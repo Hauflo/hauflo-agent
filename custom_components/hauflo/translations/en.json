@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Connect to Hauflo",
-        "description": "The pairing code is in Hauflo: project → «Deploy» → «Hauflo agent» → «Get a code». Then Hauflo deploys the project to this Home Assistant without an external address or token, and watches the site.",
+        "description": "The pairing code is in Hauflo: your project → «Connect the home» → «Get a code». It works once, for 30 minutes. Enter only the code — the server is picked from it.",
         "data": {
           "code": "Pairing code"
         },
@@ -11,14 +11,14 @@
           "advanced": {
             "name": "Advanced",
             "data": {
-              "server": "Hauflo address (only if your integrator says so)"
+              "server": "Hauflo server (leave as is — the code picks the server)"
             }
           }
         }
       },
       "reauth_confirm": {
         "title": "Link the Hauflo agent again",
-        "description": "Hauflo no longer knows this Home Assistant: the agent was unlinked or the project deleted. Get a new code in Hauflo (project → “Deploy” → “Hauflo agent” → “Get code”) — this entry is updated, no need to remove it.",
+        "description": "Hauflo no longer knows this Home Assistant: the agent was unlinked or the project deleted. Get a new code in Hauflo (your project → «Connect the home» → «Get a code»). This entry is updated, no need to remove it.",
         "data": {
           "code": "Pairing code"
         },
@@ -26,14 +26,14 @@
           "advanced": {
             "name": "Advanced",
             "data": {
-              "server": "Hauflo address (only if your integrator says so)"
+              "server": "Hauflo server (leave as is — the code picks the server)"
             }
           }
         }
       },
       "reconfigure": {
         "title": "Link to another Hauflo project",
-        "description": "Get a new code in Hauflo (project → «Deploy» → «Hauflo agent» → «Get a code»). This entry is updated; the agent's Home Assistant user stays.",
+        "description": "Get a new code in Hauflo (your project → «Connect the home» → «Get a code»). This entry is updated; the agent's Home Assistant user stays.",
         "data": {
           "code": "Pairing code"
         },
@@ -41,22 +41,22 @@
           "advanced": {
             "name": "Advanced",
             "data": {
-              "server": "Hauflo address (only if your integrator says so)"
+              "server": "Hauflo server (leave as is — the code picks the server)"
             }
           }
         }
       },
       "ranges": {
         "title": "Group addresses for Hauflo",
-        "description": "Hauflo will send commands only to these KNX group address ranges (main/middle) of project «{project}»: {ranges}. Remove any you don't want Hauflo to control (a gate, a lock). You can change this later in the integration's options.",
+        "description": "Hauflo will send commands only to these KNX group address ranges (main/middle) of project «{project}»: {ranges}. Remove any Hauflo must not control (a gate, a lock), then continue. You can change this later in the integration's options.",
         "data": {
           "ranges": "Allowed ranges (main/middle, comma-separated)"
         }
       }
     },
     "error": {
-      "invalid_code": "The code is wrong or expired — get a new one in Hauflo.",
-      "cannot_connect": "Can't reach Hauflo — check the address and the internet.",
+      "invalid_code": "The code is wrong or expired. A code works once, for 30 minutes — get a new one in Hauflo.",
+      "cannot_connect": "Can't reach Hauflo. Check that this Home Assistant has internet access, then enter the code again.",
       "https_required": "Hauflo's address must be https:// (http only for a local server)."
     },
     "abort": {

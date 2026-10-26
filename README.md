@@ -36,13 +36,16 @@ from Settings → System → Backups.
 
 ## Install
 
-1. HACS → ⋮ → **Custom repositories** → add this repository, type **Integration** → install **Hauflo** →
-   restart Home Assistant.
-2. In Hauflo: your project → **Deploy** → **Through the Hauflo agent** → **Get a code** (valid 30 minutes, once).
-3. In Home Assistant: **Settings → Devices & services → Add integration → Hauflo** → enter the code
-   (the code tells the agent which Hauflo server to use), then the group address
-   ranges Hauflo may write to.
-4. In a few seconds Hauflo shows **agent online**. Deploy as usual.
+1. HACS → ⋮ → **Custom repositories** → paste `https://github.com/Hauflo/hauflo-agent`, type **Integration** →
+   install **Hauflo** → restart Home Assistant.
+2. In Hauflo: your project → **Connect the home** → **Get a code** (works once, for 30 minutes).
+3. In Home Assistant: **Settings → Devices & services → Add integration → Hauflo** → enter only the code.
+   The code picks the server: `RU-…` → app.hauflo.ru, `EU-…` → app.hauflo.com.
+4. Home Assistant then lists the KNX group address ranges (main/middle) Hauflo may send commands to. Remove any
+   Hauflo must not control (a gate, a lock) and confirm. You can change this later in the integration's options.
+5. In a few seconds Hauflo shows **agent online**. Open **Deploy** in Hauflo, check the plan and deploy.
+
+Alarms after handover come to Telegram and by email; you set them up in Hauflo → **Monitoring**.
 
 Requirements: Home Assistant 2026.9 or newer; outbound HTTPS from Home Assistant to Hauflo.
 
