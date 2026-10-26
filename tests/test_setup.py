@@ -206,10 +206,15 @@ async def test_hauflos_dashboard_becomes_the_default_only_over_has_own(hass: Hom
     store = await async_system_store(hass)
     assert await async_home(hass, "hauflo-dom") is True
     assert store.data["core"]["default_panel"] == "hauflo-dom"
-    # Chosen in HA by a person: kept.
+    # Chosen in HA by a person (a panel that exists): kept.
+    hass.data.setdefault("frontend_panels", {})["my-dash"] = object()
     await store.async_set_item("core", {"default_panel": "my-dash"})
     assert await async_home(hass, "hauflo-dom") is False
     assert store.data["core"]["default_panel"] == "my-dash"
+    # A start page that no longer exists (an earlier install's dashboard) is nobody's choice (round 6, B13).
+    await store.async_set_item("core", {"default_panel": "gone-dash"})
+    assert await async_home(hass, "hauflo-dom") is True
+    assert store.data["core"]["default_panel"] == "hauflo-dom"
 
 
 async def test_a_label_in_use_is_never_deleted_through_the_tunnel(hass: HomeAssistant, entry) -> None:
