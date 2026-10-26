@@ -5,10 +5,13 @@ from collections.abc import Callable
 from homeassistant.util.hass_dict import HassKey
 
 DOMAIN = "hauflo"
-VERSION = "0.10.1"
-DEFAULT_SERVER = "https://app.hauflo.ru"
-# A pairing code starts with its server's region: «RU-…» → the Russian instance, «AE-…» → the international one.
-REGION_SERVERS = {"RU": "https://app.hauflo.ru", "AE": "https://app.hauflo.com"}
+VERSION = "0.11.0"
+DEFAULT_SERVER = "https://app.hauflo.com"
+# A pairing code starts with its server's region: «RU-…» → the Russian instance (data of Russian clients stays in
+# Russia), «EU-…» and any other → the international one (owner 26.10).
+REGION_SERVERS = {"RU": "https://app.hauflo.ru", "EU": "https://app.hauflo.com", "AE": "https://app.hauflo.com"}
+# Plan B: a code without a region the international server doesn't know (or can't be reached — blocked) is tried here.
+FALLBACK_SERVER = "https://app.hauflo.ru"
 CONF_SERVER = "server"
 CONF_SECRET = "secret"
 CONF_CODE = "code"

@@ -67,6 +67,51 @@ async def test_the_region_in_the_code_picks_the_server(hass: HomeAssistant, aioc
     assert result["data"][CONF_SERVER] == "https://app.hauflo.com"
 
 
+async def test_an_eu_code_goes_to_the_international_server(hass: HomeAssistant, aioclient_mock) -> None:
+    aioclient_mock.post("https://app.hauflo.com/api/agent/pair", json={"secret": "s", "project": "Villa"})
+    result = await _start(hass)
+    result = await _code(hass, result["flow_id"], {"code": "eu 7kq 4mz 9ta"})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_SERVER] == "https://app.hauflo.com"
+    assert [c[1].host for c in aioclient_mock.mock_calls] == ["app.hauflo.com"]
+
+
+async def test_a_code_without_region_tries_russia_when_the_international_server_does_not_know_it(hass: HomeAssistant, aioclient_mock) -> None:
+    aioclient_mock.post("https://app.hauflo.com/api/agent/pair", status=404)
+    aioclient_mock.post("https://app.hauflo.ru/api/agent/pair", json={"secret": "s", "project": "Дом"})
+    result = await _start(hass)
+    result = await _code(hass, result["flow_id"], {"code": "7KQ-4MZ-9TA"})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_SERVER] == "https://app.hauflo.ru"
+
+
+async def test_plan_b_when_the_international_server_is_blocked(hass: HomeAssistant, aioclient_mock) -> None:
+    aioclient_mock.post("https://app.hauflo.com/api/agent/pair", exc=aiohttp.ClientConnectionError())
+    aioclient_mock.post("https://app.hauflo.ru/api/agent/pair", json={"secret": "s", "project": "Дом"})
+    result = await _start(hass)
+    result = await _code(hass, result["flow_id"], {"code": "7KQ-4MZ-9TA"})
+    assert result["data"][CONF_SERVER] == "https://app.hauflo.ru"
+
+
+async def test_no_plan_b_for_a_wrong_code_anywhere(hass: HomeAssistant, aioclient_mock) -> None:
+    aioclient_mock.post("https://app.hauflo.com/api/agent/pair", status=404)
+    aioclient_mock.post("https://app.hauflo.ru/api/agent/pair", status=404)
+    result = await _start(hass)
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"code": "7KQ-4MZ-9TA"})
+    assert result["errors"] == {"code": "invalid_code"}
+
+
+async def test_a_regional_code_or_a_typed_server_never_goes_elsewhere(hass: HomeAssistant, aioclient_mock) -> None:
+    aioclient_mock.post("https://app.hauflo.com/api/agent/pair", status=404)
+    aioclient_mock.post("https://my.hauflo.example/api/agent/pair", status=404)
+    result = await _start(hass)
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"code": "EU-7KQ-4MZ-9TA"})
+    assert result["errors"] == {"code": "invalid_code"}
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"code": "7KQ-4MZ-9TA", "advanced": {"server": "https://my.hauflo.example"}})
+    assert result["errors"] == {"code": "invalid_code"}
+    assert {c[1].host for c in aioclient_mock.mock_calls} == {"app.hauflo.com", "my.hauflo.example"}
+
+
 async def test_one_agent_per_home_assistant(hass: HomeAssistant) -> None:
     MockConfigEntry(domain=DOMAIN, data={CONF_SERVER: "https://app.hauflo.ru", CONF_SECRET: "a"}).add_to_hass(hass)
     result = await _start(hass)

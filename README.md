@@ -40,7 +40,7 @@ from Settings → System → Backups.
    restart Home Assistant.
 2. In Hauflo: your project → **Deploy** → **Through the Hauflo agent** → **Get a code** (valid 30 minutes, once).
 3. In Home Assistant: **Settings → Devices & services → Add integration → Hauflo** → enter the code
-   (Hauflo address: `https://app.hauflo.ru` unless your integrator says otherwise), then the group address
+   (the code tells the agent which Hauflo server to use), then the group address
    ranges Hauflo may write to.
 4. In a few seconds Hauflo shows **agent online**. Deploy as usual.
 

@@ -13,7 +13,7 @@ from homeassistant.core import callback
 from homeassistant.data_entry_flow import section
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import CONF_CODE, CONF_RANGES, CONF_SECRET, CONF_SERVER, DATA_PENDING_RANGES, DATA_UNLINKED, DEFAULT_SERVER, DOMAIN, REGION_SERVERS
+from .const import CONF_CODE, CONF_RANGES, CONF_SECRET, CONF_SERVER, DATA_PENDING_RANGES, DATA_UNLINKED, DEFAULT_SERVER, DOMAIN, FALLBACK_SERVER, REGION_SERVERS
 
 
 def _secure(server: str) -> bool:
@@ -57,6 +57,12 @@ class HaufloConfigFlow(ConfigFlow, domain=DOMAIN):
             return REGION_SERVERS[region]
         return typed
 
+    @staticmethod
+    def _plan_b(code: str, server: str, errors: dict[str, str]) -> bool:
+        """Only Hauflo's international server, only a code without a known region, only «wrong code» or «no
+        connection» — a typed own server or a regional code never goes anywhere else."""
+        return server == DEFAULT_SERVER and code.split("-", 1)[0] not in REGION_SERVERS and bool(errors) and CONF_SERVER not in errors
+
     async def _pair(self, server: str, code: str, previous: str | None = None) -> tuple[dict[str, Any] | None, dict[str, str]]:
         """Trade a pairing code for the agent secret. Status first, body second (HA core review 25.10: a 404 page
         in HTML read as «no connection» instead of «wrong code»)."""
@@ -96,6 +102,14 @@ class HaufloConfigFlow(ConfigFlow, domain=DOMAIN):
             # The old secret only to the server that issued it: there the old project lets this agent go.
             previous = entry.data.get(CONF_SECRET) if entry is not None and entry.data.get(CONF_SERVER) == server else None
             body, errors = await self._pair(server, code, previous)
+            if body is None and self._plan_b(code, server, errors):
+                # A code without a region: an older Russian code, or the international server blocked — try Russia.
+                prev_b = entry.data.get(CONF_SECRET) if entry is not None and entry.data.get(CONF_SERVER) == FALLBACK_SERVER else None
+                body_b, errors_b = await self._pair(FALLBACK_SERVER, code, prev_b)
+                if body_b is not None:
+                    return body_b, FALLBACK_SERVER, {}
+                if errors_b.get(CONF_CODE):
+                    errors = errors_b
             if body is not None:
                 return body, server, {}
         return None, server, errors
