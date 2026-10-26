@@ -1,0 +1,83 @@
+# Home Assistant integration quality scale — where the Hauflo agent stands (HA core review round 3).
+rules:
+  # Bronze
+  action-setup:
+    status: exempt
+    comment: The agent registers no service actions.
+  appropriate-polling:
+    status: exempt
+    comment: No polling — one push link to Hauflo; the «Связь» entity is updated by dispatcher.
+  brands: done
+  common-modules: done
+  config-flow-test-coverage: done
+  config-flow: done
+  dependency-transparency: done
+  docs-actions:
+    status: exempt
+    comment: No service actions.
+  docs-high-level-description: done
+  docs-installation-instructions: done
+  docs-removal-instructions: done
+  entity-event-setup: done
+  entity-unique-id: done
+  has-entity-name: done
+  runtime-data: done
+  test-before-configure: done
+  test-before-setup:
+    status: exempt
+    comment: The link to Hauflo reconnects by itself with backoff; HA works offline and «Связь» says so.
+  unique-config-entry: done
+  # Silver
+  action-exceptions:
+    status: exempt
+    comment: No service actions.
+  config-entry-unloading: done
+  docs-configuration-parameters:
+    status: exempt
+    comment: No options flow.
+  docs-installation-parameters: done
+  entity-unavailable:
+    status: exempt
+    comment: «Связь» is the link's own state — on or off, never unavailable.
+  integration-owner: done
+  log-when-unavailable: done
+  parallel-updates:
+    status: exempt
+    comment: One push-updated diagnostic entity.
+  reauthentication-flow: done
+  test-coverage:
+    status: todo
+    comment: config flow 100%; the tunnel and notify engine are covered in part (pytest-homeassistant, CI).
+  # Gold
+  diagnostics: done
+  entity-category: done
+  entity-device-class: done
+  devices: done
+  entity-translations: done
+  reconfiguration-flow: done
+  repair-issues:
+    status: exempt
+    comment: An unlinked agent is HA's own re-authentication card.
+  discovery:
+    status: exempt
+    comment: A cloud link paired by code — nothing to discover.
+  discovery-update-info:
+    status: exempt
+    comment: No discovery.
+  docs-data-update: todo
+  docs-examples: todo
+  docs-known-limitations: todo
+  docs-supported-devices:
+    status: exempt
+    comment: One service device («Hauflo») for the link entity; it manages no hardware of its own.
+  docs-supported-functions: todo
+  docs-troubleshooting: todo
+  docs-use-cases: todo
+  dynamic-devices:
+    status: exempt
+    comment: One service device.
+  exception-translations: todo
+  icon-translations: todo
+  stale-devices:
+    status: exempt
+    comment: One service device.

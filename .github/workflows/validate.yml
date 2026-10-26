@@ -1,0 +1,45 @@
+name: Validate
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  hassfest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: home-assistant/actions/hassfest@master
+  tests:
+    runs-on: ubuntu-latest
+    # The oldest HA the agent says it runs on (hacs.json) and the newest (HA core expert 25.10: it leans on HA's
+    # KNX internals — a new HA release must fail here, not on a client's site).
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - ha: "2026.9.4"
+            phcc: "0.13.367"
+            py: "3.14"
+          - ha: latest
+            phcc: ""
+            py: "3.14"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.py }}
+      # A real Home Assistant (pytest-homeassistant-custom-component): config flow, setup/unload, the «Связь»
+      # entity, diagnostics — and the tunnel allowlist (what Hauflo may do in a client's HA).
+      - run: pip install "pytest-homeassistant-custom-component${{ matrix.phcc && format('=={0}', matrix.phcc) || '' }}"
+      - run: python3 -m pytest -q
+  hacs:
+    # The HACS action validates public repositories only.
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: hacs/action@main
+        with:
+          category: integration
+          # Brand images ship in custom_components/hauflo/brand (HA 2026.3+).
+          # No license file = all rights reserved until the owner picks one (repository public since 26.10 for HACS).
+          ignore: description topics license

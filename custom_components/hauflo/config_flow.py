@@ -1,0 +1,181 @@
+"""Hauflo agent setup: the integrator types the pairing code from Hauflo (project → «Агент Hauflo»)."""
+
+from __future__ import annotations
+
+import re
+from typing import Any
+
+import aiohttp
+import voluptuous as vol
+
+from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
+from homeassistant.core import callback
+from homeassistant.data_entry_flow import section
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+from .const import CONF_CODE, CONF_RANGES, CONF_SECRET, CONF_SERVER, DATA_PENDING_RANGES, DATA_UNLINKED, DEFAULT_SERVER, DOMAIN, REGION_SERVERS
+
+
+def _secure(server: str) -> bool:
+    import ipaddress  # noqa: PLC0415
+    from urllib.parse import urlparse  # noqa: PLC0415
+
+    u = urlparse(server)
+    if u.scheme == "https":
+        return True
+    if u.scheme != "http" or not u.hostname:
+        return False
+    host = u.hostname
+    try:
+        return ipaddress.ip_address(host).is_private  # a public address (IPv6 too) only by https
+    except ValueError:
+        return host == "localhost" or "." not in host  # a name in the house's network (dev: «hauflo-backend»)
+
+
+
+def _pair_code(typed: str) -> str:
+    """«73s xey w4d», «73S XEY-W4D», «ru 73s xey w4d» → «73S-XEY-W4D» / «RU-73S-XEY-W4D» (integrator run 25: spaces
+    inside were refused as a wrong code)."""
+    chars = "".join(ch for ch in typed.upper() if ch.isascii() and ch.isalnum())
+    if len(chars) == 9:
+        return f"{chars[:3]}-{chars[3:6]}-{chars[6:]}"
+    if len(chars) == 11 and chars[:2].isalpha():
+        return f"{chars[:2]}-{chars[2:5]}-{chars[5:8]}-{chars[8:]}"
+    return typed.strip().upper()
+
+class HaufloConfigFlow(ConfigFlow, domain=DOMAIN):
+    """One Hauflo agent per Home Assistant."""
+
+    VERSION = 1
+
+    @staticmethod
+    def _server_for(code: str, typed: str) -> str:
+        """The server field left as it was: the code's region decides (owner 25.10: only the code to type)."""
+        region = code.split("-", 1)[0]
+        # Any of Hauflo's own servers counts as «as it was» — a re-link with an RU code from an AE entry goes to RU.
+        if typed in ("", DEFAULT_SERVER, *REGION_SERVERS.values()) and region in REGION_SERVERS:
+            return REGION_SERVERS[region]
+        return typed
+
+    async def _pair(self, server: str, code: str, previous: str | None = None) -> tuple[dict[str, Any] | None, dict[str, str]]:
+        """Trade a pairing code for the agent secret. Status first, body second (HA core review 25.10: a 404 page
+        in HTML read as «no connection» instead of «wrong code»)."""
+        if not _secure(server):
+            return None, {CONF_SERVER: "https_required"}
+        try:
+            session = async_get_clientsession(self.hass)
+            payload = {"code": code, **({"previous": previous} if previous else {})}
+            async with session.post(f"{server}/api/agent/pair", json=payload, timeout=aiohttp.ClientTimeout(total=20)) as res:
+                if res.status == 404:
+                    return None, {CONF_CODE: "invalid_code"}
+                if res.status >= 400:
+                    return None, {"base": "cannot_connect"}
+                body = await res.json(content_type=None)
+                if not isinstance(body, dict) or not body.get("secret"):
+                    return None, {"base": "cannot_connect"}
+                return body, {}
+        except (aiohttp.ClientError, TimeoutError, ValueError):
+            return None, {"base": "cannot_connect"}
+
+    def _schema(self, server: str) -> vol.Schema:
+        # The server folded away under «Дополнительно»: the region in the code picks it (security re-review round 4:
+        # «type this address» is how someone else's server would get an admin tunnel into the house).
+        return vol.Schema(
+            {
+                vol.Required(CONF_CODE): str,
+                vol.Optional("advanced"): section(vol.Schema({vol.Required(CONF_SERVER, default=server): str}), {"collapsed": True}),
+            }
+        )
+
+    async def _code_step(self, step_id: str, user_input: dict[str, Any] | None, server: str, entry: Any = None) -> tuple[dict[str, Any] | None, str, dict[str, str]]:
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            code = _pair_code(user_input[CONF_CODE])
+            typed = (user_input.get("advanced") or {}).get(CONF_SERVER, server)
+            server = self._server_for(code, str(typed).strip().rstrip("/"))
+            # The old secret only to the server that issued it: there the old project lets this agent go.
+            previous = entry.data.get(CONF_SECRET) if entry is not None and entry.data.get(CONF_SERVER) == server else None
+            body, errors = await self._pair(server, code, previous)
+            if body is not None:
+                return body, server, {}
+        return None, server, errors
+
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        # One agent per HA: manifest single_config_entry; re-linking goes through reauth / reconfigure (HA review round 4).
+        body, server, errors = await self._code_step("user", user_input, DEFAULT_SERVER)
+        if body is not None:
+            self._paired = (body, server)
+            return await self.async_step_ranges()
+        return self.async_show_form(step_id="user", data_schema=self._schema(server), errors=errors)
+
+    async def async_step_ranges(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Which group addresses Hauflo may send to — confirmed here, in the house, not by the cloud (narrow round
+        25.10, acceptance B9: an address no HA entity uses — a gate actuator on the bus — was writable)."""
+        body, server = self._paired
+        proposed = ", ".join(parse_ranges(body.get("ranges")))
+        if user_input is not None:
+            ranges = parse_ranges(user_input.get(CONF_RANGES, ""))
+            return self.async_create_entry(title=f"Hauflo — {body.get('project', '')}", data={CONF_SERVER: server, CONF_SECRET: body["secret"]}, options={CONF_RANGES: ranges})
+        return self.async_show_form(
+            step_id="ranges",
+            data_schema=vol.Schema({vol.Optional(CONF_RANGES, default=proposed): str}),
+            description_placeholders={"project": str(body.get("project", "")), "ranges": proposed or "—"},
+        )
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
+        return HaufloOptionsFlow()
+
+    async def async_step_reconfigure(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Linked to another project, or again after an unlink: a new code updates this entry (its HA user stays)."""
+        entry = self._get_reconfigure_entry()
+        body, server, errors = await self._code_step("reconfigure", user_input, entry.data.get(CONF_SERVER, DEFAULT_SERVER), entry)
+        if body is not None:
+            self.hass.data.pop(DATA_UNLINKED, None)
+            return self.async_update_reload_and_abort(entry, title=f"Hauflo — {body.get('project', '')}", data_updates={CONF_SERVER: server, CONF_SECRET: body["secret"]})
+        return self.async_show_form(step_id="reconfigure", data_schema=self._schema(server), errors=errors)
+
+    async def async_step_reauth(self, entry_data: dict[str, Any]) -> ConfigFlowResult:
+        """Hauflo no longer knows this agent (unlinked, project deleted): HA's own «re-configure» with a new code."""
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        entry = self._get_reauth_entry()
+        body, server, errors = await self._code_step("reauth_confirm", user_input, entry.data.get(CONF_SERVER, DEFAULT_SERVER), entry)
+        if body is not None:
+            self.hass.data.pop(DATA_UNLINKED, None)
+            return self.async_update_reload_and_abort(entry, title=f"Hauflo — {body.get('project', '')}", data_updates={CONF_SERVER: server, CONF_SECRET: body["secret"]})
+        return self.async_show_form(step_id="reauth_confirm", data_schema=self._schema(server), errors=errors)
+
+
+class HaufloOptionsFlow(OptionsFlow):
+    """The group addresses Hauflo may send to — changed only here, in HA (the tunnel can't reach this flow)."""
+
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        if user_input is not None:
+            return self.async_create_entry(data={**self.config_entry.options, CONF_RANGES: parse_ranges(user_input.get(CONF_RANGES, ""))})
+        current = list(self.config_entry.options.get(CONF_RANGES) or [])
+        pending = list(self.hass.data.get(DATA_PENDING_RANGES, set()))
+        shown = ", ".join(sorted(set(current) | set(pending), key=_range_key))
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema({vol.Optional(CONF_RANGES, default=shown): str}),
+            description_placeholders={"pending": ", ".join(sorted(pending, key=_range_key)) or "—"},
+        )
+
+
+def _range_key(r: str) -> tuple[int, int]:
+    a, _, b = r.partition("/")
+    return (int(a) if a.isdigit() else 99, int(b) if b.isdigit() else 99)
+
+
+def parse_ranges(value: Any) -> list[str]:
+    """«1/1, 1/2 7/0» or a list → ["1/1", "1/2", "7/0"]: main/middle groups, KNX limits (0–31 / 0–7)."""
+    items = value if isinstance(value, list) else re.split(r"[\s,;]+", str(value or ""))
+    out = set()
+    for x in items:
+        m = re.fullmatch(r"(\d{1,2})/(\d)", str(x).strip())
+        if m and int(m.group(1)) <= 31 and int(m.group(2)) <= 7:
+            out.add(f"{int(m.group(1))}/{int(m.group(2))}")
+    return sorted(out, key=_range_key)

@@ -1,0 +1,28 @@
+{
+  "domain": "hauflo",
+  "name": "Hauflo",
+  "after_dependencies": [
+    "backup",
+    "conversation",
+    "homekit",
+    "knx",
+    "lovelace",
+    "mobile_app",
+    "person"
+  ],
+  "codeowners": [
+    "@ivvit2004"
+  ],
+  "config_flow": true,
+  "dependencies": [
+    "frontend",
+    "http"
+  ],
+  "documentation": "https://hauflo.ru",
+  "integration_type": "service",
+  "iot_class": "cloud_push",
+  "issue_tracker": "https://github.com/ivvit2004/hauflo-agent/issues",
+  "requirements": [],
+  "single_config_entry": true,
+  "version": "0.10.0"
+}
