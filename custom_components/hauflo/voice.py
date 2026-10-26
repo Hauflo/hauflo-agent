@@ -76,13 +76,32 @@ def _sentences_path(hass: HomeAssistant) -> str:
     return hass.config.path("custom_sentences", "ru", "hauflo.yaml")
 
 
+def _remove_strays(path: str) -> bool:
+    """An earlier agent's sentences under another file name (round 6: «Unknown intent» after an upgrade — its intents
+    have no handler now): ours by the header, gone. Files a human wrote are left alone."""
+    folder, gone = os.path.dirname(path), False
+    with contextlib.suppress(FileNotFoundError):
+        for name in os.listdir(folder):
+            other = os.path.join(folder, name)
+            if other == path or not name.endswith(".yaml"):
+                continue
+            with contextlib.suppress(OSError, UnicodeDecodeError):
+                with open(other, encoding="utf-8") as f:
+                    ours = f.readline() == HEADER
+                if ours:
+                    os.remove(other)
+                    gone = True
+    return gone
+
+
 def _write(path: str) -> bool:
-    """Our file only: one a human put there under the same name is left alone."""
+    """Our file only: one a human put there under the same name is left alone. True = the sentences changed."""
+    changed = _remove_strays(path)
     if os.path.exists(path):
         with open(path, encoding="utf-8") as f:
             current = f.read()
         if current == SENTENCES or not current.startswith(HEADER):
-            return False
+            return changed
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         f.write(SENTENCES)

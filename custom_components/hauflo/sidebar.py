@@ -105,7 +105,10 @@ async def async_home(hass: HomeAssistant, url_path: str) -> bool:
     # A Hauflo dashboard deleted since (a project taken over) is nobody's choice any more (integrator run 25: HA
     # opened its «Overview», the hand-over promised «Дом» first).
     dashboards = getattr(hass.data.get("lovelace"), "dashboards", None) or {}
-    gone = isinstance(current, str) and current.startswith("hauflo-") and current not in dashboards
+    # Any start page that no longer exists (a dashboard deleted since, an older install's one) is nobody's choice
+    # either — HA itself falls back to «Обзор» (round 6, B13).
+    panels = hass.data.get("frontend_panels") or {}
+    gone = isinstance(current, str) and current not in ("", "home", "lovelace") and current not in dashboards and current not in panels
     if current not in (None, "", "home", "lovelace", url_path) and not gone:
         return False
     core["default_panel"] = url_path

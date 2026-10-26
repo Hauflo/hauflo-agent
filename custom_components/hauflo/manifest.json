@@ -21,8 +21,8 @@
   "documentation": "https://hauflo.ru",
   "integration_type": "service",
   "iot_class": "cloud_push",
-  "issue_tracker": "https://github.com/ivvit2004/hauflo-agent/issues",
+  "issue_tracker": "https://github.com/Hauflo/hauflo-agent/issues",
   "requirements": [],
   "single_config_entry": true,
-  "version": "0.10.0"
+  "version": "0.10.1"
 }

@@ -1,3 +1,5 @@
+<p align="center"><img src="custom_components/hauflo/brand/logo@2x.png" alt="Hauflo" width="240"></p>
+
 # Hauflo agent for Home Assistant
 
 **Hauflo** turns a KNX ETS project into a ready Home Assistant: entities, rooms, dashboard, scenes.

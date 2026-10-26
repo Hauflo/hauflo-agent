@@ -5,7 +5,7 @@ from collections.abc import Callable
 from homeassistant.util.hass_dict import HassKey
 
 DOMAIN = "hauflo"
-VERSION = "0.10.0"
+VERSION = "0.10.1"
 DEFAULT_SERVER = "https://app.hauflo.ru"
 # A pairing code starts with its server's region: «RU-…» → the Russian instance, «AE-…» → the international one.
 REGION_SERVERS = {"RU": "https://app.hauflo.ru", "AE": "https://app.hauflo.com"}

@@ -624,3 +624,19 @@ async def test_a_push_the_ha_app_failed_quietly_is_not_sent(hass: HomeAssistant)
     sent = await eng._send({"recipients": {"all": True}}, "Протечка", "Кухня", tag="t", critical=True, targets=[{"service": "mobile_app_broken", "os": "android"}, {"service": "mobile_app_fine", "os": "ios"}])
     assert sent == ["mobile_app_fine"]
     assert eng.sent_log[0]["failed"] == ["mobile_app_broken"]
+
+
+def test_voice_strays_of_an_earlier_agent_go(tmp_path) -> None:
+    """Round 6: an earlier agent's sentences under another name stayed — «Unknown intent». Ours by the header go; a
+    file a human wrote stays."""
+    from custom_components.hauflo.voice import HEADER, SENTENCES, _write
+
+    folder = tmp_path / "custom_sentences" / "ru"
+    folder.mkdir(parents=True)
+    (folder / "old.yaml").write_text(HEADER + "language: ru\nintents: {}\n", encoding="utf-8")
+    (folder / "mine.yaml").write_text("language: ru\nintents: {}\n", encoding="utf-8")
+    path = str(folder / "hauflo.yaml")
+    assert _write(path) is True
+    assert sorted(p.name for p in folder.iterdir()) == ["hauflo.yaml", "mine.yaml"]
+    assert (folder / "hauflo.yaml").read_text(encoding="utf-8") == SENTENCES
+    assert _write(path) is False  # nothing changed the second time

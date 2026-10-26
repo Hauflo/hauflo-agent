@@ -1531,9 +1531,13 @@ class OwnedView(HomeAssistantView):
             return self.json_message("admin only", 403)
         hass = request.app[KEY_HASS]
         owned: set[str] = set()
+        entries: set[str] = set()
         for entry in hass.config_entries.async_loaded_entries(DOMAIN):
             owned |= entry.runtime_data.owned
-        return self.json({"unique_ids": sorted(owned)})
+            # The groups and bridges it set up (config entries) — a lost deploy record takes them back, not a second
+            # set (round 6, B11). Areas, floors and labels («kind:id») stay inside.
+            entries |= {e for e in entry.runtime_data.owned_entries if ":" not in e}
+        return self.json({"unique_ids": sorted(owned), "entries": sorted(entries)})
 
 
 class RangesView(HomeAssistantView):
