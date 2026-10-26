@@ -53,3 +53,8 @@ Requirements: Home Assistant 2026.9 or newer; outbound HTTPS from Home Assistant
 
 Settings → Devices & services → Hauflo → Delete. The agent's system user and its voice sentences go with it; in
 Hauflo the project shows «agent offline» — unlink it there or pair again later.
+
+## License
+
+The source code is published so you can check what runs in the home. It is not open source: you may install and
+run the agent only with the Hauflo service, and not copy it into other products. See [LICENSE](LICENSE).

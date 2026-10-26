@@ -1,0 +1,33 @@
+Hauflo Agent License
+
+Copyright (c) 2026 Hauflo. All rights reserved.
+
+The source code of this software (the Hauflo agent for Home Assistant, including its dashboard cards, icons,
+themes and other files in this repository) is published so that anyone can read and check what runs inside a
+home. It is not open source.
+
+You may, free of charge:
+  1. read, review and audit the source code;
+  2. install and run the software on a Home Assistant instance, unmodified or with changes for that
+     installation only, solely to connect that instance to the Hauflo service operated by Hauflo;
+  3. report problems and suggest changes to Hauflo.
+
+You may not, without written permission from Hauflo:
+  a. use the software, or any part of it, with any service or product other than the Hauflo service;
+  b. copy, distribute, publish, sublicense, sell or rent the software, its parts or modified versions,
+     except installing it on a Home Assistant instance connected to the Hauflo service as allowed above;
+  c. use the software, its parts or its design to build, train or offer a product or service that
+     competes with Hauflo;
+  d. remove or change this license or the copyright notices.
+
+The names «Hauflo» and the Hauflo logo are trademarks of Hauflo and are not licensed by this document.
+Home Assistant, KNX and other names are trademarks of their owners.
+
+These rights end automatically if you break these terms.
+
+THE SOFTWARE IS PROVIDED «AS IS», WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+HAUFLO BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR ITS USE.
+
+Questions about this license: support@hauflo.com
