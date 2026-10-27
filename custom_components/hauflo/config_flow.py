@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from urllib.parse import urlparse
 
 import aiohttp
 import voluptuous as vol
@@ -12,8 +13,9 @@ from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResu
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import section
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.selector import BooleanSelector, TextSelector, TextSelectorConfig
 
-from .const import CONF_CODE, CONF_RANGES, CONF_SECRET, CONF_SERVER, DATA_PENDING_RANGES, DATA_UNLINKED, DEFAULT_SERVER, DOMAIN, FALLBACK_SERVER, REGION_SERVERS
+from .const import CONF_ALLOW_CHANGES, CONF_CODE, CONF_RANGES, CONF_SECRET, CONF_SERVER, DATA_PENDING_RANGES, DATA_UNLINKED, DEFAULT_SERVER, DOMAIN, FALLBACK_SERVER, REGION_SERVERS
 
 
 def _secure(server: str) -> bool:
@@ -133,7 +135,7 @@ class HaufloConfigFlow(ConfigFlow, domain=DOMAIN):
             return self.async_create_entry(title=f"Hauflo — {body.get('project', '')}", data={CONF_SERVER: server, CONF_SECRET: body["secret"]}, options={CONF_RANGES: ranges})
         return self.async_show_form(
             step_id="ranges",
-            data_schema=vol.Schema({vol.Optional(CONF_RANGES, default=proposed): str}),
+            data_schema=vol.Schema({vol.Optional(CONF_RANGES, default=proposed): TextSelector(TextSelectorConfig(multiline=True))}),
             description_placeholders={"project": str(body.get("project", "")), "ranges": proposed or "—"},
         )
 
@@ -165,19 +167,44 @@ class HaufloConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class HaufloOptionsFlow(OptionsFlow):
-    """The group addresses Hauflo may send to — changed only here, in HA (the tunnel can't reach this flow)."""
+    """The owner's switches for Hauflo in this house — changed only here, in HA (the tunnel can't reach this flow):
+    whether Hauflo may change the setup at all, and the group addresses it may send to. No secrets, no notification
+    settings — those live in Hauflo (owner 28.10)."""
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
-            return self.async_create_entry(data={**self.config_entry.options, CONF_RANGES: parse_ranges(user_input.get(CONF_RANGES, ""))})
+            return self.async_create_entry(
+                data={
+                    **self.config_entry.options,
+                    CONF_ALLOW_CHANGES: user_input.get(CONF_ALLOW_CHANGES) is not False,
+                    CONF_RANGES: parse_ranges(user_input.get(CONF_RANGES, "")),
+                }
+            )
         current = list(self.config_entry.options.get(CONF_RANGES) or [])
         pending = list(self.hass.data.get(DATA_PENDING_RANGES, set()))
         shown = ", ".join(sorted(set(current) | set(pending), key=_range_key))
+        server = str(self.config_entry.data.get(CONF_SERVER) or "")
+        title = self.config_entry.title or ""
+        project = title.split(" — ", 1)[1] if title.startswith("Hauflo — ") else title
+        # Two texts, not a «—» for nothing pending: HA picks the step's text in the viewer's language (owner 28.10).
         return self.async_show_form(
-            step_id="init",
-            data_schema=vol.Schema({vol.Optional(CONF_RANGES, default=shown): str}),
-            description_placeholders={"pending": ", ".join(sorted(pending, key=_range_key)) or "—"},
+            step_id="init_pending" if pending else "init",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_ALLOW_CHANGES, default=self.config_entry.options.get(CONF_ALLOW_CHANGES, True) is True): BooleanSelector(),
+                    vol.Optional(CONF_RANGES, default=shown): TextSelector(TextSelectorConfig(multiline=True)),
+                }
+            ),
+            description_placeholders={
+                "pending": ", ".join(sorted(pending, key=_range_key)),
+                "project": project or "—",
+                "server": urlparse(server).hostname or server or "—",
+                "url": server,
+            },
         )
+
+    async def async_step_init_pending(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        return await self.async_step_init(user_input)
 
 
 def _range_key(r: str) -> tuple[int, ...]:

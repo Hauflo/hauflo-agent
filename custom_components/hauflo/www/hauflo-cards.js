@@ -2638,6 +2638,920 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
     }, 400);
   })();
 
+  // --- «Автоматизации» (owner 28.10; docs/automations.md): the client's own rules — sunrise / sunset ± minutes, a time,
+  // a phone's alarm clock — over Hauflo's covers, lights and scenes. Every rule is a real HA automation the agent writes
+  // (/api/hauflo/automations); this page shows what runs next, proposes ready rules for this house, edits them.
+  const AUTO = (() => {
+    const W = {
+      ru: {
+        title: "Автоматизации", close: "Закрыть",
+        sub: "Шторы и свет сами — по солнцу, по времени, по будильнику. Работают в Home Assistant дома, даже без интернета.",
+        upcoming: "Дальше",
+        sunLine: (r, s) => `Следующий рассвет — ${r}, закат — ${s}.`,
+        noSun: "Рассвет и закат появятся, когда будет известно, где дом.",
+        nothing: "Пока ничего не запланировано.",
+        in: (x) => `через ${x}`, now: "сейчас", off: "выключено", iphone: "по будильнику iPhone", noTime: "время неизвестно",
+        min: "мин", h: "ч", d: "д", today: "сегодня", tomorrow: "завтра", at: "в",
+        wd: ["пн", "вт", "ср", "чт", "пт", "сб", "вс"],
+        every: "каждый день", workdays: "по будням", weekend: "по выходным",
+        ev: { sunrise: "Рассвет", sunset: "Закат", time: "Время", alarm: "Будильник" },
+        evGen: { sunrise: "рассвета", sunset: "заката", alarm: "будильника" },
+        atTime: (t) => `В ${t}`,
+        alarmOf: (p) => `Будильник ${p}`,
+        offLong: (ev, o) => (o < 0 ? `за ${dur(-o, "ru")} до ${W.ru.evGen[ev]}` : o > 0 ? `через ${dur(o, "ru")} после ${W.ru.evGen[ev]}` : ev === "alarm" ? "со звонком будильника" : `ровно на ${ev === "sunset" ? "закате" : "рассвете"}`),
+        act: {
+          open: (n) => `Открыть ${n}`, close: (n) => `Закрыть ${n}`, position: (n, v) => `${n} на ${v} %`, on: (n, v) => (v ? `${n} ${v} %` : `Включить ${n}`),
+          off: (n) => `Выключить ${n}`, ramp: (n, v, m) => `${n} плавно до ${v} % за ${dur(m, "ru")}`, scene: (n) => `Сцена «${n}»`, room_off: (n) => `Весь свет выкл: ${n}`,
+        },
+        more: (n) => ` и ещё ${n}`,
+        mine: "Ваши правила", empty: "Пока ни одного — возьмите готовое выше или добавьте своё.", add: "Добавить",
+        sugg: "Готовые для этого дома", addOne: "Добавить", added: "Добавлено и включено. Нажмите на правило, чтобы поправить.",
+        s: {
+          sunset_covers: ["Закрывать шторы на закате", (n) => `Каждый день · шторы: ${n}`],
+          wake_covers: ["Открывать шторы в спальне по будильнику", (src) => `Спальня · ${src}`],
+          wake_light: ["Свет-будильник: плавно 0 → 25 %", (src) => `Спальня · ${src}`],
+          night_off: ["Выключать весь свет в 01:00", () => "Каждый день · все комнаты"],
+          corridor_night: ["Свет в коридоре ночью на 10 %", (r) => `Каждый день в 23:00 · ${r}`],
+        },
+        srcAndroid: (p) => `за 20 мин до будильника ${p}`, srcIphone: "с будильником iPhone",
+        newRule: "Новое правило", rule: "Правило", back: "Назад",
+        when: "Когда", days: "Дни", what: "Что сделать", addAction: "Добавить действие…",
+        grp: { covers: "Шторы", lights: "Свет", scenes: "Сцены", rooms: "Весь свет в комнате" },
+        do: { open: "Открыть", close: "Закрыть", position: "Положение", on: "Включить", off: "Выключить", ramp: "Плавно", sceneOn: "Включить" },
+        bright: "Яркость", upTo: "до", over: "за", remove: "Убрать",
+        phone: "Чей будильник", iphoneOpt: "iPhone (через «Команды»)",
+        androidHint: "Android: в приложении Home Assistant включите датчик «Следующий будильник» (Настройки приложения → Датчики) — правило само будет знать время.",
+        iphoneTitle: "На iPhone один раз",
+        iphoneSteps: (code) => [
+          "Откройте «Команды» → «Автоматизация» → «+».",
+          "Выберите «Будильник» → «Остановлен» (или «Сработал»), будильник — любой или ваш «Подъём»; включите «Запускать сразу».",
+          "Действие: «Home Assistant» → «Отправить событие» (Fire Event).",
+          `Тип события: ${code}`,
+          "Готово: остановили будильник — шторы и свет сработают. Нужно приложение Home Assistant, вошедшее в этот дом.",
+        ],
+        iphoneLater: "Сохраните правило — здесь появится код для «Команд».",
+        copy: "Скопировать", copied: "Скопировано",
+        willRun: (x) => `Сработает: ${x}`, willNot: "Сработает: по будильнику iPhone",
+        save: "Сохранить", cancel: "Отмена", saved: "Сохранено.", del: "Удалить", delAsk: "Удалить это правило?", delYes: "Да, удалить",
+        run: "Проверить сейчас", runAsk: (x) => `Сейчас выполнится: ${x}. Продолжить?`, runYes: "Выполнить", ran: "Выполнено — смотрите на шторы и свет.",
+        rampNote: "Плавный свет займёт заданные минуты.",
+        needLoc: "Сначала укажите, где дом, — без этого рассвет и закат не посчитать.", needAction: "Добавьте хотя бы одно действие.", needDay: "Выберите хотя бы один день.",
+        err: "Не получилось: ", errNet: "Нет связи с домом — попробуйте ещё раз.", noAgent: "Нужен агент Hauflo новее — обновите его в HACS.",
+        last: (t) => `Последний раз: ${t}`, never: "ещё не срабатывало", missing: "нет в Home Assistant — сохраните заново",
+        loc: "Где дом", locWhy: "Чтобы знать время рассвета и заката. В Home Assistant сохраняются только координаты.",
+        detect: "Определить", detecting: "Ищем…", detected: (c) => `Похоже, дом здесь${c ? `: ${c}` : ""}.`, confirm: "Да, дом здесь",
+        byPhone: "По телефону", manual: "Ввести вручную", lat: "Широта", lon: "Долгота", saveLoc: "Сохранить место",
+        locNow: (a, b) => `Дом: ${a}, ${b}`, change: "Изменить", locSaved: "Место сохранено.",
+        geoNo: "Телефон не дал координаты (нужен https и разрешение) — введите вручную.", yamlLoc: "Место задано в configuration.yaml — его меняет интегратор.",
+        detectFail: "По интернету не определилось — попробуйте по телефону или вручную.", mapNote: "© OpenStreetMap",
+        on: "Включено", offShort: "Выключено",
+      },
+      en: {
+        title: "Automations", close: "Close",
+        sub: "Blinds and lights by themselves — by the sun, by the clock, by your alarm. They run in Home Assistant at home, even offline.",
+        upcoming: "Next",
+        sunLine: (r, s) => `Next sunrise — ${r}, sunset — ${s}.`,
+        noSun: "Sunrise and sunset show up once the house's place is known.",
+        nothing: "Nothing planned yet.",
+        in: (x) => `in ${x}`, now: "now", off: "off", iphone: "with the iPhone alarm", noTime: "time unknown",
+        min: "min", h: "h", d: "d", today: "today", tomorrow: "tomorrow", at: "at",
+        wd: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+        every: "every day", workdays: "on weekdays", weekend: "at weekends",
+        ev: { sunrise: "Sunrise", sunset: "Sunset", time: "Time", alarm: "Alarm" },
+        evGen: { sunrise: "sunrise", sunset: "sunset", alarm: "the alarm" },
+        atTime: (t) => `At ${t}`,
+        alarmOf: (p) => `Alarm ${p}`,
+        offLong: (ev, o) => (o < 0 ? `${dur(-o, "en")} before ${W.en.evGen[ev]}` : o > 0 ? `${dur(o, "en")} after ${W.en.evGen[ev]}` : ev === "alarm" ? "as the alarm rings" : `right at ${ev}`),
+        act: {
+          open: (n) => `Open ${n}`, close: (n) => `Close ${n}`, position: (n, v) => `${n} to ${v} %`, on: (n, v) => (v ? `${n} ${v} %` : `Turn on ${n}`),
+          off: (n) => `Turn off ${n}`, ramp: (n, v, m) => `${n} slowly up to ${v} % over ${dur(m, "en")}`, scene: (n) => `Scene «${n}»`, room_off: (n) => `All lights off: ${n}`,
+        },
+        more: (n) => ` and ${n} more`,
+        mine: "Your rules", empty: "None yet — take a ready one above or add your own.", add: "Add",
+        sugg: "Ready for this house", addOne: "Add", added: "Added and on. Tap the rule to adjust it.",
+        s: {
+          sunset_covers: ["Close the blinds at sunset", (n) => `Every day · blinds: ${n}`],
+          wake_covers: ["Open the bedroom blinds with the alarm", (src) => `Bedroom · ${src}`],
+          wake_light: ["Wake-up light: slowly 0 → 25 %", (src) => `Bedroom · ${src}`],
+          night_off: ["All lights off at 01:00", () => "Every day · all rooms"],
+          corridor_night: ["Hall light at night at 10 %", (r) => `Every day at 23:00 · ${r}`],
+        },
+        srcAndroid: (p) => `20 min before the alarm on ${p}`, srcIphone: "with the iPhone alarm",
+        newRule: "New rule", rule: "Rule", back: "Back",
+        when: "When", days: "Days", what: "What to do", addAction: "Add an action…",
+        grp: { covers: "Blinds", lights: "Lights", scenes: "Scenes", rooms: "All lights of a room" },
+        do: { open: "Open", close: "Close", position: "Position", on: "On", off: "Off", ramp: "Slowly", sceneOn: "Turn on" },
+        bright: "Brightness", upTo: "up to", over: "over", remove: "Remove",
+        phone: "Whose alarm", iphoneOpt: "iPhone (via Shortcuts)",
+        androidHint: "Android: in the Home Assistant app turn on the «Next alarm» sensor (App settings → Sensors) — the rule then knows the time by itself.",
+        iphoneTitle: "On the iPhone, once",
+        iphoneSteps: (code) => [
+          "Open Shortcuts → Automation → «+».",
+          "Choose «Alarm» → «Is Stopped» (or «Goes Off»), any alarm or your «Wake-up»; turn on «Run Immediately».",
+          "Action: «Home Assistant» → «Fire Event».",
+          `Event type: ${code}`,
+          "Done: stop the alarm — the blinds and lights follow. Needs the Home Assistant app signed in to this house.",
+        ],
+        iphoneLater: "Save the rule — the code for Shortcuts shows up here.",
+        copy: "Copy", copied: "Copied",
+        willRun: (x) => `Runs: ${x}`, willNot: "Runs: with the iPhone alarm",
+        save: "Save", cancel: "Cancel", saved: "Saved.", del: "Delete", delAsk: "Delete this rule?", delYes: "Yes, delete",
+        run: "Test now", runAsk: (x) => `This runs now: ${x}. Go on?`, runYes: "Run", ran: "Done — look at the blinds and lights.",
+        rampNote: "The slow light takes the minutes set.",
+        needLoc: "Set where the house is first — sunrise and sunset need it.", needAction: "Add at least one action.", needDay: "Pick at least one day.",
+        err: "Didn't work: ", errNet: "No link to the house — try again.", noAgent: "This needs a newer Hauflo agent — update it in HACS.",
+        last: (t) => `Last run: ${t}`, never: "hasn't run yet", missing: "not in Home Assistant — save it again",
+        loc: "Where the house is", locWhy: "To know sunrise and sunset. Only the coordinates are saved in Home Assistant.",
+        detect: "Find", detecting: "Looking…", detected: (c) => `Looks like the house is here${c ? `: ${c}` : ""}.`, confirm: "Yes, it's here",
+        byPhone: "By the phone", manual: "Type it in", lat: "Latitude", lon: "Longitude", saveLoc: "Save the place",
+        locNow: (a, b) => `Home: ${a}, ${b}`, change: "Change", locSaved: "Place saved.",
+        geoNo: "The phone gave no coordinates (needs https and permission) — type them in.", yamlLoc: "The place is set in configuration.yaml — the integrator changes it.",
+        detectFail: "Not found by the internet address — try the phone or type it in.", mapNote: "© OpenStreetMap",
+        on: "On", offShort: "Off",
+      },
+    };
+    const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+    function dur(m, l) {
+      const w = W[l];
+      return m >= 60 ? `${Math.floor(m / 60)} ${w.h}${m % 60 ? ` ${m % 60} ${w.min}` : ""}` : `${m} ${w.min}`;
+    }
+    const sign = (o) => (o < 0 ? `−${-o}` : `+${o}`);
+    const BEDROOM = /спальн|bedroom|master/i;
+    const HALL = /коридор|холл|прихож|hall|corridor|entrance|lobby/i;
+    const CSS3 = `:host{display:block;font-family:Onest,var(--ha-font-family-body),system-ui,sans-serif;color:var(--eh-ink,var(--primary-text-color));-webkit-tap-highlight-color:transparent}
+*{box-sizing:border-box}
+.pg{max-width:760px;margin:0 auto;padding:8px 12px 40px}
+.map.dk img{filter:invert(1) hue-rotate(180deg) brightness(.85) contrast(.9)}
+h1{font:600 26px/1.15 Onest,sans-serif;letter-spacing:-.02em;margin:6px 0 4px}h2{font:600 18px/1.2 Onest,sans-serif;margin:0}
+.sub,.hint,.muted{font:400 13px/1.45 Onest,sans-serif;color:var(--eh-ink2,var(--secondary-text-color))}.sub{margin:0 0 14px}
+.box{background:var(--eh-glass,var(--ha-card-background,var(--card-background-color,#fff)));box-shadow:var(--eh-edge,none),var(--eh-deep,var(--ha-card-box-shadow,0 1px 3px rgba(0,0,0,.12)));border-radius:24px;padding:16px;margin:0 0 14px}
+.caps{font:500 11px/1.2 Onest,sans-serif;letter-spacing:.14em;text-transform:uppercase;color:var(--eh-ink2,var(--secondary-text-color));margin:0 0 10px}
+.sunl{display:flex;gap:10px;align-items:flex-start;font:500 14px/1.4 Onest,sans-serif;margin:0 0 10px}.sunl ha-icon{color:var(--eh-amber,#E8901F);flex:none}
+.tl{list-style:none;margin:0;padding:0}.tl li{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;padding:10px 0;border-top:1px solid var(--eh-hair,var(--divider-color,rgba(127,127,127,.2)))}
+.tl .rel{font:600 15px/1.3 Onest,sans-serif;white-space:nowrap;font-variant-numeric:tabular-nums}.tl .txt{font:400 14px/1.4 Onest,sans-serif;min-width:0}.tl .abs{color:var(--eh-ink2,var(--secondary-text-color))}
+.tl li.dis{opacity:.5}.tl li.dis .rel{font-weight:500}
+@container (max-width:520px){.tl li{grid-template-columns:1fr}}
+.pg{container-type:inline-size}
+.sg{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
+.card{display:flex;flex-direction:column;gap:6px;padding:14px;border-radius:20px;background:var(--eh-track,rgba(127,127,127,.1));min-height:112px}
+.card b{font:600 15px/1.3 Onest,sans-serif}.card .muted{flex:1}
+.btn{font:500 14px Onest,sans-serif;color:inherit;border:0;border-radius:14px;min-height:44px;padding:8px 16px;background:var(--eh-track,rgba(127,127,127,.14));cursor:pointer}
+.btn.pri{background:var(--eh-ink,var(--primary-color));color:var(--card-background-color,#fff)}.btn.sm{min-height:36px;padding:6px 12px;font-size:13px;border-radius:12px;align-self:flex-start}
+.btn.dan{color:var(--eh-alert,#D93F3F)}.btn:disabled{opacity:.5;cursor:default}
+.lnk{font:500 14px Onest,sans-serif;color:var(--eh-ink,var(--primary-color));background:none;border:0;padding:8px 0;cursor:pointer;text-decoration:underline;text-underline-offset:3px;min-height:44px}
+.rl{list-style:none;margin:0;padding:0}.rl li{display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px solid var(--eh-hair,var(--divider-color,rgba(127,127,127,.2)))}
+.rl li:first-child{border-top:0}.rl .ic{width:40px;height:40px;border-radius:20px;display:grid;place-items:center;background:var(--eh-track,rgba(127,127,127,.12));flex:none}
+.rl .bd{flex:1;min-width:0;text-align:left;background:none;border:0;color:inherit;padding:0;cursor:pointer;font:inherit}.rl .nm{font:600 15px/1.3 Onest,sans-serif}.rl .ds{font:400 13px/1.4 Onest,sans-serif;color:var(--eh-ink2,var(--secondary-text-color));overflow-wrap:anywhere}
+.rl li.dis .bd{opacity:.55}
+.sw{position:relative;width:52px;height:32px;border-radius:16px;border:0;background:var(--eh-track,rgba(127,127,127,.25));cursor:pointer;flex:none}.sw::after{content:"";position:absolute;top:4px;left:4px;width:24px;height:24px;border-radius:12px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .2s}
+.sw[aria-checked="true"]{background:var(--eh-mint,#2FB383)}.sw[aria-checked="true"]::after{left:24px}
+.seg{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:4px;padding:4px;border-radius:16px;background:var(--eh-track,rgba(127,127,127,.12))}
+.seg button{font:500 14px Onest,sans-serif;color:inherit;border:0;border-radius:12px;min-height:40px;padding:6px 4px;background:none;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--card-background-color,#fff);box-shadow:0 1px 3px rgba(0,0,0,.18);font-weight:600}
+.fld{margin:16px 0 0}.fld>.caps{margin-bottom:8px}
+.step{display:flex;align-items:center;gap:10px}.step button{width:44px;height:44px;border-radius:22px;border:0;background:var(--eh-track,rgba(127,127,127,.14));color:inherit;font:500 20px Onest,sans-serif;cursor:pointer;flex:none}
+.step span{flex:1;text-align:center;font:500 15px/1.3 Onest,sans-serif}
+.chips{display:flex;flex-wrap:wrap;gap:6px}.chips button{min-width:44px;min-height:40px;border-radius:20px;border:0;background:var(--eh-track,rgba(127,127,127,.12));color:inherit;font:500 14px Onest,sans-serif;cursor:pointer;padding:0 12px}
+.chips button[aria-pressed="true"]{background:var(--eh-ink,var(--primary-color));color:var(--card-background-color,#fff)}
+.act{padding:12px;border-radius:18px;background:var(--eh-track,rgba(127,127,127,.08));margin:0 0 8px;display:grid;gap:8px}.act .top{display:flex;align-items:center;gap:8px}.act .top b{flex:1;font:600 14px/1.3 Onest,sans-serif;min-width:0}
+.x{width:36px;height:36px;border-radius:18px;border:0;background:none;color:inherit;font-size:20px;cursor:pointer;flex:none}
+select,input{font:400 15px Onest,sans-serif;color:inherit;background:var(--card-background-color,#fff);border:1px solid var(--eh-hair,var(--divider-color,rgba(127,127,127,.35)));border-radius:12px;min-height:44px;padding:8px 12px;width:100%;max-width:100%}
+input[type=time]{width:auto;min-width:140px}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.row.end{justify-content:flex-end}.grow{flex:1}
+.msg{font:500 14px/1.4 Onest,sans-serif;margin:10px 0 0}.msg.bad{color:var(--eh-alert,#D93F3F)}
+.ask{margin:12px 0 0;padding:12px;border-radius:16px;background:color-mix(in srgb,var(--eh-amber,#E8901F) 14%,transparent)}
+.map{position:relative;height:180px;border-radius:18px;overflow:hidden;margin:10px 0;background:var(--eh-track,rgba(127,127,127,.12))}.map img{position:absolute;width:256px;height:256px;max-width:none}
+.pin{position:absolute;left:50%;top:50%;width:22px;height:22px;margin:-22px 0 0 -11px;border-radius:11px 11px 11px 0;transform:rotate(-45deg);background:var(--eh-alert,#E5484D);box-shadow:0 2px 6px rgba(0,0,0,.4)}
+.attr{position:absolute;right:6px;bottom:4px;font:400 10px Onest,sans-serif;background:rgba(255,255,255,.7);color:#333;padding:1px 4px;border-radius:4px}
+ol{margin:6px 0 0;padding:0 0 0 20px;font:400 14px/1.5 Onest,sans-serif}ol li{margin:4px 0}code{font:500 14px ui-monospace,monospace;background:var(--eh-track,rgba(127,127,127,.14));padding:2px 6px;border-radius:6px;overflow-wrap:anywhere}
+.hd{display:flex;align-items:center;gap:8px;margin:0 0 6px}.hd h2{flex:1}
+ha-icon{--mdc-icon-size:20px}`;
+
+    class Automations extends HTMLElement {
+      constructor() {
+        super();
+        this.attachShadow({ mode: "open" });
+        this.view = "list";
+        this.data = null;
+        this.msg = "";
+        this.bad = false;
+      }
+      setConfig(c) {
+        this._config = c || {};
+      }
+      getCardSize() {
+        return 12;
+      }
+      getGridOptions() {
+        return { columns: "full" };
+      }
+      set hass(h) {
+        const first = !this._hass;
+        this._hass = h;
+        if (first) {
+          this.lang = langOf(h);
+          this.load();
+          return;
+        }
+        // Only the list follows HA (last run, the phone's next alarm); an open editor is never redrawn under a finger.
+        const sig = (this.data?.rules || []).map((r) => `${h.states[r.entity_id]?.state}${h.states[r.entity_id]?.attributes?.last_triggered}${r.when.sensor ? h.states[r.when.sensor]?.state : ""}`).join();
+        if (sig !== this._sig && this.view === "list") {
+          this._sig = sig;
+          this.draw();
+        }
+      }
+      connectedCallback() {
+        clearInterval(this._tick);
+        this._tick = setInterval(() => this.view === "list" && this.data && this.draw(), 30000);
+      }
+      disconnectedCallback() {
+        clearInterval(this._tick);
+      }
+      get w() {
+        return W[this.lang || "ru"];
+      }
+      async api(method, body) {
+        return this._hass.callApi(method, "hauflo/automations", body);
+      }
+      fail(e) {
+        const m = e?.body?.message || e?.message || "";
+        this.msg = e?.status_code === 404 && !m ? this.w.noAgent : m ? this.w.err + m : this.w.errNet;
+        this.bad = true;
+      }
+      async load() {
+        try {
+          this.data = await this.api("GET");
+          this.noAgent = false;
+        } catch (e) {
+          this.noAgent = true;
+        }
+        this.draw();
+      }
+      // --- time ------------------------------------------------------------------------------------------------------
+      get tz() {
+        return this._hass?.config?.time_zone;
+      }
+      fmtParts(t, opts) {
+        try {
+          return new Intl.DateTimeFormat(this.lang === "ru" ? "ru-RU" : "en-GB", { timeZone: this.tz, ...opts }).format(t);
+        } catch (e) {
+          return new Intl.DateTimeFormat(this.lang === "ru" ? "ru-RU" : "en-GB", opts).format(t);
+        }
+      }
+      key(t) {
+        try {
+          return new Intl.DateTimeFormat("en-CA", { timeZone: this.tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(t);
+        } catch (e) {
+          return new Date(t).toISOString().slice(0, 10);
+        }
+      }
+      wdOf(t) {
+        const day = this.data?.days?.find((d) => d.date === this.key(t));
+        if (day) return day.wd;
+        const n = new Date(this.key(t) + "T12:00:00Z").getUTCDay();
+        return DAYS[(n + 6) % 7];
+      }
+      hm(t) {
+        return this.fmtParts(t, { hour: "2-digit", minute: "2-digit" });
+      }
+      dayWord(t) {
+        const now = Date.now();
+        const k = this.key(t);
+        if (k === this.key(now)) return this.w.today;
+        if (k === this.key(now + 86400000)) return this.w.tomorrow;
+        return this.w.wd[DAYS.indexOf(this.wdOf(t))];
+      }
+      when(t) {
+        return `${this.dayWord(t)} ${this.w.at} ${this.hm(t)}`;
+      }
+      rel(t) {
+        const w = this.w;
+        const m = Math.round((t - Date.now()) / 60000);
+        if (m < 1) return w.now;
+        if (m < 60) return w.in(`${m} ${w.min}`);
+        if (m < 1440) return w.in(`${Math.floor(m / 60)} ${w.h}${m % 60 ? ` ${m % 60} ${w.min}` : ""}`);
+        const d = Math.floor(m / 1440);
+        const h = Math.floor((m % 1440) / 60);
+        return w.in(`${d} ${w.d}${h ? ` ${h} ${w.h}` : ""}`);
+      }
+      nextOf(rule) {
+        const now = Date.now();
+        const w = rule.when;
+        const days = rule.days?.length ? rule.days : DAYS;
+        if (w.event === "alarm_iphone") return null;
+        if (w.event === "alarm_android") {
+          const t = Date.parse(this._hass?.states[w.sensor]?.state) + (w.offset || 0) * 60000;
+          return isFinite(t) && t > now && days.includes(this.wdOf(t)) ? t : null;
+        }
+        for (const d of this.data?.days || []) {
+          let t;
+          if (w.event === "time") {
+            const [h, m] = String(w.at || "").split(":").map(Number);
+            t = Date.parse(d.midnight) + (h * 60 + m) * 60000;
+          } else {
+            if (!d[w.event]) continue;
+            t = Date.parse(d[w.event]) + (w.offset || 0) * 60000;
+          }
+          if (isFinite(t) && t > now && days.includes(this.wdOf(t))) return t;
+        }
+        return null;
+      }
+      // --- words -------------------------------------------------------------------------------------------------------
+      name(eid) {
+        const t = this.data?.targets || {};
+        const all = [...(t.covers || []), ...(t.lights || []), ...(t.scenes || [])];
+        const it = all.find((x) => x.entity_id === eid);
+        return it ? clientName(it.name, eid) : nameOf(this._hass?.states[eid], eid);
+      }
+      room(a) {
+        return this.data?.targets?.areas?.[a] || a;
+      }
+      phone(sensor) {
+        return this.data?.targets?.alarms?.find((a) => a.entity_id === sensor)?.phone || sensor;
+      }
+      whenText(w) {
+        const t = this.w;
+        if (w.event === "time") return t.atTime(w.at);
+        if (w.event === "alarm_iphone") return t.alarmOf("iPhone");
+        const base = w.event === "alarm_android" ? t.alarmOf(this.phone(w.sensor)) : t.ev[w.event];
+        return w.offset ? `${base} ${sign(w.offset)} ${t.min}` : base;
+      }
+      daysText(days) {
+        const t = this.w;
+        if (!days || days.length === 7) return t.every;
+        if (days.join() === "mon,tue,wed,thu,fri") return t.workdays;
+        if (days.join() === "sat,sun") return t.weekend;
+        return days.map((d) => t.wd[DAYS.indexOf(d)]).join(", ");
+      }
+      actText(a) {
+        const t = this.w.act;
+        if (a.do === "room_off") return t.room_off(this.room(a.area_id));
+        const n = this.name(a.entity_id);
+        if (a.entity_id.startsWith("scene.")) return t.scene(n);
+        return t[a.do] ? t[a.do](n, a.value, a.minutes) : n;
+      }
+      // Blinds that do the same go as one: «Закрыть Деверь, Штора 1 и ещё 6» — not eight «Закрыть …».
+      actsText(r) {
+        const groups = new Map();
+        const order = [];
+        for (const a of r.actions || []) {
+          if (a.entity_id?.startsWith("cover.") && (a.do === "open" || a.do === "close")) {
+            if (!groups.has(a.do)) {
+              groups.set(a.do, []);
+              order.push(a.do);
+            }
+            groups.get(a.do).push(this.name(a.entity_id));
+          } else order.push(a);
+        }
+        const list = (n) => (n.length > 3 ? `${n.slice(0, 2).join(", ")}${this.w.more(n.length - 2)}` : n.join(", "));
+        return order.map((x) => (typeof x === "string" ? this.w.act[x](list(groups.get(x))) : this.actText(x))).join(", ");
+      }
+      icon(w) {
+        return w.event === "sunrise" ? "mdi:weather-sunset-up" : w.event === "sunset" ? "mdi:weather-sunset-down" : w.event === "time" ? "mdi:clock-outline" : "mdi:alarm";
+      }
+      // --- suggestions ---------------------------------------------------------------------------------------------------
+      suggestions() {
+        const t = this.data?.targets || {};
+        const w = this.w;
+        const have = new Set((this.data?.rules || []).map((r) => r.from).filter(Boolean));
+        const out = [];
+        const areaName = (a) => (a ? t.areas?.[a] || "" : "");
+        const android = (t.alarms || [])[0];
+        const alarmWhen = (off) => (android ? { event: "alarm_android", sensor: android.entity_id, offset: off } : { event: "alarm_iphone" });
+        const src = android ? w.srcAndroid(android.phone) : w.srcIphone;
+        const covers = t.covers || [];
+        if (covers.length)
+          out.push({ key: "sunset_covers", title: w.s.sunset_covers[0], sub: w.s.sunset_covers[1](covers.length), rule: { when: { event: "sunset", offset: 0 }, days: DAYS, actions: covers.slice(0, 20).map((c) => ({ entity_id: c.entity_id, do: "close" })) } });
+        const bedCovers = covers.filter((c) => BEDROOM.test(areaName(c.area)));
+        if (bedCovers.length)
+          out.push({ key: "wake_covers", title: w.s.wake_covers[0], sub: w.s.wake_covers[1](android ? w.alarmOf(android.phone) : w.srcIphone), rule: { when: alarmWhen(0), days: DAYS, actions: bedCovers.slice(0, 20).map((c) => ({ entity_id: c.entity_id, do: "open" })) } });
+        const dim = (t.lights || []).filter((l) => l.dim);
+        const bedLight = dim.find((l) => BEDROOM.test(areaName(l.area)));
+        if (bedLight)
+          out.push({ key: "wake_light", title: w.s.wake_light[0], sub: w.s.wake_light[1](src), rule: { when: alarmWhen(android ? -20 : 0), days: DAYS, actions: [{ entity_id: bedLight.entity_id, do: "ramp", value: 25, minutes: android ? 20 : 15 }] } });
+        if ((t.rooms || []).length)
+          out.push({ key: "night_off", title: w.s.night_off[0], sub: w.s.night_off[1](), rule: { when: { event: "time", at: "01:00" }, days: DAYS, actions: t.rooms.slice(0, 20).map((r) => ({ do: "room_off", area_id: r.area_id })) } });
+        const hall = dim.find((l) => HALL.test(areaName(l.area)));
+        if (hall)
+          out.push({ key: "corridor_night", title: w.s.corridor_night[0], sub: w.s.corridor_night[1](areaName(hall.area)), rule: { when: { event: "time", at: "23:00" }, days: DAYS, actions: [{ entity_id: hall.entity_id, do: "on", value: 10 }] } });
+        return out.filter((s) => !have.has(s.key));
+      }
+      autoName(r) {
+        return this.whenText(r.when);
+      }
+      // --- drawing ------------------------------------------------------------------------------------------------------
+      draw() {
+        const sr = this.shadowRoot;
+        const w = this.w;
+        if (this.noAgent) {
+          sr.innerHTML = `<style>${CSS3}</style><div class="pg"><h1>${esc(w.title)}</h1><p class="sub">${esc(w.noAgent)}</p></div>`;
+          return;
+        }
+        if (!this.data) {
+          sr.innerHTML = `<style>${CSS3}</style><div class="pg"><h1>${esc(w.title)}</h1></div>`;
+          return;
+        }
+        const body = this.view === "edit" ? this.editHtml() : this.view === "loc" ? this.locHtml() : this.listHtml();
+        sr.innerHTML = `<style>${CSS3}</style><div class="pg">${this._config?.overlay ? `<div class="row end"><button class="btn sm" data-close>${esc(w.close)}</button></div>` : ""}${body}</div>`;
+        sr.querySelector("[data-close]")?.addEventListener("click", () => this.dispatchEvent(new CustomEvent("hauflo-close", { bubbles: true, composed: true })));
+        this.bind();
+      }
+      listHtml() {
+        const w = this.w;
+        const d = this.data;
+        const now = Date.now();
+        const rise = (d.days || []).map((x) => Date.parse(x.sunrise)).find((t) => t > now);
+        const set = (d.days || []).map((x) => Date.parse(x.sunset)).find((t) => t > now);
+        const items = d.rules
+          .map((r) => ({ r, t: this.nextOf(r), on: r.state === "on" }))
+          .filter((x) => x.t !== null || x.r.when.event === "alarm_iphone")
+          .sort((a, b) => Number(b.on) - Number(a.on) || (a.t ?? Infinity) - (b.t ?? Infinity))
+          .slice(0, 6);
+        const tl = items
+          .map(({ r, t, on }) => {
+            const abs = t ? (this.key(t) === this.key(now) ? this.hm(t) : `${this.dayWord(t)} ${this.hm(t)}`) : "";
+            const lead = !on ? w.off : t ? this.rel(t) : w.iphone;
+            return `<li class="${on ? "" : "dis"}" data-open="${esc(r.id)}"><span class="rel">${esc(lead)}</span><span class="txt"><span class="abs">${esc(`${abs ? `${abs}, ` : ""}${this.whenText(r.when).replace(/^./, (c) => c.toLowerCase())}`)}:</span> ${esc(this.actsText(r))}</span></li>`;
+          })
+          .join("");
+        const sugg = this.suggestions();
+        const loc = d.location;
+        return `<h1>${esc(w.title)}</h1><p class="sub">${esc(w.sub)}</p>
+${!loc.set ? this.locCard() : ""}
+<section class="box" aria-label="${esc(w.upcoming)}"><div class="caps">${esc(w.upcoming)}</div>
+<p class="sunl"><ha-icon icon="mdi:weather-sunset"></ha-icon><span>${rise && set ? esc(w.sunLine(this.when(rise), this.when(set))) : esc(w.noSun)}</span></p>
+${tl ? `<ul class="tl">${tl}</ul>` : `<p class="muted">${esc(w.nothing)}</p>`}</section>
+${sugg.length ? `<section class="box"><div class="caps">${esc(w.sugg)}</div><div class="sg">${sugg.map((s) => `<div class="card"><b>${esc(s.title)}</b><span class="muted">${esc(s.sub)}</span><button class="btn sm pri" data-sugg="${esc(s.key)}">+ ${esc(w.addOne)}</button></div>`).join("")}</div></section>` : ""}
+<section class="box"><div class="hd"><h2>${esc(w.mine)}</h2><button class="btn sm pri" data-new>+ ${esc(w.add)}</button></div>
+${this.msg ? `<p class="msg ${this.bad ? "bad" : ""}" role="status">${esc(this.msg)}</p>` : ""}
+${d.rules.length ? `<ul class="rl">${d.rules.map((r) => this.ruleRow(r)).join("")}</ul>` : `<p class="muted">${esc(w.empty)}</p>`}</section>
+${loc.set ? `<p class="muted">${esc(w.locNow(loc.latitude.toFixed(3), loc.longitude.toFixed(3)))} · <button class="lnk" data-loc>${esc(w.change)}</button></p>` : ""}`;
+      }
+      ruleRow(r) {
+        const w = this.w;
+        const s = this._hass?.states[r.entity_id];
+        const on = r.state === "on";
+        const t = this.nextOf(r);
+        const last = s?.attributes?.last_triggered;
+        const meta = r.state === "missing" ? w.missing : [this.daysText(r.days), t && on ? `→ ${this.when(t)}` : "", last ? w.last(this.when(Date.parse(last))) : w.never].filter(Boolean).join(" · ");
+        return `<li class="${on ? "" : "dis"}"><span class="ic"><ha-icon icon="${this.icon(r.when)}"></ha-icon></span>
+<button class="bd" data-open="${esc(r.id)}"><div class="nm">${esc(r.name || this.autoName(r))}</div><div class="ds">${esc(this.actsText(r))}</div><div class="ds">${esc(meta)}</div></button>
+<button class="sw" role="switch" aria-checked="${on}" aria-label="${esc(on ? w.on : w.offShort)}" data-sw="${esc(r.id)}" ${r.state === "missing" ? "disabled" : ""}></button></li>`;
+      }
+      locCard() {
+        const w = this.w;
+        const loc = this.data.location;
+        const c = this.cand;
+        if (loc.yaml) return `<section class="box"><div class="caps">${esc(w.loc)}</div><p class="muted">${esc(w.yamlLoc)}</p></section>`;
+        return `<section class="box" data-loccard><div class="caps">${esc(w.loc)}</div><p class="muted">${esc(w.locWhy)}</p>
+${c ? `${this.mapHtml(c.latitude, c.longitude)}<p class="msg">${esc(w.detected([c.city, c.country].filter(Boolean).join(", ")))} <span class="muted">${esc(`${c.latitude.toFixed(4)}, ${c.longitude.toFixed(4)}`)}</span></p>
+<div class="row"><button class="btn pri" data-locok>${esc(w.confirm)}</button><button class="btn" data-geo>${esc(w.byPhone)}</button><button class="btn" data-man>${esc(w.manual)}</button></div>`
+          : `<div class="row"><button class="btn pri" data-detect ${this.busy ? "disabled" : ""}>${esc(this.busy ? w.detecting : w.detect)}</button><button class="btn" data-geo>${esc(w.byPhone)}</button><button class="btn" data-man>${esc(w.manual)}</button></div>`}
+${this.manual ? `<div class="row fld"><label class="grow">${esc(w.lat)}<input inputmode="decimal" data-lat value="${esc(c?.latitude ?? "")}"></label><label class="grow">${esc(w.lon)}<input inputmode="decimal" data-lon value="${esc(c?.longitude ?? "")}"></label><button class="btn pri" data-mansave>${esc(w.saveLoc)}</button></div>` : ""}
+${this.locMsg ? `<p class="msg ${this.locBad ? "bad" : ""}" role="status">${esc(this.locMsg)}</p>` : ""}</section>`;
+      }
+      locHtml() {
+        return `<div class="row"><button class="btn sm" data-back>← ${esc(this.w.back)}</button></div>${this.locCard()}`;
+      }
+      mapHtml(lat, lon) {
+        // OpenStreetMap tiles (as HA's own location picker uses OSM); asked only on this step, after the person pressed a
+        // button. Dark: the same tiles inverted.
+        const z = 12;
+        const n = 2 ** z;
+        const x = ((lon + 180) / 360) * n;
+        const r = (lat * Math.PI) / 180;
+        const y = ((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2) * n;
+        const tx = Math.floor(x);
+        const ty = Math.floor(y);
+        let tiles = "";
+        for (let dx = -2; dx <= 2; dx++)
+          for (let dy = -1; dy <= 1; dy++) {
+            const left = Math.round((tx + dx - x) * 256);
+            const top = Math.round((ty + dy - y) * 256);
+            tiles += `<img alt="" src="https://tile.openstreetmap.org/${z}/${(tx + dx + n) % n}/${ty + dy}.png" style="left:calc(50% + ${left}px);top:calc(50% + ${top}px)">`;
+          }
+        return `<div class="map ${this._hass?.themes?.darkMode ? "dk" : ""}" aria-hidden="true">${tiles}<span class="pin"></span><span class="attr">${esc(this.w.mapNote)}</span></div>`;
+      }
+      editHtml() {
+        const w = this.w;
+        const r = this.draft;
+        const ev = r.when.event.startsWith("alarm") ? "alarm" : r.when.event;
+        const t = this.data.targets;
+        const off = r.when.offset || 0;
+        const offRow = (evName) => `<div class="step fld"><button data-off="-5" aria-label="−5">−</button><span data-offtxt>${esc(w.offLong(evName, off))}</span><button data-off="5" aria-label="+5">+</button></div>`;
+        let whenBody = "";
+        if (ev === "sunrise" || ev === "sunset") whenBody = (this.data.location.set ? "" : `<p class="msg bad">${esc(w.needLoc)}</p>`) + offRow(ev);
+        else if (ev === "time") whenBody = `<div class="fld"><input type="time" data-at value="${esc(r.when.at || "07:00")}"></div>`;
+        else {
+          const opts = [...(t.alarms || []).map((a) => `<option value="${esc(a.entity_id)}" ${r.when.sensor === a.entity_id ? "selected" : ""}>${esc(`Android · ${a.phone}`)}</option>`), `<option value="iphone" ${r.when.event === "alarm_iphone" ? "selected" : ""}>${esc(w.iphoneOpt)}</option>`];
+          whenBody = `<div class="fld"><div class="caps">${esc(w.phone)}</div><select data-phone>${opts.join("")}</select>${(t.alarms || []).length ? "" : `<p class="hint">${esc(w.androidHint)}</p>`}</div>`;
+          if (r.when.event === "alarm_android") whenBody += offRow("alarm");
+          else {
+            const code = r.when.code;
+            whenBody += `<div class="fld"><div class="caps">${esc(w.iphoneTitle)}</div>${code ? `<ol>${w.iphoneSteps(code).map((s, i) => `<li>${i === 3 ? `${esc(s.split(":")[0])}: <code>${esc(code)}</code> <button class="btn sm" data-copy="${esc(code)}">${esc(w.copy)}</button>` : esc(s)}</li>`).join("")}</ol>` : `<p class="hint">${esc(w.iphoneLater)}</p>`}</div>`;
+          }
+        }
+        const days = r.days || DAYS;
+        const acts = r.actions.map((a, i) => this.actHtml(a, i)).join("");
+        const opt = (v, label) => `<option value="${esc(v)}">${esc(label)}</option>`;
+        const picker = `<select data-addact aria-label="${esc(w.addAction)}"><option value="">${esc(w.addAction)}</option>
+${t.covers.length ? `<optgroup label="${esc(w.grp.covers)}">${t.covers.map((c) => opt(c.entity_id, this.name(c.entity_id) + (c.area ? ` · ${this.room(c.area)}` : ""))).join("")}</optgroup>` : ""}
+${t.lights.length ? `<optgroup label="${esc(w.grp.lights)}">${t.lights.map((c) => opt(c.entity_id, this.name(c.entity_id) + (c.area ? ` · ${this.room(c.area)}` : ""))).join("")}</optgroup>` : ""}
+${t.scenes.length ? `<optgroup label="${esc(w.grp.scenes)}">${t.scenes.map((c) => opt(c.entity_id, this.name(c.entity_id))).join("")}</optgroup>` : ""}
+${t.rooms.length ? `<optgroup label="${esc(w.grp.rooms)}">${t.rooms.map((c) => opt(`room:${c.area_id}`, c.name)).join("")}</optgroup>` : ""}</select>`;
+        const next = this.nextOf(r);
+        const saved = !!r.id;
+        return `<div class="row"><button class="btn sm" data-back>← ${esc(w.back)}</button></div>
+<section class="box"><h2>${esc(saved ? r.name || this.autoName(r) : w.newRule)}</h2>
+<div class="fld"><div class="caps">${esc(w.when)}</div><div class="seg" role="group">${["sunrise", "sunset", "time", "alarm"].map((e) => `<button data-ev="${e}" aria-pressed="${ev === e}">${esc(w.ev[e])}</button>`).join("")}</div>${whenBody}</div>
+<div class="fld"><div class="caps">${esc(w.days)}</div><div class="chips">${DAYS.map((d, i) => `<button data-day="${d}" aria-pressed="${days.includes(d)}">${esc(w.wd[i])}</button>`).join("")}</div></div>
+<div class="fld"><div class="caps">${esc(w.what)}</div>${acts}${picker}</div>
+<p class="msg" data-next>${esc(r.when.event === "alarm_iphone" ? w.willNot : next ? `${w.willRun(this.when(next))} (${this.rel(next)})` : "")}</p>
+${this.msg ? `<p class="msg ${this.bad ? "bad" : ""}" role="status">${esc(this.msg)}</p>` : ""}
+${this.asking === "run" ? `<div class="ask"><p class="msg">${esc(w.runAsk(this.actsText(r)))}${r.actions.some((a) => a.do === "ramp") ? ` ${esc(w.rampNote)}` : ""}</p><div class="row"><button class="btn pri" data-runyes>${esc(w.runYes)}</button><button class="btn" data-no>${esc(w.cancel)}</button></div></div>` : ""}
+${this.asking === "del" ? `<div class="ask"><p class="msg">${esc(w.delAsk)}</p><div class="row"><button class="btn dan" data-delyes>${esc(w.delYes)}</button><button class="btn" data-no>${esc(w.cancel)}</button></div></div>` : ""}
+<div class="row fld"><button class="btn pri" data-save ${this.busy ? "disabled" : ""}>${esc(w.save)}</button><button class="btn" data-back>${esc(w.cancel)}</button><span class="grow"></span>
+${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.run)}</button><button class="btn dan" data-del>${esc(w.del)}</button>` : ""}</div></section>`;
+      }
+      actHtml(a, i) {
+        const w = this.w;
+        const seg = (opts) => `<div class="seg" role="group">${opts.map(([v, l]) => `<button data-do="${i}:${v}" aria-pressed="${a.do === v}">${esc(l)}</button>`).join("")}</div>`;
+        const stepper = (field, val, unit, label) => `<div class="step"><button data-val="${i}:${field}:-1" aria-label="−">−</button><span>${esc(`${label} ${val}${unit}`)}</span><button data-val="${i}:${field}:1" aria-label="+">+</button></div>`;
+        let title = "";
+        let body = "";
+        if (a.do === "room_off") title = `${w.grp.rooms}: ${this.room(a.area_id)}`;
+        else {
+          title = this.name(a.entity_id);
+          const d = a.entity_id.split(".")[0];
+          if (d === "cover") {
+            body = seg([["open", w.do.open], ["close", w.do.close], ["position", w.do.position]]);
+            if (a.do === "position") body += stepper("value", a.value ?? 50, " %", "");
+          } else if (d === "light") {
+            const dim = this.data.targets.lights.find((l) => l.entity_id === a.entity_id)?.dim;
+            body = seg([["on", w.do.on], ["off", w.do.off], ...(dim ? [["ramp", w.do.ramp]] : [])]);
+            if (a.do === "on" && dim) body += stepper("value", a.value ?? 100, " %", w.bright);
+            if (a.do === "ramp") body += stepper("value", a.value ?? 25, " %", w.upTo) + stepper("minutes", a.minutes ?? 15, ` ${w.min}`, w.over);
+          }
+        }
+        return `<div class="act"><div class="top"><b>${esc(title)}</b><button class="x" data-rm="${i}" aria-label="${esc(w.remove)}">×</button></div>${body}</div>`;
+      }
+      // --- events -------------------------------------------------------------------------------------------------------
+      bind() {
+        const sr = this.shadowRoot;
+        const on = (sel, fn) => sr.querySelectorAll(sel).forEach((el) => el.addEventListener("click", (e) => fn(el, e)));
+        on("[data-open]", (el) => this.edit(this.data.rules.find((r) => r.id === el.dataset.open)));
+        on("[data-new]", () => this.edit(null));
+        on("[data-back]", () => {
+          this.view = "list";
+          this.msg = "";
+          this.asking = null;
+          this.draw();
+        });
+        on("[data-loc]", () => {
+          this.view = "loc";
+          this.cand = null;
+          this.locMsg = "";
+          this.draw();
+        });
+        on("[data-sw]", (el) => this.toggle(el.dataset.sw, el.getAttribute("aria-checked") !== "true"));
+        on("[data-sugg]", (el) => this.addSuggestion(el.dataset.sugg));
+        on("[data-detect]", () => this.detect());
+        on("[data-geo]", () => this.geo());
+        on("[data-man]", () => {
+          this.manual = true;
+          this.draw();
+        });
+        on("[data-locok]", () => this.saveLoc(this.cand.latitude, this.cand.longitude, this.cand.elevation));
+        on("[data-mansave]", () => this.saveLoc(Number(String(sr.querySelector("[data-lat]").value).replace(",", ".")), Number(String(sr.querySelector("[data-lon]").value).replace(",", "."))));
+        if (this.view !== "edit") return;
+        const r = this.draft;
+        const redraw = () => this.draw();
+        on("[data-ev]", (el) => {
+          const e = el.dataset.ev;
+          if (e === "alarm") {
+            const a = this.data.targets.alarms?.[0];
+            r.when = a ? { event: "alarm_android", sensor: a.entity_id, offset: 0 } : { event: "alarm_iphone" };
+          } else if (e === "time") r.when = { event: "time", at: r.when.at || "07:00" };
+          else r.when = { event: e, offset: r.when.offset || 0 };
+          redraw();
+        });
+        on("[data-off]", (el) => {
+          r.when.offset = Math.max(-120, Math.min(120, (r.when.offset || 0) + Number(el.dataset.off)));
+          redraw();
+        });
+        sr.querySelector("[data-at]")?.addEventListener("change", (e) => {
+          r.when.at = e.target.value || "07:00";
+          redraw();
+        });
+        sr.querySelector("[data-phone]")?.addEventListener("change", (e) => {
+          const v = e.target.value;
+          r.when = v === "iphone" ? { event: "alarm_iphone", code: r.when.code } : { event: "alarm_android", sensor: v, offset: r.when.offset || 0 };
+          redraw();
+        });
+        on("[data-day]", (el) => {
+          const d = el.dataset.day;
+          const days = new Set(r.days || DAYS);
+          days.has(d) ? days.delete(d) : days.add(d);
+          r.days = DAYS.filter((x) => days.has(x));
+          redraw();
+        });
+        sr.querySelector("[data-addact]")?.addEventListener("change", (e) => {
+          const v = e.target.value;
+          if (!v) return;
+          if (v.startsWith("room:")) r.actions.push({ do: "room_off", area_id: v.slice(5) });
+          else r.actions.push({ entity_id: v, do: v.startsWith("cover.") ? "close" : "on" });
+          redraw();
+        });
+        on("[data-rm]", (el) => {
+          r.actions.splice(Number(el.dataset.rm), 1);
+          redraw();
+        });
+        on("[data-do]", (el) => {
+          const [i, v] = el.dataset.do.split(":");
+          const a = r.actions[Number(i)];
+          a.do = v;
+          if (v === "position") a.value = a.value ?? 50;
+          else if (v === "ramp") {
+            a.value = Math.min(a.value ?? 25, 100);
+            a.minutes = a.minutes ?? 15;
+          } else if (v !== "on") delete a.value;
+          if (v !== "ramp") delete a.minutes;
+          redraw();
+        });
+        on("[data-val]", (el) => {
+          const [i, field, dir] = el.dataset.val.split(":");
+          const a = r.actions[Number(i)];
+          const step = field === "minutes" ? 5 : 5;
+          const lo = field === "minutes" ? 5 : a.do === "position" ? 0 : 5;
+          const hi = field === "minutes" ? 60 : 100;
+          const cur = a[field] ?? (field === "minutes" ? 15 : a.do === "position" ? 50 : a.do === "ramp" ? 25 : 100);
+          a[field] = Math.max(lo, Math.min(hi, cur + Number(dir) * step));
+          redraw();
+        });
+        on("[data-copy]", async (el) => {
+          try {
+            await navigator.clipboard.writeText(el.dataset.copy);
+            el.textContent = this.w.copied;
+          } catch (e) {
+            const range = document.createRange();
+            range.selectNodeContents(el.previousElementSibling);
+            const s = window.getSelection();
+            s.removeAllRanges();
+            s.addRange(range);
+          }
+        });
+        on("[data-save]", () => this.save());
+        on("[data-run]", () => {
+          this.asking = "run";
+          redraw();
+        });
+        on("[data-del]", () => {
+          this.asking = "del";
+          redraw();
+        });
+        on("[data-no]", () => {
+          this.asking = null;
+          redraw();
+        });
+        on("[data-runyes]", () => this.run());
+        on("[data-delyes]", () => this.del());
+      }
+      edit(rule) {
+        this.draft = rule ? JSON.parse(JSON.stringify({ id: rule.id, name: rule.name, when: rule.when, days: rule.days, actions: rule.actions, enabled: rule.enabled, from: rule.from })) : { when: { event: "sunset", offset: 0 }, days: [...DAYS], actions: [], enabled: true };
+        this.view = "edit";
+        this.msg = "";
+        this.asking = null;
+        this.draw();
+        this.scrollIntoView?.({ block: "start" });
+      }
+      body(r) {
+        const out = { when: r.when, days: r.days, actions: r.actions, enabled: r.enabled !== false, name: r.from && r.name ? r.name : this.autoName(r) };  // a ready one keeps its title
+        if (r.id) out.id = r.id;
+        if (r.from) out.from = r.from;
+        return out;
+      }
+      async save() {
+        const r = this.draft;
+        const w = this.w;
+        this.bad = true;
+        if (!r.actions.length) this.msg = w.needAction;
+        else if (!(r.days || DAYS).length) this.msg = w.needDay;
+        else if ((r.when.event === "sunrise" || r.when.event === "sunset") && !this.data.location.set) this.msg = w.needLoc;
+        else {
+          this.busy = true;
+          this.msg = "";
+          this.draw();
+          try {
+            const saved = await this.api("POST", { op: "save", rule: this.body(r) });
+            this.data = await this.api("GET");
+            this.busy = false;
+            if (saved.when?.event === "alarm_iphone" && !r.id) {
+              // The code for Shortcuts is the agent's: show the steps on the saved rule.
+              this.edit(this.data.rules.find((x) => x.id === saved.id));
+              this.msg = w.saved;
+              this.bad = false;
+              this.draw();
+              return;
+            }
+            this.view = "list";
+            this.msg = w.saved;
+            this.bad = false;
+          } catch (e) {
+            this.busy = false;
+            this.fail(e);
+          }
+        }
+        this.draw();
+      }
+      async addSuggestion(key) {
+        const s = this.suggestions().find((x) => x.key === key);
+        if (!s) return;
+        try {
+          const saved = await this.api("POST", { op: "save", rule: this.body({ ...s.rule, enabled: true, name: s.title, from: key }) });
+          this.data = await this.api("GET");
+          if (saved.when?.event === "alarm_iphone") {
+            this.edit(this.data.rules.find((x) => x.id === saved.id));
+            this.msg = this.w.added;
+            this.bad = false;
+            this.draw();
+            return;
+          }
+          this.msg = this.w.added;
+          this.bad = false;
+        } catch (e) {
+          this.fail(e);
+        }
+        this.draw();
+      }
+      async toggle(id, enabled) {
+        try {
+          await this.api("POST", { op: "enable", id, enabled });
+          this.data = await this.api("GET");
+          this.msg = "";
+        } catch (e) {
+          this.fail(e);
+        }
+        this.draw();
+      }
+      async run() {
+        this.asking = null;
+        this.busy = true;
+        this.draw();
+        try {
+          await this.api("POST", { op: "run", id: this.draft.id });
+          this.msg = this.w.ran;
+          this.bad = false;
+        } catch (e) {
+          this.fail(e);
+        }
+        this.busy = false;
+        this.draw();
+      }
+      async del() {
+        this.asking = null;
+        try {
+          await this.api("POST", { op: "delete", id: this.draft.id });
+          this.data = await this.api("GET");
+          this.view = "list";
+          this.msg = "";
+        } catch (e) {
+          this.fail(e);
+        }
+        this.draw();
+      }
+      async detect() {
+        this.busy = true;
+        this.locMsg = "";
+        this.draw();
+        try {
+          this.cand = await this.api("POST", { op: "detect" });
+        } catch (e) {
+          this.locMsg = this.w.detectFail;
+          this.locBad = true;
+        }
+        this.busy = false;
+        this.draw();
+      }
+      geo() {
+        const w = this.w;
+        if (!navigator.geolocation || !window.isSecureContext) {
+          this.manual = true;
+          this.locMsg = w.geoNo;
+          this.locBad = true;
+          this.draw();
+          return;
+        }
+        navigator.geolocation.getCurrentPosition(
+          (p) => {
+            this.cand = { latitude: p.coords.latitude, longitude: p.coords.longitude, elevation: p.coords.altitude ?? undefined, city: "" };
+            this.locMsg = "";
+            this.draw();
+            this.cityOf(this.cand);
+          },
+          () => {
+            this.manual = true;
+            this.locMsg = w.geoNo;
+            this.locBad = true;
+            this.draw();
+          },
+          { enableHighAccuracy: false, timeout: 15000, maximumAge: 600000 },
+        );
+      }
+      // The town under the phone's coordinates — OpenStreetMap's Nominatim, as HA's own location picker searches it;
+      // only to show the person, never saved. Without the internet: the coordinates alone.
+      async cityOf(c) {
+        try {
+          const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=10&lat=${c.latitude}&lon=${c.longitude}&accept-language=${this.lang}`);
+          const a = (await r.json())?.address || {};
+          const city = a.city || a.town || a.village || a.municipality || a.state || "";
+          if (city && this.cand === c) {
+            c.city = city;
+            c.country = a.country_code ? a.country_code.toUpperCase() : "";
+            this.draw();
+          }
+        } catch (e) {
+          /* coordinates alone */
+        }
+      }
+      async saveLoc(lat, lon, elevation) {
+        if (!isFinite(lat) || !isFinite(lon)) {
+          this.locMsg = this.w.geoNo;
+          this.locBad = true;
+          this.draw();
+          return;
+        }
+        try {
+          const body = { op: "location", latitude: Number(lat.toFixed(5)), longitude: Number(lon.toFixed(5)) };
+          if (isFinite(elevation)) body.elevation = Math.round(elevation);
+          await this.api("POST", body);
+          this.data = await this.api("GET");
+          this.cand = null;
+          this.manual = false;
+          this.view = "list";
+          this.msg = this.w.locSaved;
+          this.bad = false;
+        } catch (e) {
+          const m = e?.body?.message || e?.message;
+          this.locMsg = m ? this.w.err + m : this.w.errNet;
+          this.locBad = true;
+        }
+        this.draw();
+      }
+    }
+    if (!customElements.get("hauflo-automations")) customElements.define("hauflo-automations", Automations);
+    window.customCards = window.customCards || [];
+    if (!window.customCards.some((c) => c.type === "hauflo-automations"))
+      window.customCards.push({ type: "hauflo-automations", name: "Hauflo · Автоматизации", description: "Рассвет, закат, время и будильник — правила клиента", preview: false });
+    // HA draws «Custom element doesn't exist» when a card comes before this file and redraws it once the element is
+    // defined — but its redraw event is lost when the card isn't on the page yet (live 28.10: «Ошибка конфигурации» now
+    // and then over the whole «Автоматизации» tab). Such a card of ours is asked to redraw again.
+    const heal = () => {
+      const walk = (root) => {
+        for (const el of root.querySelectorAll("*")) {
+          if (el.tagName === "HUI-ERROR-CARD" && /doesn't exist: hauflo-/.test(String(el._config?.message || "")) && customElements.get(String(el._config.message).match(/hauflo-[a-z-]+/)?.[0]))
+            el.dispatchEvent(new Event("ll-rebuild", { bubbles: true, composed: true }));
+          if (el.shadowRoot) walk(el.shadowRoot);
+        }
+      };
+      if (/^\/hauflo-/.test(location.pathname)) walk(document);
+    };
+    for (const ms of [1500, 4000, 9000]) setTimeout(heal, ms);
+    window.addEventListener("location-changed", () => setTimeout(heal, 1500));
+
+    // From the settings sheet: the dashboard's own tab when it has one, otherwise the same page over the screen.
+    const open = (hass) => {
+      const panel = document.querySelector("home-assistant")?.shadowRoot?.querySelector("home-assistant-main")?.shadowRoot?.querySelector("ha-drawer partial-panel-resolver ha-panel-lovelace");
+      const views = panel?.lovelace?.config?.views || [];
+      const base = location.pathname.split("/")[1];
+      const page = views.find((v) => JSON.stringify(v.cards || v.sections || []).includes("hauflo-automations"));
+      if (page?.path) {
+        history.pushState(null, "", `/${base}/${page.path}`);
+        window.dispatchEvent(new CustomEvent("location-changed", { detail: { replace: false } }));
+        return;
+      }
+      const wrap = document.createElement("div");
+      wrap.style.cssText = "position:fixed;inset:0;z-index:9999;overflow:auto;background:var(--primary-background-color,#f4f2ee);padding:12px 16px calc(24px + env(safe-area-inset-bottom))";
+      const el = document.createElement("hauflo-automations");
+      el.setConfig({ overlay: true });
+      el.hass = hass;
+      const keep = setInterval(() => {
+        const h = document.querySelector("home-assistant")?.hass;
+        if (h && h !== el._hass) el.hass = h;
+      }, 1000);
+      const close = () => {
+        clearInterval(keep);
+        wrap.remove();
+        document.removeEventListener("keydown", onKey);
+      };
+      const onKey = (e) => e.key === "Escape" && close();
+      document.addEventListener("keydown", onKey);
+      el.addEventListener("hauflo-close", close);
+      wrap.appendChild(el);
+      document.body.appendChild(wrap);
+    };
+    return { open };
+  })();
+
   // --- «Настройки» of the client's dashboard (owner 27.10: «непонятно, как переключить тему»; «видимый переключатель не
   // стоит — в настройках»; «кнопка зима/лето»): a gear in the header of a Hauflo dashboard → the theme (HA's own choice,
   // the one of the profile page: kept for the person, «как на телефоне» follows the phone) and the house's season.
@@ -2655,6 +3569,7 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
         done: (r) => [r.changed.length && `Переключили: ${r.changed.length}.`, r.sent.length && `Выключенным задан режим (не включали): ${r.names(r.sent)}.`, r.skipped.length && `Выключены, не трогали: ${r.names(r.skipped)} — включите и выберите режим в комнате.`, r.failed.length && `Не ответили: ${r.names(r.failed)}.`].filter(Boolean).join(" ") || "Уже так.",
         error: "Не получилось — проверьте связь с домом и попробуйте ещё раз.",
         list: "Кондиционеры",
+        autos: "Автоматизации", autosSub: "Шторы и свет по рассвету, закату, времени, будильнику",
         heat: "обогрев", cool: "охлаждение", off: "выкл.",
         view: "Вид", scenes: "Сценарии", inBlocks: "В своих блоках", onTop: "Сверху комнаты", climate: "Кондиционеры и термостаты", floor: "Тёплые полы",
         large: "Крупно", compact: "Компактно", reset: "Как настроил интегратор",
@@ -2673,6 +3588,7 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
         done: (r) => [r.changed.length && `Switched: ${r.changed.length}.`, r.sent.length && `Mode set on the ones off (not switched on): ${r.names(r.sent)}.`, r.skipped.length && `Off, left as they are: ${r.names(r.skipped)} — switch on and pick the mode in the room.`, r.failed.length && `No answer: ${r.names(r.failed)}.`].filter(Boolean).join(" ") || "Already so.",
         error: "Didn't work — check the link to the house and try again.",
         list: "ACs",
+        autos: "Automations", autosSub: "Blinds and lights by sunrise, sunset, the clock, your alarm",
         heat: "heating", cool: "cooling", off: "off",
         view: "View", scenes: "Scenes", inBlocks: "In their blocks", onTop: "On top of the room", climate: "ACs and thermostats", floor: "Floor heating",
         large: "Large", compact: "Compact", reset: "As the integrator set it",
@@ -2744,7 +3660,10 @@ ha-icon{--mdc-icon-size:20px}
 details{margin-top:10px;font:400 13px Onest,sans-serif;color:var(--eh-ink2,var(--secondary-text-color))}summary{cursor:pointer;min-height:32px;display:flex;align-items:center}
 ul{margin:4px 0 0;padding:0 0 0 18px}li{margin:2px 0}
 .seg.two{grid-template-columns:1fr 1fr}.vl{font:500 13px Onest,sans-serif;margin:12px 2px 6px}
-.reset{margin-top:10px;min-height:40px;padding:0 14px;border:0;border-radius:14px;background:var(--eh-track,rgba(127,127,127,.12));color:inherit;font:500 13px Onest,sans-serif;cursor:pointer}`;
+.reset{margin-top:10px;min-height:40px;padding:0 14px;border:0;border-radius:14px;background:var(--eh-track,rgba(127,127,127,.12));color:inherit;font:500 13px Onest,sans-serif;cursor:pointer}
+.go{display:flex;align-items:center;gap:12px;width:100%;margin:18px 0 0;padding:14px;border:0;border-radius:20px;background:var(--eh-track,rgba(127,127,127,.12));color:inherit;text-align:left;cursor:pointer;min-height:64px}
+.go span{flex:1;display:flex;flex-direction:column;gap:2px}.go b{font:600 15px Onest,sans-serif}.go small{font:400 12px/1.35 Onest,sans-serif;color:var(--eh-ink2,var(--secondary-text-color))}.go i{font-style:normal;font-size:22px;opacity:.6}.go ha-icon{color:var(--eh-amber,#E8901F)}
+`;
     /** What this dashboard shows that the client may switch, and the integrator's choice for each. */
     const viewDefaults = async (h) => {
       const out = {};
@@ -2816,6 +3735,7 @@ ul{margin:4px 0 0;padding:0 0 0 18px}li{margin:2px 0}
 <div class="caps">${esc(w.theme)}</div>
 <div class="seg" role="group" aria-label="${esc(w.theme)}">${["light", "dark", "auto"].map((v) => `<button data-theme="${v}" aria-pressed="${th === v}">${esc(w[v])}</button>`).join("")}</div>
 <p class="hint">${esc(w.themeHint)}</p>
+<button class="go" data-autos><ha-icon icon="mdi:weather-sunset"></ha-icon><span><b>${esc(w.autos)}</b><small>${esc(w.autosSub)}</small></span><i aria-hidden="true">›</i></button>
 ${viewBlock()}
 ${acs.length ? `<div class="caps">${esc(w.season)}</div><p class="now" data-now>${esc(now)}</p>
 <div class="big" role="group" aria-label="${esc(w.season)}">
@@ -2825,6 +3745,10 @@ ${acs.length ? `<div class="caps">${esc(w.season)}</div><p class="now" data-now>
 <details><summary>${esc(w.list)} · ${acs.length}</summary><ul>${acs.map((a) => `<li>${esc(a.name)} — ${esc(w[a.state] ?? a.state)}</li>`).join("")}</ul></details>` : ""}
 </div>`;
         sr.querySelector("[data-x]").onclick = close;
+        sr.querySelector("[data-autos]").onclick = () => {
+          close();
+          AUTO.open(hassOf());
+        };
         sr.querySelectorAll("[data-view]").forEach((b) => (b.onclick = async () => {
           const [k, v] = b.dataset.view.split(":");
           const next = { ...(VIEW.data || {}) };

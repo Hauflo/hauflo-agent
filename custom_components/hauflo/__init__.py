@@ -33,8 +33,8 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
 from homeassistant.helpers.storage import Store
 
-from . import backup, comfort, keep, notify, season, sidebar, theme, voice
-from .const import CONF_REFRESH_TOKEN_ID, CONF_SECRET, CONF_SERVER, CONF_USER_ID, DATA_NOTIFY_VIEWS, DATA_UNLINKED, DOMAIN, MONITOR_LABEL, MONITOR_LABEL_EN, MONITOR_LABELS, OWNED_STORE, STATUS_EVERY, VERSION, CONF_RANGES, DATA_PENDING_RANGES
+from . import automations, backup, comfort, keep, notify, season, sidebar, theme, voice
+from .const import CONF_REFRESH_TOKEN_ID, CONF_SECRET, CONF_SERVER, CONF_USER_ID, DATA_NOTIFY_VIEWS, DATA_UNLINKED, DOMAIN, MONITOR_LABEL, MONITOR_LABEL_EN, MONITOR_LABELS, OWNED_STORE, STATUS_EVERY, VERSION, CONF_RANGES, DATA_PENDING_RANGES, CONF_ALLOW_CHANGES, LOCKED_CODE
 
 _LOGGER = logging.getLogger(__name__)
 PROBLEM_ON = {"problem", "safety", "smoke", "gas", "moisture", "battery", "heat", "cold", "carbon_monoxide", "tamper", "vibration"}
@@ -99,6 +99,20 @@ def _ws_changes(msg: dict[str, Any]) -> bool:
 def _http_changes(method: str, path: str) -> bool:
     bare = path.split("?")[0]
     return method in ("POST", "DELETE") and (bare.startswith("/api/config/") or bare == "/api/hauflo/sidebar")
+
+
+# The owner closed the house in HA (options: «Allow Hauflo to change this home's setup» off): every write is refused,
+# fail closed — over the websocket all but reads (_ws_changes), over REST all but GET. Only the alarm delivery stays:
+# its rules and a test push configure who is told, not the house (owner 28.10: monitoring and alarms keep working).
+_LOCKED_HTTP_OK = {("/api/hauflo/notify", "POST"), ("/api/hauflo/notify/test", "POST")}
+
+
+def _ws_locked(msg: dict[str, Any]) -> bool:
+    return _ws_changes(msg)
+
+
+def _http_locked(method: str, path: str) -> bool:
+    return method != "GET" and (path.split("?")[0], method) not in _LOCKED_HTTP_OK
 # Integrations Hauflo sets up or tunes (flows, options); entries it may delete (its own light/cover groups).
 _FLOW_DOMAINS = {"knx", "group", "homekit", "yandex_smart_home"}
 _HAUFLO_VIEWS = {
@@ -653,6 +667,8 @@ _LOVELACE_TYPES = {
     "custom:hauflo-scenes", "custom:hauflo-alert", "custom:hauflo-room", "custom:hauflo-lights", "custom:hauflo-hero",
     "custom:hauflo-climate", "custom:hauflo-status", "custom:hauflo-devices", "custom:hauflo-sliders",
     "custom:hauflo-covers", "custom:hauflo-acs",
+    # The «Автоматизации» tab (automations.py): no entity, no action — the card asks the agent itself.
+    "custom:hauflo-automations",
 }
 # What a card may only show: anyone's (weather on the floor, an alarm source of a monitoring rule).
 _READ_ONLY_DOMAINS = {"sensor", "binary_sensor", "weather", "sun", "person", "zone", "device_tracker", "calendar", "image", "camera", "event"}
@@ -1046,6 +1062,7 @@ class Agent:
         self.stopped = False
         # KNX UI entities Hauflo created or took over (by unique_id — renames keep them): only these may be deleted.
         self.engine: notify.NotifyEngine | None = None  # alarms to the phones (set up right after the agent)
+        self.automations: Any = None  # the dashboard's «Автоматизации» (automations.py), made on first use
         self.comfort = comfort.ComfortEngine(hass)  # «Комфортный пол» and the house mode (comfort.py)
         self.owned: set[str] = set()
         self.owned_entries: set[str] = set()  # config entries (HomeKit bridges, groups) made through the tunnel
@@ -1271,6 +1288,11 @@ class Agent:
         except Exception:  # noqa: BLE001
             return None
 
+    @property
+    def locked(self) -> bool:
+        """The owner switched «Allow Hauflo to change this home's setup» off — read live, an options save needs no reload."""
+        return self.entry.options.get(CONF_ALLOW_CHANGES, True) is not True
+
     def allowed_ranges(self) -> set[str]:
         """Main/middle groups Hauflo may send to: what the integrator allowed in HA, and — for sites paired before
         this existed — the groups of the entities Hauflo already made."""
@@ -1338,6 +1360,11 @@ class Agent:
         # Hauflo doesn't hold a token for this HA: the agent signs in with its own.
         if msg.get("type") == "auth":
             data = json.dumps({"type": "auth", "access_token": self.token})
+        elif self.locked and _ws_locked(msg):
+            # Closed by the owner in HA: no write gets through, whatever it is — before any other check asks for more.
+            _LOGGER.info("Hauflo: «%s» refused — changes by Hauflo are switched off in HA", msg.get("type"))
+            await self.send({"t": "ws_msg", "ch": ch, "data": json.dumps({"id": msg.get("id"), "type": "result", "success": False, "error": {"code": LOCKED_CODE, "message": "Hauflo agent: changes by Hauflo are switched off in Home Assistant (Hauflo → Configure)"}})})
+            return
         elif (outside := self._outside_ranges(msg)):
             # Not a range the integrator allowed in HA (acceptance B9): refused, said in the house where to allow it.
             self._ask_ranges(outside)
@@ -1371,6 +1398,10 @@ class Agent:
 
     async def _http(self, f: dict[str, Any]) -> None:
         path = str(f.get("path", ""))
+        if self.locked and _http_locked(str(f.get("method", "GET")).upper(), path):
+            _LOGGER.info("Hauflo: %s %s refused — changes by Hauflo are switched off in HA", f.get("method"), path.split("?")[0])
+            await self.send({"t": "http_res", "id": f.get("id"), "status": 423, "body": json.dumps({"code": LOCKED_CODE})})
+            return
         if not _http_allowed(self.hass, str(f.get("method", "GET")).upper(), path, f.get("body"), self.owned_entries, self._flow_memo, self.owned):
             _LOGGER.warning("Hauflo: %s %s isn't allowed through the tunnel", f.get("method"), path.split("?")[0])
             await self.send({"t": "http_res", "id": f.get("id"), "status": 403, "body": "Hauflo agent: not allowed"})
@@ -1454,6 +1485,8 @@ class Agent:
             "alarms": engine.active_list() if (engine := self.engine) else [],
             # No rules yet (a re-added agent before Hauflo sends them): its open alarms aren't known yet.
             "alarmsReady": bool(engine and engine.config["rules"]),
+            # The owner closed the house for changes in HA: Hauflo stops a deploy before it starts.
+            "locked": self.locked,
         }
 
     @callback
@@ -1560,12 +1593,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
         hass.http.register_view(comfort.ComfortView(lambda: _comfort(hass)))
         hass.http.register_view(sidebar.SidebarView())
         hass.http.register_view(season.SeasonView(lambda: _season(hass)))
+        hass.http.register_view(automations.AutomationsView(lambda: _automations(hass)))
 
     async def _stop(_event: Event) -> None:
         await agent.stop()
 
     entry.async_on_unload(hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _stop))
+    # Options saved (the lock, the addresses): they're read live — no reload; Hauflo hears the lock at once.
+    entry.async_on_unload(entry.add_update_listener(_options_changed))
     return True
+
+
+async def _options_changed(hass: HomeAssistant, entry: HaufloConfigEntry) -> None:
+    entry.runtime_data.status_now()
 
 
 class OwnedView(HomeAssistantView):
@@ -1619,6 +1659,16 @@ def _engine(hass: HomeAssistant) -> notify.NotifyEngine | None:
 def _season(hass: HomeAssistant) -> season.Season | None:
     for entry in hass.config_entries.async_loaded_entries(DOMAIN):
         return season.Season(hass, lambda: entry.runtime_data.comfort)
+    return None
+
+
+def _automations(hass: HomeAssistant) -> automations.Automations | None:
+    """One per loaded entry (its lock keeps two saves from writing automations.yaml at once)."""
+    for entry in hass.config_entries.async_loaded_entries(DOMAIN):
+        agent = entry.runtime_data
+        if getattr(agent, "automations", None) is None:
+            agent.automations = automations.Automations(hass, lambda eid: _hauflo_entity(hass, eid, agent.owned, agent.owned_entries))
+        return agent.automations
     return None
 
 

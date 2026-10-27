@@ -14,7 +14,7 @@ ns = {"json": json, "re": re, "contextlib": contextlib, "ipaddress": ipaddress, 
 exec(compile(ast.Module(body=keep, type_ignores=[]), "agent", "exec"), ns)
 
 # Card / feature types an agent learnt in a version (backend AGENT_FEATURE_MIN): older agents refuse them.
-NEW_IN = {"numeric-input": "0.14.1", "thermostat": "0.14.1"}
+NEW_IN = {"numeric-input": "0.14.1", "thermostat": "0.14.1", "custom:hauflo-automations": "0.14.3"}
 READ_ONLY = ns["_READ_ONLY_DOMAINS"]
 
 
