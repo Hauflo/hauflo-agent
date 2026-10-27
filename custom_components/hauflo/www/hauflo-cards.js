@@ -3996,15 +3996,360 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
     "hauflo-acs": (h) => ({ title: "Кондиционеры", entities: ids(h, "climate", 8) }),
     "hauflo-devices": (h) => ({ entities: [...ids(h, "fan", 3), ...ids(h, "valve", 2), ...ids(h, "vacuum", 1), ...ids(h, "water_heater", 1)] }),
   };
+  // --- hauflo-entity: any one entity of any integration as a Hauflo tile (owner 28.10: «как у Mushroom — на все
+  // возможные типы»). Icon / picture, name, state; tap does what the domain does (switch, run, lock…) or the action set
+  // in the editor; hold — the entity's dialog. hauflo-title: a section heading in the same type.
+  Object.assign(EN, { "не дома": "away", "выполнить": "run", "нажать": "press", "позвонить": "call", "открыть": "open", "идёт": "playing", "на паузе": "paused", "включено": "on" });
+  // The graph's own title («За 24 ч») before the fragments make it «За 24 h» (seen on the demo HA, 28.10).
+  EN_RX.unshift([/^За (\d+) ч$/, "Last $1 h"]);
+  const TONE = { amber: ["var(--amber)", "var(--amberGlow)"], ice: ["var(--ice)", "var(--iceGlow)"], mint: ["var(--mint)", "color-mix(in srgb,var(--mint) 50%,transparent)"], alert: ["var(--alert)", "var(--alertGlow)"] };
+  const ONE = {
+    light: { icon: (s) => (s.state === "on" ? "hauflo:bulb-on" : "hauflo:bulb"), tone: "amber", word: (s) => (s.state === "on" ? (num(s.attributes.brightness) !== undefined ? `${Math.round((num(s.attributes.brightness) / 255) * 100)} %` : "вкл") : "выкл"), level: (s) => (s.state === "on" ? (num(s.attributes.brightness) ?? 255) / 255 : 0), tap: ["light", "toggle"] },
+    cover: { icon: () => "hauflo:blind", tone: "ice", word: (s) => (num(s.attributes.current_position) !== undefined && !["opening", "closing"].includes(s.state) ? (s.attributes.current_position ? `${s.attributes.current_position} %` : "закрыта") : ({ open: "открыта", closed: "закрыта", opening: "открывается…", closing: "закрывается…" })[s.state] || s.state), level: (s) => (num(s.attributes.current_position) ?? (s.state === "open" ? 100 : 0)) / 100, on: (s) => s.state !== "closed", tap: ["cover", "toggle"] },
+    climate: { icon: () => "hauflo:thermo", tone: "ice", word: (s) => `${HVAC[s.state] || s.state}${num(s.attributes.temperature) !== undefined && s.state !== "off" ? ` · ${fmt(num(s.attributes.temperature), 1)}°` : ""}`, on: (s) => s.state !== "off", tap: null },
+    media_player: { icon: () => "hauflo:speaker", tone: "amber", word: (s) => (s.state === "playing" ? s.attributes.media_title || "идёт" : s.state === "paused" ? "на паузе" : s.state === "off" ? "выкл" : s.state), on: (s) => s.state === "playing", tap: (s) => ["media_player", s.state === "off" ? "turn_on" : "media_play_pause"] },
+    scene: { icon: () => "hauflo:scene", tone: "amber", word: () => "выполнить", on: () => false, tap: ["scene", "turn_on"] },
+    script: { icon: () => "hauflo:scene", tone: "amber", word: (s) => (s.state === "on" ? "выполняется…" : "выполнить"), tap: ["script", "turn_on"] },
+    automation: { icon: () => "hauflo:clock", tone: "mint", word: (s) => (s.state === "on" ? "вкл" : "выкл"), tap: ["automation", "toggle"] },
+    person: { icon: () => "hauflo:user", tone: "mint", word: (s) => (s.state === "home" ? "дома" : s.state === "not_home" ? "не дома" : s.state), on: (s) => s.state === "home", tap: null },
+    camera: { icon: () => "hauflo:camera", tone: "alert", word: (s) => (s.state === "recording" ? "запись" : s.state === "streaming" ? "трансляция" : s.state), on: () => false, tap: null },
+    alarm_control_panel: { icon: (s) => (s.state.startsWith("armed") ? "hauflo:shield" : s.state === "triggered" ? "hauflo:shield-alert" : "hauflo:shield"), tone: "mint", word: (s) => ({ disarmed: "Снята", armed_away: "Под охраной", armed_home: "Под охраной · дома", armed_night: "Ночной режим", arming: "Ставится…", disarming: "Снимается…", pending: "Задержка входа…", triggered: "ТРЕВОГА" })[s.state] || s.state, on: (s) => s.state.startsWith("armed"), alarm: (s) => s.state === "triggered", tap: null },
+  };
+  const domainOf = (id) => String(id || "").split(".")[0];
+  const kindOf = (s) => {
+    const d = domainOf(s.entity_id);
+    if (ONE[d]) return ONE[d];
+    const v = DEV[d];
+    if (v) return { icon: () => v.icon, tone: "mint", word: (x) => v.word(x, nameOf(x, x.entity_id)), on: v.on, alarm: (x) => v.tone?.(x) === "alarm", warn: (x) => v.tone?.(x) === "warn", tap: v.tap };
+    return { icon: () => s.attributes.icon || "hauflo:info", tone: "mint", word: (x) => `${x.state}${unitOf(x) ? ` ${unitOf(x)}` : ""}`, on: (x) => x.state === "on", tap: null };
+  };
+  // What a tap / hold / double tap does when the editor set it (HA's own action format); else the domain's default.
+  const runAction = (card, a, entity) => {
+    const h = card._hass;
+    if (!a || a.action === "none") return;
+    if (a.confirmation && !window.confirm(typeof a.confirmation === "object" && a.confirmation.text ? a.confirmation.text : LANG === "ru" ? "Выполнить?" : "Are you sure?")) return;
+    haptic(card);
+    if (a.action === "more-info") return moreInfo(card, a.entity || entity);
+    if (a.action === "toggle") return call(h, "homeassistant", "toggle", { entity_id: entity });
+    if (a.action === "navigate" && a.navigation_path) return navigate(a.navigation_path);
+    if (a.action === "url" && a.url_path) return window.open(a.url_path, "_blank", "noopener");
+    const svc = a.perform_action || a.service;
+    if ((a.action === "perform-action" || a.action === "call-service") && svc && svc.includes(".")) {
+      const [d, s] = svc.split(".");
+      return call(h, d, s, { ...(a.data || a.service_data || {}), ...(a.target || {}) });
+    }
+    // Anything newer (assist…) — HA's own handler.
+    card.dispatchEvent(new CustomEvent("hass-action", { bubbles: true, composed: true, detail: { config: { entity, tap_action: a }, action: "tap" } }));
+  };
+  const INFO = (s, what, k) => {
+    if (what === "none") return "";
+    if (what === "name") return null;
+    if (what === "last_changed" || what === "last_updated") return ago(s[what]);
+    return nd(s) ? "нет связи" : k.word(s);
+  };
+  class Entity extends EHCard {
+    watched() {
+      return [this._config.entity];
+    }
+    css() {
+      return `.e{padding:14px 16px;display:flex;align-items:center;gap:14px;cursor:pointer;user-select:none;-webkit-user-select:none;min-height:76px;height:100%}
+.e.v{flex-direction:column;justify-content:center;text-align:center;gap:10px;padding:18px 12px}
+.ic{width:46px;height:46px;border-radius:16px;flex:0 0 auto;display:grid;place-items:center;background:var(--track);color:var(--ink3);background-size:cover;background-position:center;position:relative;z-index:1}
+.ic ha-icon{--mdc-icon-size:22px}.on .ic{background-color:color-mix(in srgb,var(--acc) 22%,transparent);color:var(--acc);box-shadow:0 0 22px color-mix(in srgb,var(--accGlow) 70%,transparent)}
+.ic.pic{border-radius:50%}.tx{min-width:0;flex:1;position:relative;z-index:1}.v .tx{flex:none;width:100%}
+.p1{font:500 15px/1.25 Onest,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.p2{font:400 13px/1.3 Onest,sans-serif;color:var(--ink2);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.on .p2{color:var(--acc)}.lvl{position:absolute;left:0;bottom:0;height:3px;background:var(--acc);opacity:.8;border-radius:0 2px 2px 0}
+.e.alarm{box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--alert) 60%,transparent),var(--eh-deep,none)}.e.alarm .ic{background:color-mix(in srgb,var(--alert) 22%,transparent);color:var(--alert)}.e.alarm .p2{color:var(--alert);font-weight:600}
+.e.warn .ic,.e.warn .p2{color:var(--amber)}.un{opacity:.55}.e .glow{background:radial-gradient(circle at 30px 50%,color-mix(in srgb,var(--accGlow) 45%,transparent),transparent 55%);opacity:0}.on .glow{opacity:.6}`;
+    }
+    render() {
+      const c = this._config;
+      const s = st(this._hass, c.entity);
+      if (!s) return `<div class="glass e un"><div class="ic"><ha-icon icon="hauflo:info"></ha-icon></div><div class="tx"><div class="p1">${esc(c.name || c.entity || "—")}</div><div class="p2">нет данных</div></div></div>`;
+      const k = kindOf(s);
+      const on = !nd(s) && (k.on ? k.on(s) : s.state === "on");
+      const alarm = !!k.alarm?.(s);
+      const warn = !alarm && !!k.warn?.(s);
+      const [acc, glow] = TONE[c.color] || TONE[k.tone] || TONE.mint;
+      const name = c.name || nameOf(s, s.entity_id);
+      const pick = (what, dflt) => (what === undefined ? dflt : what);
+      const p1 = INFO(s, pick(c.primary_info, "name"), k);
+      const p2 = INFO(s, pick(c.secondary_info, "state"), k);
+      const pic = c.icon_type === "entity-picture" && s.attributes.entity_picture;
+      const icon = c.icon_type === "none" ? "" : `<div class="ic${pic ? " pic" : ""}"${pic ? ` style="background-image:url('${esc(s.attributes.entity_picture)}')"` : ""}>${pic ? "" : `<ha-icon icon="${esc(c.icon || s.attributes.icon || k.icon(s))}"></ha-icon>`}</div>`;
+      const level = k.level && c.show_level !== false && on ? Math.max(0, Math.min(1, k.level(s))) : 0;
+      return `<div class="glass e${c.layout === "vertical" ? " v" : ""}${on ? " on" : ""}${alarm ? " alarm" : ""}${warn ? " warn" : ""}${nd(s) ? " un" : ""}" style="--acc:${acc};--accGlow:${glow}" role="button" tabindex="0" aria-label="${esc(name)}"><div class="glow"></div>${icon}<div class="tx">${p1 === "" ? "" : `<div class="p1">${esc(p1 ?? name)}</div>`}${p2 === "" ? "" : `<div class="p2">${esc(p2 ?? name)}</div>`}</div>${level ? `<i class="lvl" style="width:${Math.round(level * 100)}%"></i>` : ""}</div>`;
+    }
+    bind() {
+      const el = this.shadowRoot.querySelector(".e");
+      if (!el) return;
+      const c = this._config;
+      const id = c.entity;
+      const tap = () => {
+        if (c.tap_action) return runAction(this, c.tap_action, id);
+        const s = st(this._hass, id);
+        const k = s && kindOf(s);
+        const t = k && (typeof k.tap === "function" ? k.tap(s) : k.tap);
+        if (!t) return moreInfo(this, id);
+        haptic(this);
+        call(this._hass, t[0], t[1], { entity_id: id });
+      };
+      let timer;
+      let held = false;
+      let lastTap = 0;
+      let single;
+      el.addEventListener("pointerdown", () => {
+        held = false;
+        timer = setTimeout(() => {
+          held = true;
+          runAction(this, c.hold_action || { action: "more-info" }, id);
+        }, 500);
+      });
+      el.addEventListener("pointerup", () => {
+        clearTimeout(timer);
+        if (held) return;
+        // A double tap only waits when one is set — otherwise a tap is instant.
+        if (!c.double_tap_action) return tap();
+        if (Date.now() - lastTap < 250) {
+          clearTimeout(single);
+          lastTap = 0;
+          return runAction(this, c.double_tap_action, id);
+        }
+        lastTap = Date.now();
+        single = setTimeout(tap, 250);
+      });
+      el.addEventListener("pointerleave", () => clearTimeout(timer));
+      el.addEventListener("contextmenu", (ev) => ev.preventDefault());
+      el.addEventListener("keydown", (e) => e.key === "Enter" && tap());
+    }
+    getCardSize() {
+      return this._config?.layout === "vertical" ? 2 : 1;
+    }
+    getGridOptions() {
+      return this._config?.layout === "vertical" ? { columns: 3, rows: 2, min_columns: 2 } : { columns: 6, rows: 1, min_columns: 4 };
+    }
+  }
+  class Title extends EHCard {
+    css() {
+      return `.tt{padding:18px 4px 2px}.h{font:300 30px/1.1 Onest,sans-serif;letter-spacing:-.03em}.s{font:400 14px Onest,sans-serif;color:var(--ink2);margin-top:6px}`;
+    }
+    render() {
+      const c = this._config;
+      return `<div class="tt">${c.title ? `<div class="h">${esc(c.title)}</div>` : ""}${c.subtitle ? `<div class="s">${esc(c.subtitle)}</div>` : ""}</div>`;
+    }
+    getCardSize() {
+      return 1;
+    }
+    getGridOptions() {
+      return { columns: 12, rows: "auto" };
+    }
+  }
+  const MORE = [
+    ["hauflo-entity", Entity, "Hauflo · Объект", "Любой объект любой интеграции"],
+    ["hauflo-title", Title, "Hauflo · Заголовок", "Заголовок раздела"],
+  ];
+  STUB["hauflo-entity"] = (h) => ({ entity: ids(h, "light", 1)[0] || ids(h, "switch", 1)[0] || Object.keys(h?.states || {})[0] });
+  STUB["hauflo-title"] = (h) => ({ title: langOf(h) === "ru" ? "Гостиная" : "Living room" });
+
+  // --- HA's card picker (owner 28.10: «как сделать любой элемент в нашем стиле с любой интеграцией»): every card is in
+  // «Добавить карточку» → search «Hauflo», named in the HA user's language, starts filled with this home's entities of the
+  // right kind, and has a small visual editor of its main keys (the rest in YAML; keys: docs/cards.md, /help/cards).
+  const uiLang = () => langOf(document.querySelector("home-assistant")?.hass);
+  const PICK = {
+    "hauflo-entity": [["Hauflo · Объект", "Любой объект любой интеграции: свет, розетка, вентилятор, пылесос, замок, человек…"], ["Hauflo · Entity", "Any entity of any integration: light, plug, fan, vacuum, lock, person…"]],
+    "hauflo-title": [["Hauflo · Заголовок", "Заголовок раздела в стиле Hauflo"], ["Hauflo · Title", "A section heading in the Hauflo style"]],
+    "hauflo-hero": [["Hauflo · Дом", "Температура дома, свет и охрана одной цифрой"], ["Hauflo · Home", "The home at a glance: temperature, lights, alarms"]],
+    "hauflo-room": [["Hauflo · Комната", "Комната светится своим состоянием; тап — её страница, удержание — свет"], ["Hauflo · Room", "A room glowing with its state; tap opens its page, hold switches the lights"]],
+    "hauflo-scenes": [["Hauflo · Сценарии", "Сценарии в одно касание"], ["Hauflo · Scenes", "Scenes in one tap"]],
+    "hauflo-climate": [["Hauflo · Климат", "Термостат: уставка крупно, режимы, график"], ["Hauflo · Climate", "A thermostat: big setpoint, modes, chart"]],
+    "hauflo-sliders": [["Hauflo · Ползунки", "Свет, шторы, вентиляторы высокими ползунками"], ["Hauflo · Sliders", "Lights, blinds, fans as tall sliders"]],
+    "hauflo-alert": [["Hauflo · Авария", "Протечка, дым, газ — на весь экран, с действием"], ["Hauflo · Alarm", "Leak, smoke, gas — full width, with an action"]],
+    "hauflo-lights": [["Hauflo · Пульт света", "Много светильников: всё разом, диммер, капсулы"], ["Hauflo · Lights console", "Many lights: all at once, dimmer, capsules"]],
+    "hauflo-covers": [["Hauflo · Пульт штор", "Много штор: все разом, положение"], ["Hauflo · Blinds console", "Many blinds: all at once, position"]],
+    "hauflo-weather": [["Hauflo · Погода", "Сейчас и на несколько дней — любая weather-интеграция"], ["Hauflo · Weather", "Now and the next days — any weather integration"]],
+    "hauflo-air": [["Hauflo · Воздух", "PM2.5 на шкале, PM10, CO₂, влажность — любые датчики"], ["Hauflo · Air", "PM2.5 on a scale, PM10, CO₂, humidity — any sensors"]],
+    "hauflo-media": [["Hauflo · Мультимедиа", "Любой media_player: обложка, управление, громкость"], ["Hauflo · Media", "Any media_player: artwork, controls, volume"]],
+    "hauflo-graph": [["Hauflo · График", "Датчики за последние часы — энергия, температура, что угодно"], ["Hauflo · Graph", "Sensors over the last hours — energy, temperature, anything"]],
+    "hauflo-auto": [["Hauflo · Автоматизации", "Автоматизации и скрипты: вкл/выкл, запуск, когда сработали"], ["Hauflo · Automations", "Automations and scripts: on/off, run, last triggered"]],
+    "hauflo-status": [["Hauflo · Диспетчеризация", "Инженерные системы: работает, авария, нет связи"], ["Hauflo · Building systems", "Plant status: running, fault, offline"]],
+    "hauflo-security": [["Hauflo · Охрана", "Любая охранная панель, замки, двери и окна"], ["Hauflo · Security", "Any alarm panel, locks, doors and windows"]],
+    "hauflo-camera": [["Hauflo · Камера", "Любая камера: кадр, тап — трансляция"], ["Hauflo · Camera", "Any camera: snapshot, tap for live view"]],
+    "hauflo-acs": [["Hauflo · Кондиционеры", "Все кондиционеры: какие работают, температура, выключить все"], ["Hauflo · Air conditioners", "All ACs: which run, temperature, all off"]],
+    "hauflo-devices": [["Hauflo · Устройства", "Вентиляторы, клапаны, замки, пылесосы, бойлеры, розетки…"], ["Hauflo · Devices", "Fans, valves, locks, vacuums, boilers, plugs…"]],
+  };
+  const dc = (...classes) => (s) => classes.includes(s.attributes.device_class);
+  // Stubs that suit any integration's entities (HA's demo, owner 28.10), over the ones above.
+  Object.assign(STUB, {
+    "hauflo-air": (h) => {
+      const one = (cls) => ids(h, "sensor", 1, dc(cls))[0];
+      const c = { entity: ids(h, "air_quality", 1)[0], pm25: one("pm25"), pm10: one("pm10"), co2: one("carbon_dioxide"), humidity: one("humidity"), temperature: one("temperature") };
+      return Object.fromEntries(Object.entries(c).filter(([, v]) => v));
+    },
+    "hauflo-graph": (h) => ({ hours: 24, entities: ids(h, "sensor", 2, (s) => !!s.attributes.unit_of_measurement && !isNaN(Number(s.state))) }),
+    "hauflo-status": (h) => ({ entities: [...ids(h, "binary_sensor", 6, dc("problem", "connectivity", "battery", "moisture", "running", "power")), ...ids(h, "switch", 2)] }),
+    "hauflo-devices": (h) => ({ entities: ["fan", "valve", "lock", "vacuum", "humidifier", "water_heater", "siren"].flatMap((d) => ids(h, d, 2)).slice(0, 8) }),
+    "hauflo-media": (h) => ({ entity: ids(h, "media_player", 1, (s) => s.state === "playing")[0] || ids(h, "media_player", 1)[0] }),
+  });
+  const STUB_EN = { Дома: "Home", Гостиная: "Living room", Свет: "Lights", Шторы: "Blinds", Кондиционеры: "Air conditioners" };
+  const stubOf = (tag, hass) => {
+    const c = JSON.parse(JSON.stringify(STUB[tag](hass)));
+    for (const k of ["label", "name", "title"]) if (langOf(hass) !== "ru" && STUB_EN[c[k]]) c[k] = STUB_EN[c[k]];
+    return Object.fromEntries(Object.entries(c).filter(([, v]) => v !== undefined && !(Array.isArray(v) && !v.length)));
+  };
+  // The visual editor: HA's own ha-form with entity pickers of the right domains. Lists of {entity, name…} keep their
+  // extra keys; anything else set in YAML stays as it is.
+  const E = (name, domain, multiple = false) => ({ name, selector: { entity: { ...(domain ? { domain } : {}), ...(multiple ? { multiple: true } : {}) } } });
+  const TXT = (name) => ({ name, selector: { text: {} } });
+  const NUM = (name, min, max) => ({ name, selector: { number: { min, max, mode: "box" } } });
+  // Options as [value, ru, en] — put into the editor's language when it opens.
+  const SEL = (name, options) => ({ name, selector: { select: { mode: "dropdown", options } } });
+  const BOOL = (name) => ({ name, selector: { boolean: {} } });
+  const ICON = (name = "icon") => ({ name, selector: { icon: {} } });
+  const ACT = (name) => ({ name, selector: { ui_action: {} } });
+  // Two fields in a row, as HA's own editors (and Mushroom's) lay them out.
+  const G = (...schema) => ({ type: "grid", name: "", schema });
+  const INFO_OPT = [["name", "Название", "Name"], ["state", "Состояние", "State"], ["last_changed", "Когда изменилось", "Last changed"], ["none", "Ничего", "None"]];
+  const COLOR_OPT = [["amber", "Тёплый (свет)", "Warm (light)"], ["ice", "Холодный (шторы, климат)", "Cool (blinds, climate)"], ["mint", "Мятный (работает)", "Mint (running)"], ["alert", "Красный (тревога)", "Red (alarm)"]];
+  const FORM = {
+    "hauflo-entity": [
+      E("entity", null),
+      G(TXT("name"), ICON()),
+      G(SEL("icon_type", [["icon", "Иконка", "Icon"], ["entity-picture", "Картинка объекта", "Entity picture"], ["none", "Без иконки", "No icon"]]), SEL("color", COLOR_OPT)),
+      G(SEL("layout", [["horizontal", "В строку", "Horizontal"], ["vertical", "Столбиком", "Vertical"]]), BOOL("show_level")),
+      G(SEL("primary_info", INFO_OPT), SEL("secondary_info", INFO_OPT)),
+      ACT("tap_action"),
+      ACT("hold_action"),
+      ACT("double_tap_action"),
+    ],
+    "hauflo-title": [TXT("title"), TXT("subtitle")],
+    "hauflo-hero": [TXT("label"), E("temperature", ["climate", "sensor"], true), E("humidity", "sensor", true), E("lights", ["light", "switch"], true), E("alarms", "binary_sensor", true), E("devices", null, true), E("weather", "weather")],
+    "hauflo-room": [G(TXT("name"), ICON()), E("lights", ["light", "switch"], true), E("climate", "climate"), E("covers", "cover", true), E("alarms", "binary_sensor", true), G(TXT("path"), TXT("picture"))],
+    "hauflo-scenes": [G(TXT("title"), SEL("kind", [["light", "Свет", "Lights"], ["cover", "Шторы", "Blinds"]])), E("scenes", ["scene", "script"], true)],
+    "hauflo-climate": [E("entity", "climate"), G(TXT("label"), BOOL("chart")), G(BOOL("compact"), E("humidity", "sensor")), G(E("heat_setpoint", "number"), E("cool_setpoint", "number"))],
+    "hauflo-sliders": [E("entities", ["light", "cover", "fan", "media_player"], true)],
+    "hauflo-alert": [E("alarms", "binary_sensor", true), BOOL("hide_ok")],
+    "hauflo-lights": [TXT("title"), E("entities", ["light", "switch"], true)],
+    "hauflo-covers": [TXT("title"), E("entities", "cover", true)],
+    "hauflo-weather": [E("entity", "weather"), TXT("name"), G(NUM("days", 1, 7), SEL("forecast", [["daily", "По дням", "Daily"], ["hourly", "По часам", "Hourly"]]))],
+    "hauflo-air": [TXT("name"), E("entity", "air_quality"), G(E("pm25", "sensor"), E("pm10", "sensor")), G(E("co2", "sensor"), E("voc", "sensor")), G(E("humidity", "sensor"), E("temperature", "sensor"))],
+    "hauflo-media": [E("entity", "media_player"), TXT("name")],
+    "hauflo-graph": [G(TXT("title"), NUM("hours", 1, 168)), E("entities", "sensor", true)],
+    "hauflo-auto": [TXT("title"), E("entities", ["automation", "script"], true)],
+    "hauflo-status": [TXT("title"), E("entities", ["binary_sensor", "sensor", "switch", "input_boolean"], true)],
+    "hauflo-security": [TXT("name"), E("entity", "alarm_control_panel"), E("locks", "lock", true), E("openings", "binary_sensor", true)],
+    "hauflo-camera": [E("entity", "camera"), G(TXT("name"), NUM("refresh", 2, 600))],
+    "hauflo-acs": [G(TXT("title"), SEL("kind", [["ac", "Кондиционеры", "Air conditioners"], ["floor_heating", "Тёплые полы", "Floor heating"]])), E("entities", "climate", true)],
+    "hauflo-devices": [TXT("title"), E("entities", null, true)],
+  };
+  const LABEL = {
+    ru: { label: "Подпись", name: "Название", title: "Заголовок", subtitle: "Подзаголовок", icon: "Иконка", icon_type: "Что слева", color: "Цвет, когда включено", layout: "Расположение", show_level: "Полоска уровня (яркость, положение)", primary_info: "Первая строка", secondary_info: "Вторая строка", tap_action: "Нажатие", hold_action: "Удержание", double_tap_action: "Двойное нажатие", path: "Страница по тапу (путь)", picture: "Фото комнаты (URL)", temperature: "Температура (термостаты, датчики)", humidity: "Влажность", lights: "Свет", alarms: "Аварийные датчики", devices: "Устройства (нет связи)", weather: "Погода", climate: "Термостат", covers: "Шторы", kind: "Вид", scenes: "Сценарии", entity: "Объект", entities: "Объекты", days: "Дней прогноза", forecast: "Прогноз", pm25: "PM2.5", pm10: "PM10", co2: "CO₂", voc: "Летучие в-ва", hours: "Часов", locks: "Замки", openings: "Двери, окна, движение", refresh: "Обновлять кадр, с", chart: "График за сутки", hide_ok: "Прятать, когда всё в норме", compact: "Компактно (строкой)", heat_setpoint: "Уставка нагрева (number)", cool_setpoint: "Уставка охлаждения (number)", scene_layout: "Где сценарии" },
+    en: { label: "Label", name: "Name", title: "Title", subtitle: "Subtitle", icon: "Icon", icon_type: "On the left", color: "Colour when on", layout: "Layout", show_level: "Level bar (brightness, position)", primary_info: "First line", secondary_info: "Second line", tap_action: "Tap", hold_action: "Hold", double_tap_action: "Double tap", path: "Page on tap (path)", picture: "Room photo (URL)", temperature: "Temperature (thermostats, sensors)", humidity: "Humidity", lights: "Lights", alarms: "Alarm sensors", devices: "Devices (offline check)", weather: "Weather", climate: "Thermostat", covers: "Blinds", kind: "Kind", scenes: "Scenes", entity: "Entity", entities: "Entities", days: "Forecast days", forecast: "Forecast", pm25: "PM2.5", pm10: "PM10", co2: "CO₂", voc: "VOC", hours: "Hours", locks: "Locks", openings: "Doors, windows, motion", refresh: "Snapshot refresh, s", chart: "24 h chart", hide_ok: "Hide when all is OK", compact: "Compact (one row)", heat_setpoint: "Heating setpoint (number)", cool_setpoint: "Cooling setpoint (number)", scene_layout: "Where scenes go" },
+  };
+  const idOf = (x) => (typeof x === "string" ? x : x?.entity);
+  const flat = (schema) => schema.flatMap((s) => (s.type === "grid" ? flat(s.schema) : [s]));
+  // What a card does without the key — shown in the form, written only when changed.
+  const DEFAULTS = {
+    "hauflo-entity": { icon_type: "icon", layout: "horizontal", show_level: true, primary_info: "name", secondary_info: "state" },
+    "hauflo-climate": { chart: true, compact: false },
+    "hauflo-scenes": { kind: "light" },
+    "hauflo-weather": { days: 5, forecast: "daily" },
+    "hauflo-graph": { hours: 24 },
+    "hauflo-camera": { refresh: 10 },
+    "hauflo-acs": { kind: "ac" },
+  };
+  const localize = (schema, lang) =>
+    schema.map((s) =>
+      s.type === "grid"
+        ? { ...s, schema: localize(s.schema, lang) }
+        : s.selector?.select
+          ? { ...s, selector: { select: { ...s.selector.select, options: s.selector.select.options.map((o) => (Array.isArray(o) ? { value: o[0], label: lang === "ru" ? o[1] : o[2] } : o)) } } }
+          : s,
+    );
+  class Editor extends HTMLElement {
+    setConfig(config) {
+      this._config = config;
+      this._render();
+    }
+    set hass(hass) {
+      this._hass = hass;
+      this._render();
+    }
+    _render() {
+      const schema = FORM[this.tag];
+      if (!this._hass || !this._config || !schema) return;
+      // ha-form is HA's lazy part: a built-in card's editor brings it in.
+      if (!customElements.get("ha-form")) {
+        if (!this._waiting) {
+          this._waiting = true;
+          customElements.get("hui-entities-card")?.getConfigElement?.();
+          customElements.whenDefined("ha-form").then(() => this._render());
+        }
+        return;
+      }
+      const fields = flat(schema);
+      if (!this._form) {
+        this._form = document.createElement("ha-form");
+        this._form.computeLabel = (s) => LABEL[langOf(this._hass)][s.name] || s.name;
+        this._form.addEventListener("value-changed", (ev) => {
+          ev.stopPropagation();
+          const v = ev.detail.value;
+          const next = { ...this._config };
+          for (const s of fields) {
+            const val = v[s.name];
+            const dflt = DEFAULTS[this.tag]?.[s.name];
+            if (val === undefined || val === "" || (Array.isArray(val) && !val.length) || (dflt !== undefined && val === dflt && !(s.name in this._config))) delete next[s.name];
+            else if (s.selector.entity?.multiple) {
+              // The picked ids, each keeping its item from before ({entity, name, icon}); new scenes as {entity}.
+              const was = new Map((this._config[s.name] || []).map((x) => [idOf(x), x]));
+              next[s.name] = val.map((id) => was.get(id) ?? (s.name === "scenes" ? { entity: id } : id));
+            } else next[s.name] = val;
+          }
+          this._config = next;
+          this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: next }, bubbles: true, composed: true }));
+        });
+        this.appendChild(this._form);
+      }
+      const data = { ...DEFAULTS[this.tag], ...this._config };
+      for (const s of fields) if (s.selector.entity?.multiple && Array.isArray(data[s.name])) data[s.name] = data[s.name].map(idOf).filter(Boolean);
+      this._form.hass = this._hass;
+      this._form.schema = localize(schema, langOf(this._hass));
+      this._form.data = data;
+    }
+  }
+  const picker = (tag, cls, name, description) => {
+    if (STUB[tag] && !cls.getStubConfig) cls.getStubConfig = (hass) => stubOf(tag, hass);
+    if (FORM[tag] && !cls.getConfigElement)
+      cls.getConfigElement = () => {
+        const e = document.createElement("hauflo-card-editor");
+        e.tag = tag;
+        return e;
+      };
+    if (window.customCards.some((c) => c.type === tag)) return;
+    const [ru, en] = PICK[tag] || [[name, description], [name, description]];
+    // Read when the picker opens — by then HA knows the user's language.
+    window.customCards.push({
+      type: tag,
+      get name() {
+        return (uiLang() === "ru" ? ru : en)[0];
+      },
+      get description() {
+        return (uiLang() === "ru" ? ru : en)[1];
+      },
+      preview: true,
+      get documentationURL() {
+        return uiLang() === "ru" ? "https://app.hauflo.ru/help/cards" : "https://app.hauflo.com/help/cards";
+      },
+    });
+  };
   const define = () => {
     const reg = window.customElements;
     if (!reg.get("home-assistant") && !reg.get("hui-view")) return setTimeout(define, 120);
     window.customCards = window.customCards || [];
-    for (const [tag, cls, name, description] of cards) {
+    if (!reg.get("hauflo-card-editor")) reg.define("hauflo-card-editor", Editor);
+    for (const [tag, cls, name, description] of [...MORE, ...cards]) {
       if (reg.get(tag)) continue;
-      if (STUB[tag] && !cls.getStubConfig) cls.getStubConfig = (hass) => JSON.parse(JSON.stringify(STUB[tag](hass)));
+      picker(tag, cls, name, description);
       reg.define(tag, cls);
-      if (!window.customCards.some((c) => c.type === tag)) window.customCards.push({ type: tag, name, description, preview: false });
     }
   };
   define();
