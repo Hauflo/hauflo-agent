@@ -62,7 +62,7 @@ async def _local_token(hass: HomeAssistant, entry: ConfigEntry):
 # (security review 25.10: «config/» let an automation with any service through, «lovelace/» a JS resource):
 # registries, the KNX UI, dashboards, voice exposure, HomeKit / Alice / group flows, its own scenes, status reads.
 _WS_EXACT = {
-    "get_states", "get_config", "ping", "unsubscribe_events", "persistent_notification/subscribe", "cloud/status", "frontend/get_themes", "manifest/get",
+    "get_states", "get_config", "ping", "unsubscribe_events", "persistent_notification/subscribe", "cloud/status", "frontend/get_themes", "manifest/get", "get_panels",
     "config_entries/get",
     "config/area_registry/list", "config/area_registry/create", "config/area_registry/update",
     "config/floor_registry/list", "config/floor_registry/create", "config/floor_registry/update",
@@ -78,7 +78,7 @@ _SERVICES = {("homeassistant", "update_entity"), ("frontend", "set_theme"), ("sc
 # What only reads (or refreshes) — every other allowed command changes the house and needs a fresh backup first
 # (security expert 25.10: the backup was the cloud's promise, not the agent's).
 _WS_READS = {
-    "get_states", "get_config", "ping", "unsubscribe_events", "persistent_notification/subscribe", "cloud/status", "frontend/get_themes", "manifest/get",
+    "get_states", "get_config", "ping", "unsubscribe_events", "persistent_notification/subscribe", "cloud/status", "frontend/get_themes", "manifest/get", "get_panels",
     "config_entries/get", "config/area_registry/list", "config/floor_registry/list", "config/label_registry/list",
     "config/device_registry/list", "config/entity_registry/list", "config/entity_registry/get", "config/entity_registry/get_entries",
     "knx/get_knx_project", "knx/get_entity_config", "knx/validate_entity", "knx/get_entities_by_group", "knx/group_monitor_info",
@@ -211,7 +211,13 @@ _PRIVATE_STATE = {"person", "device_tracker", "zone", "sun", "weather", "camera"
 _PRIVATE_PLATFORMS = {"mobile_app", "sun"}
 _STATE_TIMES = ("context", "last_changed", "last_updated", "last_reported")
 # Reads whose answer the agent edits before it leaves the house.
-_SCRUBBED = ("get_states", "get_config", "cloud/status", "config/device_registry/list", "knx/group_monitor_info")
+_SCRUBBED = ("get_states", "get_config", "cloud/status", "config/device_registry/list", "knx/group_monitor_info", "get_panels")
+
+
+def _scrub_panels(panels: Any) -> Any:
+    """HA's menu items by name only (the deploy says which of HA's own it would hide) — no panel's config (an iframe's
+    address, an add-on's ingress) leaves the house."""
+    return {str(k): {"url_path": str(k)} for k in panels} if isinstance(panels, dict) else {}
 
 
 def _scrub_states(states: Any, hass: HomeAssistant | None = None) -> Any:
@@ -643,7 +649,7 @@ def _flow_input_ok(hass: HomeAssistant, domain: str | None, data: dict[str, Any]
 _LOVELACE_TYPES = {
     "sections", "panel", "masonry", "grid", "tile", "heading", "horizontal-stack", "vertical-stack", "button",
     "picture-glance", "cover-open-close", "cover-position", "target-temperature", "light-brightness",
-    "climate-preset-modes", "climate-hvac-modes", "climate-fan-modes",
+    "climate-preset-modes", "climate-hvac-modes", "climate-fan-modes", "numeric-input", "thermostat",
     "custom:hauflo-scenes", "custom:hauflo-alert", "custom:hauflo-room", "custom:hauflo-lights", "custom:hauflo-hero",
     "custom:hauflo-climate", "custom:hauflo-status", "custom:hauflo-devices", "custom:hauflo-sliders",
     "custom:hauflo-covers", "custom:hauflo-acs",
@@ -1196,7 +1202,7 @@ class Agent:
                 r["result"] = (
                     _scrub_states(res, self.hass) if kind == "get_states" else _scrub_config(res) if kind == "get_config"
                     else _scrub_cloud(res) if kind == "cloud/status" else _scrub_devices(res, self.hass) if kind == "config/device_registry/list"
-                    else _scrub_monitor(res)
+                    else _scrub_panels(res) if kind == "get_panels" else _scrub_monitor(res)
                 )
                 scrubbed = True
                 continue

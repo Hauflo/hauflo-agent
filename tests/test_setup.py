@@ -1,6 +1,7 @@
 """Setup and unload on a real HA: the «Связь» entity follows the link, diagnostics never carry the secret, and an
 unloaded agent leaves nothing listening (HA core review round 3)."""
 
+import asyncio
 import json
 import time
 from unittest.mock import patch
@@ -165,11 +166,21 @@ async def test_hauflo_backups_kept_by_age_and_asked_again_is_the_same(hass: Home
         backups, _ = await manager.async_get_backups()
         return sum((b.name or "").startswith("Hauflo ") for b in backups.values())
 
-    # Asked again within 10 minutes: the same backup, not a new one.
+    # Asked again within 10 minutes: the same backup, not a new one — and said so.
     assert (await client.post("/api/hauflo/backup")).status == 200
     first = await ours()
-    assert (await client.post("/api/hauflo/backup")).status == 200
+    again = await client.post("/api/hauflo/backup")
+    assert again.status == 200
+    named = await again.json()
+    assert named["reused"] is True
     assert await ours() == first
+    # …unless a deploy already went through after it (Hauflo names it in `used`): a new one (review round 2).
+    await asyncio.sleep(1.1)  # names are to the second
+    fresh = await client.post("/api/hauflo/backup", json={"used": named["name"]})
+    body = await fresh.json()
+    assert fresh.status == 200 and body["name"] != named["name"] and "reused" not in body
+    assert await ours() == first + 1
+    first = await ours()
     # Asked many times: a day's are all kept.
     with patch.object(backup, "_REUSE", 0):
         for _ in range(4):

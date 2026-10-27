@@ -111,8 +111,12 @@ class BackupView(HomeAssistantView):
                 NO_BACKUP_NOTE,
             )
             return self.json(LAST)
-        if LAST.get("state") == "done" and time.time() - float(LAST.get("at") or 0) < _REUSE:
-            return self.json(LAST)
+        # A recent one is that one (a retried deploy) — unless a deploy has already gone through after it: Hauflo names
+        # it in `used`, and that deploy's changes aren't in it (review round 2: the second deploy said «бэкап сделан до
+        # этих изменений» of the first one's backup).
+        used = body.get("used") if isinstance(body, dict) else None
+        if LAST.get("state") == "done" and time.time() - float(LAST.get("at") or 0) < _REUSE and (not used or used != LAST.get("name")):
+            return self.json({**LAST, "reused": True})
         if "backup" not in hass.config.components:
             return self.json({"state": "failed", "error": "no_backup_integration"}, 501)
         name = f"Hauflo {dt_util.now().strftime('%Y-%m-%d %H:%M:%S')}"  # HA's own time zone

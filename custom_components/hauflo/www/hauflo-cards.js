@@ -149,7 +149,8 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
     "Ожидание": "Idle", "Вода": "Water", "Газ": "Gas", "Дым": "Smoke", "Угарный газ": "Carbon monoxide", "Перегрев": "Overheat", "Вскрытие": "Tamper", "Необычно": "Unusual",
     "загрузка…": "loading…", "истории пока нет": "no history yet", "только что": "just now", "Кухня": "Kitchen", "Гостиная зона": "Living area", "Обеденная": "Dining",
     "Остров": "Island", "ТВ": "TV", "Здание": "Building", "Устройства": "Devices", "Зима": "Winter", "Лето": "Summer",
-    "Тёплые полы": "Floor heating", "греет": "heating", "держит": "holding", "Сейчас не греют": "Not heating now", "сейчас": "now", "Пол": "Floor", "В комнате": "Room",
+    "Принято": "Accept", "Не получилось — ещё раз": "Didn't work — try again",
+    "Тёплые полы": "Floor heating", "Светильник": "Light", "Выключатель": "Switch", "Штора": "Blind", "Датчик": "Sensor", "Сцена": "Scene", "Кран": "Valve", "Замок": "Lock", "Устройство": "Device", "уставка ещё не пришла с шины": "setpoint not received from the bus yet", "уставка ещё не пришла": "no setpoint yet", "нет уставки": "no setpoint", "греет": "heating", "держит": "holding", "Сейчас не греют": "Not heating now", "сейчас": "now", "Пол": "Floor", "В комнате": "Room",
   };
   // Phrases with numbers / declensions (whole text node).
   const EN_RX = [
@@ -168,6 +169,7 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
     [/^выключен · (\d+) без данных$/, "off · $1 no data"],
     [/^Климат · нет данных$/, "Climate · no data"],
     [/^Нет связи · (\d+) устройств[оа]?$/, (m, a) => `Offline · ${a} device${a === "1" ? "" : "s"}`],
+    [/^Ждём уставку · (\d+) термостат(?:а|ов)?$/, (m, a) => `Waiting for the setpoint · ${a} thermostat${a === "1" ? "" : "s"}`],
     [/^По одной \((\d+)\)$/, "One by one ($1)"],
     [/^Свет в (\d+) комнат[аеху]*$/, (m, a) => `Lights in ${a} room${a === "1" ? "" : "s"}`],
   ];
@@ -176,10 +178,11 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
   const EN_FRAG = [
     [/^Позвонить · /, "Call · "], [new RegExp(`${B}ещё аварий:`, "g"), "$1more alarms:"], [new RegExp(`${B}и ещё (\\d+)`, "g"), "$1and $2 more"], [new RegExp(`${B}за сутки`, "g"), "$124 h"],
     [new RegExp(`${B}В комнате `, "g"), "$1Now "], [new RegExp(`${B}пол (?=\\d)`, "g"), "$1floor "], [new RegExp(`${B}Сейчас `, "g"), "$1Now "], [new RegExp(`${B}влажность `, "g"), "$1humidity "],
+    [new RegExp(`${B}уставка ещё не пришла`, "g"), "$1no setpoint yet"],
     [new RegExp(`${B}нагрев(?=$|[^А-Яа-яЁё])`, "g"), "$1heating"], [new RegExp(`${B}Охлаждение до `, "g"), "$1Cooling to "], [new RegExp(`${B}Нагрев до `, "g"), "$1Heating to "],
     [new RegExp(`${B}Сдвиньте — `, "g"), "$1Slide — "], [new RegExp(`${B}сегодня в `, "g"), "$1today at "], [new RegExp(`${B}запускался `, "g"), "$1ran "],
     [new RegExp(`${B}сработала `, "g"), "$1triggered "], [new RegExp(`${B}батарея `, "g"), "$1battery "], [new RegExp(`${B}откр\\. `, "g"), "$1open "],
-    [/^Авария · /, "Alarm · "], [/^Свет · /, "Lights · "], [new RegExp(`${B}обновлено `, "g"), "$1updated "],
+    [/^Авария · /, "Alarm · "], [new RegExp(`${B}принял `, "g"), "$1accepted by "], [/^Свет · /, "Lights · "], [new RegExp(`${B}обновлено `, "g"), "$1updated "],
     [/(\d) мин назад/g, "$1 min ago"], [/(\d) мин(?=$|[^А-Яа-яЁё])/g, "$1 min"], [/(\d) ч(?=$|[^А-Яа-яЁё])/g, "$1 h"],
     [new RegExp(`${B}с (?=\\d)`, "g"), "$1since "], [new RegExp(`${B}в (?=\\d)`, "g"), "$1at "], [new RegExp(`${B}до (?=\\d)`, "g"), "$1to "], [new RegExp(`${B}за (?=\\d)`, "g"), "$1in "],
     [new RegExp(`${B}открыто: `, "g"), "$1open: "], [new RegExp(`${B}не заперто: `, "g"), "$1unlocked: "], [new RegExp(`${B}внимание: `, "g"), "$1attention: "],
@@ -214,7 +217,41 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
       for (const a of ["aria-label", "title"]) if (el.hasAttribute(a)) el.setAttribute(a, tr(el.getAttribute(a)));
     });
   };
-  const nameOf = (s, id) => (s && s.attributes.friendly_name) || id;
+  // --- The client's names (review round 2) ---------------------------------------------------------------------
+  // HA and Hauflo keep the ETS name as is (owner rule); the client's cards don't show the integrator's working notes:
+  // a device/model code in brackets at the end («Движение (bps7)», «Температура (i4-net)») goes — unless two devices
+  // of one room would then read the same; an ETS note with «?» («? может люстра?») isn't a name — the card says what
+  // the thing is until the integrator names it.
+  const techTail = (n) => {
+    const m = /^(.*\S)\s*\(\s*([^()]+?)\s*\)\s*$/.exec(n);
+    return m && /^[A-Za-z0-9._\/ -]{2,16}$/.test(m[2]) && /[A-Za-z]/.test(m[2]) && /\d/.test(m[2]) ? m[1] : null;
+  };
+  const KIND = { light: "Светильник", switch: "Выключатель", cover: "Штора", climate: "Климат", binary_sensor: "Датчик", sensor: "Датчик", scene: "Сцена", fan: "Вентиляция", valve: "Кран", lock: "Замок" };
+  let NAMES = { states: null, base: new Map() };
+  /** How many entities of one HA area would read `base` with their tails dropped — computed once per states object. */
+  const sameBase = (id, base) => {
+    const h = AGENT.hass;
+    if (!h) return 1;
+    if (NAMES.states !== h.states) {
+      const count = new Map();
+      for (const [eid, s] of Object.entries(h.states)) {
+        const n = String(s?.attributes?.friendly_name || "");
+        const b = techTail(n);
+        const key = `${h.entities?.[eid]?.area_id || ""}|${(b ?? n).toLowerCase()}`;
+        count.set(key, (count.get(key) || 0) + 1);
+      }
+      NAMES = { states: h.states, base: count };
+    }
+    return NAMES.base.get(`${h.entities?.[id]?.area_id || ""}|${base.toLowerCase()}`) || 1;
+  };
+  const clientName = (raw, id) => {
+    const n = String(raw || "").trim();
+    if (!n) return id;
+    if (n.includes("?")) return KIND[String(id || "").split(".")[0]] || "Устройство";
+    const base = techTail(n);
+    return base && sameBase(id, base) < 2 ? base : n;
+  };
+  const nameOf = (s, id) => (s && s.attributes.friendly_name ? clientName(s.attributes.friendly_name, id) : id);
   // Device codes («DKP1-1», «B1-2») keep a non-breaking hyphen: «Протечка (DKP1-» / «1)» on two lines read as
   // nonsense (integrator run 15). Only upper-case codes — icon names and entity ids are lower case.
   const esc = (t) => String(t ?? "").replace(/\b([A-Z]{1,6}\d*)-(\d+)\b/g, "$1\u2011$2").replace(/[&<>"'()]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;", "(": "&#40;", ")": "&#41;" })[c]);
@@ -439,6 +476,7 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
     }
     set hass(hass) {
       this._hass = hass;
+      AGENT.hass = hass;
       const lang = langOf(hass);
       if (lang !== LANG) {
         LANG = lang;
@@ -527,15 +565,21 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
       // Back to normal and not yet accepted is no open alarm of the house (only the alert card asks to accept it).
       const openList = openAlarms(this, c.alarms || []).filter((a) => !a.returned);
       const alarms = openList.map((a) => a.entity);
-      const critical = openList.some((a) => a.critical !== false);
+      // Accepted: still an alarm until it clears, but no longer red (ISA-18.2: acknowledged ≠ new).
+      const critical = openList.some((a) => a.critical !== false && !a.ackedBy);
       // A siren sounding or the security alarm triggered is no «Всё спокойно» (persona round 3: one source of truth).
       const loud = Object.values(h.states).filter((s) => (s.entity_id.startsWith("siren.") && s.state === "on") || (s.entity_id.startsWith("alarm_control_panel.") && s.state === "triggered"));
       const ok = !alarms.length && !loud.length;
       // A thermostat / AC with no setpoint heard, a blind HA lost: no «Всё спокойно» over them (persona round 5).
+      // On the bus but no setpoint heard yet (right after a restart) is not «no link» (review round 2): said apart.
+      const waiting = (c.devices || []).filter((id) => {
+        const s = st(h, id);
+        return id.startsWith("climate.") && !!s && !nd(s) && num(s.attributes.temperature) === undefined && num(s.attributes.target_temp_low) === undefined;
+      });
       const offline = (c.devices || []).filter((id) => {
         const s = st(h, id);
         if (!s || s.state === "unavailable") return true;
-        return id.startsWith("climate.") && (s.state === "unknown" || num(s.attributes.temperature) === undefined);
+        return id.startsWith("climate.") && s.state === "unknown";
       });
       // An alarm sensor with no data is no «в норме»: it would stay silent through a leak.
       const deaf = (c.alarms || []).filter((id) => nd(st(h, id)));
@@ -557,8 +601,11 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
       const tmin = temps.length ? Math.min(...temps) : undefined;
       const tmax = temps.length ? Math.max(...temps) : undefined;
       const devWord = (n) => (n % 10 === 1 && n % 100 !== 11 ? "устройство" : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? "устройства" : "устройств");
+      const thermoWord = (n) => (n % 10 === 1 && n % 100 !== 11 ? "термостат" : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? "термостата" : "термостатов");
       const headline = ok && offline.length
         ? `<div class="hl"><span class="dot" style="background:var(--amber);box-shadow:0 0 12px var(--amberGlow)"></span>Нет связи · ${offline.length} ${devWord(offline.length)}</div>`
+        : ok && waiting.length
+        ? `<div class="hl"><span class="dot" style="background:var(--ink2)"></span>Ждём уставку · ${waiting.length} ${thermoWord(waiting.length)}</div>`
         : ok && lightsDeaf
         ? // Lights without data: no «Всё спокойно» over what isn't known (narrow rounds 1–2, D9).
           `<div class="hl"><span class="dot" style="background:var(--ink2)"></span>Нет данных · ${lightsUnknown ? "свет" : `${lightsDeaf} ${lampsWord(lightsDeaf)}`}</div>`
@@ -597,7 +644,7 @@ ${(c.alarms || []).length && ok ? `<div><span class="caps">Датчики</span>
 .lit .ri{background:color-mix(in srgb,var(--amber) 22%,transparent);color:var(--amber)}.cold .ri{background:color-mix(in srgb,var(--ice) 22%,transparent);color:var(--ice)}
 .alarm .ri{background:color-mix(in srgb,var(--alert) 18%,transparent);color:var(--alert)}
 .t{font-size:40px;line-height:1}.t small{font:300 15px Onest,sans-serif;color:var(--ink2);letter-spacing:0;margin-left:2px}
-.tt{display:flex;flex-direction:column;align-items:flex-end;min-width:0}.t2{font:400 12px Onest,sans-serif;color:var(--ink2);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}.pic .t2{color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.55)}
+.tt{display:flex;flex-direction:column;align-items:flex-end;min-width:0}.t2+.t2{margin-top:1px}.t2{font:400 12px Onest,sans-serif;color:var(--ink2);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}.pic .t2{color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.55)}
 .s{font:400 13px Onest,sans-serif;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .chips{display:flex;gap:10px;margin-top:5px;font:500 12px Onest,sans-serif;color:var(--ink2);white-space:nowrap;overflow:hidden}
 .chips span{display:inline-flex;align-items:center;gap:3px}:host{container-type:inline-size}@container (max-width:200px){.chips span:nth-child(n+3){display:none}}.chips ha-icon{--mdc-icon-size:14px}.chips .on{color:var(--amber)}.chips .op{color:var(--ice)}
@@ -629,7 +676,7 @@ ${(c.alarms || []).length && ok ? `<div><span class="caps">Датчики</span>
       const cooling = clim && action !== undefined && (action === "cooling" || (clim.state === "cool" && action !== "idle" && action !== "off"));
       // A room in alarm: the red frame and the sign say it; a floor tile names where (persona review 25.10: said once).
       // Priority by colour (ISA-101): only a critical one is red, the rest amber — as on the alert card.
-      if (alarm) return { kind: openList.some((a) => a.critical !== false) ? "alarm" : "alarm warn", text: c.rooms?.[alarm.entity_id] ? `${c.rooms[alarm.entity_id]}${alarmsOn.length > 1 ? ` и ещё ${alarmsOn.length - 1}` : ""}` : alarmsOn.length > 1 ? `${alarmsOn.length} ${pluralAlarms(alarmsOn.length)}` : "" };
+      if (alarm) return { kind: openList.some((a) => a.critical !== false && !a.ackedBy) ? "alarm" : "alarm warn", text: c.rooms?.[alarm.entity_id] ? `${c.rooms[alarm.entity_id]}${alarmsOn.length > 1 ? ` и ещё ${alarmsOn.length - 1}` : ""}` : alarmsOn.length > 1 ? `${alarmsOn.length} ${pluralAlarms(alarmsOn.length)}` : "" };
       const deaf = (c.alarms || []).filter((id) => nd(st(h, id))).length;
       if (deaf) return { kind: "", text: `Нет связи · ${deaf} ${sensorsWord(deaf)}` };
       if (on.length) {
@@ -670,7 +717,7 @@ ${(c.alarms || []).length && ok ? `<div><span class="caps">Датчики</span>
       ].filter(Boolean);
       return `<div class="glass r ${s.kind} ${c.picture ? "pic" : ""}" role="button" tabindex="0" aria-label="${esc(c.name)}">${c.picture ? `<div class="ph" style="background-image:url('${esc(c.picture)}')"></div>` : ""}<div class="glow"></div>
 <div class="top"><span class="caps">${esc(c.name)}</span>${mark}</div>
-<div class="mid"><span class="ri"><ha-icon icon="${esc(c.icon || "hauflo:home")}"></ha-icon></span><div class="tt"><div class="t thin">${t === undefined ? "" : `${Math.round(t)}<small>°</small>`}</div>${others.length ? `<div class="t2">${others.map((x) => `${esc(x.name)} ${fmt(x.v)}°`).join(" · ")}</div>` : ""}</div></div>
+<div class="mid"><span class="ri"><ha-icon icon="${esc(c.icon || "hauflo:home")}"></ha-icon></span><div class="tt"><div class="t thin">${t === undefined ? "" : `${Math.round(t)}<small>°</small>`}</div>${others.slice(0, 2).map((x) => `<div class="t2">${esc(x.name)} ${fmt(x.v)}°</div>`).join("")}</div></div>
 <div><div class="s">${esc(s.text)}</div>${chips.length ? `<div class="chips">${chips.join("")}</div>` : ""}</div></div>`;
     }
     bind() {
@@ -889,7 +936,7 @@ ${(c.alarms || []).length && ok ? `<div><span class="caps">Датчики</span>
       const chart = this.chart(this._config.entity, this._config.floor ? "Пол" : "В комнате", mood, 96);
       return `<div class="glass c ${mood}"><div class="glow"></div><div style="position:relative">
 <div class="top"><span class="caps">${esc(this._config.label || "Климат")}${season ? ` · ${season}` : ""}</span>${doing ? `<span class="act"><i></i>${doing}</span>` : ""}</div>
-<div class="row"><div>${range ? `<div class="t thin"><span class="v">${fmt(lo)}–${fmt(hi)}</span><sup>°C</sup></div>` : target === undefined ? `<div class="t thin"><span class="v">—</span></div><div class="nos">нет связи с термостатом</div>` : `<div class="t thin"><span class="v">${fmt(target, digits)}</span><sup>°C</sup><span class="goal">цель</span></div>`}
+<div class="row"><div>${range ? `<div class="t thin"><span class="v">${fmt(lo)}–${fmt(hi)}</span><sup>°C</sup></div>` : target === undefined ? `<div class="t thin"><span class="v">—</span></div><div class="nos">${["unavailable", "unknown"].includes(s.state) ? "нет связи с термостатом" : "уставка ещё не пришла с шины"}</div>` : `<div class="t thin"><span class="v">${fmt(target, digits)}</span><sup>°C</sup><span class="goal">цель</span></div>`}
 <div class="sub">${cur === undefined ? (this._config.floor ? "нет данных" : "нет данных из комнаты") : `${this._config.floor ? "Сейчас" : "В комнате"} ${fmt(cur, 1)}°`}${floorNow}${hum !== undefined ? ` · влажность ${fmt(hum)} %` : ""}</div>${readings.length ? this.readingsRow(readings) : ""}</div>
 <div class="st"><button data-d="${step}" aria-label="Теплее"${target === undefined ? " disabled" : ""}>+</button><button data-d="${-step}" aria-label="Холоднее"${target === undefined ? " disabled" : ""}>−</button></div></div>
 ${chart}
@@ -907,7 +954,7 @@ ${fans.length > 1 || swing ? `<div class="modes fan"><span class="fl"><ha-icon i
         const cur = num(a.current_temperature);
         const step = Math.max(num(a.target_temp_step) || 0.5, 0.5);
         const heating = a.hvac_action === "heating" && (cur === undefined || target === undefined || cur < target + 0.5);
-        return `<div class="zr ${heating ? "heat" : ""}${i === zi ? " sel" : ""}"><div class="ccn" data-z="${i}"><span class="zn">${esc(z.name || nameOf(s, z.entity))}</span><span class="sub">${!s || ["unavailable", "unknown"].includes(s.state) ? "нет связи" : cur === undefined ? "нет данных" : `Сейчас ${fmt(cur, 1)}°`}${heating ? " · нагрев" : ""}</span></div>
+        return `<div class="zr ${heating ? "heat" : ""}${i === zi ? " sel" : ""}"><div class="ccn" data-z="${i}"><span class="zn">${esc(z.name || nameOf(s, z.entity))}</span><span class="sub">${!s || ["unavailable", "unknown"].includes(s.state) ? "нет связи" : cur === undefined ? "нет данных" : `Сейчас ${fmt(cur, 1)}°`}${heating ? " · нагрев" : ""}${s && !["unavailable", "unknown"].includes(s.state) && target === undefined ? " · уставка ещё не пришла" : ""}</span></div>
 <div class="cct thin">${target === undefined ? "—" : `${fmt(target, step < 1 && target % 1 ? 1 : 0)}<small>°</small>`}</div>
 <div class="st row2"><button data-e="${esc(z.entity)}" data-d="${-step}" aria-label="Холоднее"${target === undefined ? " disabled" : ""}>−</button><button data-e="${esc(z.entity)}" data-d="${step}" aria-label="Теплее"${target === undefined ? " disabled" : ""}>+</button></div></div>`;
       });
@@ -938,7 +985,7 @@ ${fans.length > 1 || swing ? `<div class="modes fan"><span class="fl"><ha-icon i
       const sensors = this.readings();
       // The line is always there (no data says so): a card that grows and shrinks with the state moves the page.
       return `<div class="glass cc ${heating ? "heat" : ""}"><div class="glow"></div><div class="ccrow">
-<div class="ccn"><span class="caps">${esc(this._config.label || nameOf(s, this._config.entity))}</span><span class="sub">${cur === undefined ? "нет данных" : `Сейчас ${fmt(cur, 1)}°`}${heating ? " · нагрев" : ""}</span>${sensors.length > 1 ? this.readingsRow(sensors) : ""}</div>
+<div class="ccn"><span class="caps">${esc(this._config.label || nameOf(s, this._config.entity))}</span><span class="sub">${cur === undefined ? "нет данных" : `Сейчас ${fmt(cur, 1)}°`}${heating ? " · нагрев" : ""}${target === undefined && !["unavailable", "unknown"].includes(s.state) ? " · уставка ещё не пришла" : ""}</span>${sensors.length > 1 ? this.readingsRow(sensors) : ""}</div>
 <div class="cct thin">${target === undefined ? "—" : `${fmt(target, step < 1 && target % 1 ? 1 : 0)}<small>°</small>`}</div>
 <div class="st row2"><button data-d="${-step}" aria-label="Холоднее"${target === undefined ? " disabled" : ""}>−</button><button data-d="${step}" aria-label="Теплее"${target === undefined ? " disabled" : ""}>+</button></div></div>${this.chart(this._config.entity, this._config.floor ? "Пол" : "Температура", heating ? "heat" : "", 56)}</div>`;
     }
@@ -950,7 +997,9 @@ ${fans.length > 1 || swing ? `<div class="modes fan"><span class="fl"><ha-icon i
           const s = st(this._hass, eid);
           if (!s) return;
           const a = s.attributes;
-          const base = num(a.temperature) ?? Math.round(num(a.current_temperature) ?? 21);
+          // No setpoint heard yet: nothing is sent (the buttons are off, the card says why — review round 2).
+          const base = num(a.temperature);
+          if (base === undefined) return;
           const v = Math.min(num(a.max_temp) ?? 35, Math.max(num(a.min_temp) ?? 5, base + Number(b.dataset.d)));
           haptic(this);
           call(this._hass, "climate", "set_temperature", { entity_id: eid, temperature: v });
@@ -1208,7 +1257,8 @@ h2{font:300 30px/1.1 Onest,sans-serif;letter-spacing:-.03em;margin:14px 0 0}
       const today = since.toDateString() === new Date().toDateString();
       const when = today ? hhmm : `${String(since.getDate()).padStart(2, "0")}.${String(since.getMonth() + 1).padStart(2, "0")} ${hhmm}`;
       // Priority by colour (ISA-101): critical red, the rest amber — a floor heating fault isn't a leak.
-      const normal = AGENT.data && top.critical === false;
+      // Accepted (owner 28.10: «нажимаешь Принято — толку ноль»): calm until it clears; a new alarm comes back red.
+      const normal = AGENT.data && (top.critical === false || !!top.ackedBy);
       this.classList.toggle("normal", !!normal);
       const act = c.action && st(h, c.action.entity_id);
       const rest = open.slice(1, 5);
@@ -1235,10 +1285,18 @@ ${act ? `<div class="sl"><div class="k"><ha-icon icon="${esc(c.action.icon || "h
         ev.stopPropagation();
         const b = ev.currentTarget;
         b.disabled = true;
+        // At once on every card (owner 28.10: nothing changed on a tap); the agent's answer confirms it.
+        const item = (AGENT.data?._list || []).find((a) => a.key === b.dataset.ack);
+        const was = item?.ackedBy;
+        if (item) item.ackedBy = this._hass.user?.name || "вы";
+        for (const c of AGENT.cards) (c._sig = ""), c._update();
         try {
           await this._hass.callApi("POST", "hauflo/alarms", { ack: b.dataset.ack });
         } catch (e) {
-          b.disabled = false;
+          if (item) item.ackedBy = was;
+          for (const c of AGENT.cards) (c._sig = ""), c._update();
+          const again = this.shadowRoot.querySelector(`[data-ack="${CSS.escape(b.dataset.ack)}"]`);
+          if (again) again.textContent = tr("Не получилось — ещё раз");
           return;
         }
         AGENT.at = 0;
@@ -1345,7 +1403,7 @@ ${act ? `<div class="sl"><div class="k"><ha-icon icon="${esc(c.action.icon || "h
       this._zone = "";
     }
     watched() {
-      return [...(this._config.entities || []), ...(this._config.groups || [])].map((e) => (typeof e === "string" ? e : e.entity));
+      return [...(this._config.entities || []), ...(this._config.groups || []), ...(this._config.lamps || [])].map((e) => (typeof e === "string" ? e : e.entity));
     }
     items() {
       return (this._config.entities || [])
@@ -1385,7 +1443,7 @@ ${act ? `<div class="sl"><div class="k"><ha-icon icon="${esc(c.action.icon || "h
 .pill.dragging .f{transition:none}.pill>*:not(.f){position:relative}
 .pill ha-icon{color:var(--ink3);--mdc-icon-size:18px}.pill .tx{min-width:0;flex:1}
 .pill .nm{font:500 13px/1.25 Onest,sans-serif;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:break-word;hyphens:manual}
-.pill .lv{font:400 13px Onest,sans-serif;color:var(--ink2)}
+.pill .lv{font:400 13px Onest,sans-serif;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pill.on{box-shadow:none;background:var(--track)}.pill.on>ha-icon{color:var(--accentC)}
 .light .pill.on .f{background:linear-gradient(90deg,color-mix(in srgb,var(--amber) 42%,transparent),color-mix(in srgb,var(--amber) 22%,transparent))}
 .cover .pill.on .f{background:linear-gradient(90deg,color-mix(in srgb,var(--ice) 36%,transparent),color-mix(in srgb,var(--ice) 18%,transparent))}
@@ -1446,7 +1504,11 @@ ${act ? `<div class="sl"><div class="k"><ha-icon icon="${esc(c.action.icon || "h
       // A floor's/building's console: its group commands and a few devices («Мультимедиа») — the summary and
       // «Вкл./Выкл. все» count both (integrator run 25.10: one switch hid the floor's lit groups).
       const both = !!this._config.master_groups && !this._zone;
-      const counted = groupsOnly ? gItems : both ? [...zoneItems, ...gItems] : zoneItems;
+      // The lamps the commands act on, when the dashboard names them: what's lit is counted by them — the central
+      // switch's own state said «Выключен» under «17 ламп в 9 комнатах» (review round 2).
+      const lampItems = (this._config.lamps || []).map((id) => ({ entity: id, s: st(this._hass, id) })).filter((x) => x.s);
+      const gCount = lampItems.length ? lampItems : gItems;
+      const counted = groupsOnly ? gCount : both ? [...zoneItems, ...gCount] : zoneItems;
       const n = onCount(counted);
       // A lit group counts in the headline too: «Выключен» above a lit «Закарнизная подсветка» (persona round 4).
       const shownN = groupsOnly || both ? n : onCount([...zoneItems, ...gItems]);
@@ -1462,8 +1524,8 @@ ${act ? `<div class="sl"><div class="k"><ha-icon icon="${esc(c.action.icon || "h
       const pill = (e) => {
         // The zone is in the chip (or under the name): the name itself without it.
         const full = e.name || nameOf(e.s, e.entity);
-        const name = e.z && e.z !== "Прочее" ? shortName(full) : full;
-        const zoneTag = !this._zone && e.z && e.z !== "Прочее" ? `${e.z} · ` : "";
+        let name = e.z && e.z !== "Прочее" ? shortName(full) : full;
+        const zoneTagAll = !this._zone && e.z && e.z !== "Прочее" ? `${e.z} · ` : "";
         const settable = this.settable(e);
         const unavailable = e.s.state === "unavailable";
         if (isCover) {
@@ -1474,11 +1536,15 @@ ${act ? `<div class="sl"><div class="k"><ha-icon icon="${esc(c.action.icon || "h
           const state = open && !["opening", "closing"].includes(e.s.state) && pos !== undefined ? `${pos} %` : coverWord(e.s);
           const moving = ["opening", "closing"].includes(e.s.state);
           return `<div class="pill ${open ? "on" : ""} ${moving ? "mv" : ""} ${settable ? "" : "wide"} ${unavailable ? "unavail" : ""}" data-e="${esc(e.entity)}" data-set="${settable ? 1 : 0}"><div class="f" style="width:${moving ? 100 : open ? pos ?? 100 : 0}%"></div>
-<ha-icon icon="${esc(e.icon || (coverDir(e, this._config) === "horizontal" ? "hauflo:curtain" : "hauflo:blind"))}"></ha-icon><div class="tx"><div class="nm">${esc(name)}</div><div class="lv">${esc(zoneTag)}${state}</div></div>
+<ha-icon icon="${esc(e.icon || (coverDir(e, this._config) === "horizontal" ? "hauflo:curtain" : "hauflo:blind"))}"></ha-icon><div class="tx"><div class="nm">${esc(name)}</div><div class="lv">${esc(zoneTagAll)}${state}</div></div>
 ${settable ? "" : `<div class="ud">${coverButtons(coverDir(e, this._config), "data-c")}</div>`}</div>`;
         }
         const on = isOpenOn(e);
         const pct = brightnessPct(e.s);
+        // A long name's note in brackets goes to the second line: «Основной свет в коридоре (где…» cut on a phone (review round 2).
+        const nb = name.length > 20 ? /^(.{6,}?)\s*\(([^()]{2,})\)\s*$/.exec(name) : null;
+        const zoneTag = nb ? `${nb[2]} · ${zoneTagAll}` : zoneTagAll;
+        name = nb ? nb[1] : name;
         return `<div class="pill ${on ? "on" : ""} ${settable ? "" : "solo"} ${unavailable ? "unavail" : ""}" data-e="${esc(e.entity)}" data-set="${settable ? 1 : 0}"><div class="f" style="width:${on && settable ? pct : 0}%"></div>
 <ha-icon icon="${esc(e.icon || (!String(e.entity).startsWith("light.") ? e.s.attributes.icon || "hauflo:power" : on ? "hauflo:bulb-on" : "hauflo:bulb"))}"></ha-icon><div class="tx"><div class="nm">${esc(name)}</div><div class="lv">${esc(zoneTag)}${nd(e.s) ? "нет связи" : on ? (settable ? `${pct} %` : "вкл") : "выкл"}</div></div></div>`;
       };
@@ -2179,7 +2245,7 @@ ${locks.length || opens.length ? `<div class="lst">${locks
         const cur = num(a.current_temperature);
         const target = num(a.temperature);
         // The mode on every row — «Нагрев» next to «Нагревает» in one list read as two different things (integrator run 17).
-        const word = !known(e.s) ? "нет связи" : e.s.state === "off" ? "Выкл" : fh ? (heats(e.s) ? "греет" : "держит") : HVAC[e.s.state] || e.s.state;
+        const word = !known(e.s) ? (["unavailable", "unknown"].includes(e.s.state) ? "нет связи" : "нет уставки") : e.s.state === "off" ? "Выкл" : fh ? (heats(e.s) ? "греет" : "держит") : HVAC[e.s.state] || e.s.state;
         const head = floors.length > 1 && e.floor && e.floor !== last ? `<div class="fl">${esc(e.floor)}</div>` : "";
         last = e.floor;
         const lit = fh ? heats(e.s) : known(e.s) && e.s.state !== "off";
