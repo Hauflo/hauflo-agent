@@ -62,7 +62,7 @@ async def _local_token(hass: HomeAssistant, entry: ConfigEntry):
 # (security review 25.10: «config/» let an automation with any service through, «lovelace/» a JS resource):
 # registries, the KNX UI, dashboards, voice exposure, HomeKit / Alice / group flows, its own scenes, status reads.
 _WS_EXACT = {
-    "get_states", "get_config", "ping", "unsubscribe_events", "persistent_notification/subscribe", "cloud/status", "frontend/get_themes",
+    "get_states", "get_config", "ping", "unsubscribe_events", "persistent_notification/subscribe", "cloud/status", "frontend/get_themes", "manifest/get",
     "config_entries/get",
     "config/area_registry/list", "config/area_registry/create", "config/area_registry/update",
     "config/floor_registry/list", "config/floor_registry/create", "config/floor_registry/update",
@@ -78,7 +78,7 @@ _SERVICES = {("homeassistant", "update_entity"), ("frontend", "set_theme"), ("sc
 # What only reads (or refreshes) — every other allowed command changes the house and needs a fresh backup first
 # (security expert 25.10: the backup was the cloud's promise, not the agent's).
 _WS_READS = {
-    "get_states", "get_config", "ping", "unsubscribe_events", "persistent_notification/subscribe", "cloud/status", "frontend/get_themes",
+    "get_states", "get_config", "ping", "unsubscribe_events", "persistent_notification/subscribe", "cloud/status", "frontend/get_themes", "manifest/get",
     "config_entries/get", "config/area_registry/list", "config/floor_registry/list", "config/label_registry/list",
     "config/device_registry/list", "config/entity_registry/list", "config/entity_registry/get", "config/entity_registry/get_entries",
     "knx/get_knx_project", "knx/get_entity_config", "knx/validate_entity", "knx/get_entities_by_group", "knx/group_monitor_info",

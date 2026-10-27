@@ -149,6 +149,7 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
     "Ожидание": "Idle", "Вода": "Water", "Газ": "Gas", "Дым": "Smoke", "Угарный газ": "Carbon monoxide", "Перегрев": "Overheat", "Вскрытие": "Tamper", "Необычно": "Unusual",
     "загрузка…": "loading…", "истории пока нет": "no history yet", "только что": "just now", "Кухня": "Kitchen", "Гостиная зона": "Living area", "Обеденная": "Dining",
     "Остров": "Island", "ТВ": "TV", "Здание": "Building", "Устройства": "Devices", "Зима": "Winter", "Лето": "Summer",
+    "Тёплые полы": "Floor heating", "греет": "heating", "держит": "holding", "Сейчас не греют": "Not heating now", "сейчас": "now", "Пол": "Floor", "В комнате": "Room",
   };
   // Phrases with numbers / declensions (whole text node).
   const EN_RX = [
@@ -156,6 +157,7 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
     [/^(\d+) ламп[аы]? в (\d+) комнат[аеху]*$/, (m, a, b) => `${a} light${a === "1" ? "" : "s"} in ${b} room${b === "1" ? "" : "s"}`],
     [/^(\d+) из (\d+) открыто$/, "$1 of $2 open"],
     [/^(\d+) из (\d+) работают$/, "$1 of $2 running"],
+    [/^(\d+) из (\d+) греют$/, "$1 of $2 heating"],
     [/^(\d+) из (\d+)/, "$1 of $2"],
     [/^(\d+) авари[яийе]+$/, (m, a) => `${a} alarm${a === "1" ? "" : "s"}`],
     [/^Показать все \((\d+)\)$/, "Show all ($1)"],
@@ -182,7 +184,7 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
     [new RegExp(`${B}с (?=\\d)`, "g"), "$1since "], [new RegExp(`${B}в (?=\\d)`, "g"), "$1at "], [new RegExp(`${B}до (?=\\d)`, "g"), "$1to "], [new RegExp(`${B}за (?=\\d)`, "g"), "$1in "],
     [new RegExp(`${B}открыто: `, "g"), "$1open: "], [new RegExp(`${B}не заперто: `, "g"), "$1unlocked: "], [new RegExp(`${B}внимание: `, "g"), "$1attention: "],
     [/ · вкл$/, " · on"], [/ · выкл$/, " · off"], [/^Яркость · /, "Brightness · "], [/^Нагрев · /, "Heat · "], [/^Охлаждение · /, "Cooling · "],
-    [new RegExp(`${B}мин (?=-?\\d)`, "g"), "$1min "], [new RegExp(`${B}макс (?=-?\\d)`, "g"), "$1max "], [/^За сутки$/, "Last 24 h"], [/^За (\d+) ч$/, "Last $1 h"],
+    [new RegExp(`${B}мин (?=-?\\d)`, "g"), "$1min "], [new RegExp(`${B}макс (?=-?\\d)`, "g"), "$1max "], [/^За сутки$/, "Last 24 h"], [/^За (\d+) ч$/, "Last $1 h"], [/^Пол · /, "Floor · "],
     [/км\/ч/g, "km/h"], [/м\/с/g, "m/s"], [/мм рт\. ст\./g, "mmHg"], [/гПа/g, "hPa"], [/мбар/g, "mbar"], [/мкг\/м³/g, "µg/m³"], [/(\d) Вт(?=$|[^А-Яа-яЁё])/g, "$1 W"],
   ];
   const tr = (text) => {
@@ -302,6 +304,117 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
     const yOf = (v) => Math.min(H - 1, Math.max(1, H - ((v - lo0) / (hi0 - lo0 || 1)) * (H - 2 * pad) - pad));
     return { line, area: `${line}L${W},${H}L${xy[0][0].toFixed(1)},${H}Z`, lo: vlo, hi: vhi, hours: hoursIn, yOf };
   };
+
+  // --- a thermostat's day: its reading and its setpoint from HA's recorder (one call, attributes), cached 5 minutes --
+  const CHIST = new Map();
+  const climateSeries = async (hass, id, hours = 24, sensor) => {
+    const key = `${id}|${sensor || ""}|${hours}`;
+    const c = CHIST.get(key);
+    if (c && Date.now() - c.at < 5 * 60000) return c.data;
+    const end = new Date();
+    const start = new Date(end.getTime() - hours * 3600000);
+    let r = {};
+    try {
+      r = await hass.callWS({ type: "history/history_during_period", start_time: start.toISOString(), end_time: end.toISOString(), entity_ids: [id], minimal_response: false, no_attributes: false, significant_changes_only: false });
+    } catch (e) {
+      r = {};
+    }
+    const n = (v) => (v === null || v === undefined || v === "" ? NaN : Number(v));
+    const at = (p) => ((p.lu ?? p.lc) ? (p.lu ?? p.lc) * 1000 : Date.parse(p.last_updated || p.last_changed));
+    const of = (k) => (r[id] || []).map((p) => [at(p), n((p.a || p.attributes || {})[k])]).filter(([t, v]) => !isNaN(t) && !isNaN(v));
+    // A room sensor of its own (`history`) is the reading; the thermostat's attribute otherwise.
+    const cur = sensor ? (await series(hass, sensor, hours)).pts : of("current_temperature");
+    // The setpoint changes seldom: only its changes (every reading writes a row with it).
+    const sp = of("temperature").filter((p, i, a) => !i || p[1] !== a[i - 1][1]);
+    const data = { cur, sp, range: [start.getTime(), end.getTime()] };
+    CHIST.set(key, { at: Date.now(), data });
+    return data;
+  };
+  /** The temperature chart beside a thermostat's number (owner 27.10: «рисовать рядом с текущей температурой
+   * график»): the reading as a line over the day, the setpoint dashed, degrees on the right, hours under it.
+   * Always the same height — loading, no history or a chart — so the page doesn't move. `data` undefined: loading. */
+  const tchart = (data, live, { H = 88, label = "В комнате", tone = "" } = {}) => {
+    const total = H + 44;
+    const shell = (inner) => `<div class="tch ${tone}" style="height:${total}px">${inner}</div>`;
+    if (data === undefined) return shell(`<div class="tno">загрузка…</div>`);
+    const now = Date.now();
+    const cur0 = data?.cur || [];
+    // Half an hour of history at least: a few minutes are a dot, not a day.
+    if (!cur0.length || now - cur0[0][0] < 30 * 60000) return shell(`<div class="tno">истории пока нет</div>`);
+    const t0 = Math.max(data.range[0], cur0[0][0]);
+    const span = now - t0 || 1;
+    // The live value is the line's end: the chart and the big number never disagree.
+    const cur = live.cur === undefined ? [...cur0] : [...cur0, [now, live.cur]];
+    // The setpoint held into the window from before it, then its changes, then now.
+    const spIn = (data.sp || []).filter((p) => p[0] > t0);
+    const spBefore = [...(data.sp || [])].reverse().find((p) => p[0] <= t0);
+    const sp = [...(spBefore ? [[t0, spBefore[1]]] : []), ...spIn, ...(live.sp !== undefined ? [[now, live.sp]] : spIn.length || spBefore ? [[now, (spIn[spIn.length - 1] || spBefore)[1]]] : [])];
+    // A day of readings every few seconds: averaged into ≤ 240 points.
+    const B = 240;
+    let pts = cur;
+    if (cur.length > B) {
+      const bins = Array.from({ length: B }, () => [0, 0, 0]);
+      for (const [t, v] of cur) {
+        const b = bins[Math.min(B - 1, Math.max(0, Math.floor(((t - t0) / span) * B)))];
+        b[0] += t;
+        b[1] += v;
+        b[2]++;
+      }
+      pts = bins.filter((b) => b[2]).map((b) => [b[0] / b[2], b[1] / b[2]]);
+      pts.push(cur[cur.length - 1]);
+    }
+    const vals = [...pts.map((p) => p[1]), ...sp.map((p) => p[1])];
+    let lo = Math.min(...vals);
+    let hi = Math.max(...vals);
+    // At least 2° of axis: 22,4–22,6° isn't stretched into a cliff.
+    if (hi - lo < 2) {
+      const m = (hi + lo) / 2;
+      lo = m - 1;
+      hi = m + 1;
+    }
+    const step = [0.5, 1, 2, 5, 10].find((s) => (hi - lo) / s <= 3) || 10;
+    lo = Math.floor(lo / step) * step;
+    hi = Math.ceil(hi / step) * step;
+    const W = 400;
+    const pad = 4;
+    const x = (t) => ((Math.max(t, t0) - t0) / span) * W;
+    const y = (v) => pad + (1 - (v - lo) / (hi - lo || 1)) * (H - 2 * pad);
+    const line = pts.map(([t, v], i) => `${i ? "L" : "M"}${x(t).toFixed(1)},${y(v).toFixed(1)}`).join("");
+    const area = `${line}L${x(pts[pts.length - 1][0]).toFixed(1)},${H}L${x(pts[0][0]).toFixed(1)},${H}Z`;
+    // The setpoint as steps: it's held, then changed.
+    const spLine = sp.map(([t, v], i) => (i ? `H${x(t).toFixed(1)}V${y(v).toFixed(1)}` : `M${x(t).toFixed(1)},${y(v).toFixed(1)}`)).join("");
+    const ticksY = [];
+    for (let v = lo; v <= hi + 1e-9; v += step) ticksY.push(v);
+    // Hours: every 6 on a day, 2 / 1 / ½ on a shorter history; none at the very edges (the labels would collide).
+    const hstep = span >= 12 * 3600000 ? 6 : span >= 5 * 3600000 ? 2 : span >= 2 * 3600000 ? 1 : 0.5;
+    const ticksX = [];
+    const d0 = new Date(t0);
+    d0.setMinutes(0, 0, 0);
+    for (let t = d0.getTime(); t < now; t += 1800000) {
+      const d = new Date(t);
+      const h = d.getHours() + d.getMinutes() / 60;
+      if (t > t0 && Math.abs((h / hstep) - Math.round(h / hstep)) < 1e-6 && (t - t0) / span > 0.06 && (t - t0) / span < 0.84) ticksX.push(t);
+    }
+    const hm = (t) => {
+      const d = new Date(t);
+      return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    };
+    const hours = Math.round(span / 3600000);
+    const period = span >= 22 * 3600000 ? "За сутки" : hours >= 1 ? `За ${hours} ч` : "";
+    const digits = step < 1 ? 1 : 0;
+    return shell(`<div class="tlg"><span><i class="ln"></i>${esc(label)}</span>${sp.length ? `<span><i class="ds"></i>цель</span>` : ""}<span class="per">${period}</span></div>
+<div class="tpl" style="height:${H}px"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">${ticksY.map((v) => `<line class="gr" x1="0" x2="${W}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" vector-effect="non-scaling-stroke"/>`).join("")}<path class="ar" d="${area}"/>${sp.length ? `<path class="sp" d="${spLine}" vector-effect="non-scaling-stroke"/>` : ""}<path class="cu" d="${line}" vector-effect="non-scaling-stroke"/></svg>${ticksY.map((v) => `<span class="ty" style="top:${((y(v) / H) * 100).toFixed(1)}%">${fmt(v, digits)}°</span>`).join("")}</div>
+<div class="tx">${ticksX.map((t) => `<span style="left:${(((t - t0) / span) * 100).toFixed(1)}%">${hm(t)}</span>`).join("")}<span class="now">сейчас</span></div>`);
+  };
+  const TCHART_CSS = `.tch{position:relative;margin-top:14px;--tc:var(--ink2)}.tch.heat{--tc:var(--amber)}.tch.cool{--tc:var(--ice)}
+.tlg{display:flex;align-items:center;gap:14px;height:16px;margin-bottom:6px;font:400 11px Onest,sans-serif;color:var(--ink3);white-space:nowrap}.tlg .per{margin-left:auto;margin-right:34px}
+.tlg i{display:inline-block;width:14px;border-top:2px solid var(--tc);vertical-align:middle;margin:-2px 6px 0 0}.tlg .ds{border-top:2px dashed var(--ink2);opacity:.8}.tlg span:first-child{color:var(--ink2)}
+.tpl{position:relative;margin-right:34px}.tpl svg{display:block;width:100%;height:100%;overflow:visible}
+.tpl .gr{stroke:var(--hair);stroke-width:1}.tpl .cu{fill:none;stroke:var(--tc);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}.tpl .ar{fill:var(--tc);opacity:.10;stroke:none}
+.tpl .sp{fill:none;stroke:var(--ink2);stroke-width:1.25;stroke-dasharray:5 4;opacity:.8}
+.ty{position:absolute;left:calc(100% + 6px);transform:translateY(-50%);font:400 11px Onest,sans-serif;color:var(--ink3);white-space:nowrap;font-variant-numeric:tabular-nums}
+.tx{position:relative;height:16px;margin:6px 34px 0 0;font:400 11px Onest,sans-serif;color:var(--ink3);font-variant-numeric:tabular-nums}.tx span{position:absolute;top:0;transform:translateX(-50%);white-space:nowrap}.tx .now{left:auto;right:-34px;transform:none}
+.tno{position:absolute;inset:0;display:grid;place-items:center;border-radius:14px;background:var(--track);font:400 13px Onest,sans-serif;color:var(--ink3)}`;
 
   class EHCard extends HTMLElement {
     constructor() {
@@ -665,28 +778,48 @@ ${(c.alarms || []).length && ok ? `<div><span class="caps">Датчики</span>
       this._loadHist();
       this._update();
     }
-    /** The room's temperature over a day, faint behind the setpoint (owner 2026-10-25: «чтобы клиент видел,
-     * что за 24 часа температура в норме»). From `history` (a sensor) or the thermostat's own reading. */
+    /** The room's temperature over a day with the setpoint (owner 2026-10-25: «чтобы клиент видел, что за 24 часа
+     * температура в норме»; 27.10: a chart beside every thermostat's number, the floor heating's too). From `history`
+     * (a sensor) or the thermostat's own reading; on a card of zones — the zone tapped. */
+    chartOf() {
+      const c = this._config;
+      return c.zones?.length ? (c.zones[this._zi || 0] || c.zones[0]).entity : c.entity;
+    }
     async _loadHist() {
       const c = this._config;
-      if (!c || c.compact || c.chart === false || this._histAt > Date.now() - 5 * 60000) return;
+      const id = c && this.chartOf();
+      if (!id || c.chart === false || (this._histId === id && this._histAt > Date.now() - 5 * 60000)) return;
       this._histAt = Date.now();
-      this._hist = c.history ? await series(this._hass, c.history, 24) : await series(this._hass, c.entity, 24, "current_temperature");
+      this._histId = id;
+      let data;
+      try {
+        data = await climateSeries(this._hass, id, 24, c.zones?.length ? undefined : c.history);
+      } catch (e) {
+        data = null;
+      }
+      if (this._histId !== id) return;
+      this._hist = data;
       this._sig = "";
       this._update();
     }
+    /** The chart of a thermostat: its live reading and setpoint end the lines. */
+    chart(id, label, tone, H) {
+      if (this._config.chart === false) return "";
+      const s = st(this._hass, id);
+      const a = s?.attributes || {};
+      const cur = this._config.history && !this._config.zones?.length ? num(st(this._hass, this._config.history)?.state) : num(a.current_temperature);
+      return tchart(this._histId === id ? this._hist : undefined, { cur, sp: num(a.temperature) }, { H, label, tone });
+    }
     css() {
-      return `.c{padding:20px 22px}.row{display:flex;justify-content:space-between;align-items:flex-end}
+      return `${TCHART_CSS}.c{padding:20px 22px}.row{display:flex;justify-content:space-between;align-items:flex-end}
 .t{font-size:76px;line-height:.9}.t sup{font:300 20px Onest,sans-serif;vertical-align:top;position:relative;top:8px;color:var(--ink2);margin-left:2px}
 .sub{font:400 13px Onest,sans-serif;color:var(--ink2);margin-top:8px}.st{display:flex;flex-direction:column;gap:8px}
 .none{font:300 20px/1.2 Onest,sans-serif;color:var(--ink2);margin:6px 0}
 .st button{width:48px;height:48px;border-radius:24px;display:grid;place-items:center;box-shadow:var(--eh-edge,inset 0 0 0 1px var(--hair));background:var(--eh-glass,transparent);font:300 26px Onest,sans-serif}
 .st button:active{transform:scale(.94)}.st button:disabled{opacity:.35;pointer-events:none}
 .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;min-height:22px}
-.chart{position:relative;margin-top:12px;height:44px}.chart+.scale{margin-top:8px}.chart span{position:absolute;left:0;top:-2px;font:400 13px Onest,sans-serif;color:var(--ink2)}
-.spark{display:block;width:100%;height:44px;color:var(--ink3);opacity:.55;-webkit-mask-image:linear-gradient(90deg,transparent,#000 18%);mask-image:linear-gradient(90deg,transparent,#000 18%);pointer-events:none}
 .nos{font:400 13px Onest,sans-serif;color:var(--ink2);margin-top:4px}.goal{font:500 11px Onest,sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-left:8px;vertical-align:top;position:relative;top:14px}
-.heat .spark{color:var(--amber)}.cool .spark{color:var(--ice)}.day{font:400 13px Onest,sans-serif;color:var(--ink2);margin-top:3px}
+.day{font:400 13px Onest,sans-serif;color:var(--ink2);margin-top:3px}
 .act{display:inline-flex;align-items:center;gap:7px;font:500 12px Onest,sans-serif;color:var(--ink2);padding:4px 10px;border-radius:11px;background:var(--track)}
 .act i{width:6px;height:6px;border-radius:3px;background:var(--ink3)}.heat .act i{background:var(--amber);box-shadow:0 0 8px var(--amber)}.cool .act i{background:var(--ice);box-shadow:0 0 8px var(--ice)}
 .scale{margin-top:18px;touch-action:pan-y;cursor:ew-resize;user-select:none;-webkit-user-select:none;padding:6px 0}
@@ -706,7 +839,7 @@ ${(c.alarms || []).length && ok ? `<div><span class="caps">Датчики</span>
 .st.row2{flex-direction:row}.st.row2 button{width:44px;height:44px;border-radius:22px;font-size:22px}
 .cool .glow{background:radial-gradient(50% 50% at 20% 10%,var(--iceGlow),transparent 70%);opacity:.6}
 .zs .caps{display:block;margin-bottom:4px}.zr{display:flex;align-items:center;gap:12px;padding:8px 0;border-top:1px solid var(--hair)}.zr:nth-child(2){border-top:0}
-.zn{font:500 15px Onest,sans-serif;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.zs .cct{font-size:32px}.zr.heat .zn::after{content:"";display:inline-block;width:6px;height:6px;border-radius:3px;background:var(--amber);margin-left:7px;vertical-align:middle}`;
+.zn{font:500 15px Onest,sans-serif;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.zs .zr .ccn{cursor:pointer}.zs .zr:not(.sel) .zn{color:var(--ink2)}.zs .cct{font-size:32px}.zr.heat .zn::after{content:"";display:inline-block;width:6px;height:6px;border-radius:3px;background:var(--amber);margin-left:7px;vertical-align:middle}`;
     }
     render() {
       const s = st(this._hass, this._config.entity);
@@ -747,39 +880,43 @@ ${(c.alarms || []).length && ok ? `<div><span class="caps">Датчики</span>
       // A mode lit only when the thermostat has said something: HA's default «heat» isn't a fact (integrator run 25.10).
       const opts = useModes ? modes.map((m) => [m, HVAC[m], known && s.state === m]) : presets.map((p) => [p, PRESET[p] || p, known && a.preset_mode === p]);
       const digits = step < 1 && target !== undefined && target % 1 ? 1 : 0;
-      const sp = this._hist ? spark(this._hist, 600, 44, 6, 3, 6, 6) : null;
       const readings = this.readings();
       // «Комфорт» of the agent (comfort.py): the house's season beside the label, and in winter the floor's setpoint
       // the agent keeps now — the client sees why the room warms (owner 25.10).
       const season = a.house_mode === "summer" ? "Лето" : a.house_mode === "winter" ? "Зима" : "";
       const fl = season === "Зима" && Array.isArray(a.floor_targets) ? a.floor_targets.map(num).filter((v) => v !== undefined) : [];
       const floorNow = fl.length ? ` · пол ${Math.min(...fl) === Math.max(...fl) ? fmt(fl[0]) : `${fmt(Math.min(...fl))}–${fmt(Math.max(...fl))}`}°` : "";
-      const chart = sp ? `<svg class="spark" viewBox="0 0 600 44" preserveAspectRatio="none"><defs><linearGradient id="cf" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="currentColor" stop-opacity=".28"/><stop offset="1" stop-color="currentColor" stop-opacity="0"/></linearGradient></defs><path d="${sp.area}" fill="url(#cf)"/>${target !== undefined ? `<line x1="0" x2="600" y1="${sp.yOf(target).toFixed(1)}" y2="${sp.yOf(target).toFixed(1)}" stroke="currentColor" stroke-width="1" stroke-dasharray="4 5" vector-effect="non-scaling-stroke" opacity=".7"/>` : ""}<path d="${sp.line}" fill="none" stroke="currentColor" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round"/></svg>` : "";
+      const chart = this.chart(this._config.entity, this._config.floor ? "Пол" : "В комнате", mood, 96);
       return `<div class="glass c ${mood}"><div class="glow"></div><div style="position:relative">
 <div class="top"><span class="caps">${esc(this._config.label || "Климат")}${season ? ` · ${season}` : ""}</span>${doing ? `<span class="act"><i></i>${doing}</span>` : ""}</div>
 <div class="row"><div>${range ? `<div class="t thin"><span class="v">${fmt(lo)}–${fmt(hi)}</span><sup>°C</sup></div>` : target === undefined ? `<div class="t thin"><span class="v">—</span></div><div class="nos">нет связи с термостатом</div>` : `<div class="t thin"><span class="v">${fmt(target, digits)}</span><sup>°C</sup><span class="goal">цель</span></div>`}
-<div class="sub">${cur === undefined ? (this._config.floor ? "нет данных" : "нет данных из комнаты") : `${this._config.floor ? "Сейчас" : "В комнате"} ${fmt(cur, 1)}°`}${floorNow}${hum !== undefined ? ` · влажность ${fmt(hum)} %` : ""}${sp ? ` · ${sp.hours >= 22 ? "за сутки" : `за ${Math.round(sp.hours)} ч`} ${fmt(sp.lo, 1)}–${fmt(sp.hi, 1)}°` : ""}</div>${readings.length ? this.readingsRow(readings) : ""}</div>
+<div class="sub">${cur === undefined ? (this._config.floor ? "нет данных" : "нет данных из комнаты") : `${this._config.floor ? "Сейчас" : "В комнате"} ${fmt(cur, 1)}°`}${floorNow}${hum !== undefined ? ` · влажность ${fmt(hum)} %` : ""}</div>${readings.length ? this.readingsRow(readings) : ""}</div>
 <div class="st"><button data-d="${step}" aria-label="Теплее"${target === undefined ? " disabled" : ""}>+</button><button data-d="${-step}" aria-label="Холоднее"${target === undefined ? " disabled" : ""}>−</button></div></div>
-${chart ? `<div class="chart">${chart}</div>` : ""}
+${chart}
 <div class="scale" data-min="${min}" data-max="${max}" data-step="${step}"><div class="ticks">${ticks}</div><div class="ends"><span>${fmt(min)}°</span><span>проведите, чтобы изменить</span><span>${fmt(max)}°</span></div></div>
 ${opts.length ? `<div class="modes">${opts.slice(0, 5).map(([k, l, on]) => `<button class="${on ? "on" : ""}" data-${useModes ? "m" : "p"}="${esc(k)}">${esc(l)}</button>`).join("")}</div>` : ""}
 ${fans.length > 1 || swing ? `<div class="modes fan"><span class="fl"><ha-icon icon="hauflo:fan"></ha-icon></span>${fans.slice(0, 5).map((f) => `<button class="${known && a.fan_mode === f ? "on" : ""}" data-f="${esc(f)}">${esc(FAN[f] || f)}</button>`).join("")}${swing ? `<button class="${known && a.swing_mode && a.swing_mode !== "off" ? "on" : ""}" data-sw="${esc(a.swing_mode && a.swing_mode !== "off" ? "off" : swing)}">Обдув</button>` : ""}</div>` : ""}</div></div>`;
     }
     /** Floor-heating zones of one room in one card: a line each — name, now, setpoint, ± (persona review 25.10). */
     zones() {
-      const rows = this._config.zones.map((z) => {
+      const zi = Math.min(this._zi || 0, this._config.zones.length - 1);
+      const rows = this._config.zones.map((z, i) => {
         const s = st(this._hass, z.entity);
         const a = s?.attributes || {};
         const target = num(a.temperature);
         const cur = num(a.current_temperature);
         const step = Math.max(num(a.target_temp_step) || 0.5, 0.5);
         const heating = a.hvac_action === "heating" && (cur === undefined || target === undefined || cur < target + 0.5);
-        return `<div class="zr ${heating ? "heat" : ""}"><div class="ccn"><span class="zn">${esc(z.name || nameOf(s, z.entity))}</span><span class="sub">${!s || ["unavailable", "unknown"].includes(s.state) ? "нет связи" : cur === undefined ? "нет данных" : `Сейчас ${fmt(cur, 1)}°`}${heating ? " · нагрев" : ""}</span></div>
+        return `<div class="zr ${heating ? "heat" : ""}${i === zi ? " sel" : ""}"><div class="ccn" data-z="${i}"><span class="zn">${esc(z.name || nameOf(s, z.entity))}</span><span class="sub">${!s || ["unavailable", "unknown"].includes(s.state) ? "нет связи" : cur === undefined ? "нет данных" : `Сейчас ${fmt(cur, 1)}°`}${heating ? " · нагрев" : ""}</span></div>
 <div class="cct thin">${target === undefined ? "—" : `${fmt(target, step < 1 && target % 1 ? 1 : 0)}<small>°</small>`}</div>
 <div class="st row2"><button data-e="${esc(z.entity)}" data-d="${-step}" aria-label="Холоднее"${target === undefined ? " disabled" : ""}>−</button><button data-e="${esc(z.entity)}" data-d="${step}" aria-label="Теплее"${target === undefined ? " disabled" : ""}>+</button></div></div>`;
       });
       const any = this._config.zones.some((z) => st(this._hass, z.entity)?.attributes?.hvac_action === "heating");
-      return `<div class="glass cc zs ${any ? "heat" : ""}"><div class="glow"></div><div style="position:relative"><div class="caps">${esc(this._config.label || "Тёплый пол")}</div>${rows.join("")}</div></div>`;
+      // One chart for the zone tapped (the first at the start): a chart per line would be a wall of lines.
+      const z = this._config.zones[zi];
+      const zs = st(this._hass, z.entity);
+      const chart = this.chart(z.entity, `Пол · ${z.name || nameOf(zs, z.entity)}`, zs?.attributes?.hvac_action === "heating" ? "heat" : "", 64);
+      return `<div class="glass cc zs ${any ? "heat" : ""}"><div class="glow"></div><div style="position:relative"><div class="caps">${esc(this._config.label || "Тёплый пол")}</div>${rows.join("")}${chart}</div></div>`;
     }
     /** The other readings the card shows (a floor's sensors), each with its value. */
     readings() {
@@ -803,7 +940,7 @@ ${fans.length > 1 || swing ? `<div class="modes fan"><span class="fl"><ha-icon i
       return `<div class="glass cc ${heating ? "heat" : ""}"><div class="glow"></div><div class="ccrow">
 <div class="ccn"><span class="caps">${esc(this._config.label || nameOf(s, this._config.entity))}</span><span class="sub">${cur === undefined ? "нет данных" : `Сейчас ${fmt(cur, 1)}°`}${heating ? " · нагрев" : ""}</span>${sensors.length > 1 ? this.readingsRow(sensors) : ""}</div>
 <div class="cct thin">${target === undefined ? "—" : `${fmt(target, step < 1 && target % 1 ? 1 : 0)}<small>°</small>`}</div>
-<div class="st row2"><button data-d="${-step}" aria-label="Холоднее"${target === undefined ? " disabled" : ""}>−</button><button data-d="${step}" aria-label="Теплее"${target === undefined ? " disabled" : ""}>+</button></div></div></div>`;
+<div class="st row2"><button data-d="${-step}" aria-label="Холоднее"${target === undefined ? " disabled" : ""}>−</button><button data-d="${step}" aria-label="Теплее"${target === undefined ? " disabled" : ""}>+</button></div></div>${this.chart(this._config.entity, this._config.floor ? "Пол" : "Температура", heating ? "heat" : "", 56)}</div>`;
     }
     bind() {
       const id = this._config.entity;
@@ -884,6 +1021,15 @@ ${fans.length > 1 || swing ? `<div class="modes fan"><span class="fl"><ha-icon i
       this.shadowRoot.querySelectorAll("button[data-f]").forEach((b) => b.addEventListener("click", () => call(this._hass, "climate", "set_fan_mode", { entity_id: id, fan_mode: b.dataset.f })));
       this.shadowRoot.querySelectorAll("button[data-sw]").forEach((b) => b.addEventListener("click", () => call(this._hass, "climate", "set_swing_mode", { entity_id: id, swing_mode: b.dataset.sw })));
       this.shadowRoot.querySelector(".caps")?.addEventListener("click", () => moreInfo(this, id));
+      this.shadowRoot.querySelectorAll("[data-z]").forEach((el) =>
+        el.addEventListener("click", () => {
+          if (Number(el.dataset.z) === (this._zi || 0)) return;
+          this._zi = Number(el.dataset.z);
+          this._sig = "";
+          this._update();
+          this._loadHist();
+        }),
+      );
     }
     getGridOptions() {
       return { columns: 12, rows: "auto" };
@@ -1210,12 +1356,12 @@ ${act ? `<div class="sl"><div class="k"><ha-icon icon="${esc(c.action.icon || "h
     css() {
       return `.k{padding:16px}.hd{display:flex;align-items:center;gap:12px}.hd .sum{flex:1;min-width:0}
 .pill.wide{grid-column:span 2}.more{margin-top:10px;width:100%;height:44px;border-radius:14px;font:500 13px Onest,sans-serif;color:var(--ink2);box-shadow:inset 0 0 0 1px var(--hair)}
-.cover .hd{flex-wrap:nowrap}.cover .hd .sum{flex:1 1 auto;min-width:0}@container (max-width:360px){.cover .mst button.ico{width:38px;height:38px}}
+.cover .hd{flex-wrap:nowrap}.cover .hd .sum{flex:1 1 auto;min-width:0}
 .hd b{font:300 24px Onest,sans-serif;letter-spacing:-.03em;display:block;line-height:1.05;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hd b.nd{font:400 15px Onest,sans-serif;letter-spacing:0;color:var(--ink3);margin-top:4px}
 .grp{margin-top:14px}.grp .caps{display:block;margin-bottom:8px}.grow{display:flex;gap:6px;flex-wrap:wrap}
 .g{display:flex;align-items:center;gap:6px;padding:5px 5px 5px 14px;border-radius:18px;box-shadow:inset 0 0 0 1px var(--hair);font:500 12px Onest,sans-serif;max-width:100%}
-.g span{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;hyphens:auto;overflow-wrap:anywhere;line-height:1.25}.g.on{background:var(--track);box-shadow:none}.g.on.lt{background:color-mix(in srgb,var(--amber) 22%,transparent)}
+.g span{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;hyphens:manual;overflow-wrap:break-word;line-height:1.25}.g.on{background:var(--track);box-shadow:none}.g.on.lt{background:color-mix(in srgb,var(--amber) 22%,transparent)}
 .g button{width:44px;height:44px;border-radius:14px;display:grid;place-items:center;color:var(--ink);box-shadow:inset 0 0 0 1px var(--hair);background:var(--eh-glass,transparent);flex:0 0 auto}.g button ha-icon{--mdc-icon-size:20px}.g button:active,.ud button:active{transform:scale(.92)}
 .g.lt{padding:0 16px;height:44px;cursor:pointer}
 .g.gc{display:grid;grid-template-columns:1fr repeat(3,44px);gap:6px;width:100%;padding:5px 5px 5px 16px;font:500 13px Onest,sans-serif}
@@ -1230,7 +1376,7 @@ ${act ? `<div class="sl"><div class="k"><ha-icon icon="${esc(c.action.icon || "h
 .cover .bar i{background:linear-gradient(90deg,color-mix(in srgb,var(--ice) 35%,transparent),color-mix(in srgb,var(--ice) 65%,transparent));box-shadow:10px 0 30px var(--iceGlow)}
 .mst button.ico{width:44px;height:44px;padding:0;border-radius:22px;display:grid;place-items:center;color:var(--ink)}.mst button.ico ha-icon{--mdc-icon-size:21px}.cover .mst{height:auto}
 .bar span{position:absolute;left:14px;top:11px;font:500 12px Onest,sans-serif}
-.chips{display:flex;gap:6px;margin-top:14px;overflow-x:auto;scrollbar-width:none;-webkit-mask-image:linear-gradient(90deg,#000 88%,transparent);mask-image:linear-gradient(90deg,#000 88%,transparent);padding-right:24px}.chips::-webkit-scrollbar{display:none}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px}
 .chips button{flex:0 0 auto;min-height:44px;padding:0 15px;display:inline-flex;align-items:center;border-radius:14px;font:500 12px Onest,sans-serif;color:var(--ink2);box-shadow:inset 0 0 0 1px var(--hair)}
 .chips button.on{color:var(--ink);background:var(--track);box-shadow:none}.chips em{font-style:normal;color:var(--amber);margin-left:5px}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
@@ -1238,7 +1384,7 @@ ${act ? `<div class="sl"><div class="k"><ha-icon icon="${esc(c.action.icon || "h
 .pill .f{position:absolute;left:0;top:0;bottom:0;transition:width .25s}
 .pill.dragging .f{transition:none}.pill>*:not(.f){position:relative}
 .pill ha-icon{color:var(--ink3);--mdc-icon-size:18px}.pill .tx{min-width:0;flex:1}
-.pill .nm{font:500 13px/1.25 Onest,sans-serif;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere;-webkit-hyphens:auto;hyphens:auto}
+.pill .nm{font:500 13px/1.25 Onest,sans-serif;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:break-word;hyphens:manual}
 .pill .lv{font:400 13px Onest,sans-serif;color:var(--ink2)}
 .pill.on{box-shadow:none;background:var(--track)}.pill.on>ha-icon{color:var(--accentC)}
 .light .pill.on .f{background:linear-gradient(90deg,color-mix(in srgb,var(--amber) 42%,transparent),color-mix(in srgb,var(--amber) 22%,transparent))}
@@ -1859,7 +2005,7 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
 .sum i,.r i{width:8px;height:8px;border-radius:4px;flex:0 0 auto}.ok i,.run i,i.ok{background:var(--mint);box-shadow:0 0 8px var(--mint)}.stop i{background:var(--ink3)}.fault i,i.fault{background:var(--alert);box-shadow:0 0 10px var(--alert)}.nolink i{background:transparent;box-shadow:inset 0 0 0 1.5px var(--ink3)}.val i{background:var(--ice)}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-top:8px}
 .r{display:flex;align-items:center;gap:10px;padding:10px 12px;min-height:56px;border-radius:18px;box-shadow:inset 0 0 0 1px var(--hair);cursor:pointer;min-width:0}.r .tx{min-width:0}
-.nm{font:500 13px/1.25 Onest,sans-serif;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere;-webkit-hyphens:auto;hyphens:auto}
+.nm{font:500 13px/1.25 Onest,sans-serif;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:break-word;hyphens:manual}
 .fault,.warn{box-shadow:none}.w{font:400 13px Onest,sans-serif;color:var(--ink2)}
 .fault{background:color-mix(in srgb,var(--alert) 14%,transparent)}.fault .w{color:var(--alert);font-weight:600}
 .warn i,i.warn{background:var(--amber);box-shadow:0 0 8px var(--amberGlow)}.warn{background:color-mix(in srgb,var(--amber) 14%,transparent)}.warn .w{color:var(--amber);font-weight:600}`;
@@ -1898,7 +2044,7 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
 .st{font:300 24px Onest,sans-serif;letter-spacing:-.02em}.sub{font:400 13px Onest,sans-serif;color:var(--ink2);margin-top:2px}
 .btns{display:flex;gap:6px;margin-top:14px}.btns button{flex:1;height:44px;border-radius:14px;font:500 13px Onest,sans-serif;box-shadow:inset 0 0 0 1px var(--hair)}.btns button.on{background:var(--track);box-shadow:none}
 .lst{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}.it{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:14px;background:var(--track);cursor:pointer;min-width:0}
-.it .nm{font:500 13px Onest,sans-serif;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;hyphens:auto;overflow-wrap:anywhere;line-height:1.25}.it .w{font:400 13px Onest,sans-serif;color:var(--ink2)}.it.bad{background:color-mix(in srgb,var(--amber) 18%,transparent)}.it.bad ha-icon{color:var(--amber)}
+.it .nm{font:500 13px Onest,sans-serif;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;hyphens:manual;overflow-wrap:break-word;line-height:1.25}.it .w{font:400 13px Onest,sans-serif;color:var(--ink2)}.it.bad{background:color-mix(in srgb,var(--amber) 18%,transparent)}.it.bad ha-icon{color:var(--amber)}
 .alarm .glow{background:radial-gradient(60% 60% at 15% 10%,var(--alertGlow),transparent 70%)}`;
     }
     render() {
@@ -1995,6 +2141,9 @@ ${locks.length || opens.length ? `<div class="lst">${locks
     sensor: { icon: "hauflo:info", word: (s) => `${fmt(num(s.state), num(s.state) % 1 ? 1 : 0)} ${unitOf(s)}`.trim(), tap: null, on: () => false, tone: (s) => (s.attributes.device_class === "battery" && num(s.state) !== undefined && num(s.state) < 20 ? "warn" : "") },
   };
   // --- hauflo-acs: every AC of the house in one card (persona round 3, Dubai: 14 rooms, «turn off every AC») ---
+  // `kind: "floor_heating"` — the same stack for the floor heating (owner 27.10: «тёплые полы так же, стопкой,
+  // по этажам»): what heats now, the floor's reading and setpoint; rows with `floor` under that floor's sub-header;
+  // a row with `path` opens the room. Older cards ignore these keys and show it as a list of ACs.
   class Acs extends EHCard {
     watched() {
       return (this._config.entities || []).map((e) => (typeof e === "string" ? e : e.entity));
@@ -2002,29 +2151,48 @@ ${locks.length || opens.length ? `<div class="lst">${locks
     css() {
       return `.k{padding:16px}.hd{display:flex;align-items:center;gap:10px}.hd .caps{flex:1}.sum{font:400 13px Onest,sans-serif;color:var(--ink2);margin-top:2px}
 .off{min-height:40px;padding:0 14px;border-radius:20px;font:500 13px Onest,sans-serif;color:var(--ink2);box-shadow:inset 0 0 0 1px var(--hair)}
-.rows{margin-top:10px;display:flex;flex-direction:column}.r{display:flex;align-items:center;gap:12px;min-height:52px;border-top:1px solid var(--hair);cursor:pointer}.r:first-child{border-top:0}
+.rows{margin-top:10px;display:flex;flex-direction:column}.r{display:flex;align-items:center;gap:12px;min-height:52px;border-top:1px solid var(--hair);cursor:pointer}.r:first-child,.fl+.r{border-top:0}
 .r ha-icon{--mdc-icon-size:20px;color:var(--ink3)}.r.on ha-icon{color:var(--ice)}.r .nm{flex:1;min-width:0;font:500 14px Onest,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.r .w{font:400 13px Onest,sans-serif;color:var(--ink2);white-space:nowrap}.r .t{font:300 22px Onest,sans-serif;min-width:52px;text-align:right}.r.un{opacity:.5}`;
+.r .w{font:400 13px Onest,sans-serif;color:var(--ink2);white-space:nowrap}.r .t{font:300 22px Onest,sans-serif;min-width:52px;text-align:right}.r.un{opacity:.5}
+.r .nm small{display:block;font:400 12px Onest,sans-serif;color:var(--ink2);margin-top:1px;overflow:hidden;text-overflow:ellipsis}.fh .r.on ha-icon{color:var(--amber)}.fl{font:500 11px/1.2 Onest,sans-serif;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);padding:14px 0 6px;border-top:1px solid var(--hair)}.fl:first-child{border-top:0;padding-top:4px}`;
     }
     render() {
+      const fh = this._config.kind === "floor_heating";
       const items = (this._config.entities || []).map((e) => (typeof e === "string" ? { entity: e } : e)).map((e) => ({ ...e, s: st(this._hass, e.entity) })).filter((e) => e.s);
       // «На связи» as the room card says it: a setpoint heard from the bus (integrator run 18: «4 из 4 работают» here,
       // «нет связи с термостатом» in the rooms).
       const known = (s) => !["unavailable", "unknown"].includes(s.state) && num(s.attributes.temperature) !== undefined;
-      const on = items.filter((e) => known(e.s) && e.s.state !== "off");
-      const offable = on.filter((e) => canTurnOff(e.s));
+      // A floor heats when its actuator says so — and it's colder than the goal (as the climate card says it).
+      const heats = (s) => {
+        const a = s.attributes;
+        const cur = num(a.current_temperature);
+        const t = num(a.temperature);
+        return known(s) && s.state !== "off" && a.hvac_action === "heating" && (cur === undefined || t === undefined || cur < t + 0.5);
+      };
+      const on = items.filter((e) => known(e.s) && e.s.state !== "off" && (!fh || heats(e.s)));
+      const offable = fh ? [] : on.filter((e) => canTurnOff(e.s));
+      // Sub-headers by the building's floor when the rows say it and there's more than one.
+      const floors = [...new Set(items.map((e) => e.floor).filter(Boolean))];
+      let last;
       const rows = items.map((e) => {
         const a = e.s.attributes;
         const cur = num(a.current_temperature);
         const target = num(a.temperature);
         // The mode on every row — «Нагрев» next to «Нагревает» in one list read as two different things (integrator run 17).
-        const word = !known(e.s) ? "нет связи" : e.s.state === "off" ? "Выкл" : HVAC[e.s.state] || e.s.state;
-        return `<div class="r ${known(e.s) && e.s.state !== "off" ? "on" : ""} ${known(e.s) ? "" : "un"}" data-i="${esc(e.entity)}"><ha-icon icon="hauflo:ac"></ha-icon><div class="nm">${esc(e.name || nameOf(e.s, e.entity))}</div><div class="w">${esc(word)}${cur !== undefined ? ` · ${fmt(cur, 1)}°` : ""}</div><div class="t">${target === undefined || e.s.state === "off" ? "—" : `${fmt(target, Number.isInteger(target) ? 0 : 1)}°`}</div></div>`;
+        const word = !known(e.s) ? "нет связи" : e.s.state === "off" ? "Выкл" : fh ? (heats(e.s) ? "греет" : "держит") : HVAC[e.s.state] || e.s.state;
+        const head = floors.length > 1 && e.floor && e.floor !== last ? `<div class="fl">${esc(e.floor)}</div>` : "";
+        last = e.floor;
+        const lit = fh ? heats(e.s) : known(e.s) && e.s.state !== "off";
+        return `${head}<div class="r ${lit ? "on" : ""} ${known(e.s) ? "" : "un"}" data-i="${esc(e.entity)}"${e.path ? ` data-p="${esc(e.path)}"` : ""}><ha-icon icon="hauflo:${fh ? "floor-heat" : "ac"}"></ha-icon><div class="nm">${e.zone && String(e.name || "").endsWith(` · ${e.zone}`) ? `${esc(e.name.slice(0, -e.zone.length - 3))}<small>${esc(e.zone)}</small>` : esc(e.name || nameOf(e.s, e.entity))}</div><div class="w">${esc(word)}${cur !== undefined ? ` · ${fmt(cur, 1)}°` : ""}</div><div class="t">${target === undefined || e.s.state === "off" ? "—" : `${fmt(target, Number.isInteger(target) ? 0 : 1)}°`}</div></div>`;
       });
-      return `<div class="glass k"><div class="hd"><div><span class="caps">${esc(this._config.title || "Кондиционеры")}</span><div class="sum">${on.length ? `${on.length} из ${items.length} работают` : items.some((e) => known(e.s)) ? "Все выключены" : "Нет связи"}</div></div>${offable.length ? `<button class="off" data-off="1">Выкл. все</button>` : ""}</div><div class="rows">${rows.join("")}</div></div>`;
+      const sum = fh
+        ? on.length ? `${on.length} из ${items.length} греют` : items.some((e) => known(e.s)) ? "Сейчас не греют" : "Нет связи"
+        : on.length ? `${on.length} из ${items.length} работают` : items.some((e) => known(e.s)) ? "Все выключены" : "Нет связи";
+      return `<div class="glass k${fh ? " fh" : ""}"><div class="hd"><div><span class="caps">${esc(this._config.title || (fh ? "Тёплые полы" : "Кондиционеры"))}</span><div class="sum">${sum}</div></div>${offable.length ? `<button class="off" data-off="1">Выкл. все</button>` : ""}</div><div class="rows">${rows.join("")}</div></div>`;
     }
     bind() {
-      this.shadowRoot.querySelectorAll("[data-i]").forEach((r) => r.addEventListener("click", () => moreInfo(this, r.dataset.i)));
+      // A row with its room's page opens the room (the floor heating); otherwise the device's own dialog.
+      this.shadowRoot.querySelectorAll("[data-i]").forEach((r) => r.addEventListener("click", () => (r.dataset.p ? navigate(r.dataset.p) : moreInfo(this, r.dataset.i))));
       this.shadowRoot.querySelector("[data-off]")?.addEventListener("click", () => {
         haptic(this);
         // Only those that can be switched off (a KNX AC with cool/heat only can't: HA answered with an error).
@@ -2041,7 +2209,7 @@ ${locks.length || opens.length ? `<div class="lst">${locks
     css() {
       return `.k{padding:16px}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-top:10px}
 .p{display:flex;align-items:center;gap:10px;min-height:58px;padding:0 12px;border-radius:18px;box-shadow:inset 0 0 0 1px var(--hair);cursor:pointer;user-select:none;-webkit-user-select:none;min-width:0}
-.p ha-icon{color:var(--ink3);--mdc-icon-size:20px;flex:0 0 auto}.p .tx{min-width:0}.nm{font:500 13px/1.25 Onest,sans-serif;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere;-webkit-hyphens:auto;hyphens:auto}.w{font:400 13px Onest,sans-serif;color:var(--ink2)}
+.p ha-icon{color:var(--ink3);--mdc-icon-size:20px;flex:0 0 auto}.p .tx{min-width:0}.nm{font:500 13px/1.25 Onest,sans-serif;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:break-word;hyphens:manual}.w{font:400 13px Onest,sans-serif;color:var(--ink2)}
 .p.on{background:color-mix(in srgb,var(--mint) 16%,transparent);box-shadow:none}.p.on ha-icon{color:var(--mint)}
 .p.act{box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--amber) 55%,transparent)}.p.act ha-icon{color:var(--amber)}.p.act .w{color:var(--ink2)}
 .p.warn{background:color-mix(in srgb,var(--amber) 18%,transparent);box-shadow:none}.p.warn ha-icon,.p.warn .w{color:var(--amber)}
