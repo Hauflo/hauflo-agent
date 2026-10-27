@@ -604,11 +604,26 @@ async def test_a_knx_write_only_into_ranges_the_integrator_allowed(hass: HomeAss
     hass.config_entries.async_update_entry(entry, options={"ranges": ["1/1"]})
     msg = lambda ga: {"type": "knx/create_entity", "platform": "switch", "data": {"knx": {"ga_switch": {"write": ga, "state": None, "passive": []}}}}  # noqa: E731
     assert agent._outside_ranges(msg("1/1/5")) == set()
-    assert agent._outside_ranges(msg("7/1/1")) == {"7/1"}
-    agent._ask_ranges({"7/1"})
+    # Asked for address by address, never the whole group around it (KNX review 27.10).
+    assert agent._outside_ranges(msg("7/1/1")) == {"7/1/1"}
+    agent._ask_ranges({"7/1/1"})
     from custom_components.hauflo.const import DATA_PENDING_RANGES
 
-    assert "7/1" in hass.data[DATA_PENDING_RANGES]
+    assert "7/1/1" in hass.data[DATA_PENDING_RANGES]
+
+
+async def test_single_addresses_and_spans_allow_only_themselves(hass: HomeAssistant, entry) -> None:
+    """KNX review 27.10: «0/0» allowed the ventilation commands 0/0/3, 0/0/5 Hauflo never writes — the integrator
+    can allow just 0/0/1 and a span 1/1/1-21."""
+    agent = entry.runtime_data
+    hass.config_entries.async_update_entry(entry, options={"ranges": ["0/0/1", "1/1/1-21", "2/2"]})
+    msg = lambda ga: {"type": "knx/update_entity", "platform": "switch", "data": {"knx": {"ga_switch": {"write": ga, "state": None, "passive": []}}}}  # noqa: E731
+    for ga in ("0/0/1", "1/1/1", "1/1/21", "2/2/200", "2/2/0"):
+        assert agent._outside_ranges(msg(ga)) == set(), ga
+    for ga in ("0/0/3", "0/0/5", "1/1/22", "1/2/1"):
+        assert agent._outside_ranges(msg(ga)) == {ga}, ga
+    # Spelled otherwise, the same address (numeric 0/0/3 = 3): still refused.
+    assert agent._outside_ranges(msg(3)) == {"0/0/3"}
 
 
 async def test_a_push_the_ha_app_failed_quietly_is_not_sent(hass: HomeAssistant) -> None:

@@ -48,9 +48,9 @@
       },
       "ranges": {
         "title": "Group addresses for Hauflo",
-        "description": "Hauflo will send commands only to these KNX group address ranges (main/middle) of project «{project}»: {ranges}. Remove any Hauflo must not control (a gate, a lock), then continue. You can change this later in the integration's options.",
+        "description": "Hauflo will send commands only to these KNX group addresses of project «{project}» — the ones its entities write: {ranges}. Remove any Hauflo must not control (a gate, a lock), then continue. You can change this later in the integration's options.",
         "data": {
-          "ranges": "Allowed ranges (main/middle, comma-separated)"
+          "ranges": "Allowed addresses (1/1/5, a span 1/1/1-21 or a whole group 1/1; comma-separated)"
         }
       }
     },
@@ -71,6 +71,15 @@
       "link": {
         "name": "Link"
       }
+    },
+    "select": {
+      "house_mode": {
+        "name": "House mode",
+        "state": {
+          "winter": "Winter",
+          "summer": "Summer"
+        }
+      }
     }
   },
   "options": {
@@ -79,7 +88,7 @@
         "title": "Group addresses for Hauflo",
         "description": "Hauflo sends commands only to these ranges. Asked for and not allowed yet: {pending}.",
         "data": {
-          "ranges": "Allowed ranges (main/middle, comma-separated)"
+          "ranges": "Allowed addresses (1/1/5, a span 1/1/1-21 or a whole group 1/1; comma-separated)"
         }
       }
     }

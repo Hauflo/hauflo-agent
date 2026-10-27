@@ -11,6 +11,7 @@ import time
 from typing import Any
 
 from homeassistant.components.http import KEY_HASS, HomeAssistantView
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
@@ -44,7 +45,14 @@ async def _create(hass: HomeAssistant, name: str) -> None:
     # Encrypted like HA's own automatic backups when a key is set (HA review round 4: secrets.yaml in the clear).
     settings = getattr(getattr(manager, "config", None), "data", None)
     password = getattr(getattr(settings, "create_backup", None), "password", None)
-    agent_id = next(iter(manager.local_backup_agents))
+    # The local location: «backup.local» on HA Core/Container, «hassio.local» on HA OS / Supervised — the latter is
+    # not in local_backup_agents (27.10 Горького 3, HA OS 2026.10.4: next() of an empty dict → «coroutine raised
+    # StopIteration»).
+    agent_id = next(iter(getattr(manager, "local_backup_agents", None) or {}), None) or next(
+        (a for a in getattr(manager, "backup_agents", {}) if a.endswith(".local")), None
+    )
+    if agent_id is None:
+        raise HomeAssistantError("no local backup location in this Home Assistant")
     await manager.async_create_backup(
         agent_ids=[agent_id],
         include_addons=None,

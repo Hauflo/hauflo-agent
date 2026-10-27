@@ -33,7 +33,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
 from homeassistant.helpers.storage import Store
 
-from . import backup, keep, notify, sidebar, theme, voice
+from . import backup, comfort, keep, notify, sidebar, theme, voice
 from .const import CONF_REFRESH_TOKEN_ID, CONF_SECRET, CONF_SERVER, CONF_USER_ID, DATA_NOTIFY_VIEWS, DATA_UNLINKED, DOMAIN, MONITOR_LABEL, MONITOR_LABEL_EN, MONITOR_LABELS, OWNED_STORE, STATUS_EVERY, VERSION, CONF_RANGES, DATA_PENDING_RANGES
 
 _LOGGER = logging.getLogger(__name__)
@@ -105,6 +105,8 @@ _HAUFLO_VIEWS = {
     ("/api/hauflo/backup", "GET"), ("/api/hauflo/backup", "POST"), ("/api/hauflo/notify", "GET"), ("/api/hauflo/notify", "POST"),
     ("/api/hauflo/notify/test", "POST"), ("/api/hauflo/alarms", "GET"), ("/api/hauflo/sidebar", "POST"),
     ("/api/hauflo/owned", "GET"), ("/api/hauflo/ranges", "GET"),
+    # «Комфортный пол»: the integrator's settings (comfort.py checks them itself).
+    ("/api/hauflo/comfort", "GET"), ("/api/hauflo/comfort", "POST"),
 }
 _MAX_CHANNELS = 8
 
@@ -288,6 +290,39 @@ def _ga_range(key: str) -> str | None:
     except (TypeError, ValueError):
         return None
     return f"{raw >> 11}/{(raw >> 8) & 7}"
+
+
+def _ga_text(key: str) -> str | None:
+    """A group address key (its raw number) → «main/middle/sub»."""
+    try:
+        raw = int(key)
+    except (TypeError, ValueError):
+        return None
+    return f"{raw >> 11}/{(raw >> 8) & 7}/{raw & 0xFF}"
+
+
+_ALLOWED_ITEM = re.compile(r"(\d{1,2})/(\d)(?:/(\d{1,3})(?:-(\d{1,3}))?)?")
+
+
+def _range_allows(allowed: set[str], key: str) -> bool:
+    """Is this group address (its raw number) in what the integrator allowed: a main/middle group «1/1», an address
+    «1/1/5» or a span «1/1/1-21» (KNX review 27.10: whole middle groups let Hauflo write commands it never makes)."""
+    try:
+        raw = int(key)
+    except (TypeError, ValueError):
+        return False
+    main, middle, sub = raw >> 11, (raw >> 8) & 7, raw & 0xFF
+    for item in allowed:
+        m = _ALLOWED_ITEM.fullmatch(str(item).strip())
+        if not m or int(m.group(1)) != main or int(m.group(2)) != middle:
+            continue
+        if m.group(3) is None:
+            return True
+        lo = int(m.group(3))
+        hi = int(m.group(4)) if m.group(4) is not None else lo
+        if lo <= sub <= hi:
+            return True
+    return False
 
 
 def _knx_writes(value: Any) -> set[str]:
@@ -1005,6 +1040,7 @@ class Agent:
         self.stopped = False
         # KNX UI entities Hauflo created or took over (by unique_id — renames keep them): only these may be deleted.
         self.engine: notify.NotifyEngine | None = None  # alarms to the phones (set up right after the agent)
+        self.comfort = comfort.ComfortEngine(hass)  # «Комфортный пол» and the house mode (comfort.py)
         self.owned: set[str] = set()
         self.owned_entries: set[str] = set()  # config entries (HomeKit bridges, groups) made through the tunnel
         self._flow_memo: dict[str, list[str]] = {}  # HomeKit options: the domains of a flow's first step
@@ -1250,7 +1286,8 @@ class Agent:
         data = msg.get("data")
         writes = _knx_writes(data.get("knx") if isinstance(data, dict) else None) - {"?"}
         allowed = self.allowed_ranges()
-        return {r for r in (_ga_range(k) for k in writes) if r and r not in allowed}
+        # What's outside is asked for address by address — never a whole group around it.
+        return {t for k in writes if (t := _ga_text(k)) and not _range_allows(allowed, k)}
 
     def _ask_ranges(self, ranges: set[str]) -> None:
         pending = self.hass.data.setdefault(DATA_PENDING_RANGES, set())
@@ -1258,7 +1295,7 @@ class Agent:
         ru = str(self.hass.config.language or "").startswith("ru")
         persistent_notification.async_create(
             self.hass,
-            (f"Hauflo просит отправлять команды в группы адресов {', '.join(sorted(pending))}. Если это ваш проект — разрешите: Настройки → Устройства и службы → Hauflo → Настроить. Ворота, замки и чужие группы не разрешайте."
+            (f"Hauflo просит отправлять команды в групповые адреса {', '.join(sorted(pending))}. Если это ваш проект — разрешите: Настройки → Устройства и службы → Hauflo → Настроить. Ворота, замки и чужие группы не разрешайте."
              if ru else f"Hauflo asks to send commands to group addresses {', '.join(sorted(pending))}. If it's your project, allow them: Settings → Devices & services → Hauflo → Configure. Don't allow gates, locks or others' groups."),
             "Hauflo",
             "hauflo_ranges",
@@ -1471,7 +1508,7 @@ class Agent:
             task.cancel()
 
 
-PLATFORMS = ["binary_sensor"]
+PLATFORMS = ["binary_sensor", "climate", "select"]
 
 
 type HaufloConfigEntry = ConfigEntry[Agent]
@@ -1481,7 +1518,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
     agent = Agent(hass, entry)
     await agent.async_load()
     entry.runtime_data = agent
+    # The floor follows the room even without Hauflo online: settings from HA's storage, before the entities exist.
+    owns = lambda eid: _own_entity(hass, eid, agent.owned_entries) and (_platform(hass, eid) != "knx" or _owned_knx(hass, eid, agent.owned))  # noqa: E731
+    agent.comfort.owns = owns
+    await agent.comfort.async_load()
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    agent.comfort.async_start()
     entry.async_create_background_task(hass, agent.run(), "hauflo agent link")
     for feature, setup in (("voice sentences", voice.async_setup), ("theme", theme.async_setup), ("menu for new people", sidebar.async_setup)):
         try:
@@ -1498,7 +1540,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
     # Set here too: the link may say «welcome» before the engine exists (re-added integration — monitoring
     # stayed empty until the minute status, integrator run 14).
     engine.on_change = agent.status_now
-    engine.owns = lambda eid: _own_entity(hass, eid, agent.owned_entries) and (_platform(hass, eid) != "knx" or _owned_knx(hass, eid, agent.owned))
+    engine.owns = owns
     await engine.async_start()
     agent.engine = engine
     if not hass.data.get(DATA_NOTIFY_VIEWS):
@@ -1509,6 +1551,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
         hass.http.register_view(notify.AlarmsView(lambda: _engine(hass)))
         hass.http.register_view(OwnedView())
         hass.http.register_view(RangesView())
+        hass.http.register_view(comfort.ComfortView(lambda: _comfort(hass)))
         hass.http.register_view(sidebar.SidebarView())
 
     async def _stop(_event: Event) -> None:
@@ -1566,9 +1609,16 @@ def _engine(hass: HomeAssistant) -> notify.NotifyEngine | None:
     return None
 
 
+def _comfort(hass: HomeAssistant) -> comfort.ComfortEngine | None:
+    for entry in hass.config_entries.async_loaded_entries(DOMAIN):
+        return entry.runtime_data.comfort
+    return None
+
+
 async def async_unload_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bool:
     if not await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         return False
+    entry.runtime_data.comfort.async_stop()
     await entry.runtime_data.stop()
     voice.async_unload(hass)
     sidebar.async_unload(hass)
@@ -1592,6 +1642,8 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         _LOGGER.exception("Hauflo: dashboard cards not kept")
     with contextlib.suppress(Exception):
         await notify.NotifyEngine(hass).async_remove()
+    with contextlib.suppress(Exception):
+        await comfort.ComfortEngine(hass).async_remove()
     with contextlib.suppress(Exception):
         session = async_get_clientsession(hass)
         await session.post(

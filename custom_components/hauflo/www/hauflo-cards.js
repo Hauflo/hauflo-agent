@@ -122,7 +122,7 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
     "Буст": "Boost", "Кондиционеры": "Air conditioners", "Все выключены": "All off", "Тихо": "Quiet", "Средне": "Medium", "Сильно": "High", "Макс": "Max", "Мягко": "Diffuse", "Фокус": "Focus", "Турбо": "Turbo", "Обдув": "Swing", "Отпуск": "Away", "Нет дома": "Away", "Защита": "Protection", "Вкл": "On", "Выкл": "Off", "вкл": "on", "выкл": "off", "Вкл. все": "All on",
     "Выкл. все": "All off", "Все": "All", "Все закрыты": "All closed", "Нет данных": "No data", "нет данных": "no data", "Яркость": "Brightness", "Группы": "Groups",
     "Прочее": "Other", "Откр.": "Open", "Закр.": "Closed", "закр.": "closed", "Открыть": "Open", "Закрыть": "Close", "Стоп": "Stop", "открыта": "open", "закрыта": "closed",
-    "открыт": "open", "закрыт": "closed", "открыто": "open", "закрыто": "closed", "открывается…": "opening…", "закрывается…": "closing…", "Шторы": "Blinds",
+    "открыт": "open", "закрыт": "closed", "открыто": "open", "закрыто": "closed", "открывается…": "opening…", "закрывается…": "closing…", "Откр…": "Opening", "Закр…": "Closing", "Шторы": "Blinds",
     "Свернуть": "Collapse", "Назад": "Back", "← Назад": "← Back", "Вперёд": "Next", "Выполнено": "Done", "выполнить": "run", "Включить": "Turn on",
     "Проверьте место протечки. Уведомление отправлено на телефоны (получено ли — неизвестно, пока кто-то не нажмёт «Принято»); «Принято» снимает повторы.": "Check where it leaks. Sent to the phones (whether it arrived isn't known until someone taps «Accept»); «Accept» stops the repeats.",
     "Проверьте место протечки.": "Check where it leaks.",
@@ -148,7 +148,7 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
     "сработал": "triggered", "звучит": "sounding", "ждёт": "idle", "на базе": "docked", "едет на базе": "returning to dock", "убирает": "cleaning", "заклинило": "jammed",
     "Ожидание": "Idle", "Вода": "Water", "Газ": "Gas", "Дым": "Smoke", "Угарный газ": "Carbon monoxide", "Перегрев": "Overheat", "Вскрытие": "Tamper", "Необычно": "Unusual",
     "загрузка…": "loading…", "истории пока нет": "no history yet", "только что": "just now", "Кухня": "Kitchen", "Гостиная зона": "Living area", "Обеденная": "Dining",
-    "Остров": "Island", "ТВ": "TV", "Здание": "Building", "Устройства": "Devices",
+    "Остров": "Island", "ТВ": "TV", "Здание": "Building", "Устройства": "Devices", "Зима": "Winter", "Лето": "Summer",
   };
   // Phrases with numbers / declensions (whole text node).
   const EN_RX = [
@@ -173,7 +173,7 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
   const B = "(^|[^А-Яа-яЁё])"; // a Cyrillic word boundary (\\b doesn't know Cyrillic)
   const EN_FRAG = [
     [/^Позвонить · /, "Call · "], [new RegExp(`${B}ещё аварий:`, "g"), "$1more alarms:"], [new RegExp(`${B}и ещё (\\d+)`, "g"), "$1and $2 more"], [new RegExp(`${B}за сутки`, "g"), "$124 h"],
-    [new RegExp(`${B}В комнате `, "g"), "$1Now "], [new RegExp(`${B}Сейчас `, "g"), "$1Now "], [new RegExp(`${B}влажность `, "g"), "$1humidity "],
+    [new RegExp(`${B}В комнате `, "g"), "$1Now "], [new RegExp(`${B}пол (?=\\d)`, "g"), "$1floor "], [new RegExp(`${B}Сейчас `, "g"), "$1Now "], [new RegExp(`${B}влажность `, "g"), "$1humidity "],
     [new RegExp(`${B}нагрев(?=$|[^А-Яа-яЁё])`, "g"), "$1heating"], [new RegExp(`${B}Охлаждение до `, "g"), "$1Cooling to "], [new RegExp(`${B}Нагрев до `, "g"), "$1Heating to "],
     [new RegExp(`${B}Сдвиньте — `, "g"), "$1Slide — "], [new RegExp(`${B}сегодня в `, "g"), "$1today at "], [new RegExp(`${B}запускался `, "g"), "$1ran "],
     [new RegExp(`${B}сработала `, "g"), "$1triggered "], [new RegExp(`${B}батарея `, "g"), "$1battery "], [new RegExp(`${B}откр\\. `, "g"), "$1open "],
@@ -222,6 +222,8 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
     return v.length ? v.reduce((a, b) => a + b, 0) / v.length : undefined;
   };
   const tempOf = (s) => (s ? (s.entity_id.startsWith("climate.") ? num(s.attributes.current_temperature) : num(s.state)) : undefined);
+  /** A card's extra readings: `sensors: ["sensor.x", {entity, name}]`. */
+  const readingsOf = (c) => (c?.sensors || []).map((x) => (typeof x === "string" ? { entity: x } : x)).filter((x) => x && x.entity);
   const brightnessPct = (s) => (s && s.state === "on" ? (num(s.attributes.brightness) !== undefined ? Math.round((num(s.attributes.brightness) / 255) * 100) : 100) : 0);
   const call = (hass, domain, service, data) => hass.callService(domain, service, data);
   const navigate = (path) => {
@@ -345,17 +347,29 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
       const refs = this.watched().map((id) => this._hass.states[id]);
       const dark = !!this._hass.themes?.darkMode;
       if (this._sig && dark === this._dark && refs.length === this._refs?.length && refs.every((r, i) => r === this._refs[i])) return;
+      const forced = !this._sig;
       this._sig = "r";
       this._refs = refs;
       this._dark = dark;
       this.lang = LANG; // hyphenation in the card's language («Полотенце-сушитель»)
       if (this._config.panel) this.style.cssText = "display:block;max-width:980px;margin:24px auto;padding:0 16px";
+      const html = `<style>${CSS}${this.css ? this.css() : ""}</style>${this.render()}`;
+      // A state update that changes nothing on the card (a thermostat repeating its reading) leaves it alone.
+      // A forced render (after a drag, a tab) always goes: the DOM may have been changed by hand.
+      if (!forced && html === this._html) return;
+      this._html = html;
       // Live, not static (designer review 25.10): a value that changed eases in, a room that lit up glows in.
       const SEL = ".t,.cct,.hd b,.s,.lv,.w,.vals b,.v,.cond,.st0";
       const before = [...this.shadowRoot.querySelectorAll(SEL)].map((e) => e.textContent);
       const kind = this.shadowRoot.querySelector(".glass")?.className;
       const first = !this.shadowRoot.querySelector(".glass");
-      this.shadowRoot.innerHTML = `<style>${CSS}${this.css ? this.css() : ""}</style>${this.render()}`;
+      // Safari/iOS (WebKit) lays the page out with the card empty while its content is replaced: a page scrolled
+      // near its end lost the card's height and jumped up — to the very top for the climate card (owner, Горького 3,
+      // 27.10: «перепрыгивают страницы» on every setpoint change). The card keeps its height until the new content is in.
+      const h = first ? 0 : this.getBoundingClientRect().height;
+      if (h) this.style.minHeight = `${h}px`;
+      this.shadowRoot.innerHTML = html;
+      if (h) requestAnimationFrame(() => (this.style.minHeight = ""));
       translate(this.shadowRoot);
       this.bind && this.bind();
       if (first || REDUCED) return;
@@ -460,7 +474,7 @@ ${(c.alarms || []).length && ok ? `<div><span class="caps">Датчики</span>
   class Room extends EHCard {
     watched() {
       const c = this._config;
-      return [...(c.lights || []), c.climate, ...(c.alarms || []), ...(c.covers || [])].filter(Boolean);
+      return [...(c.lights || []), c.climate, ...(c.alarms || []), ...(c.covers || []), ...(c.temps || []).map((x) => x.entity)].filter(Boolean);
     }
     css() {
       return `.r{height:172px;padding:16px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;user-select:none;-webkit-user-select:none}
@@ -470,6 +484,7 @@ ${(c.alarms || []).length && ok ? `<div><span class="caps">Датчики</span>
 .lit .ri{background:color-mix(in srgb,var(--amber) 22%,transparent);color:var(--amber)}.cold .ri{background:color-mix(in srgb,var(--ice) 22%,transparent);color:var(--ice)}
 .alarm .ri{background:color-mix(in srgb,var(--alert) 18%,transparent);color:var(--alert)}
 .t{font-size:40px;line-height:1}.t small{font:300 15px Onest,sans-serif;color:var(--ink2);letter-spacing:0;margin-left:2px}
+.tt{display:flex;flex-direction:column;align-items:flex-end;min-width:0}.t2{font:400 12px Onest,sans-serif;color:var(--ink2);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}.pic .t2{color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.55)}
 .s{font:400 13px Onest,sans-serif;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .chips{display:flex;gap:10px;margin-top:5px;font:500 12px Onest,sans-serif;color:var(--ink2);white-space:nowrap;overflow:hidden}
 .chips span{display:inline-flex;align-items:center;gap:3px}:host{container-type:inline-size}@container (max-width:200px){.chips span:nth-child(n+3){display:none}}.chips ha-icon{--mdc-icon-size:14px}.chips .on{color:var(--amber)}.chips .op{color:var(--ice)}
@@ -527,6 +542,8 @@ ${(c.alarms || []).length && ok ? `<div><span class="caps">Датчики</span>
       const clim = st(h, c.climate);
       const t = clim ? num(clim.attributes.current_temperature) : avg((c.temperature || []).map((id) => tempOf(st(h, id))));
       const hum = clim ? num(clim.attributes.current_humidity) : undefined;
+      // The room's other temperatures (the floor, a second zone) under the big one — a room has more than one (owner 27.10).
+      const others = (c.temps || []).map((x) => ({ name: x.name || "", v: tempOf(st(h, x.entity)) })).filter((x) => x.v !== undefined);
       const lightsOn = (c.lights || []).filter((id) => st(h, id)?.state === "on").length;
       const coversOpen = (c.covers || []).filter((id) => ["open", "opening"].includes(st(h, id)?.state)).length;
       const mark = s.kind === "lit" ? `<span class="lamp"></span>` : s.kind === "cold" ? `<ha-icon icon="hauflo:snow" style="color:var(--ice)"></ha-icon>` : s.kind.startsWith("alarm") ? `<ha-icon icon="hauflo:warning" style="color:var(--alert)"></ha-icon>` : "";
@@ -540,7 +557,7 @@ ${(c.alarms || []).length && ok ? `<div><span class="caps">Датчики</span>
       ].filter(Boolean);
       return `<div class="glass r ${s.kind} ${c.picture ? "pic" : ""}" role="button" tabindex="0" aria-label="${esc(c.name)}">${c.picture ? `<div class="ph" style="background-image:url('${esc(c.picture)}')"></div>` : ""}<div class="glow"></div>
 <div class="top"><span class="caps">${esc(c.name)}</span>${mark}</div>
-<div class="mid"><span class="ri"><ha-icon icon="${esc(c.icon || "hauflo:home")}"></ha-icon></span><div class="t thin">${t === undefined ? "" : `${Math.round(t)}<small>°</small>`}</div></div>
+<div class="mid"><span class="ri"><ha-icon icon="${esc(c.icon || "hauflo:home")}"></ha-icon></span><div class="tt"><div class="t thin">${t === undefined ? "" : `${Math.round(t)}<small>°</small>`}</div>${others.length ? `<div class="t2">${others.map((x) => `${esc(x.name)} ${fmt(x.v)}°`).join(" · ")}</div>` : ""}</div></div>
 <div><div class="s">${esc(s.text)}</div>${chips.length ? `<div class="chips">${chips.join("")}</div>` : ""}</div></div>`;
     }
     bind() {
@@ -641,7 +658,7 @@ ${(c.alarms || []).length && ok ? `<div><span class="caps">Датчики</span>
   // --- hauflo-climate: the setpoint as the one big number ----------------------------------------
   class Climate extends EHCard {
     watched() {
-      return [this._config.entity, ...(this._config.extra || []), ...(this._config.sensors || []), ...(this._config.zones || []).map((z) => z.entity)].filter(Boolean);
+      return [this._config.entity, ...(this._config.extra || []), ...readingsOf(this._config).map((r) => r.entity), ...(this._config.zones || []).map((z) => z.entity)].filter(Boolean);
     }
     set hass(hass) {
       this._hass = hass;
@@ -685,7 +702,7 @@ ${(c.alarms || []).length && ok ? `<div><span class="caps">Датчики</span>
 .cc{padding:14px 14px 14px 18px}.ccrow{display:flex;align-items:center;gap:12px;position:relative}.ccn{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}
 .ccn .caps{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ccn .sub{margin:0}
 .cct{font-size:40px;line-height:1}.cct small{font:300 15px Onest,sans-serif;color:var(--ink2);margin-left:1px}
-.sens{display:flex;gap:6px;margin-top:2px}.sens b{font:500 12px Onest,sans-serif;padding:3px 7px;border-radius:8px;background:var(--track);color:var(--ink2)}
+.sens{display:flex;gap:6px;margin-top:2px;flex-wrap:wrap}.sens b{font:500 12px Onest,sans-serif;padding:3px 7px;border-radius:8px;background:var(--track);color:var(--ink2);white-space:nowrap}.sens i{font-style:normal;color:var(--ink3);margin-right:5px}.c .sens{margin-top:8px}
 .st.row2{flex-direction:row}.st.row2 button{width:44px;height:44px;border-radius:22px;font-size:22px}
 .cool .glow{background:radial-gradient(50% 50% at 20% 10%,var(--iceGlow),transparent 70%);opacity:.6}
 .zs .caps{display:block;margin-bottom:4px}.zr{display:flex;align-items:center;gap:12px;padding:8px 0;border-top:1px solid var(--hair)}.zr:nth-child(2){border-top:0}
@@ -731,11 +748,17 @@ ${(c.alarms || []).length && ok ? `<div><span class="caps">Датчики</span>
       const opts = useModes ? modes.map((m) => [m, HVAC[m], known && s.state === m]) : presets.map((p) => [p, PRESET[p] || p, known && a.preset_mode === p]);
       const digits = step < 1 && target !== undefined && target % 1 ? 1 : 0;
       const sp = this._hist ? spark(this._hist, 600, 44, 6, 3, 6, 6) : null;
+      const readings = this.readings();
+      // «Комфорт» of the agent (comfort.py): the house's season beside the label, and in winter the floor's setpoint
+      // the agent keeps now — the client sees why the room warms (owner 25.10).
+      const season = a.house_mode === "summer" ? "Лето" : a.house_mode === "winter" ? "Зима" : "";
+      const fl = season === "Зима" && Array.isArray(a.floor_targets) ? a.floor_targets.map(num).filter((v) => v !== undefined) : [];
+      const floorNow = fl.length ? ` · пол ${Math.min(...fl) === Math.max(...fl) ? fmt(fl[0]) : `${fmt(Math.min(...fl))}–${fmt(Math.max(...fl))}`}°` : "";
       const chart = sp ? `<svg class="spark" viewBox="0 0 600 44" preserveAspectRatio="none"><defs><linearGradient id="cf" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="currentColor" stop-opacity=".28"/><stop offset="1" stop-color="currentColor" stop-opacity="0"/></linearGradient></defs><path d="${sp.area}" fill="url(#cf)"/>${target !== undefined ? `<line x1="0" x2="600" y1="${sp.yOf(target).toFixed(1)}" y2="${sp.yOf(target).toFixed(1)}" stroke="currentColor" stroke-width="1" stroke-dasharray="4 5" vector-effect="non-scaling-stroke" opacity=".7"/>` : ""}<path d="${sp.line}" fill="none" stroke="currentColor" stroke-width="2" vector-effect="non-scaling-stroke" stroke-linejoin="round"/></svg>` : "";
       return `<div class="glass c ${mood}"><div class="glow"></div><div style="position:relative">
-<div class="top"><span class="caps">${esc(this._config.label || "Климат")}</span>${doing ? `<span class="act"><i></i>${doing}</span>` : ""}</div>
+<div class="top"><span class="caps">${esc(this._config.label || "Климат")}${season ? ` · ${season}` : ""}</span>${doing ? `<span class="act"><i></i>${doing}</span>` : ""}</div>
 <div class="row"><div>${range ? `<div class="t thin"><span class="v">${fmt(lo)}–${fmt(hi)}</span><sup>°C</sup></div>` : target === undefined ? `<div class="t thin"><span class="v">—</span></div><div class="nos">нет связи с термостатом</div>` : `<div class="t thin"><span class="v">${fmt(target, digits)}</span><sup>°C</sup><span class="goal">цель</span></div>`}
-<div class="sub">${cur === undefined ? "нет данных из комнаты" : `В комнате ${fmt(cur, 1)}°`}${hum !== undefined ? ` · влажность ${fmt(hum)} %` : ""}${sp ? ` · ${sp.hours >= 22 ? "за сутки" : `за ${Math.round(sp.hours)} ч`} ${fmt(sp.lo, 1)}–${fmt(sp.hi, 1)}°` : ""}</div></div>
+<div class="sub">${cur === undefined ? (this._config.floor ? "нет данных" : "нет данных из комнаты") : `${this._config.floor ? "Сейчас" : "В комнате"} ${fmt(cur, 1)}°`}${floorNow}${hum !== undefined ? ` · влажность ${fmt(hum)} %` : ""}${sp ? ` · ${sp.hours >= 22 ? "за сутки" : `за ${Math.round(sp.hours)} ч`} ${fmt(sp.lo, 1)}–${fmt(sp.hi, 1)}°` : ""}</div>${readings.length ? this.readingsRow(readings) : ""}</div>
 <div class="st"><button data-d="${step}" aria-label="Теплее"${target === undefined ? " disabled" : ""}>+</button><button data-d="${-step}" aria-label="Холоднее"${target === undefined ? " disabled" : ""}>−</button></div></div>
 ${chart ? `<div class="chart">${chart}</div>` : ""}
 <div class="scale" data-min="${min}" data-max="${max}" data-step="${step}"><div class="ticks">${ticks}</div><div class="ends"><span>${fmt(min)}°</span><span>проведите, чтобы изменить</span><span>${fmt(max)}°</span></div></div>
@@ -758,6 +781,15 @@ ${fans.length > 1 || swing ? `<div class="modes fan"><span class="fl"><ha-icon i
       const any = this._config.zones.some((z) => st(this._hass, z.entity)?.attributes?.hvac_action === "heating");
       return `<div class="glass cc zs ${any ? "heat" : ""}"><div class="glow"></div><div style="position:relative"><div class="caps">${esc(this._config.label || "Тёплый пол")}</div>${rows.join("")}</div></div>`;
     }
+    /** The other readings the card shows (a floor's sensors), each with its value. */
+    readings() {
+      return readingsOf(this._config)
+        .map((r) => ({ ...r, v: tempOf(st(this._hass, r.entity)) }))
+        .filter((r) => r.v !== undefined);
+    }
+    readingsRow(list) {
+      return `<span class="sens">${list.map((r) => `<b>${r.name ? `<i>${esc(r.name)}</i>` : ""}${fmt(r.v, 1)}°</b>`).join("")}</span>`;
+    }
     /** One line for a second thermostat (zones of floor heating): name, setpoint, ±. */
     compact(s) {
       const a = s.attributes;
@@ -765,10 +797,11 @@ ${fans.length > 1 || swing ? `<div class="modes fan"><span class="fl"><ha-icon i
       const cur = num(a.current_temperature);
       const step = Math.max(num(a.target_temp_step) || 0.5, 0.5);
       const heating = a.hvac_action === "heating" && (num(a.current_temperature) === undefined || num(a.temperature) === undefined || num(a.current_temperature) < num(a.temperature) + 0.5);
-      // A floor with several sensors: each one's reading (owner 2026-10-25).
-      const sensors = (this._config.sensors || []).map((id) => tempOf(st(this._hass, id))).filter((v) => v !== undefined);
+      // A floor with several sensors: each one's reading, by its name (owner 2026-10-25, 27.10).
+      const sensors = this.readings();
+      // The line is always there (no data says so): a card that grows and shrinks with the state moves the page.
       return `<div class="glass cc ${heating ? "heat" : ""}"><div class="glow"></div><div class="ccrow">
-<div class="ccn"><span class="caps">${esc(this._config.label || nameOf(s, this._config.entity))}</span><span class="sub">${cur === undefined ? "" : `Сейчас ${fmt(cur, 1)}°`}${heating ? " · нагрев" : ""}</span>${sensors.length > 1 ? `<span class="sens">${sensors.map((v) => `<b>${fmt(v, 1)}°</b>`).join("")}</span>` : ""}</div>
+<div class="ccn"><span class="caps">${esc(this._config.label || nameOf(s, this._config.entity))}</span><span class="sub">${cur === undefined ? "нет данных" : `Сейчас ${fmt(cur, 1)}°`}${heating ? " · нагрев" : ""}</span>${sensors.length > 1 ? this.readingsRow(sensors) : ""}</div>
 <div class="cct thin">${target === undefined ? "—" : `${fmt(target, step < 1 && target % 1 ? 1 : 0)}<small>°</small>`}</div>
 <div class="st row2"><button data-d="${-step}" aria-label="Холоднее"${target === undefined ? " disabled" : ""}>−</button><button data-d="${step}" aria-label="Теплее"${target === undefined ? " disabled" : ""}>+</button></div></div></div>`;
     }
@@ -886,10 +919,12 @@ ${fans.length > 1 || swing ? `<div class="modes fan"><span class="fl"><ha-icon i
         return { dom: "light", name, pct: brightnessPct(s), on: s.state === "on", dimmable, icon: e.icon || "hauflo:bulb", s };
       }
       if (dom === "cover") {
-        const pos = num(s.attributes.current_position);
-        const settable = ((num(s.attributes.supported_features) || 0) & 4) !== 0;
+        // A blind with no position address (up/down + stop only): HA's position is its guess from the travel time —
+        // no number, no slider, ever (owner, Горького 3, 27.10: «откуда ты их берёшь? Это фейковые данные»).
+        const real = coverHasPosition(e, s);
+        const pos = real ? num(s.attributes.current_position) : undefined;
         const known = !["unknown", "unavailable"].includes(s.state);
-        return { dom: "cover", name, pct: pos ?? (s.state === "open" ? 100 : 0), on: known && s.state !== "closed", known, dimmable: settable && pos !== undefined, icon: e.icon || "hauflo:blind", s };
+        return { dom: "cover", name, pct: pos ?? (known && s.state !== "closed" ? 100 : 0), on: known && s.state !== "closed", known, dimmable: real, icon: e.icon || "hauflo:blind", s };
       }
       return { dom: "switch", name, pct: s.state === "on" ? 100 : 0, on: s.state === "on", dimmable: false, icon: e.icon || "hauflo:power", s };
     }
@@ -899,8 +934,9 @@ ${fans.length > 1 || swing ? `<div class="modes fan"><span class="fl"><ha-icon i
       return `<div class="wrap" style="--cols:${cols}">${items
         .map(({ e, m }) => {
           const unavailable = m.s.state === "unavailable";
-          const label = m.dom === "cover" ? (!m.known ? "—" : m.dimmable ? `${m.pct}` : m.on ? "Откр." : "Закр.") : m.on ? (m.dimmable ? `${m.pct}` : "Вкл") : "Выкл";
-          return `<div class="glass v ${m.dom} ${m.on ? "" : "off"} ${unavailable ? "unavail" : ""}" data-e="${esc(e.entity)}" role="slider" aria-label="${esc(m.name)}" aria-valuenow="${m.pct}" tabindex="0">
+          const moving = m.dom === "cover" && ["opening", "closing"].includes(m.s.state);
+          const label = m.dom === "cover" ? (!m.known ? "—" : moving ? (m.s.state === "opening" ? "Откр…" : "Закр…") : m.dimmable && num(m.s.attributes.current_position) !== undefined ? `${m.pct}` : m.on ? "Откр." : "Закр.") : m.on ? (m.dimmable ? `${m.pct}` : "Вкл") : "Выкл";
+          return `<div class="glass v ${m.dom} ${m.on ? "" : "off"} ${moving ? "mv" : ""} ${unavailable ? "unavail" : ""}" data-e="${esc(e.entity)}" role="slider" aria-label="${esc(m.name)}" aria-valuenow="${m.pct}" tabindex="0">
 <div class="lvl" style="height:${m.on || m.dom === "cover" ? m.pct : 0}%"></div><ha-icon class="ic" icon="${esc(m.icon)}"></ha-icon>
 <div><div class="p thin">${esc(label)}</div><div class="n">${esc(m.name)}</div>
 ${m.dom === "cover" && !m.dimmable ? `<div class="ud3">${coverButtons(coverDir({ ...e, s: m.s }, this._config), "data-c")}</div>` : ""}</div></div>`;
@@ -934,7 +970,7 @@ ${m.dom === "cover" && !m.dimmable ? `<div class="ud3">${coverButtons(coverDir({
         });
         el.addEventListener("pointermove", (ev) => {
           if (start === null) return;
-          const m = this.model({ entity: id });
+          const m = this.model(this.items().find((x) => x.entity === id) || { entity: id });
           if (!m.dimmable) return;
           if (!moved && Math.abs(ev.clientY - start) < 6) return;
           moved = true;
@@ -949,7 +985,7 @@ ${m.dom === "cover" && !m.dimmable ? `<div class="ud3">${coverButtons(coverDir({
           if (start === null) return;
           start = null;
           el.classList.remove("dragging");
-          const m = this.model({ entity: id });
+          const m = this.model(this.items().find((x) => x.entity === id) || { entity: id });
           haptic(this);
           if (moved) {
             if (m.dom === "light") call(this._hass, "light", pct ? "turn_on" : "turn_off", pct ? { entity_id: id, brightness_pct: Math.max(1, pct) } : { entity_id: id });
@@ -1140,6 +1176,12 @@ ${act ? `<div class="sl"><div class="k"><ha-icon icon="${esc(c.action.icon || "h
     if (/штор|тюл|портьер|занавес|curtain|drape/.test(n)) return "horizontal";
     return "vertical";
   };
+  // A real position: the cover can be sent to one and its config doesn't say `position: false`. Hauflo writes
+  // `position: false` for a blind without a position state address — HA's «current_position» there is only its estimate
+  // from the travel time. Decided by the device, not by its state: a blind keeps one look whatever it is doing
+  // (owner 27.10: the tiles changed when pressed — «нет данных» had buttons, a known one had none).
+  const coverHasPosition = (e, s) => e.position !== false && ((num(s?.attributes.supported_features) || 0) & 4) !== 0;
+  const coverWord = (s) => (["unknown", "unavailable"].includes(s.state) ? "нет данных" : s.state === "opening" ? "открывается…" : s.state === "closing" ? "закрывается…" : s.state === "closed" ? "закрыта" : "открыта");
   const COVER_BTN = {
     vertical: [["open_cover", "mdi:chevron-up", "Открыть"], ["stop_cover", "mdi:stop", "Стоп"], ["close_cover", "mdi:chevron-down", "Закрыть"]],
     horizontal: [["open_cover", "mdi:curtains", "Открыть"], ["stop_cover", "mdi:stop", "Стоп"], ["close_cover", "mdi:curtains-closed", "Закрыть"]],
@@ -1198,7 +1240,7 @@ ${act ? `<div class="sl"><div class="k"><ha-icon icon="${esc(c.action.icon || "h
 .pill ha-icon{color:var(--ink3);--mdc-icon-size:18px}.pill .tx{min-width:0;flex:1}
 .pill .nm{font:500 13px/1.25 Onest,sans-serif;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere;-webkit-hyphens:auto;hyphens:auto}
 .pill .lv{font:400 13px Onest,sans-serif;color:var(--ink2)}
-.pill.on{box-shadow:none;background:var(--track)}.pill.on ha-icon{color:var(--accentC)}
+.pill.on{box-shadow:none;background:var(--track)}.pill.on>ha-icon{color:var(--accentC)}
 .light .pill.on .f{background:linear-gradient(90deg,color-mix(in srgb,var(--amber) 42%,transparent),color-mix(in srgb,var(--amber) 22%,transparent))}
 .cover .pill.on .f{background:linear-gradient(90deg,color-mix(in srgb,var(--ice) 36%,transparent),color-mix(in srgb,var(--ice) 18%,transparent))}
 .light{--accentC:var(--amber)}.cover{--accentC:var(--ice)}
@@ -1250,7 +1292,7 @@ ${act ? `<div class="sl"><div class="k"><ha-icon icon="${esc(c.action.icon || "h
         shown = zoneItems.filter((e) => keep.has(e));
         hidden = zoneItems.length - shown.length;
       }
-      const levels = shown.map((e) => (isCover ? num(e.s.attributes.current_position) : e.s.state === "on" && num(e.s.attributes.brightness) !== undefined ? brightnessPct(e.s) : undefined)).filter((x) => x !== undefined);
+      const levels = shown.map((e) => (isCover ? (this.settable(e) ? num(e.s.attributes.current_position) : undefined) : e.s.state === "on" && num(e.s.attributes.brightness) !== undefined ? brightnessPct(e.s) : undefined)).filter((x) => x !== undefined);
       const lvl = levels.length ? Math.round(avg(levels)) : undefined;
       // Only group commands (a floor's, the building's): the summary and the master act on them.
       const groupsOnly = !all.length;
@@ -1279,10 +1321,11 @@ ${act ? `<div class="sl"><div class="k"><ha-icon icon="${esc(c.action.icon || "h
         const settable = this.settable(e);
         const unavailable = e.s.state === "unavailable";
         if (isCover) {
-          const pos = num(e.s.attributes.current_position);
+          // Only a real position is a number; without one the fill is just open/closed (no travel-time guess).
+          const pos = settable ? num(e.s.attributes.current_position) : undefined;
           const open = isOpenOn(e);
           // Without a position the pill has ▲ ■ ▼ — full width, the name stays readable.
-          const state = !known(e) ? "нет данных" : e.s.state === "opening" ? "открывается…" : e.s.state === "closing" ? "закрывается…" : !open ? "закрыта" : settable ? `${pos ?? 100} %` : "открыта";
+          const state = open && !["opening", "closing"].includes(e.s.state) && pos !== undefined ? `${pos} %` : coverWord(e.s);
           const moving = ["opening", "closing"].includes(e.s.state);
           return `<div class="pill ${open ? "on" : ""} ${moving ? "mv" : ""} ${settable ? "" : "wide"} ${unavailable ? "unavail" : ""}" data-e="${esc(e.entity)}" data-set="${settable ? 1 : 0}"><div class="f" style="width:${moving ? 100 : open ? pos ?? 100 : 0}%"></div>
 <ha-icon icon="${esc(e.icon || (coverDir(e, this._config) === "horizontal" ? "hauflo:curtain" : "hauflo:blind"))}"></ha-icon><div class="tx"><div class="nm">${esc(name)}</div><div class="lv">${esc(zoneTag)}${state}</div></div>
@@ -1320,7 +1363,7 @@ ${hidden ? `<button class="more" data-more="1">${coversFolded ? `По одной
     }
     settable(e) {
       if (!e.entity.startsWith(this.kind === "cover" ? "cover." : "light.")) return false;
-      if (this.kind === "cover") return ((num(e.s.attributes.supported_features) || 0) & 4) !== 0 && num(e.s.attributes.current_position) !== undefined;
+      if (this.kind === "cover") return coverHasPosition(e, e.s);
       return (e.s.attributes.supported_color_modes || []).some((m) => m !== "onoff");
     }
     bind() {

@@ -62,10 +62,31 @@ class _PushErrors(logging.Handler):
     def __init__(self) -> None:
         super().__init__(logging.WARNING)
         self.failed: set[str] = set()
+        # The HA app's push relay said «Rate limit exceeded» (HTTP 429): mobile_app logs it as a WARNING, any other
+        # failure as an ERROR (owner 27.10: a raw «HA 429» on the screen).
+        self.limited: set[str] = set()
 
     def emit(self, record: logging.LogRecord) -> None:
         if phone := _PHONE.get():
             self.failed.add(phone)
+            if record.levelno == logging.WARNING or "rate limit" in record.getMessage().lower():
+                self.limited.add(phone)
+
+
+# Pushes per phone the agent allows itself (owner 27.10: «лимит пушей HA»): HA's relay has a daily limit per phone —
+# a flapping house must not use it up before the leak. Normal ones are capped hourly and daily; critical ones go
+# until the higher daily cap. What's over is still on the screen and in HA's bell, and Hauflo's Telegram/email
+# don't depend on it.
+PUSH_HOUR_MAX = 20
+PUSH_DAY_MAX = 80
+PUSH_DAY_CRITICAL = 200
+# Repeats of an unaccepted alarm at the rule's pace this many times; then at most hourly until someone accepts.
+REPEAT_FAST = 12
+SCOPES = ("all", "critical", "off")
+PHONE_ID = re.compile(r"^mobile_app_[a-z0-9_]+$")
+# A test rings a phone at full volume: at most once per phone in this many seconds, and a few tests a minute in all.
+TEST_GAP = 20
+TEST_PER_MIN = 10
 GROUP_MIN = 3  # from this many devices at once — one message instead of one per device
 LIST_MAX = 8
 HEARTBEAT = re.compile(r"heartbeat|hearbeat|связь|связи|link|alive|online|пульс", re.I)
@@ -145,6 +166,11 @@ def _clean_rules(raw: Any, hass: HomeAssistant | None = None, owns: Callable[[st
         return out
     if raw.get("lang") in ("ru", "en"):
         out["lang"] = raw["lang"]
+    # Who gets the rules sent «to everyone»: a person or a phone → «all» / «critical» / «off»; «*» — anyone not
+    # listed (owner 27.10: «только себе» wasn't possible without groups).
+    aud = raw.get("audience")
+    if isinstance(aud, dict):
+        out["audience"] = {str(k): str(v) for k, v in list(aud.items())[:200] if v in SCOPES and (k == "*" or str(k).startswith("person.") or PHONE_ID.match(str(k)))}
     for g in raw.get("groups") or []:
         if isinstance(g, dict) and g.get("id") and isinstance(g.get("people"), list):
             out["groups"].append({"id": str(g["id"]), "name": str(g.get("name") or ""), "people": [str(p) for p in g["people"] if str(p).startswith("person.")]})
@@ -164,6 +190,7 @@ def _clean_rules(raw: Any, hass: HomeAssistant | None = None, owns: Callable[[st
                     "all": bool(rec.get("all")),
                     "people": [str(p) for p in rec.get("people") or [] if str(p).startswith("person.")],
                     "groups": [str(g) for g in rec.get("groups") or []],
+                    "phones": [str(p) for p in rec.get("phones") or [] if PHONE_ID.match(str(p))],
                 },
                 "priority": "critical" if r.get("priority") == "critical" else "normal",
                 "repeat_min": max(0, min(_int(r.get("repeat_min")), 240)),
@@ -232,6 +259,13 @@ class NotifyEngine:
         # Link/heartbeat sensors seen healthy at least once: before that an «off» is commissioning, not a lost link
         # (integrator run 25.10: «Связь со щитом — 39 устройств» right after saving the rules on a site without a bus).
         self._seen_ok: set[str] = set()
+        # phone service → monotonic times of its pushes in the last day (the agent's own cap, PUSH_*).
+        self._pushes: dict[str, list[float]] = {}
+        # phone service → when HA's relay last said «rate limit» / the agent's cap last held a push back.
+        self.limited: dict[str, str] = {}
+        self.throttled: dict[str, str] = {}
+        self._tested: dict[str, float] = {}
+        self._tests: list[float] = []
 
     @callback
     def _changed(self) -> None:
@@ -641,10 +675,11 @@ class NotifyEngine:
         self._schedule(rule, key)
         self._save()
 
-    def _left(self, rule: dict[str, Any], last: str | None) -> timedelta:
+    def _left(self, rule: dict[str, Any], last: str | None, count: int = 0) -> timedelta:
         """Time to the next repeat on the original schedule — a restart or a re-pair doesn't push it back
-        (integrator run 25.10: the 11:41 repeat came at 11:46)."""
-        full = timedelta(minutes=rule["repeat_min"])
+        (integrator run 25.10: the 11:41 repeat came at 11:46). After REPEAT_FAST repeats nobody accepted — hourly:
+        every 5 minutes all night is ~290 pushes a phone, past HA's daily limit (owner 27.10)."""
+        full = timedelta(minutes=rule["repeat_min"] if count <= REPEAT_FAST else max(rule["repeat_min"], 60))
         sent = dt_util.parse_datetime(last) if last else None
         return max(timedelta(seconds=5), full - (dt_util.utcnow() - sent)) if sent else full
 
@@ -659,7 +694,7 @@ class NotifyEngine:
         def _again(_now) -> None:
             self.hass.async_create_task(self._repeat(rule_id, entity_id))
 
-        inc["repeat"] = async_call_later(self.hass, self._left(rule, inc.get("last")), _again)
+        inc["repeat"] = async_call_later(self.hass, self._left(rule, inc.get("last"), int(inc.get("count") or 0)), _again)
 
     async def _repeat(self, rule_id: str, entity_id: str) -> None:
         rule = next((r for r in self.config["rules"] if r["id"] == rule_id), None)
@@ -722,7 +757,7 @@ class NotifyEngine:
             if (r := next((x for x in self.config["rules"] if x["id"] == rule_id), None)) and self.groups.get(rule_id) is group:
                 self.hass.async_create_task(self._send_group(r, repeat=True))
 
-        group["repeat"] = async_call_later(self.hass, self._left(rule, group.get("last")), _again)
+        group["repeat"] = async_call_later(self.hass, self._left(rule, group.get("last"), int(group.get("count") or 0)), _again)
 
     @callback
     def _end_group(self, rule_id: str) -> None:
@@ -848,16 +883,38 @@ class NotifyEngine:
             for s in self.hass.states.async_all("person")
         ]
 
+    def scope(self, phone: dict[str, Any]) -> str:
+        """What a phone gets of the rules sent «to everyone»: its own setting, else its person's, else «*»."""
+        aud = self.config.get("audience") or {}
+        return aud.get(phone["service"]) or (aud.get(phone["person"]) if phone.get("person") else None) or aud.get("*") or "all"
+
     def _targets(self, rule: dict[str, Any]) -> list[dict[str, Any]]:
         phones = self.phones()
         rec = rule["recipients"]
         if rec["all"]:
-            return phones
+            critical = rule.get("priority") == "critical"
+            return [p for p in phones if (s := self.scope(p)) == "all" or (s == "critical" and critical)]
         people = set(rec["people"])
         for g in self.config["groups"]:
-            if g["id"] in rec["groups"]:
+            if g["id"] in (rec.get("groups") or []):
                 people.update(g["people"])
-        return [p for p in phones if p["person"] in people]
+        chosen = set(rec.get("phones") or [])
+        return [p for p in phones if p["person"] in people or p["service"] in chosen]
+
+    @staticmethod
+    def _recent(when: dict[str, str], seconds: int) -> dict[str, str]:
+        """HA's relay limit resets within a day, the agent's own hourly: an older mark isn't said any more."""
+        now = dt_util.utcnow()
+        return {k: v for k, v in when.items() if (t := dt_util.parse_datetime(v)) is not None and (now - t).total_seconds() < seconds}
+
+    def _room(self, service: str, critical: bool) -> bool:
+        """Under the agent's own cap for this phone (PUSH_*)."""
+        now = time.monotonic()
+        log = [t for t in self._pushes.get(service, []) if now - t < 86400]
+        self._pushes[service] = log
+        if critical:
+            return len(log) < PUSH_DAY_CRITICAL
+        return len(log) < PUSH_DAY_MAX and sum(1 for t in log if now - t < 3600) < PUSH_HOUR_MAX
 
     def _english(self) -> bool:
         """The project's language when Hauflo said it, else Home Assistant's."""
@@ -870,14 +927,24 @@ class NotifyEngine:
     def _note(self, message: str, *, title: str, notification_id: str) -> None:
         persistent_notification.async_create(self.hass, self._say(message), title=self._say(title), notification_id=notification_id)
 
-    async def _send(self, rule: dict[str, Any], title: str, message: str, *, tag: str, critical: bool, actions: list | None = None, targets: list | None = None, quiet: bool = False) -> list[str]:
+    async def _send(self, rule: dict[str, Any], title: str, message: str, *, tag: str, critical: bool, actions: list | None = None, targets: list | None = None, quiet: bool = False, results: dict[str, str] | None = None) -> list[str]:
         if message != "clear_notification":
             title, message = self._say(title), self._say(message)
         if actions:
             actions = [{**a, "title": self._say(a["title"])} for a in actions]
-        sent, failed = [], []
+        sent: list[str] = []
+        failed: list[str] = []
+        limited: list[str] = []
+        held: list[str] = []
+        testing = results is not None
 
         async def one(phone: dict[str, Any]) -> None:
+            # Over the agent's cap: not sent (a test is capped on its own — TEST_GAP).
+            if not testing and not self._room(phone["service"], critical):
+                held.append(phone["service"])
+                self.throttled[phone["service"]] = dt_util.utcnow().isoformat()
+                return
+            self._pushes.setdefault(phone["service"], []).append(time.monotonic())
             data: dict[str, Any] = {"tag": tag}
             if actions:
                 data["actions"] = actions
@@ -892,9 +959,15 @@ class NotifyEngine:
             try:
                 payload = {"message": message, "data": data, **({"title": title} if title else {})}
                 await self.hass.services.async_call("notify", phone["service"], payload, blocking=True)
+                if phone["service"] in errors.limited:
+                    limited.append(phone["service"])
+                    self.limited[phone["service"]] = dt_util.utcnow().isoformat()
+                    _LOGGER.warning("Hauflo alarm to %s: the HA app's push limit for this phone is used up for today", phone["service"])
+                    return
                 if phone["service"] in errors.failed:
                     raise RuntimeError("the HA app's push service said it failed (see HA log)")
                 sent.append(phone["service"])
+                self.limited.pop(phone["service"], None)
             except Exception as err:  # noqa: BLE001 — a phone that fails mustn't stop the others
                 failed.append(phone["service"])
                 _LOGGER.warning("Hauflo alarm to %s failed: %s", phone["service"], err)
@@ -907,13 +980,36 @@ class NotifyEngine:
             await asyncio.gather(*(asyncio.ensure_future(one(p)) for p in (targets if targets is not None else self._targets(rule))))
         finally:
             app_log.removeHandler(errors)
-        self.sent_log = ([{"at": dt_util.utcnow().isoformat(), "title": title, "sent": sent, "failed": failed}] + self.sent_log)[:30]
+        self.sent_log = ([{"at": dt_util.utcnow().isoformat(), "title": title, "sent": sent, "failed": failed, **({"limited": limited} if limited else {}), **({"held": held} if held else {})}] + self.sent_log)[:30]
+        if results is not None:
+            results.update({s: "sent" for s in sent} | {s: "failed" for s in failed} | {s: "rate_limited" for s in limited})
         return sent
 
+    def test_wait(self, body: dict[str, Any]) -> int:
+        """Seconds until this test may ring its phones (0 = now): each phone at most once per TEST_GAP, TEST_PER_MIN
+        tests a minute in all — a test rings at full volume (security re-review round 5), but «Проверить» then
+        «Проверить критичное» isn't an error (owner 27.10: a red «HA 429» — this agent's own one-test-a-minute)."""
+        now = time.monotonic()
+        self._tests = [t for t in self._tests if now - t < 60]
+        if len(self._tests) >= TEST_PER_MIN:
+            return int(60 - (now - self._tests[0])) + 1
+        waits = [TEST_GAP - (now - self._tested[p["service"]]) for p in self._test_targets(body) if p["service"] in self._tested]
+        return max([0, *[int(w) + 1 for w in waits if w > 0]])
+
+    def _test_targets(self, body: dict[str, Any]) -> list[dict[str, Any]]:
+        rec = {"all": False, "people": [str(p) for p in body.get("people") or []], "groups": [str(g) for g in body.get("groups") or []], "phones": [str(p) for p in body.get("phones") or []]}
+        # A test to «everyone» reaches every phone, whatever it gets of the alarms.
+        return self.phones() if body.get("all") else self._targets({"recipients": rec})
+
     async def async_test(self, body: dict[str, Any]) -> dict[str, Any]:
-        rule = {"recipients": {"all": bool(body.get("all")), "people": body.get("people") or [], "groups": body.get("groups") or []}}
+        rule = {"recipients": {"all": False, "people": [], "groups": []}}
         critical = body.get("priority") == "critical"
-        targets = self._targets(rule)
+        targets = self._test_targets(body)
+        now = time.monotonic()
+        self._tests.append(now)
+        for p in targets:
+            self._tested[p["service"]] = now
+        results: dict[str, str] = {}
         sent = await self._send(
             rule,
             "Hauflo: проверка уведомлений",
@@ -921,8 +1017,9 @@ class NotifyEngine:
             tag="hauflo_test",
             critical=critical,
             targets=targets,
+            results=results,
         )
-        return {"targets": len(targets), "sent": sent}
+        return {"targets": len(targets), "sent": sent, "results": [{"service": p["service"], "name": p["name"], "status": results.get(p["service"], "failed")} for p in targets]}
 
     def active_list(self) -> list[dict[str, Any]]:
         """Open alarms for Hauflo's monitoring: which rule, what, since when, accepted by whom — the ones taken
@@ -966,7 +1063,10 @@ class NotifyEngine:
             if dc is None and s.domain == "binary_sensor" and HEARTBEAT.search(s.attributes.get("friendly_name") or s.entity_id):
                 dc = "connectivity"
             if dc in ALARM_CLASSES:
-                candidates.append({"entity_id": s.entity_id, "name": s.attributes.get("friendly_name") or s.entity_id, "device_class": dc, "area": self._where(s), "state": s.state})
+                entry = er.async_get(self.hass).async_get(s.entity_id)
+                # Whose it is: Hauflo's own (suggested by itself) or another integration's — taken only when the
+                # integrator picks it (owner 27.10: a suggested rule rang about another integration's gas boiler).
+                candidates.append({"entity_id": s.entity_id, "name": s.attributes.get("friendly_name") or s.entity_id, "device_class": dc, "area": self._where(s), "state": s.state, "own": bool(self.owns and self.owns(s.entity_id)), "platform": entry.platform if entry else ""})
         valves = [
             {"entity_id": s.entity_id, "name": s.attributes.get("friendly_name") or s.entity_id, "area": self._where(s)}
             for s in self.hass.states.async_all(["valve", "switch"])
@@ -981,6 +1081,8 @@ class NotifyEngine:
             "actuators": sorted(valves, key=lambda c: (c["area"], c["name"])),
             "active": [{"key": k, "since": v["since"], "acked_by": v["acked_by"], "count": v["count"]} for k, v in self.active.items()],
             "log": self.sent_log[:10],
+            # Phones HA's push relay refused today («rate limit») / the agent's own cap held back — said on the page.
+            "limits": {"rate_limited": self._recent(self.limited, 86400), "held": self._recent(self.throttled, 3600)},
         }
 
 
@@ -1017,9 +1119,6 @@ class NotifyView(HomeAssistantView):
         return self.json({"config": config})
 
 
-_LAST_TEST = -1e9
-
-
 class NotifyTestView(HomeAssistantView):
     url = "/api/hauflo/notify/test"
     name = "api:hauflo:notify:test"
@@ -1029,11 +1128,6 @@ class NotifyTestView(HomeAssistantView):
         self.engine_of = engine_of
 
     async def post(self, request):
-        # At most one test a minute: a test rings every phone at full volume (security re-review round 5).
-        global _LAST_TEST
-        if time.monotonic() - _LAST_TEST < 60:
-            return self.json_message("one test a minute", 429)
-        _LAST_TEST = time.monotonic()
         engine = self.engine_of()
         if not engine:
             return self.json_message("Hauflo agent not set up", 503)
@@ -1045,6 +1139,8 @@ class NotifyTestView(HomeAssistantView):
             return self.json_message("invalid JSON", 400)
         if not isinstance(body, dict):
             return self.json_message("an object expected", 400)
+        if wait := engine.test_wait(body):
+            return self.json({"message": "a test to this phone was just sent", "code": "test_wait", "retry_after": wait}, 429)
         return self.json(await engine.async_test(body))
 
 

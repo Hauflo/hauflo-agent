@@ -211,3 +211,15 @@ async def test_pairing_asks_which_group_addresses_hauflo_may_send_to(hass: HomeA
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {"ranges": "1/1, 1/2, 99/9, x"})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["options"] == {"ranges": ["1/1", "1/2"]}
+
+
+async def test_pairing_proposes_the_addresses_hauflo_writes(hass: HomeAssistant, aioclient_mock) -> None:
+    """KNX review 27.10: the proposal was whole middle groups (0/0 with the ventilation commands Hauflo never writes) —
+    a Hauflo that sends «addresses» is proposed those; single addresses and spans are kept, nonsense dropped."""
+    aioclient_mock.post("https://app.hauflo.ru/api/agent/pair", json={"secret": "s", "project": "Дом", "ranges": ["0/0", "1/1"], "addresses": ["0/0/1", "1/1/1-21"]})
+    result = await _start(hass)
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"code": "RU-ABC-DEF-GHK"})
+    assert result["step_id"] == "ranges"
+    assert result["description_placeholders"]["ranges"] == "0/0/1, 1/1/1-21"
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"ranges": "1/1/1-21, 0/0/1, 2/2/7-7, 3/3/9-2, 1/1/300, 5/0"})
+    assert result["options"] == {"ranges": ["0/0/1", "1/1/1-21", "2/2/7", "5/0"]}

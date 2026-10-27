@@ -283,6 +283,11 @@ cases = [
  (W({"type": "lovelace/config/save", "url_path": "dashboard-home", "config": {}}), False),
  (H("DELETE", "/api/hauflo/notify"), False),
  (H("GET", "/api/hauflo/whatever"), False),
+ # «Комфортный пол» (0.12.0): its settings read and written, nothing else on that path.
+ (H("GET", "/api/hauflo/comfort"), True),
+ (H("POST", "/api/hauflo/comfort", {"rooms": []}), True),
+ (H("DELETE", "/api/hauflo/comfort"), False),
+ (H("POST", "/api/hauflo/comfort/x", {}), False),
  (H("POST", "/api/config/config_entries/flow/fk", {"host": "knxrouter"}), False),
  (H("POST", "/api/config/config_entries/flow/fk", {"gateway": "manual"}), True),
  # Security re-review round 5: the integrator's own groups, bridges and scenes are out of reach.

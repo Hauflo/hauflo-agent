@@ -126,7 +126,8 @@ class HaufloConfigFlow(ConfigFlow, domain=DOMAIN):
         """Which group addresses Hauflo may send to — confirmed here, in the house, not by the cloud (narrow round
         25.10, acceptance B9: an address no HA entity uses — a gate actuator on the bus — was writable)."""
         body, server = self._paired
-        proposed = ", ".join(parse_ranges(body.get("ranges")))
+        # The addresses Hauflo's entities write, as spans (KNX review 27.10); an older Hauflo sends only main/middle groups.
+        proposed = ", ".join(parse_ranges(body.get("addresses") or body.get("ranges")))
         if user_input is not None:
             ranges = parse_ranges(user_input.get(CONF_RANGES, ""))
             return self.async_create_entry(title=f"Hauflo — {body.get('project', '')}", data={CONF_SERVER: server, CONF_SECRET: body["secret"]}, options={CONF_RANGES: ranges})
@@ -179,17 +180,29 @@ class HaufloOptionsFlow(OptionsFlow):
         )
 
 
-def _range_key(r: str) -> tuple[int, int]:
-    a, _, b = r.partition("/")
-    return (int(a) if a.isdigit() else 99, int(b) if b.isdigit() else 99)
+def _range_key(r: str) -> tuple[int, ...]:
+    """«main/middle[/first[-last]]» in bus order; a whole group before its addresses."""
+    nums = [int(p) if p.isdigit() else 999 for p in re.split(r"[/-]", r)]
+    return tuple((nums + [-1, -1, -1])[:3])
 
 
 def parse_ranges(value: Any) -> list[str]:
-    """«1/1, 1/2 7/0» or a list → ["1/1", "1/2", "7/0"]: main/middle groups, KNX limits (0–31 / 0–7)."""
+    """«1/1, 1/2/5 7/0/1-21» or a list → ["1/1", "1/2/5", "7/0/1-21"]: a main/middle group, one address or a span of
+    one middle group's addresses (KNX review 27.10: Hauflo proposes the addresses it writes, not whole groups); KNX
+    limits 0–31 / 0–7 / 0–255; anything else is dropped."""
     items = value if isinstance(value, list) else re.split(r"[\s,;]+", str(value or ""))
     out = set()
     for x in items:
-        m = re.fullmatch(r"(\d{1,2})/(\d)", str(x).strip())
-        if m and int(m.group(1)) <= 31 and int(m.group(2)) <= 7:
-            out.add(f"{int(m.group(1))}/{int(m.group(2))}")
+        m = re.fullmatch(r"(\d{1,2})/(\d)(?:/(\d{1,3})(?:\s*-\s*(\d{1,3}))?)?", str(x).strip())
+        if not m or int(m.group(1)) > 31 or int(m.group(2)) > 7:
+            continue
+        group = f"{int(m.group(1))}/{int(m.group(2))}"
+        if m.group(3) is None:
+            out.add(group)
+            continue
+        lo = int(m.group(3))
+        hi = int(m.group(4)) if m.group(4) is not None else lo
+        if hi > 255 or lo > hi:
+            continue
+        out.add(f"{group}/{lo}" if lo == hi else f"{group}/{lo}-{hi}")
     return sorted(out, key=_range_key)
