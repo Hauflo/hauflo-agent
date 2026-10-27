@@ -33,7 +33,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
 from homeassistant.helpers.storage import Store
 
-from . import backup, comfort, keep, notify, sidebar, theme, voice
+from . import backup, comfort, keep, notify, season, sidebar, theme, voice
 from .const import CONF_REFRESH_TOKEN_ID, CONF_SECRET, CONF_SERVER, CONF_USER_ID, DATA_NOTIFY_VIEWS, DATA_UNLINKED, DOMAIN, MONITOR_LABEL, MONITOR_LABEL_EN, MONITOR_LABELS, OWNED_STORE, STATUS_EVERY, VERSION, CONF_RANGES, DATA_PENDING_RANGES
 
 _LOGGER = logging.getLogger(__name__)
@@ -1553,6 +1553,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
         hass.http.register_view(RangesView())
         hass.http.register_view(comfort.ComfortView(lambda: _comfort(hass)))
         hass.http.register_view(sidebar.SidebarView())
+        hass.http.register_view(season.SeasonView(lambda: _season(hass)))
 
     async def _stop(_event: Event) -> None:
         await agent.stop()
@@ -1606,6 +1607,12 @@ def _engine(hass: HomeAssistant) -> notify.NotifyEngine | None:
     for entry in hass.config_entries.async_loaded_entries(DOMAIN):
         if entry.runtime_data.engine is not None:
             return entry.runtime_data.engine
+    return None
+
+
+def _season(hass: HomeAssistant) -> season.Season | None:
+    for entry in hass.config_entries.async_loaded_entries(DOMAIN):
+        return season.Season(hass, lambda: entry.runtime_data.comfort)
     return None
 
 

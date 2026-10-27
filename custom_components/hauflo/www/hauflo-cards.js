@@ -2333,6 +2333,200 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
     }, 400);
   })();
 
+  // --- «Настройки» of the client's dashboard (owner 27.10: «непонятно, как переключить тему»; «видимый переключатель не
+  // стоит — в настройках»; «кнопка зима/лето»): a gear in the header of a Hauflo dashboard → the theme (HA's own choice,
+  // the one of the profile page: kept for the person, «как на телефоне» follows the phone) and the house's season.
+  (() => {
+    const W = {
+      ru: {
+        title: "Настройки", close: "Закрыть", theme: "Тема", light: "Светлая", dark: "Тёмная", auto: "Как на телефоне",
+        themeHint: "Запоминается для вас. «Как на телефоне» — днём светлая, ночью тёмная, если так настроен телефон.",
+        season: "Сезон", winter: "Зима", winterSub: "кондиционеры греют", summer: "Лето", summerSub: "кондиционеры охлаждают",
+        now: (m) => `Сейчас: ${m === "heat" ? "зима — кондиционеры на обогреве" : "лето — кондиционеры на охлаждении"}.`,
+        mixed: (h, c) => `Сейчас по-разному: на обогреве ${h}, на охлаждении ${c}.`,
+        allOff: (m) => `Кондиционеры выключены.${m ? ` Последний выбор — ${m === "heat" ? "зима" : "лето"}.` : ""}`,
+        seasonHint: (n) => `Одной кнопкой — все ${n} кондиционер${n % 10 === 1 && n % 100 !== 11 ? "" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? "а" : "ов"} дома. Выключенные не включаются. Тёплые полы и батареи не трогаем.`,
+        busy: "Переключаем…",
+        done: (r) => [r.changed.length && `Переключили: ${r.changed.length}.`, r.sent.length && `Выключенным задан режим (не включали): ${r.names(r.sent)}.`, r.skipped.length && `Выключены, не трогали: ${r.names(r.skipped)} — включите и выберите режим в комнате.`, r.failed.length && `Не ответили: ${r.names(r.failed)}.`].filter(Boolean).join(" ") || "Уже так.",
+        error: "Не получилось — проверьте связь с домом и попробуйте ещё раз.",
+        list: "Кондиционеры",
+        heat: "обогрев", cool: "охлаждение", off: "выкл.",
+      },
+      en: {
+        title: "Settings", close: "Close", theme: "Theme", light: "Light", dark: "Dark", auto: "As the phone",
+        themeHint: "Kept for you. «As the phone» follows the phone's light or dark mode.",
+        season: "Season", winter: "Winter", winterSub: "ACs heat", summer: "Summer", summerSub: "ACs cool",
+        now: (m) => `Now: ${m === "heat" ? "winter — the ACs heat" : "summer — the ACs cool"}.`,
+        mixed: (h, c) => `Now mixed: ${h} heating, ${c} cooling.`,
+        allOff: (m) => `The ACs are off.${m ? ` Last chosen: ${m === "heat" ? "winter" : "summer"}.` : ""}`,
+        seasonHint: (n) => `One tap for all ${n} AC${n === 1 ? "" : "s"} of the house. The ones off stay off. Floor heating and radiators aren't touched.`,
+        busy: "Switching…",
+        done: (r) => [r.changed.length && `Switched: ${r.changed.length}.`, r.sent.length && `Mode set on the ones off (not switched on): ${r.names(r.sent)}.`, r.skipped.length && `Off, left as they are: ${r.names(r.skipped)} — switch on and pick the mode in the room.`, r.failed.length && `No answer: ${r.names(r.failed)}.`].filter(Boolean).join(" ") || "Already so.",
+        error: "Didn't work — check the link to the house and try again.",
+        list: "ACs",
+        heat: "heating", cool: "cooling", off: "off",
+      },
+    };
+    const root = () => document.querySelector("home-assistant");
+    const hassOf = () => root()?.hass;
+    const words = () => W[langOf(hassOf())];
+    const themeNow = () => {
+      const d = hassOf()?.selectedTheme?.dark;
+      return d === true ? "dark" : d === false ? "light" : "auto";
+    };
+    // HA's own mechanism (its profile page fires the same): applied at once, saved for the person, kept over reloads.
+    const setTheme = (v) => root()?.dispatchEvent(new CustomEvent("settheme", { detail: { dark: v === "dark" ? true : v === "light" ? false : undefined }, bubbles: true, composed: true }));
+    /** The ACs (heat + cool) — from the agent; without it (an older agent) from the states. */
+    const localAcs = (h) =>
+      Object.values(h?.states || {})
+        .filter((s) => s.entity_id.startsWith("climate.") && (s.attributes.hvac_modes || []).includes("heat") && (s.attributes.hvac_modes || []).includes("cool") && !nd(s))
+        .map((s) => ({ entity_id: s.entity_id, name: nameOf(s, s.entity_id), state: s.state }));
+    const loadSeason = async (h) => {
+      try {
+        return { ...(await h.callApi("GET", "hauflo/season")), agent: true };
+      } catch (e) {
+        const list = localAcs(h);
+        const on = list.filter((a) => a.state === "heat" || a.state === "cool").map((a) => a.state);
+        return { acs: list, season: on.length ? (on.filter((m) => m === "heat").length >= on.length / 2 ? "heat" : "cool") : null, agent: false };
+      }
+    };
+    const applySeason = async (h, mode, info) => {
+      if (info.agent) return h.callApi("POST", "hauflo/season", { mode });
+      const r = { changed: [], sent: [], skipped: [], failed: [] };
+      for (const a of info.acs) {
+        if (a.state === mode) continue;
+        if (a.state === "off") {
+          r.skipped.push(a.entity_id);
+          continue;
+        }
+        try {
+          await call(h, "climate", "set_hvac_mode", { entity_id: a.entity_id, hvac_mode: mode });
+          r.changed.push(a.entity_id);
+        } catch (e) {
+          r.failed.push(a.entity_id);
+        }
+      }
+      return r;
+    };
+    const CSS2 = `:host{position:fixed;inset:0;z-index:9999;display:grid;place-items:end center;background:rgba(0,0,0,.42);font-family:Onest,var(--ha-font-family-body),system-ui,sans-serif;color:var(--eh-ink,var(--primary-text-color));-webkit-tap-highlight-color:transparent}
+@media (min-width:600px){:host{place-items:center}}
+*{box-sizing:border-box}
+.sh{width:min(100%,460px);max-height:92vh;overflow:auto;background:var(--card-background-color,#fff);background-image:var(--eh-glass,none);border-radius:28px 28px 0 0;padding:20px 20px calc(20px + env(safe-area-inset-bottom));box-shadow:0 20px 60px rgba(0,0,0,.35)}
+@media (min-width:600px){.sh{border-radius:28px}}
+.hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}.hd h2{font:600 20px/1.2 Onest,sans-serif;margin:0;letter-spacing:-.01em}
+.x{width:44px;height:44px;border-radius:22px;border:0;background:var(--eh-track,rgba(127,127,127,.12));color:inherit;font-size:22px;cursor:pointer}
+.caps{font:500 11px/1.2 Onest,sans-serif;letter-spacing:.14em;text-transform:uppercase;color:var(--eh-ink2,var(--secondary-text-color));margin:18px 0 8px}
+.seg{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;padding:4px;border-radius:18px;background:var(--eh-track,rgba(127,127,127,.12))}
+.seg button,.big button{font:500 14px Onest,sans-serif;color:inherit;border:0;border-radius:14px;min-height:44px;padding:8px;background:none;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--card-background-color,#fff);box-shadow:0 1px 3px rgba(0,0,0,.18);font-weight:600}
+.hint{font:400 13px/1.45 Onest,sans-serif;color:var(--eh-ink2,var(--secondary-text-color));margin:8px 2px 0}
+.big{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.big button{display:flex;flex-direction:column;align-items:flex-start;gap:4px;padding:14px;border-radius:20px;background:var(--eh-track,rgba(127,127,127,.12));text-align:left;min-height:84px}
+.big button b{display:flex;align-items:center;gap:8px;font:600 17px Onest,sans-serif}.big button span{font:400 12px Onest,sans-serif;color:var(--eh-ink2,var(--secondary-text-color))}
+.big button[aria-pressed="true"].heat{background:color-mix(in srgb,var(--eh-amber,#E8901F) 22%,transparent);box-shadow:inset 0 0 0 2px var(--eh-amber,#E8901F)}
+.big button[aria-pressed="true"].cool{background:color-mix(in srgb,var(--eh-ice,#3C82F0) 22%,transparent);box-shadow:inset 0 0 0 2px var(--eh-ice,#3C82F0)}
+.big button:disabled{opacity:.55;cursor:default}
+ha-icon{--mdc-icon-size:20px}
+.now{font:500 14px/1.4 Onest,sans-serif;margin:0 2px 10px}.res{font:400 13px/1.45 Onest,sans-serif;margin:10px 2px 0}
+details{margin-top:10px;font:400 13px Onest,sans-serif;color:var(--eh-ink2,var(--secondary-text-color))}summary{cursor:pointer;min-height:32px;display:flex;align-items:center}
+ul{margin:4px 0 0;padding:0 0 0 18px}li{margin:2px 0}`;
+    let sheet = null;
+    const openSettings = async () => {
+      if (sheet) return;
+      const h = hassOf();
+      if (!h) return;
+      const w = words();
+      sheet = document.createElement("div");
+      sheet.className = "hauflo-settings";
+      const sr = sheet.attachShadow({ mode: "open" });
+      const close = () => {
+        sheet?.remove();
+        sheet = null;
+        document.removeEventListener("keydown", onKey);
+      };
+      const onKey = (e) => e.key === "Escape" && close();
+      document.addEventListener("keydown", onKey);
+      let info = null;
+      let res = "";
+      let busy = false;
+      const draw = () => {
+        const th = themeNow();
+        const acs = info?.acs || [];
+        const on = acs.filter((a) => a.state === "heat" || a.state === "cool");
+        const heat = on.filter((a) => a.state === "heat").length;
+        const cool = on.length - heat;
+        const now = !info ? "" : !on.length ? w.allOff(info.chosen ?? info.season) : heat && cool ? w.mixed(heat, cool) : w.now(heat ? "heat" : "cool");
+        const pressed = info && on.length && !(heat && cool) ? (heat ? "heat" : "cool") : info && !on.length ? (info.chosen ?? info.season) : null;
+        sr.innerHTML = `<style>${CSS2}</style><div class="sh" role="dialog" aria-modal="true" aria-label="${esc(w.title)}">
+<div class="hd"><h2>${esc(w.title)}</h2><button class="x" data-x aria-label="${esc(w.close)}">×</button></div>
+<div class="caps">${esc(w.theme)}</div>
+<div class="seg" role="group" aria-label="${esc(w.theme)}">${["light", "dark", "auto"].map((v) => `<button data-theme="${v}" aria-pressed="${th === v}">${esc(w[v])}</button>`).join("")}</div>
+<p class="hint">${esc(w.themeHint)}</p>
+${acs.length ? `<div class="caps">${esc(w.season)}</div><p class="now" data-now>${esc(now)}</p>
+<div class="big" role="group" aria-label="${esc(w.season)}">
+<button class="heat" data-season="heat" aria-pressed="${pressed === "heat"}" ${busy ? "disabled" : ""}><b><ha-icon icon="hauflo:snow"></ha-icon>${esc(w.winter)}</b><span>${esc(w.winterSub)}</span></button>
+<button class="cool" data-season="cool" aria-pressed="${pressed === "cool"}" ${busy ? "disabled" : ""}><b><ha-icon icon="hauflo:sun"></ha-icon>${esc(w.summer)}</b><span>${esc(w.summerSub)}</span></button></div>
+<p class="hint">${esc(w.seasonHint(acs.length))}</p>${res ? `<p class="res" data-res>${esc(res)}</p>` : ""}
+<details><summary>${esc(w.list)} · ${acs.length}</summary><ul>${acs.map((a) => `<li>${esc(a.name)} — ${esc(w[a.state] ?? a.state)}</li>`).join("")}</ul></details>` : ""}
+</div>`;
+        sr.querySelector("[data-x]").onclick = close;
+        sr.querySelectorAll("[data-theme]").forEach((b) => (b.onclick = () => {
+          setTheme(b.dataset.theme);
+          setTimeout(draw, 50);
+        }));
+        sr.querySelectorAll("[data-season]").forEach((b) => (b.onclick = async () => {
+          if (busy) return;
+          busy = true;
+          res = w.busy;
+          draw();
+          try {
+            const r = await applySeason(hassOf(), b.dataset.season, info);
+            const names = (ids) => ids.map((id) => (info.acs.find((a) => a.entity_id === id)?.name ?? id)).join(", ");
+            res = w.done({ changed: r.changed || [], sent: r.sent || [], skipped: r.skipped || [], failed: r.failed || [], names });
+          } catch (e) {
+            res = w.error;
+          }
+          busy = false;
+          // HA's states follow the bus: read again a moment later.
+          await new Promise((ok) => setTimeout(ok, 800));
+          info = await loadSeason(hassOf());
+          if (sheet) draw();
+        }));
+      };
+      // A tap on the dim backdrop closes; inside the sheet (a shadow root — retargeted to the host) it doesn't.
+      sheet.addEventListener("click", (e) => e.composedPath()[0] === sheet && close());
+      draw();
+      document.body.appendChild(sheet);
+      info = await loadSeason(h);
+      if (sheet) draw();
+      sr.querySelector("[data-x]")?.focus();
+    };
+    const GEAR = ".hauflo-gear{display:inline-flex;align-items:center;justify-content:center;width:48px;height:48px;margin:0 2px;border:0;border-radius:24px;background:none;color:var(--app-header-text-color,var(--primary-text-color));cursor:pointer;flex:none;-webkit-tap-highlight-color:transparent}.hauflo-gear:hover{background:rgba(127,127,127,.12)}.hauflo-gear ha-icon{--mdc-icon-size:22px}";
+    setInterval(() => {
+      if (!/^\/hauflo-/.test(location.pathname)) return;
+      const panel = document.querySelector("home-assistant")?.shadowRoot?.querySelector("home-assistant-main")?.shadowRoot?.querySelector("ha-drawer partial-panel-resolver ha-panel-lovelace");
+      const rs = panel?.shadowRoot?.querySelector("hui-root")?.shadowRoot;
+      const bar = rs?.querySelector(".toolbar");
+      if (!bar || bar.querySelector(".hauflo-gear")) return;
+      if (!rs.querySelector("style[data-hauflo-gear]")) {
+        const s = document.createElement("style");
+        s.dataset.haufloGear = "1";
+        s.textContent = GEAR;
+        rs.appendChild(s);
+      }
+      const b = document.createElement("button");
+      b.className = "hauflo-gear";
+      b.setAttribute("aria-label", words().title);
+      b.title = words().title;
+      b.innerHTML = `<ha-icon icon="mdi:cog-outline"></ha-icon>`; // a plain gear — Hauflo's own one reads as a sun
+      b.addEventListener("click", () => void openSettings());
+      // Beside HA's own buttons, not inside them: the wall tablet (kiosk) hides those, not this one.
+      const items = bar.querySelector(".action-items");
+      if (items) bar.insertBefore(b, items);
+      else bar.appendChild(b);
+    }, 700);
+  })();
+
   // --- kiosk: a wall tablet without HA's sidebar and buttons (owner 2026-10-25: «киоск режим важно») ----
   // Opened once with «?kiosk» the tablet remembers it: no sidebar, no menu/search/Assist/edit — the floor
   // tabs and the back arrow stay. «?kiosk=full» hides the whole header; «?kiosk=0» turns it off.
