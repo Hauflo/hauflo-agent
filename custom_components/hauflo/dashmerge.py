@@ -550,13 +550,48 @@ class Merge:
         }
 
 
+def unpanel(cfg: Any, new: dict[str, Any]) -> Any:
+    """A Hauflo panel view the new version sends as a sections view (owner live test 28.10, «Котельная»: HA's panel view
+    showed only its first card — what the family or HA's «Добавить на панель» put on the room page was hidden): read as
+    that sections view, its cards in the new version's first section — in the base and in HA's config alike, so what the
+    family added there stays on that page after Hauflo's card, not on a hidden «-kept» page. A copy; the rest as it is."""
+    if not isinstance(cfg, dict) or not isinstance(new, dict):
+        return cfg
+    to_sections: dict[str, str] = {}
+    for v in _kids(new, 0):
+        h = _hid(v)
+        secs = v.get("sections") if isinstance(v, dict) else None
+        if h and isinstance(secs, list):
+            first = next((_hid(s) for s in secs if _hid(s)), None)
+            to_sections[h] = first or f"{h}/s:panel"
+    views = cfg.get("views")
+    if not to_sections or not isinstance(views, list):
+        return cfg
+    out_views: list[Any] = []
+    changed = False
+    for v in views:
+        h = _hid(v)
+        if h in to_sections and isinstance(v, dict) and _kids_key(v, 1) == "cards":
+            cards = [c for c in v.get("cards", []) if isinstance(c, dict)] if isinstance(v.get("cards"), list) else []
+            own = {k: copy.deepcopy(x) for k, x in v.items() if k not in ("cards", "type")}
+            out_views.append({**own, "type": "sections", "sections": [{"type": "grid", ID: to_sections[h], "cards": copy.deepcopy(cards)}]})
+            changed = True
+        else:
+            out_views.append(v)
+    return {**cfg, "views": out_views} if changed else cfg
+
+
 def plan_and_merge(new: dict[str, Any], current: Any, base: dict[str, Any] | None, take: Any = (), restore: Any = ()) -> tuple[dict[str, Any], dict[str, Any]]:
     """(the config to save, what the plan says). No base: Hauflo's config as it is, nothing known about HA's."""
-    new = rekey(ensure_ids(copy.deepcopy(new)), base)  # unique ids whatever the cloud sent, none of another kind
+    new = ensure_ids(copy.deepcopy(new))
+    if base is not None:
+        # A panel page of Hauflo's that is a sections page now: base and HA's config read that way first (`unpanel`).
+        base, seen = unpanel(base, new), unpanel(current, new)
+    new = rekey(new, base)  # unique ids whatever the cloud sent, none of another kind
     if base is None:
         return new, {"base": False}
-    m = Merge(new, current, base, take, restore)
-    return m.result, {**m.summary(), "base": True, "edited": current != base, "changes": m.result != current, "lost": m.lost()}
+    m = Merge(new, seen, base, take, restore)
+    return m.result, {**m.summary(), "base": True, "edited": seen != base, "changes": m.result != current, "lost": m.lost()}
 
 
 # --- the agent's side -------------------------------------------------------------------------------------------------
@@ -670,7 +705,8 @@ class DashboardMerge:
         if not exists:
             raise MergeError("not_found", "no such storage dashboard")
         base = self.bases.get(url_path) if current is not None else None
-        new = rekey(ensure_ids(copy.deepcopy(config)), base)
+        new = ensure_ids(copy.deepcopy(config))
+        new = rekey(new, unpanel(base, new) if base is not None else None)
         if base is None and current is not None and not replace:
             # Nothing known of what is Hauflo's here: no merge can tell the integrator's cards — refused, the cloud
             # decides (a hand-edited dashboard stays, or is rebuilt with a copy) as with an older agent.
