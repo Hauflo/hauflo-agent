@@ -33,7 +33,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
 from homeassistant.helpers.storage import Store
 
-from . import automations, backup, comfort, dashmerge, keep, notify, presence, season, sidebar, theme, titles, voice
+from . import automations, backup, comfort, dashmerge, keep, notify, presence, scenes, season, sidebar, theme, titles, voice
 from .const import CONF_REFRESH_TOKEN_ID, CONF_SECRET, CONF_SERVER, CONF_USER_ID, DATA_NOTIFY_VIEWS, DATA_UNLINKED, DOMAIN, MONITOR_LABEL, MONITOR_LABEL_EN, MONITOR_LABELS, OWNED_STORE, STATUS_EVERY, VERSION, CONF_RANGES, DATA_PENDING_RANGES, CONF_ALLOW_CHANGES, LOCKED_CODE
 
 _LOGGER = logging.getLogger(__name__)
@@ -1097,6 +1097,9 @@ def _http_allowed(hass: HomeAssistant, method: str, path: str, body: Any, owned_
     if low.startswith("/api/config/scene/config/") and method in ("POST", "DELETE", "GET"):
         if not (len(parts) == 5 and parts[4].startswith("hauflo_")):
             return False
+        # A scene the family made on the dashboard (scenes.py) is theirs: the cloud never reads, rewrites or deletes it.
+        if parts[4].startswith("hauflo_fam_"):
+            return False
         # A scene only sets lights, blinds, relays, climate, fans, media — never a lock or the alarm.
         # Only Hauflo's own (panel round 6: the integrator's gate relay in «Evening»).
         ents = data.get("entities", {}) if method == "POST" else {}
@@ -1725,6 +1728,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
         hass.http.register_view(season.SeasonView(lambda: _season(hass)))
         hass.http.register_view(titles.TitlesView())
         hass.http.register_view(automations.AutomationsView(lambda: _automations(hass)))
+        hass.http.register_view(scenes.ScenesView(lambda: _scenes(hass)))
         hass.http.register_view(presence.PresenceView(lambda: _presence(hass)))
 
     async def _stop(_event: Event) -> None:
@@ -1803,6 +1807,16 @@ def _automations(hass: HomeAssistant) -> automations.Automations | None:
         if getattr(agent, "automations", None) is None:
             agent.automations = automations.Automations(hass, lambda eid: _hauflo_entity(hass, eid, agent.owned, agent.owned_entries))
         return agent.automations
+    return None
+
+
+def _scenes(hass: HomeAssistant) -> scenes.FamilyScenes | None:
+    """The family's own room scenes (scenes.py): Hauflo's lights and blinds only, as automations."""
+    for entry in hass.config_entries.async_loaded_entries(DOMAIN):
+        agent = entry.runtime_data
+        if getattr(agent, "family_scenes", None) is None:
+            agent.family_scenes = scenes.FamilyScenes(hass, lambda eid: _hauflo_entity(hass, eid, agent.owned, agent.owned_entries))
+        return agent.family_scenes
     return None
 
 

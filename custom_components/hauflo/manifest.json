@@ -25,5 +25,5 @@
   "issue_tracker": "https://github.com/Hauflo/hauflo-agent/issues",
   "requirements": [],
   "single_config_entry": true,
-  "version": "0.15.5"
+  "version": "0.16.0"
 }

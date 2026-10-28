@@ -673,3 +673,29 @@ async def test_a_copy_made_before_a_take_save_is_never_pruned(hass: HomeAssistan
     # Kept over a restart of the agent (its store).
     await agent.dashboards.async_load()
     assert agent.dashboards.taken_copies == {kept}
+
+
+def test_automations_card_moved_out_of_service_is_not_left_duplicated():
+    """Owner 28.10: the «Автоматизации» card was inside «Сервис», now it is a tab of its own. It is Hauflo's own card (it
+    has an id): the old copy goes, the new one is added, the integrator's own card in «Сервис» stays."""
+    auto = {"type": "custom:hauflo-automations", "grid_options": {"columns": "full"}}
+    old = {"views": [
+        view("v/living", "living", "Гостиная", section("v/living/s:l", card("v/living/s:l/c", "light.a"))),
+        view("v/service", "service", "Сервис",
+             {"type": "grid", ID: "v/service/s:automations:", "cards": [{**auto, ID: "v/service/s:automations:/automations:"}]},
+             section("v/service/s:p", card("v/service/s:p/c", "sensor.p"))),
+    ]}
+    new = {"views": [
+        copy.deepcopy(old["views"][0]),
+        view("v/service", "service", "Сервис", copy.deepcopy(old["views"][1]["sections"][1])),
+        view("v/automations", "automations", "Автоматизации",
+             {"type": "grid", ID: "v/automations/s:automations:", "cards": [{**auto, ID: "v/automations/s:automations:/automations:"}]}),
+    ]}
+    cur = copy.deepcopy(old)
+    cur["views"][1]["sections"].append({"type": "grid", "cards": [copy.deepcopy(MY_CARD)]})
+    merged, _ = plan_and_merge(new, cur, old)
+    assert json.dumps(merged).count("custom:hauflo-automations") == 1
+    svc = next(v for v in merged["views"] if v["path"] == "service")
+    assert "hauflo-automations" not in json.dumps(svc)
+    assert MY_CARD in [c for s in svc["sections"] for c in s["cards"]]
+    assert any(v["path"] == "automations" for v in merged["views"])

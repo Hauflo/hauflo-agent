@@ -38,7 +38,8 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
 @media (prefers-reduced-motion: reduce){.mv .f,.g.gc.mv{animation:none}}
 .scn{display:flex;flex-wrap:wrap;gap:8px}.scn button{height:44px;padding:0 15px 0 12px;border-radius:15px;display:flex;align-items:center;gap:8px;flex:0 1 auto;max-width:100%;min-width:0;color:var(--ink);box-shadow:var(--eh-edge,inset 0 0 0 1px var(--hair));background:var(--eh-glass,transparent);font:500 13px Onest,sans-serif;transition:background .3s,box-shadow .3s}
 .scn button span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.scn button ha-icon{color:var(--sacc);flex:0 0 auto;--mdc-icon-size:17px}
-.scn button.go{background:color-mix(in srgb,var(--sacc) 26%,transparent)}.scn.light{--sacc:var(--amber)}.scn.cover{--sacc:var(--ice)}.scn.mixed{--sacc:var(--mint)}
+.scn button.go{background:color-mix(in srgb,var(--sacc) 26%,transparent)}.scn.light{--sacc:var(--amber)}.scn.cover{--sacc:var(--ink2)}.scn.mixed{--sacc:var(--mint)}
+.scn button.add{box-shadow:inset 0 0 0 1px var(--hair);background:transparent;color:var(--ink2);padding:0 14px 0 10px}.scn button.add ha-icon{color:var(--ink2)}
 .srow{margin-top:14px}.srow>.caps{display:block;margin-bottom:8px}
 :host button.sent{background:color-mix(in srgb,var(--amber) 16%,transparent);box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--amber) 55%,transparent)}`;
 
@@ -213,7 +214,13 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
     "Остров": "Island", "ТВ": "TV", "Здание": "Building", "Устройства": "Devices", "Зима": "Winter", "Лето": "Summer",
     "Принято": "Accept", "отправлено": "sent", "Нет ответа от дома — команда могла не дойти": "No answer from the house — the command may not have arrived", "Не получилось — ещё раз": "Didn't work — try again",
     "не отправлено — нет связи с домом": "not sent — no link to the house", "Показания": "Readings", "Комната": "Room", "Здесь пока ничего нет — добавьте устройства в проект или свои карточки в Home Assistant": "Nothing here yet — add devices to the project or your own cards in Home Assistant",
-    "Тёплые полы": "Floor heating", "цель · обогрев": "target · heating", "цель · охлаждение": "target · cooling", "Сценарии": "Scenes", "Светильник": "Light", "Выключатель": "Switch", "Штора": "Blind", "Датчик": "Sensor", "Сцена": "Scene", "Кран": "Valve", "Замок": "Lock", "Устройство": "Device", "уставка ещё не пришла от системы": "no setpoint from the system yet", "нет данных от системы": "no data from the system yet", "уставка ещё не пришла": "no setpoint yet", "нет уставки": "no setpoint", "греет": "heating", "держит": "holding", "поддерживает": "keeping", "Сейчас не греют": "Not heating now", "сейчас": "now", "Пол": "Floor", "В комнате": "Room",
+    "Тёплые полы": "Floor heating", "цель · обогрев": "target · heating", "цель · охлаждение": "target · cooling", "Сценарии": "Scenes", "Светильник": "Light", "Выключатель": "Switch", "Штора": "Blind", "Датчик": "Sensor", "Сцена": "Scene", "Кран": "Valve", "Замок": "Lock", "Устройство": "Device", "уставка ещё не пришла от системы": "no setpoint from the system yet", "нет данных от системы": "no data from the system yet", "уставка ещё не пришла": "no setpoint yet", "нет уставки": "no setpoint", "Положение неизвестно": "Position unknown", "Поднять": "Raise", "Опустить": "Lower", "Раздвинуть": "Open", "Задвинуть": "Close",
+    "Новая сцена": "New scene", "Новая сцена света": "New light scene", "Новая сцена штор": "New blind scene", "Название": "Name", "Например, Утро": "e.g. Morning", "Например, Кино": "e.g. Movie night",
+    "Поставьте шторы как нужно — сцена запомнит их положение.": "Set the blinds the way you want — the scene remembers where they are.",
+    "Включите свет как нужно — сцена запомнит, что горит и как ярко.": "Set the lights the way you want — the scene remembers what is on and how bright.",
+    "Запомнить как сейчас": "Save as it is now", "Отмена": "Cancel", "Введите название": "Enter a name", "Переименовать": "Rename", "Сохранить": "Save", "Удалить сцену": "Delete scene", "Убрать с панели": "Remove from the dashboard",
+    "Сцену настроил интегратор. Её можно переименовать и перезаписать; убрать — только с этой панели.": "Your installer set up this scene. You can rename it and save it again; removing only takes it off this dashboard.",
+    "греет": "heating", "держит": "holding", "поддерживает": "keeping", "Сейчас не греют": "Not heating now", "сейчас": "now", "Пол": "Floor", "В комнате": "Room",
   };
   // Phrases with numbers / declensions (whole text node).
   const EN_RX = [
@@ -510,27 +517,244 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
     const own = kind && TITLES.data?.[kind];
     return own ? `<span data-own>${esc(own)}</span>` : esc((kind === card._config?.block && card._config?.title) || fallback);
   };
-  /** Scene buttons of one kind (light amber, blinds ice, both mint) — the room's top card and the blocks share them. */
-  const sceneChips = (hass, list, kind) =>
-    `<div class="scn ${kind}">${(list || [])
-      .filter((x) => st(hass, x.entity))
+  // --- the family's own room scenes (owner 28.10: «сцены, как и сцены света, должны создаваться и редактироваться мной и
+  // клиентом»; agent scenes.py, 0.16.0+): a block with `scene_room` gets «+ Сцена» → a name → «Запомнить как сейчас»;
+  // a long press on a scene Hauflo made (the integrator's or the family's) → rename / remember again / delete (hide).
+  const FAM = { hidden: null, state: "", cards: new Set() };
+  const famRerender = () => {
+    for (const c of FAM.cards) {
+      c._sig = "";
+      c._update();
+    }
+  };
+  const loadFam = (h) => {
+    if (FAM.state || !h?.callApi) return;
+    FAM.state = "loading";
+    h.callApi("GET", "hauflo/scenes")
+      .then((r) => (FAM.hidden = Array.isArray(r?.hidden) ? r.hidden : []))
+      .catch(() => (FAM.hidden = []))
+      .finally(() => {
+        FAM.state = "done";
+        famRerender();
+      });
+  };
+  /** The room's scenes the family saved on the dashboard (`hauflo_fam_<room>_<l|c>_<time>`), oldest first. */
+  // All of them once per states object (HA replaces it on any change) — not a walk over every state per card and update.
+  const FAM_ALL = new WeakMap();
+  const allFamily = (hass) => {
+    const states = hass?.states;
+    if (!states) return [];
+    if (!FAM_ALL.has(states))
+      FAM_ALL.set(
+        states,
+        Object.values(states)
+          .filter((s) => s.entity_id.startsWith("scene.") && String(s.attributes.id || "").startsWith("hauflo_fam_"))
+          .sort((a, b) => String(a.attributes.id).localeCompare(String(b.attributes.id))),
+      );
+    return FAM_ALL.get(states);
+  };
+  const familyScenes = (hass, room, kind) => {
+    const prefix = `hauflo_fam_${String(room).replace(/[^a-z0-9]/g, "")}_${kind === "cover" ? "c" : "l"}_`;
+    return allFamily(hass)
+      .filter((s) => String(s.attributes.id).startsWith(prefix))
+      .map((s) => ({ entity: s.entity_id }));
+  };
+  /** The family scenes a card with `scene_room` shows — watched, so one saved on another phone shows here too. */
+  const famWatched = (card) => {
+    const c = card._config || {};
+    const rooms = [c.scene_room, ...(c.rows || []).map((r) => r.scene_room)].filter(Boolean);
+    if (!rooms.length || !card._hass) return [];
+    FAM.cards.add(card);
+    loadFam(card._hass);
+    return allFamily(card._hass)
+      .filter((s) => rooms.some((r) => String(s.attributes.id).startsWith(`hauflo_fam_${r}_`)))
+      .map((s) => s.entity_id);
+  };
+  /** Scene buttons of one kind (light amber, blinds neutral, both mint) — the room's top card and the blocks share them.
+   * `room` (the card's `scene_room`): the family's own scenes after the integrator's, and «+ Сцена». */
+  const sceneChips = (hass, list, kind, room) => {
+    const own = room && hass ? familyScenes(hass, room, kind) : [];
+    const hidden = new Set(FAM.hidden || []);
+    const all = [...(list || []), ...own.filter((x) => !(list || []).some((y) => y.entity === x.entity))].filter((x) => st(hass, x.entity) && !hidden.has(x.entity));
+    return `<div class="scn ${kind}">${all
       .map((x) => {
-        const label = x.name || nameOf(st(hass, x.entity), x.entity);
-        return `<button data-scene="${esc(x.entity)}" title="${esc(label)}"><ha-icon icon="${esc(x.icon || (kind === "cover" ? "hauflo:blind" : "hauflo:scene"))}"></ha-icon><span>${esc(label)}</span></button>`;
+        const s = st(hass, x.entity);
+        const label = x.name || nameOf(s, x.entity);
+        const editable = /^hauflo_/.test(String(s.attributes.id || ""));
+        return `<button data-scene="${esc(x.entity)}" ${editable && room ? 'data-edit="1"' : ""} title="${esc(label)}"><ha-icon icon="${esc(x.icon || s.attributes.icon || (kind === "cover" ? "hauflo:blind" : "hauflo:scene"))}"></ha-icon><span>${esc(label)}</span></button>`;
       })
-      .join("")}</div>`;
-  const bindScenes = (card) =>
-    card.shadowRoot.querySelectorAll("button[data-scene]").forEach((b) =>
+      .join("")}${room && kind !== "mixed" ? `<button class="add" data-scene-add="${kind === "cover" ? "cover" : "light"}" aria-label="Новая сцена" title="Новая сцена"><ha-icon icon="mdi:plus"></ha-icon><span>Сцена</span></button>` : ""}</div>`;
+  };
+  /** What «Запомнить как сейчас» takes: the block's own lights / blinds (one by one — never a group, it would move twice). */
+  const captureList = (card, kind) => {
+    const c = card._config || {};
+    const ids = [...(c.entities || []), ...(c.capture || []), ...((c.rows || []).find((r) => r.kind === kind)?.capture || [])].map((e) => (typeof e === "string" ? e : e?.entity)).filter(Boolean);
+    return [...new Set(ids.filter((id) => id.startsWith(kind === "cover" ? "cover." : "light.")))];
+  };
+  const roomOf = (card, kind) => card._config?.scene_room || (card._config?.rows || []).find((r) => r.kind === kind)?.scene_room;
+  // A function: SHEET_CSS (the climate sheet's) is defined further down.
+  const sceneSheetCss = () => `${SHEET_CSS}
+*{box-sizing:border-box}.sh{padding:18px 18px calc(18px + env(safe-area-inset-bottom));gap:12px}.t{font:500 17px Onest,sans-serif;color:var(--primary-text-color)}
+.n{font:400 13px/1.4 Onest,sans-serif;color:var(--secondary-text-color)}.e{font:400 13px/1.4 Onest,sans-serif;color:var(--eh-alert,#FF5A5F)}
+input{height:48px;border-radius:14px;border:1px solid var(--divider-color);padding:0 14px;font:400 16px Onest,sans-serif;background:transparent;color:var(--primary-text-color)}
+.b{height:48px;border-radius:14px;border:0;font:500 15px Onest,sans-serif;cursor:pointer;background:var(--eh-track,rgba(127,127,127,.12));color:var(--primary-text-color)}
+.b.go{background:color-mix(in srgb,var(--eh-amber,#FFB25C) 30%,transparent)}.b.bad{color:var(--eh-alert,#FF5A5F)}.b:disabled{opacity:.5}`;
+  /** A small sheet over the dashboard: the family's scene actions. */
+  const sceneSheet = (card, build) => {
+    const host = document.createElement("div");
+    host.className = "hauflo-scene-sheet";
+    const sr = host.attachShadow({ mode: "open" });
+    const close = () => {
+      host.remove();
+      document.removeEventListener("keydown", onKey);
+    };
+    const onKey = (e) => e.key === "Escape" && close();
+    document.addEventListener("keydown", onKey);
+    host.addEventListener("click", (e) => e.composedPath()[0] === host && close());
+    const draw = (html) => {
+      sr.innerHTML = `<style>${sceneSheetCss()}</style><div class="sh" role="dialog" aria-modal="true">${html}</div>`;
+      if (LANG !== "ru") translate(sr);
+    };
+    document.body.appendChild(host);
+    build({ sr, draw, close });
+  };
+  const famCall = async (card, body) => {
+    try {
+      return { ok: await card._hass.callApi("POST", "hauflo/scenes", body) };
+    } catch (e) {
+      // HA's callApi rejects with the parsed body ({message}) or a plain error.
+      const msg = e?.body?.message || e?.message || (typeof e === "string" ? e : "");
+      return { error: msg && !/^\d{3}/.test(msg) ? msg : "Не получилось — ещё раз" };
+    }
+  };
+  const famDone = (card) => {
+    FAM.state = "";
+    loadFam(card._hass);
+    setTimeout(famRerender, 400); // HA's scene reload: the new / renamed entity shows a moment later
+  };
+  /** «+ Сцена»: a name, then what the room's lights / blinds do now. */
+  const openAddScene = (card, kind) => {
+    const room = roomOf(card, kind);
+    const entities = captureList(card, kind);
+    sceneSheet(card, ({ sr, draw, close }) => {
+      const form = (err = "", value = "") => {
+        draw(`<div class="t">${kind === "cover" ? "Новая сцена штор" : "Новая сцена света"}</div>
+<div class="n">${kind === "cover" ? "Поставьте шторы как нужно — сцена запомнит их положение." : "Включите свет как нужно — сцена запомнит, что горит и как ярко."}</div>
+<input maxlength="40" placeholder="${kind === "cover" ? "Например, Утро" : "Например, Кино"}" aria-label="Название" value="${esc(value)}">
+${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-save>Запомнить как сейчас</button><button class="b" data-x>Отмена</button>`);
+        const input = sr.querySelector("input");
+        input.focus();
+        sr.querySelector("[data-x]").addEventListener("click", close);
+        const save = async () => {
+          const name = input.value.trim();
+          if (!name) return form("Введите название", "");
+          sr.querySelector("[data-save]").disabled = true;
+          const r = await famCall(card, { op: "add", room, kind: kind === "cover" ? "c" : "l", name, entities });
+          if (r.error) return form(r.error, name);
+          haptic(card, "success");
+          close();
+          famDone(card);
+        };
+        sr.querySelector("[data-save]").addEventListener("click", save);
+        input.addEventListener("keydown", (e) => e.key === "Enter" && save());
+      };
+      form();
+    });
+  };
+  /** A long press on a scene Hauflo made: rename, remember again, delete (the family's) or hide (the integrator's). */
+  const openEditScene = (card, entity, kind) => {
+    const s = st(card._hass, entity);
+    if (!s) return;
+    const family = /^hauflo_fam_/.test(String(s.attributes.id || ""));
+    sceneSheet(card, ({ sr, draw, close }) => {
+      const menu = (err = "") => {
+        draw(`<div class="t">${esc(nameOf(s, entity))}</div>
+${family ? "" : `<div class="n">Сцену настроил интегратор. Её можно переименовать и перезаписать; убрать — только с этой панели.</div>`}
+${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b" data-rename>Переименовать</button>
+<button class="b go" data-again>Запомнить как сейчас</button>
+<button class="b bad" data-del>${family ? "Удалить сцену" : "Убрать с панели"}</button><button class="b" data-x>Отмена</button>`);
+        sr.querySelector("[data-x]").addEventListener("click", close);
+        sr.querySelector("[data-rename]").addEventListener("click", () => rename());
+        sr.querySelector("[data-again]").addEventListener("click", async () => {
+          const r = await famCall(card, { op: "recapture", entity_id: entity, entities: captureList(card, kind) });
+          if (r.error) return menu(r.error);
+          haptic(card, "success");
+          close();
+          famDone(card);
+        });
+        sr.querySelector("[data-del]").addEventListener("click", async () => {
+          const r = await famCall(card, { op: "delete", entity_id: entity });
+          if (r.error) return menu(r.error);
+          close();
+          famDone(card);
+        });
+      };
+      const rename = (err = "") => {
+        draw(`<div class="t">Переименовать</div><input maxlength="40" aria-label="Название" value="${esc(nameOf(s, entity))}">${err ? `<div class="e">${esc(err)}</div>` : ""}
+<button class="b go" data-save>Сохранить</button><button class="b" data-x>Отмена</button>`);
+        const input = sr.querySelector("input");
+        input.focus();
+        input.select();
+        sr.querySelector("[data-x]").addEventListener("click", close);
+        const save = async () => {
+          const name = input.value.trim();
+          if (!name) return rename("Введите название");
+          const r = await famCall(card, { op: "rename", entity_id: entity, name });
+          if (r.error) return rename(r.error);
+          close();
+          famDone(card);
+        };
+        sr.querySelector("[data-save]").addEventListener("click", save);
+        input.addEventListener("keydown", (e) => e.key === "Enter" && save());
+      };
+      menu();
+    });
+  };
+  const bindScenes = (card) => {
+    const root = card.shadowRoot;
+    root.querySelectorAll("button[data-scene]").forEach((b) => {
+      const kind = b.closest(".scn")?.classList.contains("cover") ? "cover" : "light";
+      let timer = null;
+      let held = false;
+      if (b.dataset.edit) {
+        b.addEventListener("pointerdown", () => {
+          held = false;
+          timer = setTimeout(() => {
+            held = true;
+            haptic(card, "medium");
+            openEditScene(card, b.dataset.scene, kind);
+          }, 550);
+        });
+        for (const ev of ["pointerup", "pointerleave", "pointercancel"]) b.addEventListener(ev, () => clearTimeout(timer));
+        b.addEventListener("contextmenu", (ev) => {
+          ev.preventDefault();
+          clearTimeout(timer);
+          if (!held) openEditScene(card, b.dataset.scene, kind);
+          held = true;
+        });
+      }
       b.addEventListener("click", (ev) => {
         ev.stopPropagation();
+        if (held) {
+          held = false;
+          return;
+        }
         const id = b.dataset.scene;
         haptic(card);
         card._busy = true;
         // A tick and «отправлено» where its icon and name were: the tap took (persona round 5, final review 28.10).
         sendAck(card, b, id.split(".")[0] === "script" ? "script" : "scene", "turn_on", { entity_id: id });
         setTimeout(() => (card._busy = false), 1600);
+      });
+    });
+    root.querySelectorAll("button[data-scene-add]").forEach((b) =>
+      b.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        haptic(card);
+        openAddScene(card, b.dataset.sceneAdd);
       }),
     );
+  };
   const OPENING = ["window", "door", "garage_door", "opening"];
   const FAN = { auto: "Авто", on_low: "Тихо", on_high: "Сильно", auto_low: "Авто ↓", auto_high: "Авто ↑", low: "Тихо", medium: "Средне", middle: "Средне", mid: "Средне", high: "Сильно", top: "Макс", quiet: "Тихо", diffuse: "Мягко", focus: "Фокус", turbo: "Турбо" };
   /** climate.turn_off is there: the TURN_OFF feature (128) or «off» among its modes. */
@@ -759,7 +983,7 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
       if (!this._config || !this._hass || this._busy) return;
       // HA replaces a state object when it changes: comparing references is enough — no JSON of every
       // attribute on every hass update (HA core review 25.10). `_sig = ""` elsewhere forces a render.
-      const refs = this.watched().map((id) => this._hass.states[id]);
+      const refs = [...this.watched(), ...famWatched(this)].map((id) => this._hass.states[id]);
       const dark = !!this._hass.themes?.darkMode;
       if (this._sig && dark === this._dark && refs.length === this._refs?.length && refs.every((r, i) => r === this._refs[i])) return;
       const forced = !this._sig;
@@ -810,10 +1034,10 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
     /** The scenes of this block (light / blinds) when they're shown in it — the integrator's choice or the client's. */
     sceneRow() {
       const c = this._config;
-      if (!c.scenes?.length) return "";
+      if (!c.scenes?.length && !c.scene_room) return "";
       const where = viewPrefs(this).scenes || c.scene_layout || "blocks";
       if (where !== "blocks") return "";
-      return `<div class="srow"><span class="caps">${blockTitle(this, this.kind === "cover" ? "Сценарии штор" : "Сценарии света", this.kind === "cover" ? "cover_scenes" : "light_scenes")}</span>${sceneChips(this._hass, c.scenes, this.kind === "cover" ? "cover" : "light")}</div>`;
+      return `<div class="srow"><span class="caps">${blockTitle(this, this.kind === "cover" ? "Сценарии штор" : "Сценарии света", this.kind === "cover" ? "cover_scenes" : "light_scenes")}</span>${sceneChips(this._hass, c.scenes || [], this.kind === "cover" ? "cover" : "light", c.scene_room)}</div>`;
     }
   }
 
@@ -1088,7 +1312,7 @@ ${(c.alarms || []).length && ok ? `<div><span class="caps">Датчики</span>
         this.hideCard(!rows.length);
         if (!rows.length) return "";
         return `<div class="glass m rows"><div class="hd"><span class="ic"><ha-icon icon="hauflo:scene"></ha-icon></span><span class="caps">${blockTitle(this, "Сценарии")}</span></div>
-${rows.map((r) => `<div class="rw"><span class="caps sub">${esc(r.title || (r.kind === "cover" ? "Шторы" : "Свет"))}</span>${sceneChips(this._hass, r.scenes, r.kind === "cover" ? "cover" : r.kind === "mixed" ? "mixed" : "light")}</div>`).join("")}</div>`;
+${rows.map((r) => `<div class="rw"><span class="caps sub">${esc(r.title || (r.kind === "cover" ? "Шторы" : "Свет"))}</span>${sceneChips(this._hass, r.scenes, r.kind === "cover" ? "cover" : r.kind === "mixed" ? "mixed" : "light", r.scene_room)}</div>`).join("")}</div>`;
       }
       const list = (c.scenes || []).map((x) => ({ ...x, st: st(this._hass, x.entity) })).filter((x) => x.st);
       const kind = c.kind === "cover" ? "cover" : c.kind === "mixed" ? "mixed" : "light";
@@ -1264,6 +1488,7 @@ ${rows.map((r) => `<div class="rw"><span class="caps sub">${esc(r.title || (r.ki
 .cc{padding:14px 14px 14px 18px}.ccrow{display:flex;align-items:center;gap:12px;position:relative}.ccn{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}
 .ccn .caps{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ccn .sub{margin:0}
 .cct{font-size:40px;line-height:1}.cct small{font:300 15px Onest,sans-serif;color:var(--ink2);margin-left:1px}
+.cct .tgc{display:block;margin-top:4px;text-align:right;font:500 11px/1.2 Onest,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--ink2)}
 .sens{display:flex;gap:6px;margin-top:2px;flex-wrap:wrap}.sens b{font:500 12px Onest,sans-serif;padding:3px 7px;border-radius:8px;background:var(--track);color:var(--ink2);white-space:nowrap}.sens i{font-style:normal;color:var(--ink3);margin-right:5px}.c .sens{margin-top:8px}
 .st.row2{flex-direction:row}.st.row2 button{width:44px;height:44px;border-radius:22px;font-size:22px}
 .cool .glow{background:radial-gradient(50% 50% at 20% 10%,var(--iceGlow),transparent 70%);opacity:.6}
@@ -1354,7 +1579,7 @@ ${fans.length > 1 || swing ? `<div class="modes fan"><span class="fl"><ha-icon i
         const step = Math.max(num(a.target_temp_step) || 0.5, 0.5);
         const heating = a.hvac_action === "heating" && (cur === undefined || target === undefined || cur < target + 0.5);
         return `<div class="zr ${heating ? "heat" : ""}${i === zi ? " sel" : ""}"><div class="ccn" data-z="${i}"><span class="zn">${esc(z.name || nameOf(s, z.entity))}</span><span class="sub">${!s || ["unavailable", "unknown"].includes(s.state) ? "нет связи" : cur === undefined ? "нет данных" : `Сейчас ${fmt(cur, 1)}°`}${heating ? " · нагрев" : ""}${s && !["unavailable", "unknown"].includes(s.state) && target === undefined ? " · уставка ещё не пришла" : ""}</span></div>
-<div class="cct thin">${target === undefined ? "—" : `${fmt(target, step < 1 && target % 1 ? 1 : 0)}<small>°</small>`}</div>
+<div class="cct thin">${target === undefined ? "—" : `${fmt(target, step < 1 && target % 1 ? 1 : 0)}<small>°</small><span class="tgc">цель</span>`}</div>
 <div class="st row2"><button data-e="${esc(z.entity)}" data-d="${-step}" aria-label="Холоднее"${target === undefined ? " disabled" : ""}>−</button><button data-e="${esc(z.entity)}" data-d="${step}" aria-label="Теплее"${target === undefined ? " disabled" : ""}>+</button></div></div>`;
       });
       const any = this._config.zones.some((z) => st(this._hass, z.entity)?.attributes?.hvac_action === "heating");
@@ -1387,7 +1612,7 @@ ${fans.length > 1 || swing ? `<div class="modes fan"><span class="fl"><ha-icon i
       // The line is always there (no data says so): a card that grows and shrinks with the state moves the page.
       return `<div class="glass cc ${heating ? "heat" : ""}"><div class="glow"></div><div class="ccrow">
 <div class="ccn" data-open="1" role="button" tabindex="0"><span class="caps">${esc(this._config.label || nameOf(s, this._config.entity))}</span><span class="sub">${cur === undefined ? "нет данных" : `Сейчас ${fmt(cur, 1)}°`}${heating ? " · нагрев" : ""}${target === undefined && !["unavailable", "unknown"].includes(s.state) ? " · уставка ещё не пришла" : ""}</span>${pair ? `<span class="pair2">${["heat", "cool"].filter((k) => pair[k] !== undefined).map((k) => `${k === "heat" ? "обогрев до" : "охлаждение от"} ${fmt(pair[k])}°`).join(" · ")}</span>` : ""}${sensors.length > 1 ? this.readingsRow(sensors) : ""}</div>
-<div class="cct thin">${target === undefined ? "—" : `${fmt(target, step < 1 && target % 1 ? 1 : 0)}<small>°</small>`}</div>
+<div class="cct thin">${target === undefined ? "—" : `${fmt(target, step < 1 && target % 1 ? 1 : 0)}<small>°</small><span class="tgc">цель</span>`}</div>
 <div class="st row2"><button data-d="${-step}" aria-label="Холоднее"${target === undefined ? " disabled" : ""}>−</button><button data-d="${step}" aria-label="Теплее"${target === undefined ? " disabled" : ""}>+</button></div></div>${this.chart(this._config.entity, this._config.floor ? "Пол" : "Температура", heating ? "heat" : "", 56)}</div>`;
     }
     bind() {
@@ -1802,9 +2027,14 @@ ${act ? `<div class="sl"><div class="k"><ha-icon icon="${esc(c.action.icon || "h
   // Blinds go up/down, curtains apart/together (owner 2026-10-25: «часто влево вправо»). Set per cover
   // (`direction: horizontal|vertical`) or for the card; else by the name: roller/жалюзи/рольставни go up,
   // «штора», «тюль», «портьера» to the side.
+  // The curtain type the integrator set in the step «Сцены» is HA's device class (owner 28.10: рулонные, тюль, портьеры…):
+  // a curtain to the side, a shade / blind / shutter / awning up and down.
   const coverDir = (e, cfg) => {
     const d = e.direction || cfg.direction;
     if (d === "horizontal" || d === "vertical") return d;
+    const dc = e.s?.attributes?.device_class;
+    if (dc === "curtain") return "horizontal";
+    if (["shade", "blind", "shutter", "awning"].includes(dc)) return "vertical";
     const n = String(e.name || nameOf(e.s, e.entity) || "").toLowerCase();
     if (/рулон|жалюз|рольстав|ролет|маркиз|roller|blind|shutter|screen|экран/.test(n)) return "vertical";
     if (/штор|тюл|портьер|занавес|curtain|drape/.test(n)) return "horizontal";
@@ -1815,10 +2045,16 @@ ${act ? `<div class="sl"><div class="k"><ha-icon icon="${esc(c.action.icon || "h
   // from the travel time. Decided by the device, not by its state: a blind keeps one look whatever it is doing
   // (owner 27.10: the tiles changed when pressed — «нет данных» had buttons, a known one had none).
   const coverHasPosition = (e, s) => e.position !== false && ((num(s?.attributes.supported_features) || 0) & 4) !== 0;
-  const coverWord = (s) => (["unknown", "unavailable"].includes(s.state) ? "нет данных" : s.state === "opening" ? "открывается…" : s.state === "closing" ? "закрывается…" : s.state === "closed" ? "закрыта" : "открыта");
+  // A blind with no position status says nothing until it moves: no «нет данных» on every row (owner, Горького 3, 28.10) —
+  // the block's header says «положение неизвестно» once; a lost link is still said per blind.
+  const coverWord = (s) => (s.state === "unavailable" ? "нет связи" : s.state === "unknown" ? "" : s.state === "opening" ? "открывается…" : s.state === "closing" ? "закрывается…" : s.state === "closed" ? "закрыта" : "открыта");
+  /** The cover's own icon by its type (device class), else by the way it moves. */
+  const COVER_ICON = { curtain: "hauflo:curtain", shade: "mdi:roller-shade", blind: "mdi:blinds-horizontal", shutter: "mdi:window-shutter", awning: "mdi:awning-outline" };
+  const coverIcon = (e, cfg) => COVER_ICON[e.s?.attributes?.device_class] || (coverDir(e, cfg) === "horizontal" ? "hauflo:curtain" : "hauflo:blind");
+  // Sideways: «Раздвинуть / Задвинуть»; up and down: «Поднять / Опустить» (owner 28.10).
   const COVER_BTN = {
-    vertical: [["open_cover", "mdi:chevron-up", "Открыть"], ["stop_cover", "mdi:stop", "Стоп"], ["close_cover", "mdi:chevron-down", "Закрыть"]],
-    horizontal: [["open_cover", "mdi:curtains", "Открыть"], ["stop_cover", "mdi:stop", "Стоп"], ["close_cover", "mdi:curtains-closed", "Закрыть"]],
+    vertical: [["open_cover", "mdi:chevron-up", "Поднять"], ["stop_cover", "mdi:stop", "Стоп"], ["close_cover", "mdi:chevron-down", "Опустить"]],
+    horizontal: [["open_cover", "mdi:curtains", "Раздвинуть"], ["stop_cover", "mdi:stop", "Стоп"], ["close_cover", "mdi:curtains-closed", "Задвинуть"]],
   };
   const coverButtons = (dir, attr, id, only) =>
     COVER_BTN[dir]
@@ -1846,7 +2082,7 @@ ${act ? `<div class="sl"><div class="k"><ha-icon icon="${esc(c.action.icon || "h
 .pill.wide{grid-column:span 2}.more{margin-top:10px;width:100%;height:44px;border-radius:14px;font:500 13px Onest,sans-serif;color:var(--ink2);box-shadow:inset 0 0 0 1px var(--hair)}
 .cover .hd{flex-wrap:nowrap}.cover .hd .sum{flex:1 1 auto;min-width:0}
 .hd b{font:300 24px Onest,sans-serif;letter-spacing:-.03em;display:block;line-height:1.05;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.hd b.nd{font:400 15px Onest,sans-serif;letter-spacing:0;color:var(--ink3);margin-top:4px}
+.hd b.nd{font:400 15px/1.3 Onest,sans-serif;letter-spacing:0;color:var(--ink3);margin-top:4px;white-space:normal}
 .grp{margin-top:14px}.grp .caps{display:block;margin-bottom:8px}.grow{display:flex;gap:6px;flex-wrap:wrap}
 .g{display:flex;align-items:center;gap:6px;padding:5px 5px 5px 14px;border-radius:18px;box-shadow:inset 0 0 0 1px var(--hair);font:500 12px Onest,sans-serif;max-width:100%}
 .g span{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;hyphens:manual;overflow-wrap:break-word;line-height:1.25}.g.on{background:var(--track);box-shadow:none}.g.on.lt{background:color-mix(in srgb,var(--amber) 22%,transparent)}
@@ -1949,7 +2185,7 @@ ${act ? `<div class="sl"><div class="k"><ha-icon icon="${esc(c.action.icon || "h
       const title = blockTitle(this, isCover ? "Шторы" : "Свет");
       const total = counted.length;
       const unknownAll = counted.every((e) => !known(e));
-      const summary = unknownAll && total ? "Нет данных" : isCover ? (n ? `${n} из ${total} открыто` : "Все закрыты") : shownN ? `${shownN} из ${shownTotal}${lvl !== undefined ? ` · ${lvl} %` : ""}` : "Выключен";
+      const summary = unknownAll && total ? (isCover ? "Положение неизвестно" : "Нет данных") : isCover ? (n ? `${n} из ${total} открыто` : "Все закрыты") : shownN ? `${shownN} из ${shownTotal}${lvl !== undefined ? ` · ${lvl} %` : ""}` : "Выключен";
       const master = isCover
         ? coverButtons(all.length && all.filter((e) => coverDir(e, this._config) === "horizontal").length * 2 >= all.length ? "horizontal" : "vertical", "data-all").replace(/<button /g, '<button class="ico" ')
         : `<button data-all="${n ? "turn_off" : "turn_on"}" class="${n ? "on" : ""}">${n ? "Выкл. все" : "Вкл. все"}</button>`;
@@ -1969,7 +2205,7 @@ ${act ? `<div class="sl"><div class="k"><ha-icon icon="${esc(c.action.icon || "h
           const state = open && !["opening", "closing"].includes(e.s.state) && pos !== undefined ? `${pos} %` : coverWord(e.s);
           const moving = ["opening", "closing"].includes(e.s.state);
           return `<div class="pill ${open ? "on" : ""} ${moving ? "mv" : ""} ${settable ? "" : "wide"} ${unavailable ? "unavail" : ""}" data-e="${esc(e.entity)}" data-set="${settable ? 1 : 0}"><div class="f" style="width:${moving ? 100 : open ? pos ?? 100 : 0}%"></div>
-<ha-icon icon="${esc(e.icon || (coverDir(e, this._config) === "horizontal" ? "hauflo:curtain" : "hauflo:blind"))}"></ha-icon><div class="tx"><div class="nm">${esc(name)}</div><div class="lv">${esc(zoneTagAll)}${state}</div></div>
+<ha-icon icon="${esc(e.icon || coverIcon(e, this._config))}"></ha-icon><div class="tx"><div class="nm">${esc(name)}</div>${state || zoneTagAll ? `<div class="lv">${esc(state ? zoneTagAll : zoneTagAll.replace(/ · $/, ""))}${state}</div>` : ""}</div>
 ${settable ? "" : `<div class="ud">${coverButtons(coverDir(e, this._config), "data-c")}</div>`}</div>`;
         }
         const on = isOpenOn(e);
