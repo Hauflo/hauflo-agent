@@ -8,7 +8,7 @@ import ast, contextlib, glob, ipaddress, json, logging, pathlib, re, types
 HERE = pathlib.Path(__file__).parent
 src = open(HERE.parent / "custom_components/hauflo/__init__.py").read()
 tree = ast.parse(src)
-FUNCS = {"_lovelace_ok", "_hauflo_entity", "_own_entity", "_protected", "_platform", "_owned_knx", "_owned_knx_writes", "_knx_writes", "_ga_key"}
+FUNCS = {"_lovelace_ok", "_area_lights_owned", "_image_ok", "_hauflo_entity", "_own_entity", "_protected", "_platform", "_owned_knx", "_owned_knx_writes", "_knx_writes", "_ga_key"}
 keep = [n for n in tree.body if (isinstance(n, ast.Assign) and any(getattr(t, "id", "").startswith("_") for t in n.targets)) or (isinstance(n, ast.FunctionDef) and n.name in FUNCS)]
 ns = {"json": json, "re": re, "contextlib": contextlib, "ipaddress": ipaddress, "Any": object, "HomeAssistant": object, "logging": logging, "__name__": "agent", "DOMAIN": "hauflo"}
 exec(compile(ast.Module(body=keep, type_ignores=[]), "agent", "exec"), ns)

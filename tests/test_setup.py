@@ -391,7 +391,7 @@ async def test_alarm_rules_watch_only_house_sensors(hass: HomeAssistant) -> None
 
     er.async_get(hass).async_get_or_create("sensor", "mobile_app", "phone-battery", suggested_object_id="phone_battery")
     raw = {"rules": [{"id": "r", "sources": ["binary_sensor.leak", "sensor.co2", "person.anna", "device_tracker.phone", "sensor.phone_battery", "zone.home"]}], "groups": []}
-    assert _clean_rules(raw, hass)["rules"][0]["sources"] == ["binary_sensor.leak", "sensor.co2"]
+    assert _clean_rules(raw, hass, lambda eid: True)["rules"][0]["sources"] == ["binary_sensor.leak", "sensor.co2"]
 
 
 async def test_a_push_button_switches_off_only_hauflos_own(hass: HomeAssistant) -> None:
@@ -401,12 +401,14 @@ async def test_a_push_button_switches_off_only_hauflos_own(hass: HomeAssistant) 
     def rule(service: str, eid: str) -> dict:
         return {"rules": [{"id": "r", "sources": ["binary_sensor.leak"], "action": {"title": "Принял", "service": service, "entity_id": eid}}], "groups": []}
 
-    owns = lambda eid: eid == "switch.hauflo_pump"  # noqa: E731
+    owns = lambda eid: eid in ("switch.hauflo_pump", "valve.water")  # noqa: E731
     assert "action" not in _clean_rules(rule("switch.turn_off", "switch.rele_vorot"), hass, owns)["rules"][0]
     assert "action" not in _clean_rules(rule("switch.turn_off", "switch.hauflo_pump"), hass)["rules"][0]  # owner unknown: none
     assert _clean_rules(rule("switch.turn_off", "switch.hauflo_pump"), hass, owns)["rules"][0]["action"]["entity_id"] == "switch.hauflo_pump"
     assert _clean_rules(rule("valve.close_valve", "valve.water"), hass, owns)["rules"][0]["action"]["entity_id"] == "valve.water"
     assert "action" not in _clean_rules(rule("valve.open_valve", "valve.water"), hass, owns)["rules"][0]
+    # Security review 28.10: a valve that isn't Hauflo's (the garden's) is never a button's.
+    assert "action" not in _clean_rules(rule("valve.close_valve", "valve.front_garden"), hass, owns)["rules"][0]
     assert _button({"service": "switch.turn_off"}, "Насос") == "Выключить: Насос"
     assert _button({"service": "valve.close_valve"}, "Кран") == "Закрыть: Кран"
 
@@ -486,6 +488,7 @@ async def test_an_alarm_sensor_without_data_is_said_and_its_return(hass: HomeAss
     from custom_components.hauflo import notify
 
     eng = notify.NotifyEngine(hass)
+    eng.owns = lambda eid: True  # the leak sensor is Hauflo's own
     sent: list[tuple[str, str]] = []
 
     async def fake_send(rule, title, message, **kw):
@@ -497,11 +500,11 @@ async def test_an_alarm_sensor_without_data_is_said_and_its_return(hass: HomeAss
         await hass.async_block_till_done()
 
     with patch.object(eng, "_send", fake_send):
-        hass.states.async_set("binary_sensor.leak", "off", {"friendly_name": "Протечка в котельной"})
+        hass.states.async_set("binary_sensor.leak", "off", {"friendly_name": "Протечка в котельной", "device_class": "moisture"})
         await eng.async_start()
         await eng.async_set({"rules": [{"id": "r", "kind": "leak", "title": "Протечка", "sources": ["binary_sensor.leak"], "priority": "critical"}], "groups": []})
         await hass.async_block_till_done()
-        hass.states.async_set("binary_sensor.leak", "unavailable", {"friendly_name": "Протечка в котельной"})
+        hass.states.async_set("binary_sensor.leak", "unavailable", {"friendly_name": "Протечка в котельной", "device_class": "moisture"})
         await hass.async_block_till_done()
         await later(60)
         assert not sent  # a minute without data is not yet said
@@ -510,7 +513,7 @@ async def test_an_alarm_sensor_without_data_is_said_and_its_return(hass: HomeAss
         assert any("нет связи" in title for title, _ in sent)
         assert any("Протечка в котельной" in message for _, message in sent)
         assert [a.get("noData") for a in eng.active_list()] == [True]  # grey «нет связи», not the alarm itself
-        hass.states.async_set("binary_sensor.leak", "off", {"friendly_name": "Протечка в котельной"})
+        hass.states.async_set("binary_sensor.leak", "off", {"friendly_name": "Протечка в котельной", "device_class": "moisture"})
         await hass.async_block_till_done()
         await later(notify.NODATA_AFTER + 20)
         assert any("связь есть" in title for title, _ in sent)
@@ -521,6 +524,7 @@ async def test_an_alarm_sensor_without_data_is_said_and_its_return(hass: HomeAss
 async def test_an_alarm_is_accepted_from_the_dashboard(hass: HomeAssistant, hass_client, entry) -> None:
     """SCADA expert 25.10: only a phone's push button could accept an alarm; the dashboard now can, as the person."""
     eng = entry.runtime_data.engine
+    eng.owns = lambda eid: True  # the leak sensor is Hauflo's own
     sent: list[str] = []
 
     async def fake_send(rule, title, message, **kw):
@@ -528,9 +532,9 @@ async def test_an_alarm_is_accepted_from_the_dashboard(hass: HomeAssistant, hass
         return []
 
     with patch.object(eng, "_send", fake_send):
-        hass.states.async_set("binary_sensor.leak", "off", {"friendly_name": "Протечка"})
+        hass.states.async_set("binary_sensor.leak", "off", {"friendly_name": "Протечка", "device_class": "moisture"})
         await eng.async_set({"rules": [{"id": "r", "kind": "leak", "title": "Протечка", "sources": ["binary_sensor.leak"], "priority": "critical"}], "groups": []})
-        hass.states.async_set("binary_sensor.leak", "on", {"friendly_name": "Протечка"})
+        hass.states.async_set("binary_sensor.leak", "on", {"friendly_name": "Протечка", "device_class": "moisture"})
         await hass.async_block_till_done()
         client = await hass_client()
         listed = await (await client.get("/api/hauflo/alarms")).json()
@@ -553,6 +557,7 @@ async def test_a_chattering_sensor_is_said_once_and_its_settled_alarm_after(hass
     from custom_components.hauflo import notify
 
     eng = notify.NotifyEngine(hass)
+    eng.owns = lambda eid: True  # the leak sensor is Hauflo's own
     sent: list[str] = []
 
     async def fake_send(rule, title, message, **kw):
@@ -564,20 +569,20 @@ async def test_a_chattering_sensor_is_said_once_and_its_settled_alarm_after(hass
         await hass.async_block_till_done()
 
     with patch.object(eng, "_send", fake_send):
-        hass.states.async_set("binary_sensor.leak", "off", {"friendly_name": "Протечка"})
+        hass.states.async_set("binary_sensor.leak", "off", {"friendly_name": "Протечка", "device_class": "moisture"})
         await eng.async_start()
         await eng.async_set({"rules": [{"id": "r", "kind": "leak", "title": "Протечка", "sources": ["binary_sensor.leak"], "priority": "critical"}], "groups": []})
         for _ in range(20):
-            hass.states.async_set("binary_sensor.leak", "on", {"friendly_name": "Протечка"})
+            hass.states.async_set("binary_sensor.leak", "on", {"friendly_name": "Протечка", "device_class": "moisture"})
             await hass.async_block_till_done()
             await later(notify.GROUP_WINDOW + 1)
-            hass.states.async_set("binary_sensor.leak", "off", {"friendly_name": "Протечка"})
+            hass.states.async_set("binary_sensor.leak", "off", {"friendly_name": "Протечка", "device_class": "moisture"})
             await hass.async_block_till_done()
             await later(notify.GROUP_WINDOW + 1)
         assert len(sent) <= 6  # the first alarms and «снова в норме», then one «дребезжит» — not 40
         assert sum("📳" in s for s in sent) == 1
         # Settles in alarm: said as an alarm once it stays put.
-        hass.states.async_set("binary_sensor.leak", "on", {"friendly_name": "Протечка"})
+        hass.states.async_set("binary_sensor.leak", "on", {"friendly_name": "Протечка", "device_class": "moisture"})
         await hass.async_block_till_done()
         before = len(sent)
         await later(notify.CHATTER_WINDOW + 5)
@@ -589,16 +594,17 @@ async def test_a_chattering_sensor_is_said_once_and_its_settled_alarm_after(hass
 async def test_a_critical_alarm_back_to_normal_stays_until_accepted(hass: HomeAssistant, hass_client, entry) -> None:
     """SCADA expert 25.10 (ISA-18.2 returned-unacknowledged): a leak that dried up before anyone looked vanished."""
     eng = entry.runtime_data.engine
+    eng.owns = lambda eid: True  # the leak sensor is Hauflo's own
 
     async def fake_send(rule, title, message, **kw):
         return []
 
     with patch.object(eng, "_send", fake_send):
-        hass.states.async_set("binary_sensor.leak", "off", {"friendly_name": "Протечка"})
+        hass.states.async_set("binary_sensor.leak", "off", {"friendly_name": "Протечка", "device_class": "moisture"})
         await eng.async_set({"rules": [{"id": "r", "kind": "leak", "title": "Протечка", "sources": ["binary_sensor.leak"], "priority": "critical"}], "groups": []})
-        hass.states.async_set("binary_sensor.leak", "on", {"friendly_name": "Протечка"})
+        hass.states.async_set("binary_sensor.leak", "on", {"friendly_name": "Протечка", "device_class": "moisture"})
         await hass.async_block_till_done()
-        hass.states.async_set("binary_sensor.leak", "off", {"friendly_name": "Протечка"})
+        hass.states.async_set("binary_sensor.leak", "off", {"friendly_name": "Протечка", "device_class": "moisture"})
         await hass.async_block_till_done()
         client = await hass_client()
         listed = (await (await client.get("/api/hauflo/alarms")).json())["_list"]
@@ -652,6 +658,7 @@ async def test_a_push_the_ha_app_failed_quietly_is_not_sent(hass: HomeAssistant)
     hass.services.async_register("notify", "mobile_app_broken", broken)
     hass.services.async_register("notify", "mobile_app_fine", fine)
     eng = notify.NotifyEngine(hass)
+    eng.owns = lambda eid: True  # the leak sensor is Hauflo's own
     sent = await eng._send({"recipients": {"all": True}}, "Протечка", "Кухня", tag="t", critical=True, targets=[{"service": "mobile_app_broken", "os": "android"}, {"service": "mobile_app_fine", "os": "ios"}])
     assert sent == ["mobile_app_fine"]
     assert eng.sent_log[0]["failed"] == ["mobile_app_broken"]

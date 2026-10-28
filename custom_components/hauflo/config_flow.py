@@ -10,12 +10,13 @@ import aiohttp
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
+from homeassistant.components import persistent_notification
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import section
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.selector import BooleanSelector, TextSelector, TextSelectorConfig
+from homeassistant.helpers.selector import BooleanSelector, SelectSelector, SelectSelectorConfig, SelectSelectorMode, TextSelector, TextSelectorConfig
 
-from .const import CONF_ALLOW_CHANGES, CONF_CODE, CONF_RANGES, CONF_SECRET, CONF_SERVER, DATA_PENDING_RANGES, DATA_UNLINKED, DEFAULT_SERVER, DOMAIN, FALLBACK_SERVER, REGION_SERVERS
+from .const import CONF_ACCEPT_PENDING, CONF_ALLOW_CHANGES, CONF_CODE, CONF_RANGES, CONF_SECRET, CONF_SERVER, DATA_PENDING_RANGES, DATA_UNLINKED, DEFAULT_SERVER, DOMAIN, FALLBACK_SERVER, REGION_SERVERS
 
 
 def _secure(server: str) -> bool:
@@ -171,18 +172,36 @@ class HaufloOptionsFlow(OptionsFlow):
     whether Hauflo may change the setup at all, and the group addresses it may send to. No secrets, no notification
     settings — those live in Hauflo (owner 28.10)."""
 
+    _shown_pending: list[str] | None = None
+
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
+            # What Hauflo asked for is allowed only ticked one by one (security review 28.10: prefilled into the allowed
+            # list, a Submit for the owner lock granted the gate's 7/7/1); the rest of what was shown is declined.
+            shown_pending = self._shown_pending or []
+            ticked = user_input.get(CONF_ACCEPT_PENDING) or []
+            accepted = [r for r in ticked if r in shown_pending] if isinstance(ticked, list) else []
+            ranges = parse_ranges(user_input.get(CONF_RANGES, ""))
+            pending = self.hass.data.get(DATA_PENDING_RANGES)
+            if isinstance(pending, set):
+                pending -= set(shown_pending)
+                if not pending:
+                    persistent_notification.async_dismiss(self.hass, "hauflo_ranges")
             return self.async_create_entry(
                 data={
                     **self.config_entry.options,
                     CONF_ALLOW_CHANGES: user_input.get(CONF_ALLOW_CHANGES) is not False,
-                    CONF_RANGES: parse_ranges(user_input.get(CONF_RANGES, "")),
+                    CONF_RANGES: parse_ranges(ranges + accepted),
                 }
             )
         current = list(self.config_entry.options.get(CONF_RANGES) or [])
-        pending = list(self.hass.data.get(DATA_PENDING_RANGES, set()))
-        shown = ", ".join(sorted(set(current) | set(pending), key=_range_key))
+        pending = sorted(self.hass.data.get(DATA_PENDING_RANGES, set()), key=_range_key)
+        self._shown_pending = pending
+        shown = ", ".join(sorted(current, key=_range_key))
+        extra: dict[Any, Any] = {}
+        if pending:
+            # Opt-in boxes, all off: nothing Hauflo asked for is granted by a Submit made for anything else.
+            extra[vol.Optional(CONF_ACCEPT_PENDING, default=[])] = SelectSelector(SelectSelectorConfig(options=pending, multiple=True, mode=SelectSelectorMode.LIST))
         server = str(self.config_entry.data.get(CONF_SERVER) or "")
         title = self.config_entry.title or ""
         project = title.split(" — ", 1)[1] if title.startswith("Hauflo — ") else title
@@ -193,10 +212,11 @@ class HaufloOptionsFlow(OptionsFlow):
                 {
                     vol.Required(CONF_ALLOW_CHANGES, default=self.config_entry.options.get(CONF_ALLOW_CHANGES, True) is True): BooleanSelector(),
                     vol.Optional(CONF_RANGES, default=shown): TextSelector(TextSelectorConfig(multiline=True)),
+                    **extra,
                 }
             ),
             description_placeholders={
-                "pending": ", ".join(sorted(pending, key=_range_key)),
+                "pending": ", ".join(pending),
                 "project": project or "—",
                 "server": urlparse(server).hostname or server or "—",
                 "url": server,

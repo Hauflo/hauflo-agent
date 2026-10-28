@@ -13,7 +13,15 @@ found by the house's internet address (HA's own onboarding helper; the HA box ha
 after the person confirms it.
 
 GET/POST /api/hauflo/automations — any signed-in person of this HA (the client isn't an admin), as «Зима / лето»; not through
-the tunnel.
+the tunnel. The house's place (op location / detect) only an HA administrator: it moves HA's zone.home, which presence
+and every sun rule of the house use (security review 28.10).
+
+automations.yaml (security review 28.10: re-dumping it lost the integrator's comments and !include). HA reads automations
+only from configuration.yaml's `automation:` keys — no file of Hauflo's own without editing configuration.yaml, which
+is riskier still. So the agent writes automations.yaml only while it is plain — what HA's own automation editor writes:
+it loads and dumps back to the same text (no comments, no !include / !secret / !input). Anything else is refused with
+a message (the integrator keeps the file by hand; nothing is touched). Before every write a copy
+automations.yaml.hauflo-bak-<time> (the last 3 kept); read-modify-write under one lock for the whole house.
 """
 
 from __future__ import annotations
@@ -21,6 +29,8 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 import datetime as dt
+import hashlib
+import json
 import logging
 import math
 import re
@@ -61,8 +71,37 @@ _DO = {
 }
 
 
+BACKUP = AUTOMATIONS + ".hauflo-bak-"
+KEEP_BACKUPS = 3
+# One read-modify-write of automations.yaml at a time, whichever config entry asks.
+_FILE_LOCK = asyncio.Lock()
+
+
 class Invalid(ValueError):
     """A request the agent refuses (400)."""
+
+
+class NotPlain(RuntimeError):
+    """automations.yaml carries what a re-dump would lose (409, said in both languages)."""
+
+    RU = ("Hauflo не меняет automations.yaml: в нём комментарии, !include / !secret или ручное оформление, которые "
+          "потерялись бы при перезаписи. Правила Hauflo в этом доме добавляет интегратор, или он приводит файл к виду, "
+          "в каком его сохраняет редактор автоматизаций Home Assistant.")
+    EN = ("Hauflo doesn't change automations.yaml: it has comments, !include / !secret or hand formatting a rewrite would "
+          "lose. In this home the integrator adds Hauflo's rules, or saves the file the way Home Assistant's automation "
+          "editor writes it.")
+
+
+class Changed(Exception):
+    """The automation was edited in HA's own editor: Hauflo never writes over it unasked (409)."""
+
+
+def _digest(cfg: Any) -> str:
+    """What an automation does — not its description or initial_state (written by older agents)."""
+    if not isinstance(cfg, dict):
+        return ""
+    body = {k: v for k, v in cfg.items() if k not in ("description", "initial_state")}
+    return hashlib.sha1(json.dumps(body, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()
 
 
 def _int(value: Any, lo: int, hi: int, what: str) -> int:
@@ -135,6 +174,27 @@ class Automations:
         single = [eid for eid in found if (e := reg.async_get(eid)) is not None and e.platform != "group"]
         return sorted(single or found)
 
+    def _room_covers(self, area_id: str, position: bool = False) -> list[str]:
+        """The Hauflo blinds of a room, one by one (not its group — that would move them twice); with `position`, only
+        the ones that can stop at a position."""
+        reg = er.async_get(self.hass)
+        out = []
+        for eid in self.hass.states.async_entity_ids("cover"):
+            if not self._pickable(eid) or self._area(eid) != area_id or ((e := reg.async_get(eid)) is not None and e.platform == "group"):
+                continue
+            if position and not int(self.hass.states.get(eid).attributes.get("supported_features") or 0) & 4:
+                continue
+            out.append(eid)
+        return sorted(out)
+
+    def _area_target(self, domain: str, area_id: str, explicit: list[str]) -> dict[str, Any]:
+        """The room itself when every one of its lights / blinds is Hauflo's (a lamp added later follows — HA expert
+        28.10); else the list — never the integrator's own or a garage door by way of the room."""
+        everything = [eid for eid in self.hass.states.async_entity_ids(domain) if self._area(eid) == area_id]
+        if everything and all(self._pickable(eid) for eid in everything):
+            return {"area_id": area_id}
+        return {"entity_id": explicit}
+
     def targets(self) -> dict[str, Any]:
         areas = ar.async_get(self.hass)
         out: dict[str, list[dict[str, Any]]] = {"cover": [], "light": [], "scene": []}
@@ -148,6 +208,7 @@ class Automations:
                 item: dict[str, Any] = {"entity_id": eid, "name": s.attributes.get("friendly_name") or eid, "area": area}
                 if domain == "cover":
                     item["position"] = bool(int(s.attributes.get("supported_features") or 0) & 4)
+                    item["group"] = (e := er.async_get(self.hass).async_get(eid)) is not None and e.platform == "group"
                 if domain == "light":
                     modes = s.attributes.get("supported_color_modes") or []
                     item["dim"] = any(m != "onoff" for m in modes)
@@ -156,6 +217,10 @@ class Automations:
             if n := len(self._room_lights(area_id)):
                 rooms[area_id] = n
         names = {a: (area.name if (area := areas.async_get_area(a)) else a) for a in {i["area"] for v in out.values() for i in v if i["area"]}}
+        cover_rooms = []
+        for area_id in {i["area"] for i in out["cover"] if i["area"]}:
+            if n := len(self._room_covers(area_id)):
+                cover_rooms.append({"area_id": area_id, "name": names.get(area_id, area_id), "covers": n, "position": bool(self._room_covers(area_id, True))})
         alarms = []
         for ent in er.async_get(self.hass).entities.values():
             if ent.domain == "sensor" and self._alarm_sensor(ent.entity_id):
@@ -168,6 +233,7 @@ class Automations:
             "lights": out["light"],
             "scenes": out["scene"],
             "rooms": sorted(({"area_id": a, "name": names.get(a, a), "lights": n} for a, n in rooms.items()), key=lambda r: r["name"]),
+            "cover_rooms": sorted(cover_rooms, key=lambda r: r["name"]),
             "areas": names,
         }
 
@@ -212,6 +278,18 @@ class Automations:
                 if not isinstance(area_id, str) or not self._room_lights(area_id):
                     raise Invalid("room_off: a room with Hauflo lights")
                 clean.append({"do": "room_off", "area_id": area_id})
+                continue
+            if do == "room_covers":
+                # «Все шторы спальни» as one action (family review 28.10: twenty «Штора 1, Штора 2, Штора 1…»).
+                area_id, cmd = a.get("area_id"), a.get("cover")
+                if cmd not in _DO["cover"]:
+                    raise Invalid("room_covers: cover open, close or position")
+                if not isinstance(area_id, str) or not self._room_covers(area_id, cmd == "position"):
+                    raise Invalid("room_covers: a room with Hauflo blinds")
+                item = {"do": "room_covers", "area_id": area_id, "cover": cmd}
+                if cmd == "position":
+                    item["value"] = _int(a.get("value"), 0, 100, "position %")
+                clean.append(item)
                 continue
             eid = a.get("entity_id")
             if not self._pickable(eid):
@@ -265,7 +343,14 @@ class Automations:
             if a["do"] == "room_off":
                 lights = self._room_lights(a["area_id"])
                 if lights:
-                    out.append({"action": "light.turn_off", "target": {"entity_id": lights}})
+                    out.append({"action": "light.turn_off", "target": self._area_target("light", a["area_id"], lights)})
+                continue
+            if a["do"] == "room_covers":
+                if covers := self._room_covers(a["area_id"], a["cover"] == "position"):
+                    call = {"action": _DO["cover"][a["cover"]], "target": self._area_target("cover", a["area_id"], covers)}
+                    if a["cover"] == "position":
+                        call["data"] = {"position": a["value"]}
+                    out.append(call)
                 continue
             domain = a["entity_id"].split(".")[0]
             call: dict[str, Any] = {"action": _DO[domain][a["do"]], "target": {"entity_id": a["entity_id"]}}
@@ -299,40 +384,71 @@ class Automations:
         cfg: dict[str, Any] = {
             "id": rule_id,
             "alias": f"Hauflo · {name}",
-            "description": "Создано в Hauflo: дашборд → Автоматизации. Меняйте там."
-            if ru
-            else "Made in Hauflo: dashboard → Automations. Change it there.",
+            # Neutral: it keeps working after Hauflo is removed (HA expert 28.10), the page it named may be gone.
+            "description": "Создано в Hauflo." if ru else "Made in Hauflo.",
             "triggers": [trigger],
             "conditions": [{"condition": "time", "weekday": list(rule["days"])}] if len(rule["days"]) < 7 else [],
             "actions": self._service_calls(rule),
             "mode": "single",
-            "initial_state": rule["enabled"],
+            # No initial_state: HA keeps the on / off a person set (in HA or here) over restarts (HA expert 28.10).
         }
         return cfg
 
-    async def _read_file(self) -> list[dict[str, Any]]:
-        from homeassistant.util.yaml import load_yaml  # noqa: PLC0415
+    @staticmethod
+    def _plain(text: str) -> list[Any]:
+        """automations.yaml as data — only when a dump gives back the same text (HA's editor's own format); else
+        NotPlain. An empty file / «[]» is plain."""
+        import yaml  # noqa: PLC0415
+        from homeassistant.util.yaml import dump  # noqa: PLC0415
+
+        body = text.strip()
+        if body in ("", "[]"):
+            return []
+        try:
+            data = yaml.safe_load(text)  # no HA tags: one would fail here, not be followed
+        except yaml.YAMLError as err:
+            raise NotPlain(f"not YAML: {err}") from err
+        if not isinstance(data, list):
+            raise NotPlain("not a list")
+        if dump(data).strip() != body:
+            raise NotPlain("hand formatting")
+        return data
+
+    async def _read_file(self) -> tuple[list[dict[str, Any]], str | None]:
         import os  # noqa: PLC0415
 
         path = self.hass.config.path(AUTOMATIONS)
 
-        def read() -> Any:
-            return load_yaml(path) if os.path.isfile(path) else None
+        def read() -> str | None:
+            if not os.path.isfile(path):
+                return None
+            with open(path, encoding="utf-8") as f:
+                return f.read()
 
-        data = await self.hass.async_add_executor_job(read)
-        if data is None:
-            return []
-        if not isinstance(data, list):
-            raise RuntimeError("automations.yaml is not a list")
-        return data
+        text = await self.hass.async_add_executor_job(read)
+        return ([], None) if text is None else (self._plain(text), text)
 
-    async def _write_file(self, data: list[dict[str, Any]]) -> None:
+    async def _write_file(self, data: list[dict[str, Any]], before: str | None) -> None:
+        import os  # noqa: PLC0415
+
         from homeassistant.util.file import write_utf8_file_atomic  # noqa: PLC0415
         from homeassistant.util.yaml import dump  # noqa: PLC0415
 
         path = self.hass.config.path(AUTOMATIONS)
         contents = dump(data)  # before the file is opened: a dump error never truncates it
-        await self.hass.async_add_executor_job(write_utf8_file_atomic, path, contents)
+        self._plain(contents)  # what is written reads back the same (never a file the next write would refuse)
+
+        def write() -> None:
+            if before is not None:
+                stamp = dt_util.utcnow().strftime("%Y%m%d-%H%M%S-%f")
+                write_utf8_file_atomic(self.hass.config.path(BACKUP + stamp), before)
+                folder = self.hass.config.path()
+                old = sorted(n for n in os.listdir(folder) if n.startswith(BACKUP))
+                for name in old[:-KEEP_BACKUPS]:
+                    os.remove(os.path.join(folder, name))
+            write_utf8_file_atomic(path, contents)
+
+        await self.hass.async_add_executor_job(write)
 
     def entity_of(self, rule_id: str) -> str | None:
         return er.async_get(self.hass).async_get_entity_id("automation", "automation", rule_id)
@@ -346,11 +462,12 @@ class Automations:
 
             # HA's own check, as its automation editor does (a changed HA schema fails here, not in the file).
             await async_validate_config_item(self.hass, rule_id, cfg)
-        data = await self._read_file()
-        kept = [a for a in data if not (isinstance(a, dict) and a.get("id") == rule_id)]
-        if cfg is not None:
-            kept.append(cfg)
-        await self._write_file(kept)
+        async with _FILE_LOCK:
+            data, before = await self._read_file()
+            kept = [a for a in data if not (isinstance(a, dict) and a.get("id") == rule_id)]
+            if cfg is not None:
+                kept.append(cfg)
+            await self._write_file(kept, before)
         if cfg is not None:
             await self.hass.services.async_call("automation", "reload", {"id": rule_id}, blocking=True)
         elif eid := self.entity_of(rule_id):
@@ -360,7 +477,24 @@ class Automations:
         data = await self.store.async_load()
         return data if isinstance(data, dict) and isinstance(data.get("rules"), dict) else {"rules": {}}
 
-    async def save(self, raw: Any, user: str | None) -> dict[str, Any]:
+    async def changed(self, data: dict[str, Any]) -> set[str]:
+        """Hauflo's rules someone edited in HA's own automation editor: what's in automations.yaml is not what Hauflo
+        wrote (its digest; for a rule from before the digest — what Hauflo would write from the form)."""
+        try:
+            file, _ = await self._read_file()
+        except Exception:  # noqa: BLE001 — an unreadable file: nothing said changed, writes refuse on their own
+            return set()
+        now = {a.get("id"): a for a in file if isinstance(a, dict)}
+        out = set()
+        for rule_id, rule in data["rules"].items():
+            if (cur := now.get(rule_id)) is None:
+                continue
+            want = rule.get("hash") or _digest(self.automation(rule_id, rule))
+            if _digest(cur) != want:
+                out.add(rule_id)
+        return out
+
+    async def save(self, raw: Any, user: str | None, force: bool = False) -> dict[str, Any]:
         async with self.lock:
             data = await self._load()
             rule_id = raw.get("id") if isinstance(raw, dict) else None
@@ -371,17 +505,22 @@ class Automations:
                     raise KeyError(rule_id)
             elif len(data["rules"]) >= MAX_RULES:
                 raise Invalid(f"at most {MAX_RULES} rules")
+            # Edited in HA's editor: only «Вернуть как в Hauflo», asked and confirmed, writes over it (HA expert 28.10).
+            if rule_id is not None and not force and rule_id in await self.changed(data):
+                raise Changed(rule_id)
             rule = self.validate(raw, data["rules"].get(rule_id) if rule_id else None)
             rule_id = rule_id or PREFIX + secrets.token_hex(6)
             rule["by"], rule["at"] = user, time.time()
-            await self._put(rule_id, self.automation(rule_id, rule))
+            cfg = self.automation(rule_id, rule)
+            await self._put(rule_id, cfg)
+            rule["hash"] = _digest(cfg)
             data["rules"][rule_id] = rule
             await self.store.async_save(data)
         await self._apply_enabled(rule_id, rule["enabled"])
-        return {"id": rule_id, **rule}
+        return {"id": rule_id, **{k: v for k, v in rule.items() if k != "hash"}}
 
     async def _apply_enabled(self, rule_id: str, enabled: bool) -> None:
-        # initial_state holds it over restarts; the switch now (a reload keeps an unchanged automation's state).
+        # HA keeps the switch over restarts (no initial_state); a reload keeps an unchanged automation's state.
         for _ in range(20):
             if eid := self.entity_of(rule_id):
                 await self.hass.services.async_call("automation", "turn_on" if enabled else "turn_off", {"entity_id": eid}, blocking=True)
@@ -395,10 +534,10 @@ class Automations:
             data = await self._load()
             rule = self._own(data, rule_id)
             rule["enabled"] = enabled
-            await self._put(rule_id, self.automation(rule_id, rule))
+            # Only HA's own switch: the file isn't written (an edit made in HA's editor stays — HA expert 28.10).
             await self.store.async_save(data)
         await self._apply_enabled(rule_id, enabled)
-        return {"id": rule_id, **rule}
+        return {"id": rule_id, **{k: v for k, v in rule.items() if k != "hash"}}
 
     @staticmethod
     def _own(data: dict[str, Any], rule_id: Any) -> dict[str, Any]:
@@ -459,6 +598,18 @@ class Automations:
         await self.hass.config.async_update(**kwargs)
         return self.location()
 
+    async def set_time_zone(self, body: dict[str, Any]) -> dict[str, Any]:
+        """The house's time zone (family review 28.10: HA in UTC, a Moscow family saw sunset at 13:58). Only the zone."""
+        from homeassistant.core_config import ConfigSource  # noqa: PLC0415
+
+        if self.hass.config.config_source == ConfigSource.YAML:
+            raise PermissionError("the time zone is set in configuration.yaml")
+        tz = body.get("time_zone")
+        if set(body) - {"op", "time_zone"} or not isinstance(tz, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+){0,2}", tz) or dt_util.get_time_zone(tz) is None:
+            raise Invalid("time_zone: an IANA zone (Europe/Moscow)")
+        await self.hass.config.async_update(time_zone=tz)
+        return self.location()
+
     async def detect(self) -> dict[str, Any]:
         """Where the house is by its internet address — HA's own onboarding helper (the HA box has no GPS). Nothing is
         saved: the person confirms first."""
@@ -503,11 +654,13 @@ class Automations:
 
     async def answer(self) -> dict[str, Any]:
         data = await self._load()
+        edited = await self.changed(data)
         rules = []
         for rule_id, rule in data["rules"].items():
             eid = self.entity_of(rule_id)
             s = self.hass.states.get(eid) if eid else None
-            rules.append({"id": rule_id, **{k: v for k, v in rule.items() if k != "by"}, "entity_id": eid, "state": s.state if s else "missing"})
+            # On / off as HA has it (a person may switch it in HA too).
+            rules.append({"id": rule_id, **{k: v for k, v in rule.items() if k not in ("by", "hash")}, "entity_id": eid, "state": s.state if s else "missing", "enabled": s.state == "on" if s else rule["enabled"], "changed": rule_id in edited})
         rules.sort(key=lambda r: r.get("at") or 0)
         return {"location": self.location(), "days": self.days(self.location()["set"]), "rules": rules, "targets": self.targets(), "max_offset": MAX_OFFSET}
 
@@ -539,9 +692,14 @@ class AutomationsView(HomeAssistantView):
         # A person's own action, as HA's own buttons are; the tunnel can't reach this view (not in its allowlist).
         user = request["hass_user"]
         op = body.get("op")
+        ru = str(engine.hass.config.language or "").startswith("ru")
+        if op in ("location", "detect") and not (user is not None and user.is_admin):
+            # HA's home location moves zone.home (presence, every sun rule): an administrator's (security review 28.10).
+            msg = "Место дома задаёт администратор Home Assistant." if ru else "The home's location is set by the Home Assistant administrator."
+            return self.json({"message": msg, "code": "admin_only"}, 403)
         try:
             if op == "save":
-                return self.json(await engine.save(body.get("rule"), user.name if user else None))
+                return self.json(await engine.save(body.get("rule"), user.name if user else None, body.get("force") is True))
             if op == "enable":
                 return self.json(await engine.set_enabled(body.get("id"), body.get("enabled")))
             if op == "delete":
@@ -553,10 +711,20 @@ class AutomationsView(HomeAssistantView):
                 return self.json(await engine.set_location(body))
             if op == "detect":
                 return self.json(await engine.detect())
+            if op == "timezone":
+                # The whole HA's clock: only HA's owner (an admin).
+                if not (user and user.is_admin):
+                    return self.json_message("admin only", 403)
+                return self.json(await engine.set_time_zone(body))
         except Invalid as err:
             return self.json_message(str(err), 400)
+        except NotPlain as err:
+            _LOGGER.warning("Hauflo automations: automations.yaml left as it is (%s)", err)
+            return self.json({"message": NotPlain.RU if ru else NotPlain.EN, "code": "not_plain"}, 409)
         except KeyError:
             return self.json_message("no such rule", 404)
+        except Changed:
+            return self.json_message("changed in Home Assistant", 409)
         except LookupError as err:
             return self.json_message(str(err), 409)
         except PermissionError as err:
@@ -564,4 +732,4 @@ class AutomationsView(HomeAssistantView):
         except Exception as err:  # noqa: BLE001 — HA refused the automation or the file: said, not a 500
             _LOGGER.warning("Hauflo sun: %s failed: %s", op, err)
             return self.json_message(f"Home Assistant: {err}", 500)
-        return self.json_message("op: save, enable, delete, run, detect or location", 400)
+        return self.json_message("op: save, enable, delete, run, detect, location or timezone", 400)

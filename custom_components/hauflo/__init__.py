@@ -33,7 +33,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
 from homeassistant.helpers.storage import Store
 
-from . import automations, backup, comfort, keep, notify, season, sidebar, theme, voice
+from . import automations, backup, comfort, dashmerge, keep, notify, presence, season, sidebar, theme, titles, voice
 from .const import CONF_REFRESH_TOKEN_ID, CONF_SECRET, CONF_SERVER, CONF_USER_ID, DATA_NOTIFY_VIEWS, DATA_UNLINKED, DOMAIN, MONITOR_LABEL, MONITOR_LABEL_EN, MONITOR_LABELS, OWNED_STORE, STATUS_EVERY, VERSION, CONF_RANGES, DATA_PENDING_RANGES, CONF_ALLOW_CHANGES, LOCKED_CODE
 
 _LOGGER = logging.getLogger(__name__)
@@ -229,12 +229,17 @@ _SCRUBBED = ("get_states", "get_config", "cloud/status", "config/device_registry
 
 
 def _scrub_panels(panels: Any) -> Any:
-    """HA's menu items by name only (the deploy says which of HA's own it would hide) — no panel's config (an iframe's
-    address, an add-on's ingress) leaves the house."""
-    return {str(k): {"url_path": str(k)} for k in panels} if isinstance(panels, dict) else {}
+    """Only HA's own menu items «Убрать лишнее из меню» may hide, by name (the deploy says which this HA has) — no
+    other panel's name (an add-on, an iframe: what runs in the house) or config leaves it (security review 28.10)."""
+    return {str(k): {"url_path": str(k)} for k in panels if k in sidebar.MENU_EXTRAS} if isinstance(panels, dict) else {}
 
 
-def _scrub_states(states: Any, hass: HomeAssistant | None = None) -> Any:
+# Binary sensors that tell who is home and where they move (security review 28.10: motion / doors with their times went
+# to the cloud): their state is Hauflo's to see only on its own entities or ones marked «Hauflo мониторинг».
+_PRESENCE_CLASSES = {"motion", "occupancy", "presence", "door", "window", "opening", "garage_door", "lock"}
+
+
+def _scrub_states(states: Any, hass: HomeAssistant | None = None, visible: Callable[[str], bool] | None = None) -> Any:
     if not isinstance(states, list):
         return states
     phones = set()
@@ -246,7 +251,13 @@ def _scrub_states(states: Any, hass: HomeAssistant | None = None) -> Any:
             continue
         eid = str(st.get("entity_id", ""))
         attrs = st.get("attributes") if isinstance(st.get("attributes"), dict) else {}
-        if eid.split(".")[0] in _PRIVATE_STATE or eid in phones:
+        presence = eid.startswith("binary_sensor.") and attrs.get("device_class") in _PRESENCE_CLASSES
+        if presence and visible is not None:
+            try:
+                presence = not visible(eid)
+            except Exception:  # noqa: BLE001 — not knowable: hidden
+                presence = True
+        if eid.split(".")[0] in _PRIVATE_STATE or eid in phones or presence:
             st["attributes"] = {k: v for k, v in attrs.items() if k in _KEEP_ON_PRIVATE}
             st["state"] = "hidden"
             for k in _STATE_TIMES:  # when someone came home, and who did what
@@ -669,6 +680,10 @@ _LOVELACE_TYPES = {
     "custom:hauflo-covers", "custom:hauflo-acs",
     # The «Автоматизации» tab (automations.py): no entity, no action — the card asks the agent itself.
     "custom:hauflo-automations",
+    # An empty room's note (0.14.7): text only.
+    "custom:hauflo-title",
+    # What HA put in an area (0.14.7): only the area id comes from the cloud; the card reads HA and opens HA's own dialog.
+    "custom:hauflo-area",
 }
 # What a card may only show: anyone's (weather on the floor, an alarm source of a monitoring rule).
 _READ_ONLY_DOMAINS = {"sensor", "binary_sensor", "weather", "sun", "person", "zone", "device_tracker", "calendar", "image", "camera", "event"}
@@ -681,7 +696,9 @@ _CARD_SERVICES = {
     "climate.set_temperature", "climate.set_hvac_mode", "climate.set_preset_mode", "climate.set_fan_mode",
     "climate.set_swing_mode", "climate.turn_off", "knx.send",
 }
-_ENTITY_RE = re.compile(r"^[a-z_]+\.[a-z0-9_]+$")
+_ENTITY_RE = re.compile(r"[a-z_]+\.[a-z0-9_]+")  # fullmatch only
+# A view / section / card's Hauflo id (dashmerge.py): plain text, no control characters.
+_HAUFLO_ID_RE = re.compile(r"^[^\x00-\x1f\x7f]{1,256}$")
 _COPY_RE = re.compile(r"^hauflo-[a-z0-9_-]{1,40}-copy-\d{12}$")
 _NAV_RE = re.compile(r"^/(hauflo-[a-z0-9_-]+(/[a-z0-9_-]*)?|config/scene/edit/hauflo_[a-z0-9_]+)$")
 
@@ -701,6 +718,41 @@ def _owned_knx_writes(hass: HomeAssistant | None, owned: set[str] | None) -> set
     return out
 
 
+# HA's service call targets (cv.ENTITY_SERVICE_FIELDS): «data» and «service_data» are merged into the target by the
+# frontend and HA, so all three are checked alike (security review 28.10).
+_TARGET_KEYS = {"entity_id", "device_id", "area_id", "floor_id", "label_id"}
+_TEXT_KEYS = {"icon", "name", "title", "label", "text", "theme", "url_path", "path", "color"}
+_RUNS = ("perform-action", "call-service")
+# Pictures a card may show: HA's own (a room's photo, a camera through HA, /local), Hauflo's static files and inline
+# images — never an address outside the house (a tracking pixel sees who opens the dashboard; security review 28.10).
+_IMAGE_KEYS = {"image", "picture", "camera_image", "background", "icon_image", "entity_picture"}
+_IMAGE_RE = re.compile(r"(?:/local/|/api/image/serve/|/api/image_proxy/|/api/camera_proxy/|/hauflo_static/)[A-Za-z0-9_./%?=&+-]*")
+_DATA_IMAGE_RE = re.compile(r"data:image/(?:png|jpeg|gif|webp|svg\+xml)(?:;[a-z0-9=_-]+)*;base64,[A-Za-z0-9+/=]*")
+
+
+def _image_ok(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    if _DATA_IMAGE_RE.fullmatch(value):
+        return True
+    return bool(_IMAGE_RE.fullmatch(value)) and ".." not in value and "//" not in value
+
+
+def _area_lights_owned(hass: HomeAssistant | None, area_id: Any, owned: set[str] | None, owned_entries: set[str] | None) -> bool:
+    """«Всё выключить» by a room: every light HA would turn off there (its own area, or its device's when it has
+    none — as HA's service helper resolves it) is Hauflo's."""
+    if hass is None or not isinstance(area_id, str) or not re.fullmatch(r"[a-z0-9_]+", area_id) or area_id in ("all", "none"):
+        return False
+    try:
+        ents = er.async_get(hass)
+        lights = [e for e in er.async_entries_for_area(ents, area_id) if e.domain == "light"]
+        for device in dr.async_entries_for_area(dr.async_get(hass), area_id):
+            lights += [e for e in er.async_entries_for_device(ents, device.id) if e.domain == "light" and not e.area_id]
+        return all(_hauflo_entity(hass, e.entity_id, owned, owned_entries) for e in lights)
+    except Exception:  # noqa: BLE001 — not knowable: not allowed
+        return False
+
+
 def _lovelace_ok(hass: HomeAssistant | None, config: Any, owned: set[str] | None, owned_entries: set[str] | None) -> bool:
     if not isinstance(config, dict):
         return False
@@ -712,46 +764,104 @@ def _lovelace_ok(hass: HomeAssistant | None, config: Any, owned: set[str] | None
             return True
         return _hauflo_entity(hass, eid, owned, owned_entries)
 
+    def target_ids(value: Any) -> list[str] | None:
+        """entity_id as HA reads it (cv.comp_entity_ids lower-cases, strips, splits on commas, takes «all»): only exact
+        lower-case ids pass — anything HA would reinterpret is refused (security review 28.10)."""
+        items = value if isinstance(value, list) else [value]
+        if not items or not all(isinstance(i, str) and _ENTITY_RE.fullmatch(i) for i in items):
+            return None
+        return items
+
+    def service_ok(v: dict[str, Any]) -> bool:
+        """A service call anywhere in a dashboard: an allowed service, on Hauflo's own entities named one by one."""
+        names = [v[k] for k in ("perform_action", "service") if k in v and not (k == "service" and isinstance(v[k], dict) and "perform_action" not in v)]
+        if not names or not all(isinstance(n, str) and n in _CARD_SERVICES for n in names) or len(set(names)) != 1:
+            return False
+        service = names[0]
+        for k in ("target", "data", "service_data"):
+            if k in v and not isinstance(v[k], dict):
+                return False
+        if service == "knx.send":
+            # A KNX scene's «store» (+128) on an address one of Hauflo's own entities sends to — nothing else.
+            if set(v) & ({"target", "service_data"} | _TARGET_KEYS) or "data" not in v:
+                return False
+            data = v["data"]
+            if not owned_writes:
+                owned_writes.append(_owned_knx_writes(hass, owned))
+            payload = data.get("payload")
+            if set(data) - {"address", "payload"} or _ga_key(data.get("address")) not in owned_writes[0]:
+                return False
+            return isinstance(payload, list) and all(isinstance(b, int) and not isinstance(b, bool) and 0 <= b <= 255 for b in payload)
+        ids: list[str] = []
+        areas: list[Any] = []
+        # Our own alarm card's action names its entity at the top (hauflo-alert: {service, entity_id}).
+        for part, is_target in ((v.get("target") or {}, True), (v.get("data") or {}, False), (v.get("service_data") or {}, False), (v, False)):
+            for k, x in part.items():
+                if not isinstance(k, str):
+                    return False
+                lk = k.strip().lower()
+                if k == "entity_id":
+                    got = target_ids(x)
+                    if got is None:
+                        return False
+                    ids += got
+                elif k == "area_id" and is_target and service == "light.turn_off":
+                    areas += x if isinstance(x, list) else [x]
+                elif lk in _TARGET_KEYS or is_target:
+                    return False  # device / area / floor / label: whatever HA finds there isn't Hauflo's to say
+        if not ids and not areas:
+            return False  # nothing named: never «whatever the service reaches by default»
+        if areas and not all(_area_lights_owned(hass, a, owned, owned_entries) for a in areas):
+            return False
+        return all(_hauflo_entity(hass, i, owned, owned_entries) for i in ids)
+
     def walk(v: Any, key: str = "") -> bool:
         if isinstance(v, dict):
             kind = v.get("type")
             if kind is not None and (not isinstance(kind, str) or kind not in _LOVELACE_TYPES):
                 return False
+            if "hauflo_id" in v and not (isinstance(v["hauflo_id"], str) and _HAUFLO_ID_RE.match(v["hauflo_id"])):
+                return False
             action = v.get("action")
-            if key.endswith("_action"):  # tap_action, hold_action, icon_tap_action, double_tap_action
+            if key.endswith("_action") or isinstance(action, str):  # tap_action, hold_action, icon_tap_action, double_tap_action…
                 if action not in _ACTIONS:
                     return False
                 if action == "navigate" and not _NAV_RE.match(str(v.get("navigation_path", ""))):
                     return False
-            service = v.get("perform_action", v.get("service"))
-            if isinstance(service, dict) and "perform_action" not in v:
-                service = None  # the alert card's «service» is the service company's contact (phone, name)
-            if service is not None:
-                if not isinstance(service, str) or service not in _CARD_SERVICES:
-                    return False
-                target = v.get("target") if isinstance(v.get("target"), dict) else {}
-                data = v.get("data") if isinstance(v.get("data"), dict) else {}
-                # Whole-room «all off» is the only target that isn't an entity of Hauflo's.
-                if set(target) - {"entity_id"} and not (service == "light.turn_off" and set(target) == {"area_id"}):
-                    return False
-                if service == "knx.send":
-                    if not owned_writes:
-                        owned_writes.append(_owned_knx_writes(hass, owned))
-                    payload = data.get("payload")
-                    if set(data) - {"address", "payload"} or _ga_key(data.get("address")) not in owned_writes[0]:
+                if action in _RUNS:
+                    if not service_ok(v):
                         return False
-                    if not (isinstance(payload, list) and all(isinstance(b, int) and not isinstance(b, bool) and 0 <= b <= 255 for b in payload)):
-                        return False
+                elif set(v) & ({"perform_action", "service", "target", "data", "service_data"} | _TARGET_KEYS):
+                    return False  # fail closed: a service or a target on an action that runs none
+            elif "perform_action" in v or isinstance(v.get("service"), str):
+                if not service_ok(v):  # a service under any other key (our own cards' actions, card features)
+                    return False
+            elif "target" in v or "service_data" in v:
+                return False  # a target with no service to check it by
+            if key == "state_image" and not all(_image_ok(x) for x in v.values()):
+                return False
             return all(walk(x, str(k)) for k, x in v.items())
         if isinstance(v, list):
             return all(walk(x, key) for x in v)
         if isinstance(v, str):
-            if key in ("perform_action", "service", "type", "action", "navigation_path"):
+            if key in ("perform_action", "service", "type", "action", "navigation_path", "hauflo_id"):
                 return True  # checked with their dict
+            if key in _IMAGE_KEYS:
+                return _image_ok(v)
             if v.startswith("/") and key == "path":
                 return bool(_NAV_RE.match(v))
-            if _ENTITY_RE.match(v) and key not in ("icon", "name", "title", "label", "text", "theme", "url_path", "path", "color"):
-                return entity_ok(v)
+            if key not in _TEXT_KEYS:
+                norm = v.strip().lower()
+                if norm == "all":
+                    return False  # HA's «every entity» (security review 28.10)
+                # HA lower-cases, strips and splits on commas what it reads as entity ids: only the exact form passes.
+                pieces = [p.strip().lower() for p in v.split(",")]
+                if any(_ENTITY_RE.fullmatch(p) for p in pieces) and (len(pieces) > 1 or norm != v):
+                    return False
+                if _ENTITY_RE.fullmatch(v):
+                    return entity_ok(v)
+                if v.lower().startswith(("http://", "https://", "//", "javascript:", "data:")):
+                    return False  # nothing in a Hauflo dashboard loads from outside the house
             return key not in ("url", "url_path") or v.startswith("hauflo-")
         return True
 
@@ -797,6 +907,9 @@ def _ws_allowed(msg: dict[str, Any], hass: HomeAssistant | None = None, owned: s
         return (str(msg.get("domain")), str(msg.get("service"))) in _SERVICES
     if t not in _WS_EXACT:
         return False
+    if t == "manifest/get":
+        # Only what the deploy reads (the agent's own version) and KNX's — not which integrations the house runs.
+        return msg.get("integration") in ("hauflo", "knx")
     if t == "config_entries/get":
         # Only the integrations Hauflo sets up — not every title in the house («Анин iPhone»; panel round 6).
         return msg.get("domain") in _FLOW_DOMAINS | {DOMAIN}  # the agent's own: the dashboard needs its cards
@@ -1063,11 +1176,14 @@ class Agent:
         # KNX UI entities Hauflo created or took over (by unique_id — renames keep them): only these may be deleted.
         self.engine: notify.NotifyEngine | None = None  # alarms to the phones (set up right after the agent)
         self.automations: Any = None  # the dashboard's «Автоматизации» (automations.py), made on first use
+        self.presence: presence.Presence | None = None  # «Нет дома — имитация присутствия» (presence.py)
         self.comfort = comfort.ComfortEngine(hass)  # «Комфортный пол» and the house mode (comfort.py)
         self.owned: set[str] = set()
         self.owned_entries: set[str] = set()  # config entries (HomeKit bridges, groups) made through the tunnel
         self._flow_memo: dict[str, list[str]] = {}  # HomeKit options: the domains of a flow's first step
         self._owned_store: Store = Store(hass, 1, OWNED_STORE)
+        # The last dashboard Hauflo saved, per dashboard: the integrator's own cards are merged in against it (dashmerge.py).
+        self.dashboards = dashmerge.DashboardMerge(hass)
         self._pending: dict[tuple[int, Any], tuple[str, str | None]] = {}
         self._note_subs: set[tuple[int, Any]] = set()  # persistent_notification subscriptions: their events are scrubbed
         self._unsub_signals = None
@@ -1178,6 +1294,7 @@ class Agent:
         data = await self._owned_store.async_load()
         self.owned = set(data.get("unique_ids", [])) if isinstance(data, dict) else set()
         self.owned_entries = set(data.get("entries", [])) if isinstance(data, dict) else set()
+        await self.dashboards.async_load()
 
     def _knx_uid(self, entity_id: Any) -> str | None:
         entry = er.async_get(self.hass).async_get(entity_id) if isinstance(entity_id, str) else None
@@ -1217,7 +1334,7 @@ class Agent:
             res = r.get("result")
             if kind in _SCRUBBED:
                 r["result"] = (
-                    _scrub_states(res, self.hass) if kind == "get_states" else _scrub_config(res) if kind == "get_config"
+                    _scrub_states(res, self.hass, self._state_visible) if kind == "get_states" else _scrub_config(res) if kind == "get_config"
                     else _scrub_cloud(res) if kind == "cloud/status" else _scrub_devices(res, self.hass) if kind == "config/device_registry/list"
                     else _scrub_panels(res) if kind == "get_panels" else _scrub_monitor(res)
                 )
@@ -1288,6 +1405,11 @@ class Agent:
         except Exception:  # noqa: BLE001
             return None
 
+    def _state_visible(self, eid: str) -> bool:
+        """A presence sensor's state goes to Hauflo only when it is Hauflo's own or marked «Hauflo мониторинг»."""
+        own = _own_entity(self.hass, eid, self.owned_entries) and (_platform(self.hass, eid) != "knx" or _owned_knx(self.hass, eid, self.owned))
+        return own or notify.labelled(self.hass, eid)
+
     @property
     def locked(self) -> bool:
         """The owner switched «Allow Hauflo to change this home's setup» off — read live, an options save needs no reload."""
@@ -1347,6 +1469,9 @@ class Agent:
             return False
         return False
 
+    def _dashboard_ok(self, config: Any) -> bool:
+        return _lovelace_ok(self.hass, config, self.owned, self.owned_entries)
+
     async def _channel_send(self, ch: int, data: str) -> None:
         local = self.channels.get(ch)
         if local is None:
@@ -1360,6 +1485,10 @@ class Agent:
         # Hauflo doesn't hold a token for this HA: the agent signs in with its own.
         if msg.get("type") == "auth":
             data = json.dumps({"type": "auth", "access_token": self.token})
+        elif msg.get("type") == dashmerge.PLAN:
+            # Reads only: answered by the agent itself (no foreign card's content leaves the house).
+            await dashmerge.handle(self, ch, msg, self._dashboard_ok, backup.fresh, LOCKED_CODE)
+            return
         elif self.locked and _ws_locked(msg):
             # Closed by the owner in HA: no write gets through, whatever it is — before any other check asks for more.
             _LOGGER.info("Hauflo: «%s» refused — changes by Hauflo are switched off in HA", msg.get("type"))
@@ -1369,6 +1498,10 @@ class Agent:
             # Not a range the integrator allowed in HA (acceptance B9): refused, said in the house where to allow it.
             self._ask_ranges(outside)
             await self.send({"t": "ws_msg", "ch": ch, "data": json.dumps({"id": msg.get("id"), "type": "result", "success": False, "error": {"code": "address_not_allowed", "message": f"Hauflo agent: group addresses {', '.join(sorted(outside))} are not allowed in HA (Hauflo → Configure)"}})})
+            return
+        elif msg.get("type") == dashmerge.SAVE or (msg.get("type") == "lovelace/config/save" and self.dashboards.manages(msg.get("url_path"))):
+            # Hauflo's part merged with what the integrator made in HA — by the agent: the cloud never writes his cards.
+            await dashmerge.handle(self, ch, msg, self._dashboard_ok, backup.fresh, LOCKED_CODE)
             return
         elif not (await self._own_dashboard_copy(msg)) and not _ws_allowed(msg, self.hass, self.owned, self.owned_entries):
             # Only what Hauflo deploys and reads — never backups, add-ons, arbitrary services (security review 25.10).
@@ -1575,11 +1708,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
     except Exception as err:  # noqa: BLE001 — never stops the agent
         degrade("lovelace resources", err)
     # Push alarms to the residents' phones (notify.py); its API is registered once per HA run.
+    # «Нет дома — имитация присутствия»: on / until survive a restart (presence.py).
+    agent.presence = presence.Presence(hass, lambda eid: _hauflo_entity(hass, eid, agent.owned, agent.owned_entries))
+    try:
+        await agent.presence.async_start()
+    except Exception as err:  # noqa: BLE001 — never stops the agent
+        degrade("presence simulation", err)
     engine = notify.NotifyEngine(hass)
     # Set here too: the link may say «welcome» before the engine exists (re-added integration — monitoring
     # stayed empty until the minute status, integrator run 14).
     engine.on_change = agent.status_now
     engine.owns = owns
+    engine.locked = lambda: agent.locked
     await engine.async_start()
     agent.engine = engine
     if not hass.data.get(DATA_NOTIFY_VIEWS):
@@ -1593,9 +1733,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
         hass.http.register_view(comfort.ComfortView(lambda: _comfort(hass)))
         hass.http.register_view(sidebar.SidebarView())
         hass.http.register_view(season.SeasonView(lambda: _season(hass)))
+        hass.http.register_view(titles.TitlesView())
         hass.http.register_view(automations.AutomationsView(lambda: _automations(hass)))
+        hass.http.register_view(presence.PresenceView(lambda: _presence(hass)))
 
     async def _stop(_event: Event) -> None:
+        if agent.presence is not None:
+            agent.presence.async_stop()
         await agent.stop()
 
     entry.async_on_unload(hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _stop))
@@ -1672,6 +1816,12 @@ def _automations(hass: HomeAssistant) -> automations.Automations | None:
     return None
 
 
+def _presence(hass: HomeAssistant) -> presence.Presence | None:
+    for entry in hass.config_entries.async_loaded_entries(DOMAIN):
+        return entry.runtime_data.presence
+    return None
+
+
 def _comfort(hass: HomeAssistant) -> comfort.ComfortEngine | None:
     for entry in hass.config_entries.async_loaded_entries(DOMAIN):
         return entry.runtime_data.comfort
@@ -1682,6 +1832,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> b
     if not await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         return False
     entry.runtime_data.comfort.async_stop()
+    if entry.runtime_data.presence is not None:
+        entry.runtime_data.presence.async_stop()
+        entry.runtime_data.presence = None
     await entry.runtime_data.stop()
     voice.async_unload(hass)
     sidebar.async_unload(hass)

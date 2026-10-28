@@ -3,7 +3,7 @@ Runs without Home Assistant installed: python3 agent/tests/test_tunnel_allowlist
 import ast, contextlib, glob, ipaddress, json, pathlib, re, sys, types
 src = open(pathlib.Path(__file__).parents[1] / "custom_components/hauflo/__init__.py").read()
 tree = ast.parse(src)
-keep = [n for n in tree.body if (isinstance(n, ast.Assign) and any(getattr(t, "id", "").startswith("_") for t in n.targets)) or (isinstance(n, ast.FunctionDef) and n.name in ("_ws_allowed", "_ga_key", "_knx_listens", "_entry_domain", "_flow_handler", "_http_allowed", "_own_entity", "_own_device", "_owned_knx", "_forbidden", "_lan_host", "_flow_input_ok", "_unused_label", "_device_entities_owned", "_protected", "_own_dashboard", "_alice_labels", "_homekit_step_ok", "_hauflo_entity", "_knx_writes", "_foreign_knx_writes", "_knx_config_ok", "_flow_step", "_platform", "_lovelace_ok", "_owned_knx_writes", "_label_ok", "_scrub_states", "_scrub_devices", "_scrub_monitor", "_scrub_notes", "_ws_changes", "_http_changes", "_owns", "_area_floor_empty", "_foreign_holders", "_scrub_diagnostics"))]
+keep = [n for n in tree.body if (isinstance(n, ast.Assign) and any(getattr(t, "id", "").startswith("_") for t in n.targets)) or (isinstance(n, ast.FunctionDef) and n.name in ("_ws_allowed", "_ga_key", "_knx_listens", "_entry_domain", "_flow_handler", "_http_allowed", "_own_entity", "_own_device", "_owned_knx", "_forbidden", "_lan_host", "_flow_input_ok", "_unused_label", "_device_entities_owned", "_protected", "_own_dashboard", "_alice_labels", "_homekit_step_ok", "_hauflo_entity", "_knx_writes", "_foreign_knx_writes", "_knx_config_ok", "_flow_step", "_platform", "_lovelace_ok", "_area_lights_owned", "_image_ok", "_owned_knx_writes", "_label_ok", "_scrub_states", "_scrub_devices", "_scrub_monitor", "_scrub_notes", "_ws_changes", "_http_changes", "_owns", "_area_floor_empty", "_foreign_holders", "_scrub_diagnostics"))]
 import logging
 ns = {"json": json, "re": re, "contextlib": contextlib, "ipaddress": ipaddress, "Any": object, "HomeAssistant": object, "logging": logging, "__name__": "agent", "DOMAIN": "hauflo"}
 exec(compile(ast.Module(body=keep, type_ignores=[]), "agent", "exec"), ns)
@@ -32,6 +32,15 @@ _labels = {"alisa": ["light.knx_1", "cover.knx_blind"], "integrator": ["light.kn
 _dev_labels = {"ondevice": ["dk"]}
 ns["er"].async_entries_for_label = lambda reg, lid: [types.SimpleNamespace(entity_id=e) for e in _labels.get(lid, [])]
 ns["dr"] = types.SimpleNamespace(async_get=lambda h: types.SimpleNamespace(async_get=devs_reg.get), async_entries_for_label=lambda reg, lid: _dev_labels.get(lid, []))
+# Rooms: the kitchen's only light is Hauflo's; the hall also has the family's own lamp (on a device placed there).
+_area_ents = {"kitchen": [types.SimpleNamespace(entity_id="light.knx_1", domain="light", area_id="kitchen")], "hall": [types.SimpleNamespace(entity_id="light.knx_1", domain="light", area_id="hall")]}
+_area_devs = {"hall": [types.SimpleNamespace(id="dhue")]}
+dev_ents["dhue"] = [types.SimpleNamespace(entity_id="light.hue_lamp", domain="light", area_id=None, platform="hue")]
+ents_reg["light.hue_lamp"] = _Ent("hue", "light")
+ents_reg["cover.garage_door"] = _Ent("template", "cover")
+ents_reg["valve.front_garden"] = _Ent("template", "valve")
+ns["er"].async_entries_for_area = lambda reg, a: _area_ents.get(a, [])
+ns["dr"].async_entries_for_area = lambda reg, a: _area_devs.get(a, [])
 ns["DOMAIN"] = "hauflo"
 # KNX UI store: Hauflo's light and the integrator's gate relay by hand.
 class _GA:  # xknx's GroupAddress: hashable, its number as .raw
@@ -312,8 +321,82 @@ def test_allowlist():
     assert not bad, f"cases {bad} disagree"
 
 
+def _btn(action: dict) -> dict:
+    """A «Kitchen light» button on Hauflo's own light whose tap runs `action`."""
+    return {"views": [{"cards": [{"type": "tile", "entity": "light.knx_1", "name": "Свет кухня", "tap_action": action}]}]}
+
+
+_PA = lambda svc, **kw: {"action": "perform-action", "perform_action": svc, **kw}
+# Security review 28.10 (agent 0.14.4, live): each of these was ACCEPTED and a non-admin's tap opened the garage.
+BLOCKER_REFUSED = {
+    "target entity_id all": _btn(_PA("cover.open_cover", target={"entity_id": "all"})),
+    "target entity_id ALL": _btn(_PA("cover.open_cover", target={"entity_id": "ALL"})),
+    "data entity_id all": _btn(_PA("cover.open_cover", data={"entity_id": "all"})),
+    "data area_id": _btn(_PA("cover.open_cover", data={"area_id": "garage"})),
+    "data device_id": _btn(_PA("cover.open_cover", data={"device_id": "dz"})),
+    "data label_id": _btn(_PA("cover.open_cover", data={"label_id": "integrator"})),
+    "data floor_id": _btn(_PA("cover.open_cover", data={"floor_id": "ground"})),
+    "service_data area_id": _btn(_PA("cover.open_cover", service_data={"area_id": "garage"})),
+    "target device_id": _btn(_PA("cover.open_cover", target={"device_id": "dz"})),
+    "target label_id": _btn(_PA("homeassistant.toggle", target={"label_id": "integrator"})),
+    "target area_id not light.turn_off": _btn(_PA("homeassistant.turn_off", target={"area_id": "kitchen"})),
+    "upper-case entity": _btn(_PA("cover.open_cover", target={"entity_id": "COVER.GARAGE_DOOR"})),
+    "upper-case in data list": _btn(_PA("homeassistant.toggle", data={"entity_id": ["VALVE.FRONT_GARDEN"]})),
+    "leading space": _btn(_PA("cover.open_cover", target={"entity_id": " cover.garage_door"})),
+    "trailing newline": _btn(_PA("cover.open_cover", target={"entity_id": "cover.garage_door\n"})),
+    "comma list in one string": _btn(_PA("homeassistant.toggle", target={"entity_id": "light.knx_1,cover.garage_door"})),
+    "own light + foreign in data": _btn(_PA("homeassistant.toggle", target={"entity_id": "light.knx_1"}, data={"entity_id": "cover.garage_door"})),
+    "entity_id as dict": _btn(_PA("homeassistant.toggle", target={"entity_id": {"x": "cover.garage_door"}})),
+    "entity_id as number": _btn(_PA("homeassistant.toggle", target={"entity_id": 5})),
+    "empty list": _btn(_PA("homeassistant.toggle", target={"entity_id": []})),
+    "no target at all": _btn(_PA("homeassistant.toggle")),
+    "target not a dict": _btn(_PA("homeassistant.toggle", target="cover.garage_door")),
+    "Entity_ID key spelled otherwise": _btn(_PA("homeassistant.toggle", target={"Entity_ID": "cover.garage_door"})),
+    "unknown target key": _btn(_PA("homeassistant.toggle", target={"entity_id": "light.knx_1", "match": "all"})),
+    "service vs perform_action disagree": _btn({"action": "call-service", "service": "cover.open_cover", "perform_action": "light.turn_on", "target": {"entity_id": "light.knx_1"}}),
+    "call-service legacy with all": _btn({"action": "call-service", "service": "cover.open_cover", "service_data": {"entity_id": "all"}}),
+    "toggle action carrying a target": _btn({"action": "toggle", "target": {"entity_id": "cover.garage_door"}}),
+    "more-info carrying a service": _btn({"action": "more-info", "perform_action": "cover.open_cover", "target": {"entity_id": "light.knx_1"}}),
+    "unknown action key carrying a service": {"views": [{"cards": [{"type": "tile", "entity": "light.knx_1", "features": [{"type": "light-brightness", "press": {"perform_action": "cover.open_cover", "target": {"entity_id": "all"}}}]}]}]},
+    "nested under a card feature": {"views": [{"cards": [{"type": "tile", "entity": "light.knx_1", "features": [{"type": "light-brightness", "tap_action": _PA("cover.open_cover", data={"area_id": "garage"})}]}]}]},
+    "alert card action entity all": {"views": [{"cards": [{"type": "custom:hauflo-alert", "alarms": [], "action": {"title": "x", "service": "switch.turn_off", "entity_id": "all"}}]}]},
+    "alert card action area": {"views": [{"cards": [{"type": "custom:hauflo-alert", "alarms": [], "action": {"title": "x", "service": "switch.turn_off", "entity_id": "light.knx_1", "area_id": "garage"}}]}]},
+    "room card lights all": {"views": [{"cards": [{"type": "custom:hauflo-room", "name": "x", "lights": "all"}]}]},
+    "room card lights upper-case": {"views": [{"cards": [{"type": "custom:hauflo-room", "name": "x", "lights": ["SWITCH.RELE_VOROT"]}]}]},
+    "tile entity with a space": {"views": [{"cards": [{"type": "tile", "entity": " cover.garage_door"}]}]},
+    "light.turn_off area with the family's lamp": _btn(_PA("light.turn_off", target={"area_id": "hall"})),
+    "light.turn_off area all": _btn(_PA("light.turn_off", target={"area_id": "all"})),
+    "light.turn_off area in data": _btn(_PA("light.turn_off", data={"area_id": "kitchen"})),
+    "knx.send with a target": {"views": [{"cards": [{"type": "tile", "entity": "scene.hauflo_r1_evening", "hold_action": _PA("knx.send", data={"address": "1/1/1", "payload": [128]}, target={"entity_id": "all"})}]}]},
+    # LOW 7: a picture from outside the house.
+    "external image": {"views": [{"cards": [{"type": "picture-glance", "image": "https://evil.example/p.png", "entities": []}]}]},
+    "protocol-relative image": {"views": [{"cards": [{"type": "custom:hauflo-room", "name": "x", "picture": "//evil.example/p.png"}]}]},
+    "image escaping /local": {"views": [{"cards": [{"type": "custom:hauflo-room", "name": "x", "picture": "/local/../../api/x"}]}]},
+    "image with css break-out": {"views": [{"cards": [{"type": "custom:hauflo-room", "name": "x", "picture": "/local/a.jpg') url('https://evil.example"}]}]},
+    "state_image external": {"views": [{"cards": [{"type": "picture-glance", "image": "/local/a.jpg", "state_image": {"on": "https://evil.example/on.png"}, "entities": []}]}]},
+    "data: non-image": {"views": [{"cards": [{"type": "picture-glance", "image": "data:text/html;base64,PHNjcmlwdD4=", "entities": []}]}]},
+}
+BLOCKER_ACCEPTED = {
+    "own light by entity_id": _btn(_PA("light.turn_off", target={"entity_id": "light.knx_1"})),
+    "own light in a list": _btn(_PA("homeassistant.toggle", target={"entity_id": ["light.knx_1"]})),
+    "own light in data (legacy)": _btn({"action": "call-service", "service": "light.turn_on", "service_data": {"entity_id": "light.knx_1", "brightness_pct": 50}}),
+    "light.turn_off area all Hauflo's": _btn(_PA("light.turn_off", target={"area_id": "kitchen"})),
+    "own scene": {"views": [{"cards": [{"type": "tile", "entity": "scene.hauflo_r1_evening", "tap_action": _PA("scene.turn_on", target={"entity_id": "scene.hauflo_r1_evening"})}]}]},
+    "alert card own action": {"views": [{"cards": [{"type": "custom:hauflo-alert", "alarms": ["binary_sensor.smoke_z"], "action": {"title": "x", "service": "switch.turn_off", "entity_id": "light.knx_1"}}]}]},
+    "local picture": {"views": [{"cards": [{"type": "custom:hauflo-room", "name": "x", "picture": "/local/rooms/kukhnia.jpg"}]}]},
+    "area picture": {"views": [{"cards": [{"type": "picture-glance", "image": "/api/image/serve/0a1b2c/512x512", "entities": []}]}]},
+    "inline svg": {"views": [{"cards": [{"type": "picture-glance", "image": "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=", "entities": []}]}]},
+}
+
+
+def test_lovelace_service_targets_security_2810():
+    wrong = [n for n, c in BLOCKER_REFUSED.items() if LV(c)] + [n for n, c in BLOCKER_ACCEPTED.items() if not LV(c)]
+    assert not wrong, f"disagree: {wrong}"
+
+
 if __name__ == "__main__":
     test_allowlist()
+    test_lovelace_service_targets_security_2810()
     print(f"{len(cases)} cases ok")
 
 # Dashboards Hauflo generated and deployed pass the check whole (their entities taken as Hauflo's own).

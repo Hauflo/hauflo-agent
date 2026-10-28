@@ -8,7 +8,8 @@
     "knx",
     "lovelace",
     "mobile_app",
-    "person"
+    "person",
+    "recorder"
   ],
   "codeowners": [
     "@Hauflo"
@@ -24,5 +25,5 @@
   "issue_tracker": "https://github.com/Hauflo/hauflo-agent/issues",
   "requirements": [],
   "single_config_entry": true,
-  "version": "0.14.4"
+  "version": "0.15.0"
 }

@@ -98,14 +98,16 @@
       },
       "init_pending": {
         "title": "Hauflo in this home",
-        "description": "Connected to project «{project}» on {server} — [open Hauflo]({url}).\n\nHauflo sends KNX commands only to the addresses below. Hauflo asked for these and waits for your permission: {pending}. They're already in the list — save to allow them; remove gates, locks and others' groups first.",
+        "description": "Connected to project «{project}» on {server} — [open Hauflo]({url}).\n\nHauflo sends KNX commands only to the allowed addresses. Hauflo asked for these and waits for your permission: {pending}. They are NOT allowed until you tick them below. Check each one: it may be a gate or a lock. Unticked ones are declined when you save.",
         "data": {
           "allow_changes": "Allow Hauflo to change this home's setup",
-          "ranges": "Allowed addresses (1/1/5, a span 1/1/1-21 or a whole group 1/1; comma-separated or one per line)"
+          "ranges": "Allowed addresses (1/1/5, a span 1/1/1-21 or a whole group 1/1; comma-separated or one per line)",
+          "accept_pending": "Allow these requested addresses"
         },
         "data_description": {
           "allow_changes": "Off: Hauflo changes nothing in Home Assistant — deploys, dashboards, rooms, KNX entities and backups started by Hauflo are refused. Monitoring, alarms and voice keep working.",
-          "ranges": "Remove any Hauflo must not control (a gate, a lock)."
+          "ranges": "Remove any Hauflo must not control (a gate, a lock).",
+          "accept_pending": "Tick only your own project's addresses. Check each one: it may be a gate or a lock."
         }
       }
     }

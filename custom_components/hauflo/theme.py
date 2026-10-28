@@ -15,7 +15,7 @@ from homeassistant.components.frontend import add_extra_js_url
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.core import Event, HomeAssistant, callback
 
-from .const import DATA_THEME_LISTENER, DATA_WWW
+from .const import DATA_THEME_DEFAULTS, DATA_THEME_LISTENER, DATA_THEME_FIRING, DATA_WWW
 
 _LOGGER = logging.getLogger(__name__)
 THEME = "Hauflo Atelier"
@@ -160,15 +160,28 @@ THEME_DARK = f"{THEME} · тёмная"
 FIXED = {THEME_LIGHT: {**_COMMON, **LIGHT}, THEME_DARK: {**_COMMON, **DARK}}
 
 
+# Names that are no longer ours. The current ones (THEME + FIXED) were in OLD_THEMES too, so «is an old
+# name still there?» was always true and every themes_updated re-injected and fired again — an endless
+# loop in HA (integrator review 28.10). Only names we don't ship any more are removed.
+_STALE = tuple(t for t in OLD_THEMES if t != THEME and t not in FIXED)
+
+
+def _ours() -> dict:
+    return {THEME: AURA, **FIXED}
+
+
 @callback
 def _inject(hass: HomeAssistant) -> bool:
+    """Put the Hauflo themes into HA's list. True only when the list actually changed."""
     themes = hass.data.get("frontend_themes")
-    if themes is None or (themes.get(THEME) == AURA and all(themes.get(k) == v for k, v in FIXED.items()) and not any(t in themes for t in OLD_THEMES)):
+    if themes is None:
         return False
-    for old in OLD_THEMES:
+    want = _ours()
+    if all(themes.get(k) == v for k, v in want.items()) and not any(t in themes for t in _STALE):
+        return False
+    for old in _STALE:
         themes.pop(old, None)
-    themes[THEME] = AURA
-    themes.update(FIXED)
+    themes.update(want)
     return True
 
 
@@ -186,16 +199,56 @@ async def _restore_default(hass: HomeAssistant) -> bool:
     return changed
 
 
+_DEFAULT_KEYS = ("frontend_default_theme", "frontend_default_dark_theme")
+
+
+def _remember_defaults(hass: HomeAssistant) -> None:
+    """What HA's default themes are now — read at every themes_updated, so that at a reload we know what they were
+    just before it (an admin picking another theme fires the event too: the pick is what is remembered)."""
+    hass.data[DATA_THEME_DEFAULTS] = {k: hass.data.get(k) for k in _DEFAULT_KEYS}
+
+
+def _reapply_defaults(hass: HomeAssistant) -> bool:
+    """«Reload themes» resets the default to HA's own when the theme isn't in the YAML list. Put Hauflo's back only
+    where it was the default before the reload (the admin's later pick is remembered as that, so it stays)."""
+    before = hass.data.get(DATA_THEME_DEFAULTS) or {}
+    changed = False
+    for k in _DEFAULT_KEYS:
+        if before.get(k) == THEME and hass.data.get(k) != THEME:
+            hass.data[k] = THEME
+            changed = True
+    return changed
+
+
+def _fire(hass: HomeAssistant) -> None:
+    # Re-entrancy guard: outside a dispatch HA runs listeners right inside async_fire, so our own listener
+    # sees this event while the flag is set and skips it. Inside a dispatch (fired from the listener) HA
+    # queues it; that next pass finds the list unchanged and doesn't fire — the loop always ends.
+    hass.data[DATA_THEME_FIRING] = True
+    try:
+        hass.bus.async_fire("themes_updated")
+    finally:
+        hass.data[DATA_THEME_FIRING] = False
+
+
 async def async_setup(hass: HomeAssistant) -> None:
     injected = _inject(hass)
     if await _restore_default(hass) or injected:
-        hass.bus.async_fire("themes_updated")
+        _fire(hass)
+    _remember_defaults(hass)
 
     @callback
     def _after_reload(_event: Event) -> None:
-        # HA's «Reload themes» rebuilt the list from YAML: put Aura back (fires once more, then no-op).
+        # HA's «Reload themes» rebuilt the list from YAML: put the Hauflo themes back — fire only when the
+        # list really changed, never for our own event.
+        if hass.data.get(DATA_THEME_FIRING):
+            return
+        # The default theme Hauflo set comes back too (HA's reload resets it to «default»). Same single-fire rule.
+        # Only after a reload (our themes were gone): at any other themes_updated the default is the admin's pick.
         if _inject(hass):
-            hass.bus.async_fire("themes_updated")
+            _reapply_defaults(hass)
+            _fire(hass)
+        _remember_defaults(hass)
 
     if not hass.data.get(DATA_THEME_LISTENER):
         hass.data[DATA_THEME_LISTENER] = hass.bus.async_listen("themes_updated", _after_reload)
@@ -214,3 +267,5 @@ def async_unload(hass: HomeAssistant) -> None:
     JS stays registered — dashboards keep working until HA restarts (keep.py makes copies on removal)."""
     if callable(unsub := hass.data.pop(DATA_THEME_LISTENER, None)):
         unsub()
+    hass.data.pop(DATA_THEME_FIRING, None)
+    hass.data.pop(DATA_THEME_DEFAULTS, None)

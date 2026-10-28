@@ -5,7 +5,7 @@ from collections.abc import Callable
 from homeassistant.util.hass_dict import HassKey
 
 DOMAIN = "hauflo"
-VERSION = "0.14.4"
+VERSION = "0.15.0"
 DEFAULT_SERVER = "https://app.hauflo.com"
 # A pairing code starts with its server's region: «RU-…» → the Russian instance (data of Russian clients stays in
 # Russia), «EU-…» and any other → the international one (owner 26.10).
@@ -30,6 +30,8 @@ DATA_UNLINKED: HassKey[bool] = HassKey(f"{DOMAIN}_unlinked")
 DATA_NOTIFY_VIEWS: HassKey[bool] = HassKey(f"{DOMAIN}_notify_views")
 DATA_SIDEBAR_LISTENER: HassKey[Callable[[], None]] = HassKey(f"{DOMAIN}_sidebar_listener")
 DATA_THEME_LISTENER: HassKey[Callable[[], None]] = HassKey(f"{DOMAIN}_theme_listener")
+DATA_THEME_FIRING: HassKey[bool] = HassKey(f"{DOMAIN}_theme_firing")
+DATA_THEME_DEFAULTS: HassKey[dict[str, str | None]] = HassKey(f"{DOMAIN}_theme_defaults")
 DATA_WWW: HassKey[bool] = HassKey(f"{DOMAIN}_www_registered")
 # The group addresses (main/middle) Hauflo may send to — confirmed in HA by the integrator.
 CONF_RANGES = "ranges"
@@ -38,5 +40,6 @@ DATA_PENDING_RANGES = "hauflo_pending_ranges"
 # «Allow Hauflo to change this home's setup» (options, on by default): off — the tunnel refuses every config write;
 # reads, monitoring and alarms keep working. Read live from the entry's options: no restart needed.
 CONF_ALLOW_CHANGES = "allow_changes"
+CONF_ACCEPT_PENDING = "accept_pending"
 # The tunnel's answer to a write while the owner keeps the house closed (Hauflo says where to switch it back).
 LOCKED_CODE = "locked_by_owner"

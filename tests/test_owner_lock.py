@@ -251,6 +251,39 @@ async def test_the_dialog(hass: HomeAssistant, entry) -> None:
     assert entry.options[CONF_RANGES] == ["1/1", "7/1/1"]
 
 
+async def test_pending_is_never_prefilled_security_2810(hass: HomeAssistant, entry) -> None:
+    """Security review 28.10: the cloud's requested 7/7/1 (a gate) was prefilled into «allowed» — the owner toggled the
+    lock, pressed Submit and granted it. Now pending addresses are separate opt-in boxes, all off; the unticked are
+    declined (cleared) on save."""
+    hass.config_entries.async_update_entry(entry, options={**entry.options, CONF_RANGES: ["1/1"]})
+    hass.data[DATA_PENDING_RANGES] = {"7/7/1", "1/2/3"}
+    flow = await hass.config_entries.options.async_init(entry.entry_id)
+    assert flow["step_id"] == "init_pending"
+    defaults = {str(k): k.default() for k in flow["data_schema"].schema}
+    assert defaults == {CONF_ALLOW_CHANGES: True, CONF_RANGES: "1/1", "accept_pending": []}
+    sel = [v for k, v in flow["data_schema"].schema.items() if str(k) == "accept_pending"][0]
+    assert sel.config["multiple"] is True and [o["value"] if isinstance(o, dict) else o for o in sel.config["options"]] == ["1/2/3", "7/7/1"]
+    # The reviewer's exact case: only the lock toggled, Submit with the defaults.
+    flow = await hass.config_entries.options.async_configure(flow["flow_id"], {CONF_ALLOW_CHANGES: False, CONF_RANGES: defaults[CONF_RANGES]})
+    assert flow["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options[CONF_RANGES] == ["1/1"] and entry.options[CONF_ALLOW_CHANGES] is False
+    assert not hass.data[DATA_PENDING_RANGES]  # declined: not asked again by this dialog
+    flow = await hass.config_entries.options.async_init(entry.entry_id)
+    assert flow["step_id"] == "init"
+
+    # Ticked one by one: only that one; an address never asked for can't be smuggled through the boxes.
+    hass.data[DATA_PENDING_RANGES] = {"7/7/1", "1/2/3"}
+    flow = await hass.config_entries.options.async_init(entry.entry_id)
+    flow = await hass.config_entries.options.async_configure(flow["flow_id"], {CONF_ALLOW_CHANGES: True, CONF_RANGES: "1/1", "accept_pending": ["1/2/3"]})
+    assert entry.options[CONF_RANGES] == ["1/1", "1/2/3"]
+    assert not hass.data[DATA_PENDING_RANGES]
+    hass.data[DATA_PENDING_RANGES] = {"1/2/4"}
+    flow = await hass.config_entries.options.async_init(entry.entry_id)
+    with pytest.raises(Exception):  # noqa: B017 — HA's selector refuses a value it didn't offer
+        await hass.config_entries.options.async_configure(flow["flow_id"], {CONF_ALLOW_CHANGES: True, CONF_RANGES: "1/1", "accept_pending": ["7/7/1"]})
+    assert "7/7/1" not in entry.options[CONF_RANGES]
+
+
 def test_both_languages_say_the_same_steps() -> None:
     import pathlib
 
@@ -260,7 +293,8 @@ def test_both_languages_say_the_same_steps() -> None:
         steps = j["options"]["step"]
         assert set(steps) == {"init", "init_pending"}, name
         for step in steps.values():
-            assert set(step["data"]) == {CONF_ALLOW_CHANGES, CONF_RANGES}
+            assert set(step["data"]) - {"accept_pending"} == {CONF_ALLOW_CHANGES, CONF_RANGES}
             assert "{project}" in step["description"] and "{server}" in step["description"] and "{url}" in step["description"]
         assert "{pending}" in steps["init_pending"]["description"] and "{pending}" not in steps["init"]["description"]
+        assert set(steps["init_pending"]["data"]) == set(steps["init_pending"]["data_description"]) == {CONF_ALLOW_CHANGES, CONF_RANGES, "accept_pending"}
         assert "—" not in steps["init"]["description"].split("\n\n", 1)[1]

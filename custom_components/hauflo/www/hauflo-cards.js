@@ -51,6 +51,28 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
   // an alarm (a link rule's «off» is its alarm, not «on»), with priority, since, who accepted it. Fetched again only
   // when an alarm sensor of some card changes, or once a minute; without the agent — the sensor's «on».
   const AGENT = { at: 0, sig: "", data: null, wait: null, ids: new Set(), cards: new Set() };
+  // «Нет дома — имитация» (presence.py): the header says it, so nobody wonders why the lights move. Asked once a minute
+  // for all the headers on the page; the «Автоматизации» page puts its answer here at once.
+  const PRES = {
+    at: 0, data: null, wait: null, cards: new Set(),
+    set(d) {
+      this.data = d;
+      this.at = Date.now();
+      for (const c of this.cards) {
+        c._sig = "";
+        c._update();
+      }
+    },
+    get(card) {
+      this.cards.add(card);
+      const h = card._hass;
+      if (h && !this.wait && Date.now() - this.at > 60000) {
+        this.at = Date.now();
+        this.wait = h.callApi("GET", "hauflo/presence").then((d) => this.set(d), () => (this.data = null)).finally(() => (this.wait = null));
+      }
+      return this.data;
+    },
+  };
   const refreshAlarms = (hass) => {
     const sig = [...AGENT.ids].map((id) => hass.states[id]?.state).join();
     if (AGENT.wait || (sig === AGENT.sig && Date.now() - AGENT.at < 60000)) return;
@@ -114,7 +136,7 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
     return l.startsWith("ru") ? "ru" : "en";
   };
   const EN = {
-    "Дома": "Home", "Всё здание": "Whole building", "Всё спокойно": "All quiet", "Авария": "Alarm", "Аварий нет": "No alarms",
+    "Дома": "Home", "Дом": "Home", "Главная": "Home", "Нет дома · имитация": "Away · simulation", "Всё здание": "Whole building", "Всё спокойно": "All quiet", "Авария": "Alarm", "Аварий нет": "No alarms",
     "В комнатах": "Rooms", "Влажность": "Humidity", "Свет": "Lights", "Датчики": "Sensors", "в норме": "OK", "на улице": "outside",
     "Свет выключен": "Lights off", "Свет включён": "Lights on", "Всё выключено": "All off", "Свет: нет данных": "Lights: no data", "Всё в норме": "All OK", "всё в норме": "all OK",
     "Сценарии света": "Light scenes", "Сценарии штор": "Blind scenes", "Сценариев нет": "No scenes", "Климат": "Climate", "Тёплый пол": "Floor heating",
@@ -123,7 +145,7 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
     "Освещение": "Lighting", "Сцены": "Scenes", "Уведомления": "Notifications", "Без комнаты": "No room", "Нет связи": "Offline", "Теплее": "Warmer", "Холоднее": "Cooler", "нет связи": "offline", "Нет термостата": "No thermostat", "Держит": "Holding", "Нагревает": "Heating", "Охлаждает": "Cooling",
     "Осушает": "Drying", "Вентилирует": "Ventilating", "Выключен": "Off", "выключен": "off", "выключена": "off", "Нагрев": "Heat", "Холод": "Cool", "Охлаждение": "Cooling",
     "Авто": "Auto", "Диапазон": "Range", "Осушение": "Dry", "Вент.": "Fan", "Комфорт": "Comfort", "Эко": "Eco", "Эконом": "Economy", "Ночь": "Night", "Сон": "Sleep",
-    "Буст": "Boost", "Кондиционеры": "Air conditioners", "Все выключены": "All off", "Тихо": "Quiet", "Средне": "Medium", "Сильно": "High", "Макс": "Max", "Мягко": "Diffuse", "Фокус": "Focus", "Турбо": "Turbo", "Обдув": "Swing", "Отпуск": "Away", "Нет дома": "Away", "Защита": "Protection", "Вкл": "On", "Выкл": "Off", "вкл": "on", "выкл": "off", "Вкл. все": "All on",
+    "Буст": "Boost", "Кондиционеры": "Air conditioners", "Отопление": "Heating", "Изменить уставку": "Change the setpoint", "Все выключены": "All off", "Тихо": "Quiet", "Средне": "Medium", "Сильно": "High", "Макс": "Max", "Мягко": "Diffuse", "Фокус": "Focus", "Турбо": "Turbo", "Обдув": "Swing", "Отпуск": "Away", "Нет дома": "Away", "Защита": "Protection", "Вкл": "On", "Выкл": "Off", "вкл": "on", "выкл": "off", "Вкл. все": "All on",
     "Выкл. все": "All off", "Все": "All", "Все закрыты": "All closed", "Нет данных": "No data", "нет данных": "no data", "Яркость": "Brightness", "Группы": "Groups",
     "Прочее": "Other", "Откр.": "Open", "Закр.": "Closed", "закр.": "closed", "Открыть": "Open", "Закрыть": "Close", "Стоп": "Stop", "открыта": "open", "закрыта": "closed",
     "открыт": "open", "закрыт": "closed", "открыто": "open", "закрыто": "closed", "открывается…": "opening…", "закрывается…": "closing…", "Откр…": "Opening", "Закр…": "Closing", "Шторы": "Blinds",
@@ -153,7 +175,8 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
     "Ожидание": "Idle", "Вода": "Water", "Газ": "Gas", "Дым": "Smoke", "Угарный газ": "Carbon monoxide", "Перегрев": "Overheat", "Вскрытие": "Tamper", "Необычно": "Unusual",
     "загрузка…": "loading…", "истории пока нет": "no history yet", "только что": "just now", "Кухня": "Kitchen", "Гостиная зона": "Living area", "Обеденная": "Dining",
     "Остров": "Island", "ТВ": "TV", "Здание": "Building", "Устройства": "Devices", "Зима": "Winter", "Лето": "Summer",
-    "Принято": "Accept", "Не получилось — ещё раз": "Didn't work — try again",
+    "Принято": "Accept", "отправлено": "sent", "Не получилось — ещё раз": "Didn't work — try again",
+    "не отправлено — нет связи с домом": "not sent — no link to the house", "Показания": "Readings", "Комната": "Room", "Здесь пока ничего нет — добавьте устройства в проект или свои карточки в Home Assistant": "Nothing here yet — add devices to the project or your own cards in Home Assistant",
     "Тёплые полы": "Floor heating", "цель · обогрев": "target · heating", "цель · охлаждение": "target · cooling", "Сценарии": "Scenes", "Светильник": "Light", "Выключатель": "Switch", "Штора": "Blind", "Датчик": "Sensor", "Сцена": "Scene", "Кран": "Valve", "Замок": "Lock", "Устройство": "Device", "уставка ещё не пришла с шины": "setpoint not received from the bus yet", "уставка ещё не пришла": "no setpoint yet", "нет уставки": "no setpoint", "греет": "heating", "держит": "holding", "Сейчас не греют": "Not heating now", "сейчас": "now", "Пол": "Floor", "В комнате": "Room",
   };
   // Phrases with numbers / declensions (whole text node).
@@ -214,7 +237,8 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
   };
   const translate = (root) => {
     if (LANG === "ru") return;
-    const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: (n) => (n.parentNode?.nodeName === "STYLE" ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT) });
+    // A name the client typed (`data-own`) stays as typed.
+    const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: (n) => (n.parentNode?.nodeName === "STYLE" || n.parentElement?.closest?.("[data-own]") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT) });
     for (let n = walk.nextNode(); n; n = walk.nextNode()) {
       const v = tr(n.nodeValue);
       if (v !== n.nodeValue) n.nodeValue = v;
@@ -323,6 +347,58 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
     }
     viewRerender();
     await h.callWS({ type: "frontend/set_user_data", key: "hauflo_view", value: next });
+  };
+  // --- the client's names of the blocks (owner 28.10: «как переименовать карточку — кому-то надо так, а кому-то как мне»):
+  // for the whole house, kept by the agent (/api/hauflo/titles, agent 0.14.7+) — a deploy rewrites the dashboard, the
+  // names stay. A card of a block (`block: climate`, `lights`…) shows the client's name over the integrator's title.
+  const TITLES = { data: null, state: "", cards: new Set() };
+  const loadTitles = (h) => {
+    if (TITLES.state || !h?.callApi) return;
+    TITLES.state = "loading";
+    try {
+      TITLES.data = JSON.parse(localStorage.getItem("hauflo_titles") || "null");
+    } catch (e) {
+      TITLES.data = null;
+    }
+    h.callApi("GET", "hauflo/titles")
+      .then((r) => (TITLES.data = r && typeof r.titles === "object" && r.titles ? r.titles : {}))
+      // An older agent (no such view) or no link: the integrator's titles.
+      .catch(() => (TITLES.data = TITLES.data || {}))
+      .finally(() => {
+        TITLES.state = "done";
+        try {
+          localStorage.setItem("hauflo_titles", JSON.stringify(TITLES.data));
+        } catch (e) {
+          /* private mode */
+        }
+        for (const c of TITLES.cards) {
+          c._sig = "";
+          c._update();
+        }
+      });
+  };
+  const setTitles = async (h, next) => {
+    const r = await h.callApi("POST", "hauflo/titles", { titles: next });
+    TITLES.data = r?.titles || {};
+    try {
+      localStorage.setItem("hauflo_titles", JSON.stringify(TITLES.data));
+    } catch (e) {
+      /* private mode */
+    }
+    for (const c of TITLES.cards) {
+      c._sig = "";
+      c._update();
+    }
+  };
+  /** A block's title: the client's name (marked `data-own` — kept as typed, not put into English), else the config's,
+   * else the card's own word. */
+  const blockTitle = (card, fallback, kind = card._config?.block) => {
+    if (kind) {
+      TITLES.cards.add(card);
+      loadTitles(card._hass);
+    }
+    const own = kind && TITLES.data?.[kind];
+    return own ? `<span data-own>${esc(own)}</span>` : esc((kind === card._config?.block && card._config?.title) || fallback);
   };
   /** Scene buttons of one kind (light amber, blinds ice, both mint) — the room's top card and the blocks share them. */
   const sceneChips = (hass, list, kind) =>
@@ -548,9 +624,10 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
         if (LANG === "ru") return;
         for (const m of ms) {
           if (m.type === "characterData") {
+            if (m.target.parentElement?.closest?.("[data-own]")) continue;
             const v = tr(m.target.nodeValue);
             if (v !== m.target.nodeValue) m.target.nodeValue = v;
-          } else m.addedNodes.forEach((n) => (n.nodeType === 3 ? (n.nodeValue = tr(n.nodeValue)) : n.nodeType === 1 && n.nodeName !== "STYLE" && translate(n)));
+          } else m.addedNodes.forEach((n) => (n.nodeType === 3 ? !n.parentElement?.closest?.("[data-own]") && (n.nodeValue = tr(n.nodeValue)) : n.nodeType === 1 && n.nodeName !== "STYLE" && !n.closest?.("[data-own]") && translate(n)));
         }
       }).observe(this.shadowRoot, { childList: true, subtree: true, characterData: true });
     }
@@ -633,7 +710,7 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
       if (!c.scenes?.length) return "";
       const where = viewPrefs(this).scenes || c.scene_layout || "blocks";
       if (where !== "blocks") return "";
-      return `<div class="srow"><span class="caps">${this.kind === "cover" ? "Сценарии штор" : "Сценарии света"}</span>${sceneChips(this._hass, c.scenes, this.kind === "cover" ? "cover" : "light")}</div>`;
+      return `<div class="srow"><span class="caps">${blockTitle(this, this.kind === "cover" ? "Сценарии штор" : "Сценарии света", this.kind === "cover" ? "cover_scenes" : "light_scenes")}</span>${sceneChips(this._hass, c.scenes, this.kind === "cover" ? "cover" : "light")}</div>`;
     }
   }
 
@@ -648,6 +725,7 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
       return `.top{display:flex;justify-content:space-between;align-items:center;gap:12px}
 .out{display:inline-flex;align-items:center;gap:8px;padding:6px 12px 6px 8px;border-radius:16px;background:var(--track);font:400 13px Onest,sans-serif;color:var(--ink2);white-space:nowrap;cursor:pointer}
 .out ha-icon{--mdc-icon-size:20px;color:var(--amber)}.out b{font:500 15px Onest,sans-serif;color:var(--ink)}
+.lab{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0}.away{display:inline-flex;align-items:center;gap:6px;padding:4px 10px 4px 8px;border-radius:12px;background:color-mix(in srgb,var(--amber) 20%,transparent);color:var(--ink);font:500 12px Onest,sans-serif;white-space:nowrap;cursor:pointer}.away ha-icon{--mdc-icon-size:15px;color:var(--amber)}
 .hl{font:300 34px/1.1 Onest,sans-serif;letter-spacing:-.03em;margin-top:10px;display:flex;align-items:center;gap:12px}.hl.bad{color:var(--alert)}.hl .dot{width:10px;height:10px;border-radius:5px;flex:0 0 auto}
 .h{padding:6px 8px 4px}.t{font-size:112px;line-height:.9;margin-top:4px}.t sup{font:300 34px Onest,sans-serif;vertical-align:top;position:relative;top:10px;margin-left:4px;letter-spacing:0;color:var(--ink2)}
 .none{font:300 30px/1.2 Onest,sans-serif;letter-spacing:-.02em;color:var(--ink2);margin:14px 0 6px}
@@ -716,7 +794,8 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
         : !alarms.length
         ? `<div class="hl bad"><span class="dot" style="background:var(--alert);box-shadow:0 0 12px var(--alert)"></span>${loud.some((s) => s.entity_id.startsWith("alarm_control_panel.")) ? "Тревога · охрана" : "Звучит сирена"}</div>`
         : `<div class="hl bad"${critical ? "" : ' style="color:var(--amber)"'}><span class="dot" style="background:${critical ? "var(--alert)" : "var(--amber)"};box-shadow:0 0 12px ${critical ? "var(--alert)" : "var(--amber)"}"></span>${esc(alarms.length === 1 ? `Авария${c.rooms?.[alarms[0]] ? ` · ${c.rooms[alarms[0]]}` : ""}` : `${alarms.length} ${pluralAlarms(alarms.length)}`)}</div>`;
-      return `<div class="h"><div class="top"><span class="caps">${esc(c.label || "Дома")}</span>${outside}</div>
+      const away = PRES.get(this)?.enabled;
+      return `<div class="h"><div class="top"><span class="lab"><span class="caps">${esc(c.label || "Дома")}</span>${away ? `<span class="away" role="link" tabindex="0" data-away><ha-icon icon="mdi:home-export-outline"></ha-icon>Нет дома · имитация</span>` : ""}</span>${outside}</div>
 ${headline}
 <div class="f">${tmin !== undefined ? `<div><span class="caps">В комнатах</span><b>${tmin === tmax ? `${fmt(tmin)}°` : `${fmt(Math.floor(tmin))}–${fmt(Math.ceil(tmax))}°`}</b></div>` : ""}
 ${hum !== undefined ? `<div><span class="caps">Влажность</span><b>${fmt(hum)} %</b></div>` : ""}
@@ -730,6 +809,11 @@ ${(c.alarms || []).length && ok ? `<div><span class="caps">Датчики</span>
 
   Hero.prototype.bind = function () {
     this.shadowRoot.querySelector("[data-w]")?.addEventListener("click", () => moreInfo(this, this._config.weather));
+    // The chip opens the dashboard's «Автоматизации» tab, where the simulation is switched.
+    const away = this.shadowRoot.querySelector("[data-away]");
+    const open = () => AUTO.open(this._hass, ".pres");
+    away?.addEventListener("click", open);
+    away?.addEventListener("keydown", (e) => e.key === "Enter" && open());
   };
 
   // --- hauflo-room: a room that glows with its state; tap = its page, hold = its light -----------
@@ -892,7 +976,7 @@ ${(c.alarms || []).length && ok ? `<div><span class="caps">Датчики</span>
         const rows = c.rows.filter((r) => (r.always || where === "top") && (r.scenes || []).some((x) => st(this._hass, x.entity)));
         this.hideCard(!rows.length);
         if (!rows.length) return "";
-        return `<div class="glass m rows"><div class="hd"><span class="ic"><ha-icon icon="hauflo:scene"></ha-icon></span><span class="caps">${esc(c.title || "Сценарии")}</span></div>
+        return `<div class="glass m rows"><div class="hd"><span class="ic"><ha-icon icon="hauflo:scene"></ha-icon></span><span class="caps">${blockTitle(this, "Сценарии")}</span></div>
 ${rows.map((r) => `<div class="rw"><span class="caps sub">${esc(r.title || (r.kind === "cover" ? "Шторы" : "Свет"))}</span>${sceneChips(this._hass, r.scenes, r.kind === "cover" ? "cover" : r.kind === "mixed" ? "mixed" : "light")}</div>`).join("")}</div>`;
       }
       const list = (c.scenes || []).map((x) => ({ ...x, st: st(this._hass, x.entity) })).filter((x) => x.st);
@@ -901,7 +985,7 @@ ${rows.map((r) => `<div class="rw"><span class="caps sub">${esc(r.title || (r.ki
       this.hideCard(false);
       const label = (x) => x.name || nameOf(x.st, x.entity);
       if (!list.length) return `<div class="glass m ${kind}"><span class="caps">Сценариев нет</span></div>`;
-      return `<div class="glass m ${kind}"><div class="hd"><span class="ic"><ha-icon icon="${icon}"></ha-icon></span><span class="caps">${esc(c.title || (kind === "cover" ? "Сценарии штор" : "Сценарии света"))}</span></div>
+      return `<div class="glass m ${kind}"><div class="hd"><span class="ic"><ha-icon icon="${icon}"></ha-icon></span><span class="caps">${blockTitle(this, kind === "cover" ? "Сценарии штор" : kind === "mixed" ? "Сцены" : "Сценарии света")}</span></div>
 <div class="row">${list.map((x) => `<button data-scene="${esc(x.entity)}" title="${esc(label(x))}"><ha-icon icon="${esc(x.icon || (kind === "cover" ? "hauflo:blind" : kind === "mixed" ? "hauflo:scene" : "hauflo:scene"))}"></ha-icon><span>${esc(label(x))}</span></button>`).join("")}</div></div>`;
     }
     bind() {
@@ -1709,6 +1793,9 @@ ${act ? `<div class="sl"><div class="k"><ha-icon icon="${esc(c.action.icon || "h
       const groupNames = (this._config.groups || []).map((id) => nameOf(st(this._hass, id), id).replace(/\s*\((вс[яеё]|весь|all)\)\s*$/i, "").trim().toLowerCase()).filter((n) => n.length > 3);
       const partOfGroup = (e) => /\(част|part/i.test(e.name || nameOf(e.s, e.entity)) && groupNames.some((g) => String(e.name || nameOf(e.s, e.entity)).toLowerCase().startsWith(g));
       const zoneItems = (this._zone ? all.filter((e) => e.z === this._zone) : all).filter((e) => this._expanded || !partOfGroup(e));
+      // Blinds folded behind their groups: ▲ ■ ▼ still move every blind of the zone, not only the ETS groups (integrator
+      // review 28.10: groups «2, 4, 6» and «Угловая, Деверь» left blinds 1, 3, 5 out of «все»).
+      this._coverIds = isCover ? zoneItems.map((e) => e.entity) : null;
       const known = (e) => !["unknown", "unavailable"].includes(e.s.state);
       const isOpenOn = (e) => known(e) && (isCover ? e.s.state !== "closed" : e.s.state === "on");
       const onCount = (xs) => xs.filter(isOpenOn).length;
@@ -1745,7 +1832,7 @@ ${act ? `<div class="sl"><div class="k"><ha-icon icon="${esc(c.action.icon || "h
       // A lit group counts in the headline too: «Выключен» above a lit «Закарнизная подсветка» (persona round 4).
       const shownN = groupsOnly || both ? n : onCount([...zoneItems, ...gItems]);
       const shownTotal = groupsOnly || both ? counted.length : zoneItems.length + gItems.length;
-      const title = this._config.title || (isCover ? "Шторы" : "Свет");
+      const title = blockTitle(this, isCover ? "Шторы" : "Свет");
       const total = counted.length;
       const unknownAll = counted.every((e) => !known(e));
       const summary = unknownAll && total ? "Нет данных" : isCover ? (n ? `${n} из ${total} открыто` : "Все закрыты") : shownN ? `${shownN} из ${shownTotal}${lvl !== undefined ? ` · ${lvl} %` : ""}` : "Выключен";
@@ -1780,7 +1867,7 @@ ${settable ? "" : `<div class="ud">${coverButtons(coverDir(e, this._config), "da
         return `<div class="pill ${on ? "on" : ""} ${settable ? "" : "solo"} ${unavailable ? "unavail" : ""}" data-e="${esc(e.entity)}" data-set="${settable ? 1 : 0}"><div class="f" style="width:${on && settable ? pct : 0}%"></div>
 <ha-icon icon="${esc(e.icon || (!String(e.entity).startsWith("light.") ? e.s.attributes.icon || "hauflo:power" : on ? "hauflo:bulb-on" : "hauflo:bulb"))}"></ha-icon><div class="tx"><div class="nm">${esc(name)}</div><div class="lv">${esc(zoneTag)}${nd(e.s) ? "нет связи" : on ? (settable ? `${pct} %` : "вкл") : "выкл"}</div></div></div>`;
       };
-      return `<div class="glass k ${isCover ? "cover" : "light"}"><div class="hd"><div class="sum"><span class="caps">${esc(title)}${this._zone ? ` · ${esc(this._zone)}` : ""}</span><b class="${isCover && unknownAll ? "nd" : ""}">${esc(summary)}</b></div><div class="mst">${master}</div></div>
+      return `<div class="glass k ${isCover ? "cover" : "light"}"><div class="hd"><div class="sum"><span class="caps">${title}${this._zone ? ` · ${esc(this._zone)}` : ""}</span><b class="${isCover && unknownAll ? "nd" : ""}">${esc(summary)}</b></div><div class="mst">${master}</div></div>
 ${dimmables.length > 1 && (isCover || n) ? `<div class="bar" data-bar="1"><i style="width:${lvl ?? 0}%"></i><span>${isCover ? "Все" : "Яркость"}${lvl === undefined ? "" : ` · ${lvl} %`}</span></div>` : ""}
 ${this.sceneRow()}
 ${this.groupsRow()}
@@ -1819,6 +1906,7 @@ ${hidden ? `<button class="more" data-more="1">${coversFolded ? `По одной
       const domain = isCover ? "cover" : "homeassistant";
       const shownIds = () => {
         const ids = [...root.querySelectorAll(".pill")].map((p) => p.dataset.e);
+        if (isCover && !ids.length && this._coverIds?.length) return this._coverIds;
         if (this._config.master_groups && !this._zone) return [...ids, ...(this._config.groups || [])];
         return ids.length ? ids : this._config.groups || [];
       };
@@ -2317,7 +2405,7 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
       const faults = rows.filter((e) => this.word(e.s)[1] === "fault").length;
       const nolink = rows.filter((e) => this.word(e.s)[1] === "nolink").length;
       const warns = rows.filter((e) => this.word(e.s)[1] === "warn").length;
-      return `<div class="glass d"><div class="hd"><span class="caps">${esc(this._config.title || "Инженерные системы")}</span><span class="sum"><i class="${faults ? "fault" : warns || nolink ? "warn" : "ok"}"></i>${faults ? `аварий: ${faults}` : nolink ? `без связи: ${nolink}` : warns ? `внимание: ${warns}` : "всё в норме"}</span></div>
+      return `<div class="glass d"><div class="hd"><span class="caps">${blockTitle(this, "Инженерные системы")}</span><span class="sum"><i class="${faults ? "fault" : warns || nolink ? "warn" : "ok"}"></i>${faults ? `аварий: ${faults}` : nolink ? `без связи: ${nolink}` : warns ? `внимание: ${warns}` : "всё в норме"}</span></div>
 <div class="grid">${rows
         .map((e) => {
           const [w, k] = this.word(e.s);
@@ -2330,6 +2418,107 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
     }
     getGridOptions() {
       return { columns: 12, rows: "auto" };
+    }
+  }
+
+  // --- hauflo-area: whatever HA puts in a room (owner 28.10: «Котельная» made for the ZONT boiler controller — another
+  // integration's entities in that HA area). The cloud sends only the area id, never foreign entity ids: the card reads
+  // HA's registry here. A tap on anything not Hauflo's opens HA's own dialog (its controls, its labels) — a config made
+  // in the cloud can't dress a gate up as a lamp; Hauflo's own (on this Hauflo dashboard already) keeps its one tap.
+  const AREA_GROUPS = [
+    ["climate", "Климат", (d) => ["climate", "water_heater", "humidifier"].includes(d)],
+    ["values", "Показания", (d) => ["sensor", "number", "input_number"].includes(d)],
+    ["switches", "Выключатели", (d) => ["switch", "light", "fan", "input_boolean", "valve", "cover"].includes(d)],
+    ["status", "Датчики", (d) => d === "binary_sensor"],
+    ["other", "Прочее", () => true],
+  ];
+  const AREA_ICON = { climate: "mdi:thermostat", water_heater: "mdi:water-boiler", sensor: "mdi:gauge", number: "mdi:tune-variant", switch: "mdi:toggle-switch-outline", light: "mdi:lightbulb-outline", fan: "mdi:fan", binary_sensor: "mdi:checkbox-blank-circle-outline", valve: "mdi:valve", cover: "mdi:window-shutter", lock: "mdi:lock-outline", camera: "mdi:cctv", media_player: "mdi:speaker" };
+  /** Entity ids on the open Hauflo dashboard's config: the agent let them through as Hauflo's own (or read-only). */
+  const OWNED = { url: "", ids: null, wait: null };
+  const ownedOnDashboard = (card) => {
+    const url = location.pathname.split("/")[1] || "";
+    const h = card._hass;
+    if (!/^hauflo-/.test(url) || !h?.callWS) return new Set();
+    if (OWNED.url !== url && !OWNED.wait) {
+      OWNED.url = url;
+      OWNED.wait = h
+        .callWS({ type: "lovelace/config", url_path: url })
+        .then((cfg) => (OWNED.ids = new Set(JSON.stringify(cfg).match(/"[a-z_]+\.[a-z0-9_]+"/g)?.map((x) => x.slice(1, -1)) ?? [])))
+        .catch(() => (OWNED.ids = new Set()))
+        .finally(() => {
+          OWNED.wait = null;
+          card._sig = "";
+          card._update();
+        });
+    }
+    return OWNED.ids || new Set();
+  };
+  class Area extends Status {
+    /** The area's entities: put in it themselves or through their device; not hidden, not diagnostic / config. */
+    members() {
+      const h = this._hass;
+      const area = this._config.area;
+      if (!h || !area) return [];
+      if (this._memo && this._memo.ents === h.entities && this._memo.devs === h.devices && this._memo.area === area) return this._memo.ids;
+      const ids = Object.values(h.entities || {})
+        .filter((e) => !e.hidden && !e.entity_category && (e.area_id ? e.area_id === area : !!e.device_id && h.devices?.[e.device_id]?.area_id === area))
+        .map((e) => e.entity_id)
+        .sort((a, b) => nameOf(h.states[a], a).localeCompare(nameOf(h.states[b], b)));
+      this._memo = { ents: h.entities, devs: h.devices, area, ids };
+      return ids;
+    }
+    watched() {
+      return this.members();
+    }
+    word(s) {
+      const d = s.entity_id.split(".")[0];
+      if (["switch", "light", "fan", "input_boolean"].includes(d) && !["unavailable", "unknown"].includes(s.state)) return s.state === "on" ? ["вкл", "run"] : ["выкл", "stop"];
+      if (d === "cover" && !["unavailable", "unknown"].includes(s.state)) return [s.state === "open" ? "открыта" : s.state === "closed" ? "закрыта" : s.state, s.state === "open" ? "run" : "stop"];
+      return super.word(s);
+    }
+    css() {
+      return `${super.css()}.d .sub{display:block;margin:14px 0 0 2px;font-size:10px}.r ha-icon{--mdc-icon-size:18px;color:var(--ink3);flex:0 0 auto}.r.run ha-icon{color:var(--mint)}.r.fault ha-icon{color:var(--alert)}
+.empty{font:400 14px/1.5 Onest,sans-serif;color:var(--ink2);margin:6px 2px 2px}.r{min-height:56px}`;
+    }
+    render() {
+      const h = this._hass;
+      const ids = this.members().filter((id) => h.states[id]);
+      const areaName = h.areas?.[this._config.area]?.name;
+      const title = this._config.title || areaName || "Комната";
+      this.hideCard(false);
+      if (!ids.length) return `<div class="glass d"><span class="caps">${esc(title)}</span><p class="empty">Здесь пока ничего нет — добавьте устройства в проект или свои карточки в Home Assistant</p></div>`;
+      const owned = ownedOnDashboard(this);
+      const left = new Set(ids);
+      const groups = AREA_GROUPS.map(([k, label, fits]) => {
+        const list = [...left].filter((id) => fits(id.split(".")[0]));
+        list.forEach((id) => left.delete(id));
+        return [k, label, list];
+      }).filter(([, , list]) => list.length);
+      const faults = ids.filter((id) => this.word(h.states[id])[1] === "fault").length;
+      return `<div class="glass d"><div class="hd"><span class="caps">${esc(title)}</span>${faults ? `<span class="sum"><i class="fault"></i>аварий: ${faults}</span>` : ""}</div>${groups
+        .map(
+          ([, label, list]) =>
+            `${groups.length > 1 ? `<span class="caps sub">${esc(label)}</span>` : ""}<div class="grid">${list
+              .map((id) => {
+                const s = h.states[id];
+                const [w, k] = this.word(s);
+                const d = id.split(".")[0];
+                const tap = owned.has(id) && ["switch", "light", "fan", "input_boolean"].includes(d) && !nd(s) ? "toggle" : "info";
+                return `<div class="r ${k}" data-e="${esc(id)}" data-tap="${tap}" role="button" tabindex="0"><ha-icon icon="${esc(s.attributes.icon || AREA_ICON[d] || "mdi:circle-medium")}"></ha-icon><div class="tx"><div class="nm">${esc(nameOf(s, id))}</div><div class="w">${esc(w)}</div></div></div>`;
+              })
+              .join("")}</div>`,
+        )
+        .join("")}</div>`;
+    }
+    bind() {
+      this.shadowRoot.querySelectorAll(".r").forEach((r) =>
+        r.addEventListener("click", () => {
+          if (r.dataset.tap === "toggle") {
+            haptic(this);
+            call(this._hass, "homeassistant", "toggle", { entity_id: r.dataset.e });
+          } else moreInfo(this, r.dataset.e);
+        }),
+      );
     }
   }
 
@@ -2438,7 +2627,7 @@ ${locks.length || opens.length ? `<div class="lst">${locks
     siren: { icon: "hauflo:bell", word: (s) => (s.state === "on" ? "звучит" : "выключена"), tap: ["siren", "toggle"], tone: (s) => (s.state === "on" ? "alarm" : "") },
     switch: { icon: "hauflo:power", word: (s) => (s.state === "on" ? "вкл" : "выкл"), tap: ["switch", "toggle"] },
     input_boolean: { icon: "hauflo:switch", word: (s) => (s.state === "on" ? "вкл" : "выкл"), tap: ["input_boolean", "toggle"] },
-    button: { icon: "hauflo:check", word: (s, name = "") => (/звон|bell/i.test(name) ? "позвонить" : /калит|ворот|двер|замок|gate|door/i.test(name) ? "открыть" : "нажать"), tap: ["button", "press"], on: () => false, action: true },
+    button: { icon: "mdi:gesture-tap-button", word: (s, name = "") => (/звон|bell/i.test(name) ? "позвонить" : /калит|ворот|двер|замок|gate|door/i.test(name) ? "открыть" : "нажать"), tap: ["button", "press"], on: () => false, action: true },
     binary_sensor: { icon: "hauflo:info", word: (s) => (OPENING.includes(s.attributes.device_class) ? (s.state === "on" ? "открыто" : "закрыто") : s.state === "on" ? "сработал" : "в норме"), tap: null, tone: (s) => (s.state === "on" && ["moisture", "smoke", "gas", "problem", "safety", "carbon_monoxide"].includes(s.attributes.device_class) ? "alarm" : ""), on: (s) => s.state === "on" && !["moisture", "smoke", "gas", "problem", "safety", "carbon_monoxide"].includes(s.attributes.device_class) },
     number: { icon: "hauflo:info", word: (s) => (num(s.state) === undefined ? "нет данных" : `${fmt(num(s.state), num(s.state) % 1 ? 1 : 0)} ${unitOf(s) || (num(s.attributes.max) === 100 && num(s.attributes.min) === 0 ? "%" : "")}`.trim()), tap: null, on: () => false },
     sensor: { icon: "hauflo:info", word: (s) => `${fmt(num(s.state), num(s.state) % 1 ? 1 : 0)} ${unitOf(s)}`.trim(), tap: null, on: () => false, tone: (s) => (s.attributes.device_class === "battery" && num(s.state) !== undefined && num(s.state) < 20 ? "warn" : "") },
@@ -2448,8 +2637,19 @@ ${locks.length || opens.length ? `<div class="lst">${locks
   // по этажам»): what heats now, the floor's reading and setpoint; rows with `floor` under that floor's sub-header;
   // a row with `path` opens the room. Older cards ignore these keys and show it as a list of ACs.
   class Acs extends EHCard {
+    constructor() {
+      super();
+      // The setpoint being changed on one row (owner 28.10: «быстро пройтись по всем зонам и изменить»): {id, v};
+      // the values sent and not yet heard back, per thermostat.
+      this._ed = null;
+      this._pend = {};
+      this._failed = null;
+    }
     watched() {
       return (this._config.entities || []).map((e) => (typeof e === "string" ? e : e.entity));
+    }
+    disconnectedCallback() {
+      this.closeEdit();
     }
     css() {
       return `.k{padding:16px}.hd{display:flex;align-items:center;gap:10px}.hd .caps{flex:1}.sum{font:400 13px Onest,sans-serif;color:var(--ink2);margin-top:2px}
@@ -2457,14 +2657,40 @@ ${locks.length || opens.length ? `<div class="lst">${locks
 .rows{margin-top:10px;display:flex;flex-direction:column}.r{display:flex;align-items:center;gap:12px;min-height:52px;border-top:1px solid var(--hair);cursor:pointer}.r:first-child,.fl+.r{border-top:0}
 .r ha-icon{--mdc-icon-size:20px;color:var(--ink3)}.r.on ha-icon{color:var(--ice)}.r .nm{flex:1;min-width:0;font:500 14px Onest,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .r .w{font:400 13px Onest,sans-serif;color:var(--ink2);white-space:nowrap}.r .t{font:300 22px Onest,sans-serif;min-width:52px;text-align:right}.r.un{opacity:.5}
-.r .nm small{display:block;font:400 12px Onest,sans-serif;color:var(--ink2);margin-top:1px;overflow:hidden;text-overflow:ellipsis}.fh .r.on ha-icon{color:var(--amber)}.fl{font:500 11px/1.2 Onest,sans-serif;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);padding:14px 0 6px;border-top:1px solid var(--hair)}.fl:first-child{border-top:0;padding-top:4px}`;
+.r button.t{min-height:44px;padding:0 6px;margin-right:-6px;border-radius:14px;color:var(--ink);font-variant-numeric:tabular-nums}.r button.t:hover{background:var(--track)}.r .t.pend{color:var(--ice)}.fh .r .t.pend{color:var(--amber)}
+.r .ed{display:flex;align-items:center;gap:2px;margin-right:-6px}.r .ed button{width:44px;height:44px;border-radius:22px;background:var(--track);color:var(--ink);font:400 22px/1 Onest,sans-serif;display:grid;place-items:center}
+.r .ed b{font:300 22px Onest,sans-serif;min-width:58px;text-align:center;color:var(--ice)}.fh .r .ed b{color:var(--amber)}.r .ed button:disabled{opacity:.35;cursor:default}
+.r .nm small{display:block;font:400 12px Onest,sans-serif;color:var(--ink2);margin-top:1px;overflow:hidden;text-overflow:ellipsis}.r .nm small.err{color:var(--alert)}.fh .r.on ha-icon{color:var(--amber)}.fl{font:500 11px/1.2 Onest,sans-serif;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);padding:14px 0 6px;border-top:1px solid var(--hair)}.fl:first-child{border-top:0;padding-top:4px}`;
+    }
+    /** A row's setpoint and how to send a new one: the climate's own; a climate kept between two values (heat_cool:
+     * low / high) — the one of the mode it's in, the other kept (as the large card does it). */
+    sp(s) {
+      const a = s?.attributes || {};
+      const step = Math.max(num(a.target_temp_step) || 0.5, 0.5);
+      const min = num(a.min_temp) ?? 5;
+      const max = num(a.max_temp) ?? 35;
+      const t = num(a.temperature);
+      if (t !== undefined) return { v: t, step, min, max, data: (v) => ({ temperature: v }) };
+      const lo = num(a.target_temp_low);
+      const hi = num(a.target_temp_high);
+      if (lo === undefined || hi === undefined) return null;
+      const cool = activeMode(s) === "cool";
+      return { v: cool ? hi : lo, step, min, max, data: (v) => (cool ? { target_temp_low: Math.min(lo, v), target_temp_high: v } : { target_temp_low: v, target_temp_high: Math.max(hi, v) }) };
+    }
+    /** The title: the client's name, the integrator's, else by what's in the list (all ACs / heating only / climate). */
+    defaultTitle(fh, items) {
+      if (fh) return "Тёплые полы";
+      const ms = items.map((e) => e.s.attributes.hvac_modes || []);
+      if (ms.length && ms.every((m) => m.includes("dry") || m.includes("fan_only"))) return "Кондиционеры";
+      if (ms.length && !ms.some((m) => m.some((x) => ["cool", "heat_cool", "auto", "dry", "fan_only"].includes(x)))) return "Отопление";
+      return "Климат";
     }
     render() {
       const fh = this._config.kind === "floor_heating";
       const items = (this._config.entities || []).map((e) => (typeof e === "string" ? { entity: e } : e)).map((e) => ({ ...e, s: st(this._hass, e.entity) })).filter((e) => e.s);
       // «На связи» as the room card says it: a setpoint heard from the bus (integrator run 18: «4 из 4 работают» here,
       // «нет связи с термостатом» in the rooms).
-      const known = (s) => !["unavailable", "unknown"].includes(s.state) && num(s.attributes.temperature) !== undefined;
+      const known = (s) => !["unavailable", "unknown"].includes(s.state) && (num(s.attributes.temperature) !== undefined || num(s.attributes.target_temp_low) !== undefined);
       // A floor heats when its actuator says so — and it's colder than the goal (as the climate card says it).
       const heats = (s) => {
         const a = s.attributes;
@@ -2476,26 +2702,132 @@ ${locks.length || opens.length ? `<div class="lst">${locks
       const offable = fh ? [] : on.filter((e) => canTurnOff(e.s));
       // Sub-headers by the building's floor when the rows say it and there's more than one.
       const floors = [...new Set(items.map((e) => e.floor).filter(Boolean))];
+      // A value sent is shown at once and until the thermostat says it (or 10 s — then its own again).
+      const now = Date.now();
+      for (const [id, p] of Object.entries(this._pend)) {
+        const sp = this.sp(st(this._hass, id));
+        if (now - p.at > 10000 || (sp && Math.abs(sp.v - p.v) < 0.01 && p.sent)) delete this._pend[id];
+      }
+      if (this._ed && !items.some((e) => e.entity === this._ed.id && known(e.s) && e.s.state !== "off")) this._ed = null;
       let last;
       const rows = items.map((e) => {
         const a = e.s.attributes;
         const cur = num(a.current_temperature);
-        const target = num(a.temperature);
+        const sp = known(e.s) ? this.sp(e.s) : null;
+        const pend = this._pend[e.entity];
+        const target = pend ? pend.v : sp?.v;
         // The mode on every row — «Нагрев» next to «Нагревает» in one list read as two different things (integrator run 17).
         const word = !known(e.s) ? (["unavailable", "unknown"].includes(e.s.state) ? "нет связи" : "нет уставки") : e.s.state === "off" ? "Выкл" : fh ? (heats(e.s) ? "греет" : "держит") : HVAC[e.s.state] || e.s.state;
         const head = floors.length > 1 && e.floor && e.floor !== last ? `<div class="fl">${esc(e.floor)}</div>` : "";
         last = e.floor;
         const lit = fh ? heats(e.s) : known(e.s) && e.s.state !== "off";
-        return `${head}<div class="r ${lit ? "on" : ""} ${known(e.s) ? "" : "un"}" data-i="${esc(e.entity)}"${e.path ? ` data-p="${esc(e.path)}"` : ""}><ha-icon icon="hauflo:${fh ? "floor-heat" : "ac"}"></ha-icon><div class="nm">${e.zone && String(e.name || "").endsWith(` · ${e.zone}`) ? `${esc(e.name.slice(0, -e.zone.length - 3))}<small>${esc(e.zone)}</small>` : esc(e.name || nameOf(e.s, e.entity))}</div><div class="w">${esc(word)}${cur !== undefined ? ` · ${fmt(cur, 1)}°` : ""}</div><div class="t">${target === undefined || e.s.state === "off" ? "—" : `${fmt(target, Number.isInteger(target) ? 0 : 1)}°`}</div></div>`;
+        const editing = this._ed?.id === e.entity;
+        const state = `${word}${cur !== undefined ? ` · ${fmt(cur, 1)}°` : ""}`;
+        const failed = this._failed?.id === e.entity && now - this._failed.at < 6000;
+        const name = e.zone && String(e.name || "").endsWith(` · ${e.zone}`) ? e.name.slice(0, -e.zone.length - 3) : e.name || nameOf(e.s, e.entity);
+        // Under the name: the zone; while the stepper is open — the state (no room for both on a phone); a failed send.
+        const sub = failed ? `<small class="err">не отправлено — нет связи с домом</small>` : editing ? `<small>${esc(state)}</small>` : e.zone && String(e.name || "").endsWith(` · ${e.zone}`) ? `<small>${esc(e.zone)}</small>` : "";
+        const digits = (v) => fmt(v, sp && sp.step < 1 && v % 1 ? 1 : Number.isInteger(v) ? 0 : 1);
+        // The setpoint: a tap on it opens − 26° + for this row only; the rest of the row opens the room / the dialog.
+        const tail = editing
+          ? `<div class="ed" data-ed="1"><button data-sd="-1" aria-label="Холоднее"${this._ed.v - sp.step < sp.min - 0.001 ? " disabled" : ""}>−</button><b aria-live="polite">${digits(this._ed.v)}°</b><button data-sd="1" aria-label="Теплее"${this._ed.v + sp.step > sp.max + 0.001 ? " disabled" : ""}>+</button></div>`
+          : target === undefined || e.s.state === "off" || !sp
+            ? `<div class="t">—</div>`
+            : `<button class="t${pend ? " pend" : ""}" data-t="${esc(e.entity)}" aria-label="Изменить уставку">${digits(target)}°</button>`;
+        return `${head}<div class="r ${lit ? "on" : ""} ${known(e.s) ? "" : "un"}" data-i="${esc(e.entity)}"${e.path ? ` data-p="${esc(e.path)}"` : ""}><ha-icon icon="hauflo:${fh ? "floor-heat" : "ac"}"></ha-icon><div class="nm">${esc(name)}${sub}</div>${editing ? "" : `<div class="w">${esc(state)}</div>`}${tail}</div>`;
       });
       const sum = fh
         ? on.length ? `${on.length} из ${items.length} греют` : items.some((e) => known(e.s)) ? "Сейчас не греют" : "Нет связи"
         : on.length ? `${on.length} из ${items.length} работают` : items.some((e) => known(e.s)) ? "Все выключены" : "Нет связи";
-      return `<div class="glass k${fh ? " fh" : ""}"><div class="hd"><div><span class="caps">${esc(this._config.title || (fh ? "Тёплые полы" : "Кондиционеры"))}</span><div class="sum">${sum}</div></div>${offable.length ? `<button class="off" data-off="1">Выкл. все</button>` : ""}</div><div class="rows">${rows.join("")}</div></div>`;
+      return `<div class="glass k${fh ? " fh" : ""}"><div class="hd"><div><span class="caps">${blockTitle(this, this.defaultTitle(fh, items))}</span><div class="sum">${sum}</div></div>${offable.length ? `<button class="off" data-off="1">Выкл. все</button>` : ""}</div><div class="rows">${rows.join("")}</div></div>`;
+    }
+    redraw() {
+      this._sig = "";
+      this._update();
+    }
+    /** Closes the stepper (4 s idle, a tap elsewhere); a value not sent yet goes now. */
+    closeEdit() {
+      clearTimeout(this._edIdle);
+      if (this._edSend) {
+        clearTimeout(this._edSend);
+        this._edSend = null;
+        this.send();
+      }
+      if (this._outside) {
+        document.removeEventListener("pointerdown", this._outside, true);
+        this._outside = null;
+      }
+      if (!this._ed) return;
+      this._ed = null;
+      this.redraw();
+    }
+    idle() {
+      clearTimeout(this._edIdle);
+      this._edIdle = setTimeout(() => this.closeEdit(), 4000);
+    }
+    send() {
+      const ed = this._lastEd;
+      if (!ed) return;
+      const sp = this.sp(st(this._hass, ed.id));
+      if (!sp) return;
+      const p = this._pend[ed.id];
+      if (p) p.sent = true;
+      call(this._hass, "climate", "set_temperature", { entity_id: ed.id, ...sp.data(ed.v) }).catch(() => {
+        delete this._pend[ed.id];
+        this._failed = { id: ed.id, at: Date.now() };
+        this.redraw();
+        setTimeout(() => this.redraw(), 6100);
+      });
     }
     bind() {
       // A row with its room's page opens the room (the floor heating); otherwise the device's own dialog.
-      this.shadowRoot.querySelectorAll("[data-i]").forEach((r) => r.addEventListener("click", () => (r.dataset.p ? navigate(r.dataset.p) : moreInfo(this, r.dataset.i))));
+      this.shadowRoot.querySelectorAll("[data-i]").forEach((r) =>
+        r.addEventListener("click", (ev) => {
+          if (ev.composedPath().some((n) => n.dataset && (n.dataset.t || n.dataset.ed))) return;
+          r.dataset.p ? navigate(r.dataset.p) : moreInfo(this, r.dataset.i);
+        }),
+      );
+      this.shadowRoot.querySelectorAll("button[data-t]").forEach((b) =>
+        b.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          const id = b.dataset.t;
+          const sp = this.sp(st(this._hass, id));
+          if (!sp) return;
+          if (this._ed && this._ed.id !== id) this.closeEdit();
+          haptic(this);
+          this._ed = { id, v: this._pend[id]?.v ?? sp.v };
+          // One open at a time on the page: a tap anywhere else closes it.
+          if (!this._outside) {
+            this._outside = (e) => {
+              if (!e.composedPath().some((n) => n.dataset && n.dataset.ed)) this.closeEdit();
+            };
+            document.addEventListener("pointerdown", this._outside, true);
+          }
+          this.idle();
+          this.redraw();
+        }),
+      );
+      this.shadowRoot.querySelectorAll("button[data-sd]").forEach((b) =>
+        b.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          const ed = this._ed;
+          const sp = ed && this.sp(st(this._hass, ed.id));
+          if (!sp) return;
+          const v = Math.round(Math.min(sp.max, Math.max(sp.min, ed.v + Number(b.dataset.sd) * sp.step)) / sp.step) * sp.step;
+          ed.v = Number(v.toFixed(2));
+          haptic(this, "selection");
+          this._pend[ed.id] = { v: ed.v, at: Date.now() };
+          this._lastEd = { ...ed };
+          // Each tap shows at once; one call after the taps stop (~0.6 s), not one per tap.
+          clearTimeout(this._edSend);
+          this._edSend = setTimeout(() => {
+            this._edSend = null;
+            this.send();
+          }, 600);
+          this.idle();
+          this.redraw();
+        }),
+      );
       this.shadowRoot.querySelector("[data-off]")?.addEventListener("click", () => {
         haptic(this);
         // Only those that can be switched off (a KNX AC with cool/heat only can't: HA answered with an error).
@@ -2514,7 +2846,7 @@ ${locks.length || opens.length ? `<div class="lst">${locks
 .p{display:flex;align-items:center;gap:10px;min-height:58px;padding:0 12px;border-radius:18px;box-shadow:inset 0 0 0 1px var(--hair);cursor:pointer;user-select:none;-webkit-user-select:none;min-width:0}
 .p ha-icon{color:var(--ink3);--mdc-icon-size:20px;flex:0 0 auto}.p .tx{min-width:0}.nm{font:500 13px/1.25 Onest,sans-serif;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:break-word;hyphens:manual}.w{font:400 13px Onest,sans-serif;color:var(--ink2)}
 .p.on{background:color-mix(in srgb,var(--mint) 16%,transparent);box-shadow:none}.p.on ha-icon{color:var(--mint)}
-.p.act{box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--amber) 55%,transparent)}.p.act ha-icon{color:var(--amber)}.p.act .w{color:var(--ink2)}
+.p.act{box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--amber) 55%,transparent)}.p.act ha-icon{color:var(--amber)}.p.act .w{color:var(--ink2)}.p.act.sent{background:color-mix(in srgb,var(--amber) 14%,transparent)}.p.act:active{transform:scale(.97)}
 .p.warn{background:color-mix(in srgb,var(--amber) 18%,transparent);box-shadow:none}.p.warn ha-icon,.p.warn .w{color:var(--amber)}
 .p.alarm{background:color-mix(in srgb,var(--alert) 16%,transparent);box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--alert) 55%,transparent)}.p.alarm ha-icon,.p.alarm .w{color:var(--alert);font-weight:600}.p:active{transform:scale(.97)}.un{opacity:.45}`;
     }
@@ -2533,7 +2865,11 @@ ${locks.length || opens.length ? `<div class="lst">${locks
           const d = DEV[e.entity.split(".")[0]] || { icon: "hauflo:info", word: (s) => s.state, tap: null };
           const tone = d.tone ? d.tone(e.s) : "";
           const on = !tone && (d.on ? d.on(e.s) : e.s.state === "on");
-          return `<div class="p ${on ? "on" : ""} ${tone} ${d.action ? "act" : ""} ${nd(e.s) ? "un" : ""}" data-e="${esc(e.entity)}"><ha-icon icon="${esc(e.icon || (/звон|bell/i.test(e.name || nameOf(e.s, e.entity)) ? "hauflo:doorbell" : d.icon))}"></ha-icon><div class="tx"><div class="nm">${esc(e.name || nameOf(e.s, e.entity))}</div><div class="w">${esc(nd(e.s) ? "нет связи" : d.word(e.s, e.name || nameOf(e.s, e.entity)))}</div></div></div>`;
+          // A button / scene / script has no on-off state: «unknown» = never pressed yet, not offline (owner 28.10:
+          // damper presets read «нет связи» until pressed). Only «unavailable» is offline; a press flashes «отправлено».
+          const un = d.action ? e.s.state === "unavailable" : nd(e.s);
+          const sent = d.action && (this._sent?.[e.entity] || 0) > Date.now();
+          return `<div class="p ${on ? "on" : ""} ${tone} ${d.action ? "act" : ""} ${sent ? "sent" : ""} ${un ? "un" : ""}" data-e="${esc(e.entity)}"><ha-icon icon="${esc(e.icon || (/звон|bell/i.test(e.name || nameOf(e.s, e.entity)) ? "hauflo:doorbell" : sent ? "hauflo:check" : d.icon))}"></ha-icon><div class="tx"><div class="nm">${esc(e.name || nameOf(e.s, e.entity))}</div><div class="w">${esc(un ? "нет связи" : sent ? "отправлено" : d.word(e.s, e.name || nameOf(e.s, e.entity)))}</div></div></div>`;
         })
         .join("")}</div></div>`;
     }
@@ -2558,6 +2894,12 @@ ${locks.length || opens.length ? `<div class="lst">${locks
           if (!tap) return moreInfo(this, id);
           haptic(this);
           call(this._hass, tap[0], tap[1], { entity_id: id });
+          if (d.action) {
+            (this._sent ??= {})[id] = Date.now() + 1500;
+            this._sig = "";
+            this._update();
+            setTimeout(() => ((this._sig = ""), this._update()), 1600);
+          }
         });
         el.addEventListener("pointerleave", () => clearTimeout(t));
         el.addEventListener("contextmenu", (ev) => ev.preventDefault());
@@ -2586,6 +2928,7 @@ ${locks.length || opens.length ? `<div class="lst">${locks
     ["hauflo-security", Security, "Hauflo · Охрана", "Охрана, замки, двери и окна"],
     ["hauflo-camera", Camera, "Hauflo · Камера", "Картинка с камеры, тап — трансляция"],
     ["hauflo-acs", Acs, "Hauflo · Кондиционеры", "Все кондиционеры дома: какие работают, температура, выключить все"],
+    ["hauflo-area", Area, "Hauflo · Комната HA", "Всё, что Home Assistant отнёс к комнате, — в стиле Hauflo"],
     ["hauflo-devices", Devices, "Hauflo · Устройства", "Вентиляторы, клапаны, замки, пылесосы, бойлеры…"],
   ];
   // --- a dashboard with a fixed light or dark Atelier theme: HA paints only the view, the header follows here
@@ -2667,7 +3010,7 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
         mine: "Ваши правила", empty: "Пока ни одного — возьмите готовое выше или добавьте своё.", add: "Добавить",
         sugg: "Готовые для этого дома", addOne: "Добавить", added: "Добавлено и включено. Нажмите на правило, чтобы поправить.",
         s: {
-          sunset_covers: ["Закрывать шторы на закате", (n) => `Каждый день · шторы: ${n}`],
+          sunset_covers: ["Закрывать шторы на закате", (rooms, n) => `Каждый день · ${n} · ${rooms}`],
           wake_covers: ["Открывать шторы в спальне по будильнику", (src) => `Спальня · ${src}`],
           wake_light: ["Свет-будильник: плавно 0 → 25 %", (src) => `Спальня · ${src}`],
           night_off: ["Выключать весь свет в 01:00", () => "Каждый день · все комнаты"],
@@ -2676,19 +3019,21 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
         srcAndroid: (p) => `за 20 мин до будильника ${p}`, srcIphone: "с будильником iPhone",
         newRule: "Новое правило", rule: "Правило", back: "Назад",
         when: "Когда", days: "Дни", what: "Что сделать", addAction: "Добавить действие…",
-        grp: { covers: "Шторы", lights: "Свет", scenes: "Сцены", rooms: "Весь свет в комнате" },
+        grp: { covers: "Шторы по одной", coverRooms: "Все шторы комнаты", lights: "Свет", scenes: "Сцены", rooms: "Весь свет в комнате" },
         do: { open: "Открыть", close: "Закрыть", position: "Положение", on: "Включить", off: "Выключить", ramp: "Плавно", sceneOn: "Включить" },
         bright: "Яркость", upTo: "до", over: "за", remove: "Убрать",
         phone: "Чей будильник", iphoneOpt: "iPhone (через «Команды»)",
-        androidHint: "Android: в приложении Home Assistant включите датчик «Следующий будильник» (Настройки приложения → Датчики) — правило само будет знать время.",
-        iphoneTitle: "На iPhone один раз",
-        iphoneSteps: (code) => [
-          "Откройте «Команды» → «Автоматизация» → «+».",
-          "Выберите «Будильник» → «Остановлен» (или «Сработал»), будильник — любой или ваш «Подъём»; включите «Запускать сразу».",
-          "Действие: «Home Assistant» → «Отправить событие» (Fire Event).",
-          `Тип события: ${code}`,
-          "Готово: остановили будильник — шторы и свет сработают. Нужно приложение Home Assistant, вошедшее в этот дом.",
+        androidHint: "Android: откройте приложение Home Assistant → Настройки → Приложение → Управление датчиками → «Следующий будильник» → включить. Больше ничего не нужно — время будильника Hauflo узнает сам.",
+        iphoneTitle: "Один раз на iPhone — 2 минуты",
+        iphoneSteps: [
+          "Откройте на iPhone приложение «Команды».",
+          "Внизу нажмите «Автоматизация», затем «+».",
+          "Выберите «Будильник» → «Выключен» (или «Сработал»), будильник — «Любой». Включите «Запускать сразу» и нажмите «Далее».",
+          "«Новая пустая автоматизация» → «Добавить действие» → найдите «Home Assistant» → «Отправить событие».",
+          "В поле «Событие» вставьте этот код:",
+          "Нажмите «Готово». Утром выключите будильник — шторы и свет сработают сами. На iPhone нужно приложение Home Assistant, вошедшее в этот дом.",
         ],
+        share: "Отправить инструкцию", shareTitle: "Будильник iPhone → дом", shared: "Инструкция скопирована — вставьте её в сообщение.",
         iphoneLater: "Сохраните правило — здесь появится код для «Команд».",
         copy: "Скопировать", copied: "Скопировано",
         willRun: (x) => `Сработает: ${x}`, willNot: "Сработает: по будильнику iPhone",
@@ -2698,13 +3043,47 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
         needLoc: "Сначала укажите, где дом, — без этого рассвет и закат не посчитать.", needAction: "Добавьте хотя бы одно действие.", needDay: "Выберите хотя бы один день.",
         err: "Не получилось: ", errNet: "Нет связи с домом — попробуйте ещё раз.", noAgent: "Нужен агент Hauflo новее — обновите его в HACS.",
         last: (t) => `Последний раз: ${t}`, never: "ещё не срабатывало", missing: "нет в Home Assistant — сохраните заново",
+        changedTag: "изменено в Home Assistant",
+        changedNote: "Это правило поменяли в редакторе Home Assistant — Hauflo его не трогает: включать, выключать и проверять можно, править — там. Или верните как было в Hauflo (правка из Home Assistant пропадёт).",
+        restore: "Вернуть как в Hauflo", restoreAsk: "Вернуть правило как было в Hauflo? Правка из Home Assistant пропадёт.", restoreYes: "Да, вернуть",
+        coverRooms: (n) => `Все шторы: ${n}`, split: "По отдельности", review: "Проверьте и нажмите «Сохранить».",
+        roomCovers: { open: (l) => `Открыть шторы: ${l}`, close: (l) => `Закрыть шторы: ${l}`, position: (l, v) => `Шторы на ${v} %: ${l}` },
+        moreRooms: (n) => ` и ещё ${n} ${n % 10 === 1 && n % 100 !== 11 ? "комната" : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? "комнаты" : "комнат"}`,
+        blindsN: (n) => `${n} ${n % 10 === 1 && n % 100 !== 11 ? "штора" : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? "шторы" : "штор"}`,
+        findCity: "Найти город", cityPh: "Город или адрес", find: "Найти", noCity: "Ничего не нашлось — попробуйте иначе.", notThis: "Не то — найти иначе",
+        manualLink: "Ввести координаты вручную", llPh: "например, 55.75, 37.62", or: "или",
+        notAdmin: "Где дом, задаёт владелец Home Assistant (администратор) — попросите его открыть эту страницу.",
+        tzAsk: (z, cur) => `Часовой пояс дома — ${z}, а в Home Assistant стоит ${cur}. Из-за этого рассвет и закат показываются не в то время.`, tzFix: (z) => `Поставить ${z}`, tzDone: "Часовой пояс исправлен.", tzNote: (z) => `Время — по часам дома (${z}).`,
+        loadFail: "Не загрузилось — обновите страницу.", reload: "Обновить",
         loc: "Где дом", locWhy: "Чтобы знать время рассвета и заката. В Home Assistant сохраняются только координаты.",
         detect: "Определить", detecting: "Ищем…", detected: (c) => `Похоже, дом здесь${c ? `: ${c}` : ""}.`, confirm: "Да, дом здесь",
         byPhone: "По телефону", manual: "Ввести вручную", lat: "Широта", lon: "Долгота", saveLoc: "Сохранить место",
         locNow: (a, b) => `Дом: ${a}, ${b}`, change: "Изменить", locSaved: "Место сохранено.",
         geoNo: "Телефон не дал координаты (нужен https и разрешение) — введите вручную.", yamlLoc: "Место задано в configuration.yaml — его меняет интегратор.",
-        detectFail: "По интернету не определилось — попробуйте по телефону или вручную.", mapNote: "© OpenStreetMap",
+        detectFail: "По интернету не определилось — попробуйте по телефону или вручную.", mapNote: "Карта загружается с OpenStreetMap · © OpenStreetMap",
+        adminLoc: "Место дома задаёт администратор Home Assistant.",
+        notPlain: "Hauflo не меняет automations.yaml: в нём комментарии, !include или ручное оформление. Правило добавит интегратор.",
         on: "Включено", offShort: "Выключено",
+        p: {
+          title: "Нет дома — имитация присутствия",
+          sub: "Пока вас нет, вечером загорается и гаснет свет, закрываются шторы — как обычно у вас, каждый вечер по-новому.",
+          how: (n, j) => `Учится на двух неделях истории дома: где и когда вечером горит свет, когда закрываются шторы. Свет — только в темноте и не больше чем в ${n} комнатах сразу, время каждый раз ±${j} мин. То, что кто-то дома поменял за последние 10 минут, не трогает.`,
+          sunHow: "Шторы откроются через 30 мин после рассвета и закроются на закате; вечером спокойный свет в 1–2 комнатах, где он горит чаще всего.",
+          since: (d) => `Включено ${d}`, untilLine: (d) => `выключится само после ${d}`, untilNone: "пока не выключите",
+          what: "Что участвует", lights: "Свет", covers: "Шторы", mode: "Как", learned: "По привычкам семьи", sun: "По солнцу",
+          until: "До (включительно)", noDate: "Без даты",
+          today: "Сегодня", nothing: "сегодня вечером свет по привычкам не выпал",
+          blinds: (o, c) => [o ? `шторы откроются в ${o}` : "", c ? `${o ? "" : "шторы "}закроются в ${c}` : ""].filter(Boolean).join(", "),
+          bySun: "по солнцу",
+          few: (n, min) => `Пока мало истории: вечером свет горел ${n} ${n % 10 === 1 && n % 100 !== 11 ? "раз" : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? "раза" : "раз"} за две недели, нужно хотя бы ${min}. Свет не включится; шторы — по солнцу.`,
+          useSun: "Включить «по солнцу»",
+          noLoc: "Свет включается, только когда стемнеет, — сначала укажите, где дом.",
+          noRec: "В Home Assistant выключена история (recorder) — учиться не на чем.",
+          noDev: "Нет света и штор Hauflo, которые можно включать.",
+          log: "Что сделано", all: "Показать все", less: "Свернуть",
+          skip: { manual: "пропущено: меняли вручную", offline: "пропущено: нет связи", gone: "пропущено: устройства нет", error: "не получилось" },
+          sys: { on: "Имитация включена", off: "Имитация выключена", auto_off: "Выключилась сама — дата прошла" },
+        },
       },
       en: {
         title: "Automations", close: "Close",
@@ -2730,7 +3109,7 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
         mine: "Your rules", empty: "None yet — take a ready one above or add your own.", add: "Add",
         sugg: "Ready for this house", addOne: "Add", added: "Added and on. Tap the rule to adjust it.",
         s: {
-          sunset_covers: ["Close the blinds at sunset", (n) => `Every day · blinds: ${n}`],
+          sunset_covers: ["Close the blinds at sunset", (rooms, n) => `Every day · ${n} · ${rooms}`],
           wake_covers: ["Open the bedroom blinds with the alarm", (src) => `Bedroom · ${src}`],
           wake_light: ["Wake-up light: slowly 0 → 25 %", (src) => `Bedroom · ${src}`],
           night_off: ["All lights off at 01:00", () => "Every day · all rooms"],
@@ -2739,19 +3118,21 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
         srcAndroid: (p) => `20 min before the alarm on ${p}`, srcIphone: "with the iPhone alarm",
         newRule: "New rule", rule: "Rule", back: "Back",
         when: "When", days: "Days", what: "What to do", addAction: "Add an action…",
-        grp: { covers: "Blinds", lights: "Lights", scenes: "Scenes", rooms: "All lights of a room" },
+        grp: { covers: "Blinds one by one", coverRooms: "All blinds of a room", lights: "Lights", scenes: "Scenes", rooms: "All lights of a room" },
         do: { open: "Open", close: "Close", position: "Position", on: "On", off: "Off", ramp: "Slowly", sceneOn: "Turn on" },
         bright: "Brightness", upTo: "up to", over: "over", remove: "Remove",
         phone: "Whose alarm", iphoneOpt: "iPhone (via Shortcuts)",
-        androidHint: "Android: in the Home Assistant app turn on the «Next alarm» sensor (App settings → Sensors) — the rule then knows the time by itself.",
-        iphoneTitle: "On the iPhone, once",
-        iphoneSteps: (code) => [
-          "Open Shortcuts → Automation → «+».",
-          "Choose «Alarm» → «Is Stopped» (or «Goes Off»), any alarm or your «Wake-up»; turn on «Run Immediately».",
-          "Action: «Home Assistant» → «Fire Event».",
-          `Event type: ${code}`,
-          "Done: stop the alarm — the blinds and lights follow. Needs the Home Assistant app signed in to this house.",
+        androidHint: "Android: open the Home Assistant app → Settings → Companion app → Manage sensors → «Next alarm» → turn it on. Nothing else — Hauflo learns the alarm time by itself.",
+        iphoneTitle: "Once on the iPhone — 2 minutes",
+        iphoneSteps: [
+          "Open the Shortcuts app on the iPhone.",
+          "Tap «Automation» at the bottom, then «+».",
+          "Choose «Alarm» → «Is Stopped» (or «Goes Off»), alarm — «Any». Turn on «Run Immediately» and tap «Next».",
+          "«New Blank Automation» → «Add Action» → find «Home Assistant» → «Fire Event».",
+          "Paste this code into «Event»:",
+          "Tap «Done». In the morning stop the alarm — the blinds and lights follow. The iPhone needs the Home Assistant app signed in to this house.",
         ],
+        share: "Send the steps", shareTitle: "iPhone alarm → home", shared: "Steps copied — paste them into a message.",
         iphoneLater: "Save the rule — the code for Shortcuts shows up here.",
         copy: "Copy", copied: "Copied",
         willRun: (x) => `Runs: ${x}`, willNot: "Runs: with the iPhone alarm",
@@ -2761,13 +3142,47 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
         needLoc: "Set where the house is first — sunrise and sunset need it.", needAction: "Add at least one action.", needDay: "Pick at least one day.",
         err: "Didn't work: ", errNet: "No link to the house — try again.", noAgent: "This needs a newer Hauflo agent — update it in HACS.",
         last: (t) => `Last run: ${t}`, never: "hasn't run yet", missing: "not in Home Assistant — save it again",
+        changedTag: "changed in Home Assistant",
+        changedNote: "This rule was changed in Home Assistant's editor — Hauflo leaves it alone: switch it on / off and test it here, edit it there. Or put it back as it was in Hauflo (the Home Assistant edit is lost).",
+        restore: "Put back as in Hauflo", restoreAsk: "Put the rule back as it was in Hauflo? The Home Assistant edit is lost.", restoreYes: "Yes, put it back",
+        coverRooms: (n) => `All blinds: ${n}`, split: "One by one", review: "Check it and tap «Save».",
+        roomCovers: { open: (l) => `Open the blinds: ${l}`, close: (l) => `Close the blinds: ${l}`, position: (l, v) => `Blinds to ${v} %: ${l}` },
+        moreRooms: (n) => ` and ${n} more room${n === 1 ? "" : "s"}`,
+        blindsN: (n) => `${n} blind${n === 1 ? "" : "s"}`,
+        findCity: "Find the town", cityPh: "Town or address", find: "Find", noCity: "Nothing found — try other words.", notThis: "Not this — search again",
+        manualLink: "Type the coordinates", llPh: "e.g. 55.75, 37.62", or: "or",
+        notAdmin: "The house's place is set by Home Assistant's owner (an admin) — ask them to open this page.",
+        tzAsk: (z, cur) => `The house's time zone is ${z}, but Home Assistant has ${cur}. Sunrise and sunset show at the wrong time because of it.`, tzFix: (z) => `Set ${z}`, tzDone: "Time zone fixed.", tzNote: (z) => `Times are the house's clock (${z}).`,
+        loadFail: "Didn't load — refresh the page.", reload: "Refresh",
         loc: "Where the house is", locWhy: "To know sunrise and sunset. Only the coordinates are saved in Home Assistant.",
         detect: "Find", detecting: "Looking…", detected: (c) => `Looks like the house is here${c ? `: ${c}` : ""}.`, confirm: "Yes, it's here",
         byPhone: "By the phone", manual: "Type it in", lat: "Latitude", lon: "Longitude", saveLoc: "Save the place",
         locNow: (a, b) => `Home: ${a}, ${b}`, change: "Change", locSaved: "Place saved.",
         geoNo: "The phone gave no coordinates (needs https and permission) — type them in.", yamlLoc: "The place is set in configuration.yaml — the integrator changes it.",
-        detectFail: "Not found by the internet address — try the phone or type it in.", mapNote: "© OpenStreetMap",
+        detectFail: "Not found by the internet address — try the phone or type it in.", mapNote: "Map loaded from OpenStreetMap · © OpenStreetMap",
+        adminLoc: "The home's location is set by the Home Assistant administrator.",
+        notPlain: "Hauflo doesn't change automations.yaml: it has comments, !include or hand formatting. The integrator adds the rule.",
         on: "On", offShort: "Off",
+        p: {
+          title: "Away — presence simulation",
+          sub: "While you're away, lights go on and off in the evening and the blinds close — the way your home usually does, a little different every evening.",
+          how: (n, j) => `Learns from two weeks of the home's history: where and when lights are on in the evening, when the blinds close. Lights only in the dark and in at most ${n} rooms at once, every time ±${j} min. Anything someone at home changed in the last 10 minutes is left alone.`,
+          sunHow: "The blinds open 30 min after sunrise and close at sunset; in the evening a calm light in the 1–2 rooms where it's on most.",
+          since: (d) => `On since ${d}`, untilLine: (d) => `switches itself off after ${d}`, untilNone: "until you switch it off",
+          what: "What takes part", lights: "Lights", covers: "Blinds", mode: "How", learned: "By the family's habits", sun: "By the sun",
+          until: "Until (incl.)", noDate: "No date",
+          today: "Today", nothing: "no evening light came up from the habits tonight",
+          blinds: (o, c) => [o ? `blinds open at ${o}` : "", c ? `${o ? "" : "blinds "}close at ${c}` : ""].filter(Boolean).join(", "),
+          bySun: "by the sun",
+          few: (n, min) => `Not enough history yet: lights were on in the evening ${n} time${n === 1 ? "" : "s"} in two weeks, at least ${min} are needed. No lights; the blinds follow the sun.`,
+          useSun: "Use «by the sun»",
+          noLoc: "Lights go on only once it's dark — set where the house is first.",
+          noRec: "History (recorder) is off in Home Assistant — nothing to learn from.",
+          noDev: "No Hauflo lights or blinds to switch.",
+          log: "What it did", all: "Show all", less: "Show less",
+          skip: { manual: "skipped: changed by hand", offline: "skipped: offline", gone: "skipped: device gone", error: "didn't work" },
+          sys: { on: "Simulation on", off: "Simulation off", auto_off: "Switched itself off — the date passed" },
+        },
       },
     };
     const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
@@ -2776,7 +3191,25 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
       return m >= 60 ? `${Math.floor(m / 60)} ${w.h}${m % 60 ? ` ${m % 60} ${w.min}` : ""}` : `${m} ${w.min}`;
     }
     const sign = (o) => (o < 0 ? `−${-o}` : `+${o}`);
+    // Little drawings of the iPhone steps (family review 28.10: «Команды → Автоматизация, Fire Event» lost a person).
+    const svg = (d) => `<svg viewBox="0 0 32 32" width="32" height="32" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+    const STEP_ART = [
+      svg('<rect x="5" y="9" width="15" height="15" rx="4"/><rect x="12" y="5" width="15" height="15" rx="4" fill="currentColor" fill-opacity=".18"/>'),
+      svg('<rect x="4" y="4" width="24" height="24" rx="6"/><path d="M16 11v10M11 16h10"/>'),
+      svg('<circle cx="16" cy="17" r="9"/><path d="M16 12v5l3 2M7 8l3-3M25 8l-3-3"/>'),
+      svg('<path d="M5 16 16 6l11 10"/><path d="M8 14v12h16V14"/><circle cx="16" cy="19" r="2.5"/>'),
+      svg('<rect x="7" y="6" width="18" height="22" rx="3"/><path d="M12 6V4h8v2M11 14h10M11 19h7"/>'),
+      svg('<circle cx="16" cy="16" r="11"/><path d="m11 16 4 4 7-8"/>'),
+    ];
     const BEDROOM = /спальн|bedroom|master/i;
+    const el_code = (card) => card.draft?.when?.code || "";
+    const VIEWER_TZ = (() => {
+      try {
+        return Intl.DateTimeFormat().resolvedOptions().timeZone;
+      } catch (e) {
+        return "";
+      }
+    })();
     const HALL = /коридор|холл|прихож|hall|corridor|entrance|lobby/i;
     const CSS3 = `:host{display:block;font-family:Onest,var(--ha-font-family-body),system-ui,sans-serif;color:var(--eh-ink,var(--primary-text-color));-webkit-tap-highlight-color:transparent}
 *{box-sizing:border-box}
@@ -2825,6 +3258,18 @@ input[type=time]{width:auto;min-width:140px}
 .attr{position:absolute;right:6px;bottom:4px;font:400 10px Onest,sans-serif;background:rgba(255,255,255,.7);color:#333;padding:1px 4px;border-radius:4px}
 ol{margin:6px 0 0;padding:0 0 0 20px;font:400 14px/1.5 Onest,sans-serif}ol li{margin:4px 0}code{font:500 14px ui-monospace,monospace;background:var(--eh-track,rgba(127,127,127,.14));padding:2px 6px;border-radius:6px;overflow-wrap:anywhere}
 .hd{display:flex;align-items:center;gap:8px;margin:0 0 6px}.hd h2{flex:1}
+ol.steps{list-style:none;padding:0;margin:8px 0 10px;display:grid;gap:10px}ol.steps li{display:flex;gap:12px;align-items:flex-start;margin:0}
+.sti{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;flex:none;background:var(--eh-track,rgba(127,127,127,.12));color:var(--eh-ink,var(--primary-text-color))}
+.stt{font:400 14px/1.45 Onest,sans-serif;min-width:0}.stt .row{margin-top:6px}
+.rl li.bye{animation:eh-bye .38s ease forwards;overflow:hidden}@keyframes eh-bye{from{max-height:120px;opacity:1}to{max-height:0;opacity:0;padding-top:0;padding-bottom:0;border-top-width:0}}
+.alt{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0 0}.alt input{flex:1;min-width:180px}
+.hits{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:6px}.hits button{width:100%;text-align:left;font:400 14px/1.35 Onest,sans-serif;color:inherit;border:0;border-radius:12px;min-height:44px;padding:8px 12px;background:var(--eh-track,rgba(127,127,127,.1));cursor:pointer}
+details.man{margin:12px 0 0}details.man summary{font:500 14px Onest,sans-serif;cursor:pointer;min-height:44px;display:flex;align-items:center;color:var(--eh-ink2,var(--secondary-text-color))}
+.pres .hd{gap:12px}.pres .pic{width:40px;height:40px;border-radius:20px;display:grid;place-items:center;background:var(--eh-track,rgba(127,127,127,.12));flex:none}
+.pres.on .pic{background:color-mix(in srgb,var(--eh-amber,#E8901F) 22%,transparent);color:var(--eh-amber,#E8901F)}.pres .sub{margin:4px 0 8px}
+.tn{font:400 14px/1.5 Onest,sans-serif;margin:10px 0 0;padding:10px 12px;border-radius:14px;background:color-mix(in srgb,var(--eh-amber,#E8901F) 12%,transparent)}
+.pres .chips button:disabled{opacity:.45;cursor:default}.pres input[type=date]{width:auto;min-width:170px}
+.tl.pl li{grid-template-columns:auto 1fr}.tl.pl .rel{font-size:14px;font-weight:500}.tl.pl ha-icon{--mdc-icon-size:16px;vertical-align:-2px;color:var(--eh-ink2,var(--secondary-text-color))}
 ha-icon{--mdc-icon-size:20px}`;
 
     class Automations extends HTMLElement {
@@ -2873,7 +3318,15 @@ ha-icon{--mdc-icon-size:20px}`;
       async api(method, body) {
         return this._hass.callApi(method, "hauflo/automations", body);
       }
+      isAdmin() {
+        return this._hass?.user?.is_admin === true;
+      }
       fail(e) {
+        if (e?.body?.code === "not_plain") {
+          this.msg = this.w.notPlain;
+          this.bad = true;
+          return;
+        }
         const m = e?.body?.message || e?.message || "";
         this.msg = e?.status_code === 404 && !m ? this.w.noAgent : m ? this.w.err + m : this.w.errNet;
         this.bad = true;
@@ -2885,7 +3338,82 @@ ha-icon{--mdc-icon-size:20px}`;
         } catch (e) {
           this.noAgent = true;
         }
+        await this.loadPres();
         this.draw();
+      }
+      // --- «Нет дома — имитация присутствия» (presence.py) --------------------------------------------------------------
+      async loadPres() {
+        try {
+          this.pres = await this._hass.callApi("GET", "hauflo/presence");
+          PRES.set(this.pres);
+        } catch (e) {
+          this.pres = null; // an agent before 0.14.5: no section
+        }
+      }
+      async setPres(body) {
+        this.pBusy = true;
+        this.draw();
+        try {
+          this.pres = await this._hass.callApi("POST", "hauflo/presence", { op: "set", ...body });
+          PRES.set(this.pres);
+          this.pMsg = "";
+        } catch (e) {
+          const m = e?.body?.message || e?.message || "";
+          this.pMsg = m ? this.w.err + m : this.w.errNet;
+        }
+        this.pBusy = false;
+        this.draw();
+      }
+      presHtml() {
+        const pr = this.pres;
+        if (!pr) return "";
+        const w = this.w;
+        const p = w.p;
+        const t = (iso) => (iso ? this.hm(Date.parse(iso)) : "");
+        const date = (d) => this.fmtParts(Date.parse(`${d}T12:00:00Z`), { day: "numeric", month: "long" });
+        const on = pr.enabled;
+        const tn = pr.tonight;
+        let state = "";
+        if (on) {
+          const head = `${pr.since ? p.since(this.when(Date.parse(pr.since))) : ""} · ${pr.until ? p.untilLine(date(pr.until)) : p.untilNone}`;
+          let line = "";
+          if (pr.status === "no_devices") line = `<p class="msg bad">${esc(p.noDev)}</p>`;
+          else if (pr.status === "no_recorder") line = `<p class="msg bad">${esc(p.noRec)}</p>`;
+          else if (tn) {
+            const rooms = (tn.rooms || []).map((r) => `${r.name} ${t(r.from)}–${t(r.to)}`).join(", ");
+            const bl = p.blinds(t(tn.covers?.open), t(tn.covers?.close));
+            const parts = [];
+            if (tn.lights === "few") parts.push(`<p class="msg">${esc(p.few(tn.evenings, pr.min_evenings))}</p><button class="btn sm pri" data-pmode="sun">${esc(p.useSun)}</button>`);
+            if (tn.lights === "no_location") parts.push(`<p class="msg bad">${esc(p.noLoc)}</p>`);
+            const today = [tn.lights === "learned" || tn.lights === "sun" ? rooms || p.nothing : "", bl ? `${bl}${tn.covers?.by === "sun" ? ` (${p.bySun})` : ""}` : ""].filter(Boolean).join(" · ");
+            line = `${today ? `<p class="tn"><b>${esc(p.today)}:</b> ${esc(today)}</p>` : ""}${parts.join("")}`;
+          }
+          state = `<p class="muted">${esc(head)}</p>${line}`;
+        }
+        const ico = { on: "mdi:lightbulb-on-outline", off: "mdi:lightbulb-outline", open: "mdi:blinds-open", close: "mdi:blinds", position: "mdi:blinds" };
+        const act = (x) => {
+          const n = `${x.name || x.entity_id}${x.room ? ` · ${x.room}` : ""}`;
+          return x.do === "on" ? w.act.on(n, x.value) : x.do === "off" ? w.act.off(n) : x.do === "position" ? w.act.position(n, x.value) : w.act[x.do] ? w.act[x.do](n) : n;
+        };
+        const log = (pr.log || []).slice(0, this.pAll ? 20 : 5);
+        const when = (iso) => {
+          const x = Date.parse(iso);
+          return this.key(x) === this.key(Date.now()) ? this.hm(x) : `${this.dayWord(x)} ${this.hm(x)}`;
+        };
+        const logHtml = log.length
+          ? `<div class="fld"><div class="caps">${esc(p.log)}</div><ul class="tl pl">${log
+              .map((x) => `<li class="${x.skip ? "dis" : ""}"><span class="rel">${esc(when(x.t))}</span><span class="txt">${x.sys ? `<b>${esc(p.sys[x.sys] || x.sys)}</b>` : `<ha-icon icon="${ico[x.do] || "mdi:home"}"></ha-icon> ${esc(act(x))}${x.skip ? ` — ${esc(p.skip[x.skip] || x.skip)}` : ""}`}</span></li>`)
+              .join("")}</ul>${(pr.log || []).length > 5 ? `<button class="lnk" data-pall>${esc(this.pAll ? p.less : p.all)}</button>` : ""}</div>`
+          : "";
+        const today = this.key(Date.now());
+        const max = this.key(Date.now() + 90 * 86400000);
+        return `<section class="box pres${on ? " on" : ""}" aria-label="${esc(p.title)}"><div class="hd"><span class="pic"><ha-icon icon="mdi:home-export-outline"></ha-icon></span><h2>${esc(p.title)}</h2><button class="sw" role="switch" aria-checked="${on}" aria-label="${esc(p.title)}" data-psw ${this.pBusy ? "disabled" : ""}></button></div>
+<p class="sub">${esc(p.sub)}</p>${state}
+${this.pMsg ? `<p class="msg bad" role="status">${esc(this.pMsg)}</p>` : ""}
+<div class="fld"><div class="caps">${esc(p.what)}</div><div class="chips"><button aria-pressed="${pr.lights}" data-pk="lights" ${pr.devices?.lights ? "" : "disabled"}>${esc(p.lights)}${pr.devices?.lights ? ` · ${pr.devices.lights}` : ""}</button><button aria-pressed="${pr.covers}" data-pk="covers" ${pr.devices?.covers ? "" : "disabled"}>${esc(p.covers)}${pr.devices?.covers ? ` · ${pr.devices.covers}` : ""}</button></div></div>
+<div class="fld"><div class="caps">${esc(p.mode)}</div><div class="seg"><button aria-pressed="${pr.mode === "learned"}" data-pmode="learned">${esc(p.learned)}</button><button aria-pressed="${pr.mode === "sun"}" data-pmode="sun">${esc(p.sun)}</button></div><p class="hint">${esc(pr.mode === "sun" ? p.sunHow : p.how(pr.max_rooms || 3, pr.jitter_min || 15))}</p></div>
+<div class="fld"><div class="caps">${esc(p.until)}</div><div class="row"><input type="date" data-puntil min="${today}" max="${max}" value="${esc(pr.until || "")}" aria-label="${esc(p.until)}"><button class="btn sm" data-puclear ${pr.until ? "" : "disabled"}>${esc(p.noDate)}</button></div></div>
+${logHtml}</section>`;
       }
       // --- time ------------------------------------------------------------------------------------------------------
       get tz() {
@@ -2966,6 +3494,19 @@ ha-icon{--mdc-icon-size:20px}`;
       room(a) {
         return this.data?.targets?.areas?.[a] || a;
       }
+      // A device always with its room: «Штора 1 · Спальня» (family review 28.10: «Штора 1, Штора 2, Штора 1…»).
+      nameIn(eid) {
+        const t = this.data?.targets || {};
+        const it = [...(t.covers || []), ...(t.lights || [])].find((x) => x.entity_id === eid);
+        return it?.area ? `${this.name(eid)} · ${this.room(it.area)}` : this.name(eid);
+      }
+      roomsList(ids) {
+        const names = ids.map((a) => this.room(a));
+        return names.length > 3 ? `${names.slice(0, 2).join(", ")}${this.w.moreRooms(names.length - 2)}` : names.join(", ");
+      }
+      coverRoom(a) {
+        return (this.data?.targets?.cover_rooms || []).find((r) => r.area_id === a);
+      }
       phone(sensor) {
         return this.data?.targets?.alarms?.find((a) => a.entity_id === sensor)?.phone || sensor;
       }
@@ -2986,7 +3527,8 @@ ha-icon{--mdc-icon-size:20px}`;
       actText(a) {
         const t = this.w.act;
         if (a.do === "room_off") return t.room_off(this.room(a.area_id));
-        const n = this.name(a.entity_id);
+        if (a.do === "room_covers") return this.w.roomCovers[a.cover](this.room(a.area_id), a.value);
+        const n = this.nameIn(a.entity_id);
         if (a.entity_id.startsWith("scene.")) return t.scene(n);
         return t[a.do] ? t[a.do](n, a.value, a.minutes) : n;
       }
@@ -2994,17 +3536,25 @@ ha-icon{--mdc-icon-size:20px}`;
       actsText(r) {
         const groups = new Map();
         const order = [];
+        // «Закрыть шторы: Гостиная, Кухня и ещё 4 комнаты» — rooms, not twenty blinds.
+        const rooms = new Map();
         for (const a of r.actions || []) {
-          if (a.entity_id?.startsWith("cover.") && (a.do === "open" || a.do === "close")) {
+          if (a.do === "room_covers" && a.cover !== "position") {
+            if (!rooms.has(a.cover)) {
+              rooms.set(a.cover, []);
+              order.push({ rooms: a.cover });
+            }
+            rooms.get(a.cover).push(a.area_id);
+          } else if (a.entity_id?.startsWith("cover.") && (a.do === "open" || a.do === "close")) {
             if (!groups.has(a.do)) {
               groups.set(a.do, []);
               order.push(a.do);
             }
-            groups.get(a.do).push(this.name(a.entity_id));
+            groups.get(a.do).push(this.nameIn(a.entity_id));
           } else order.push(a);
         }
         const list = (n) => (n.length > 3 ? `${n.slice(0, 2).join(", ")}${this.w.more(n.length - 2)}` : n.join(", "));
-        return order.map((x) => (typeof x === "string" ? this.w.act[x](list(groups.get(x))) : this.actText(x))).join(", ");
+        return order.map((x) => (typeof x === "string" ? this.w.act[x](list(groups.get(x))) : x.rooms ? this.w.roomCovers[x.rooms](this.roomsList(rooms.get(x.rooms))) : this.actText(x))).join(", ");
       }
       icon(w) {
         return w.event === "sunrise" ? "mdi:weather-sunset-up" : w.event === "sunset" ? "mdi:weather-sunset-down" : w.event === "time" ? "mdi:clock-outline" : "mdi:alarm";
@@ -3019,12 +3569,13 @@ ha-icon{--mdc-icon-size:20px}`;
         const android = (t.alarms || [])[0];
         const alarmWhen = (off) => (android ? { event: "alarm_android", sensor: android.entity_id, offset: off } : { event: "alarm_iphone" });
         const src = android ? w.srcAndroid(android.phone) : w.srcIphone;
-        const covers = t.covers || [];
-        if (covers.length)
-          out.push({ key: "sunset_covers", title: w.s.sunset_covers[0], sub: w.s.sunset_covers[1](covers.length), rule: { when: { event: "sunset", offset: 0 }, days: DAYS, actions: covers.slice(0, 20).map((c) => ({ entity_id: c.entity_id, do: "close" })) } });
-        const bedCovers = covers.filter((c) => BEDROOM.test(areaName(c.area)));
-        if (bedCovers.length)
-          out.push({ key: "wake_covers", title: w.s.wake_covers[0], sub: w.s.wake_covers[1](android ? w.alarmOf(android.phone) : w.srcIphone), rule: { when: alarmWhen(0), days: DAYS, actions: bedCovers.slice(0, 20).map((c) => ({ entity_id: c.entity_id, do: "open" })) } });
+        // Blinds by rooms (family review 28.10: «шторы: 81» — and a rule of 20 of them): every room ticked, seen in the editor.
+        const cr = (t.cover_rooms || []).slice(0, 20);
+        if (cr.length)
+          out.push({ key: "sunset_covers", title: w.s.sunset_covers[0], sub: w.s.sunset_covers[1](this.roomsList(cr.map((r) => r.area_id)), w.blindsN(cr.reduce((n, r) => n + r.covers, 0))), rule: { when: { event: "sunset", offset: 0 }, days: DAYS, actions: cr.map((r) => ({ do: "room_covers", area_id: r.area_id, cover: "close" })) } });
+        const bed = cr.filter((r) => BEDROOM.test(r.name));
+        if (bed.length)
+          out.push({ key: "wake_covers", title: w.s.wake_covers[0], sub: w.s.wake_covers[1](android ? w.alarmOf(android.phone) : w.srcIphone), rule: { when: alarmWhen(0), days: DAYS, actions: bed.map((r) => ({ do: "room_covers", area_id: r.area_id, cover: "open" })) } });
         const dim = (t.lights || []).filter((l) => l.dim);
         const bedLight = dim.find((l) => BEDROOM.test(areaName(l.area)));
         if (bedLight)
@@ -3040,21 +3591,55 @@ ha-icon{--mdc-icon-size:20px}`;
         return this.whenText(r.when);
       }
       // --- drawing ------------------------------------------------------------------------------------------------------
-      draw() {
+      // Where the page is scrolled — HA's view scrolls in its own container, not the window (owner 28.10: «удалить —
+      // кидает на верх страницы»).
+      scrollers() {
+        const out = [];
+        let n = this;
+        while (n) {
+          n = n.assignedSlot || n.parentNode || n.host;
+          if (n && n.nodeType === 1 && n.scrollHeight > n.clientHeight + 1 && /(auto|scroll)/.test(getComputedStyle(n).overflowY)) out.push([n, n.scrollTop]);
+        }
+        const se = document.scrollingElement;
+        if (se) out.push([se, se.scrollTop]);
+        return out;
+      }
+      toList(extra) {
+        this.view = "list";
+        this.asking = null;
+        Object.assign(this, extra || {});
+        this.draw({ restore: this._listScroll });
+      }
+      draw(opts = {}) {
         const sr = this.shadowRoot;
         const w = this.w;
+        const keep = this.isConnected ? this.scrollers() : [];
+        // WebKit lays the page out with the card empty while it's replaced: the card keeps its height till it's back.
+        const h = this.isConnected ? this.getBoundingClientRect().height : 0;
+        if (h) this.style.minHeight = `${h}px`;
+        const back = opts.restore || keep;
+        const put = () => !opts.top && back.forEach(([el, top]) => Math.abs(el.scrollTop - top) > 1 && (el.scrollTop = top));
+        const done = () => {
+          put();
+          requestAnimationFrame(() => {
+            this.style.minHeight = "";
+            if (opts.top) this.scrollIntoView?.({ block: "start" });
+            else put();
+          });
+        };
         if (this.noAgent) {
           sr.innerHTML = `<style>${CSS3}</style><div class="pg"><h1>${esc(w.title)}</h1><p class="sub">${esc(w.noAgent)}</p></div>`;
-          return;
+          return done();
         }
         if (!this.data) {
           sr.innerHTML = `<style>${CSS3}</style><div class="pg"><h1>${esc(w.title)}</h1></div>`;
-          return;
+          return done();
         }
         const body = this.view === "edit" ? this.editHtml() : this.view === "loc" ? this.locHtml() : this.listHtml();
         sr.innerHTML = `<style>${CSS3}</style><div class="pg">${this._config?.overlay ? `<div class="row end"><button class="btn sm" data-close>${esc(w.close)}</button></div>` : ""}${body}</div>`;
         sr.querySelector("[data-close]")?.addEventListener("click", () => this.dispatchEvent(new CustomEvent("hauflo-close", { bubbles: true, composed: true })));
         this.bind();
+        done();
       }
       listHtml() {
         const w = this.w;
@@ -3080,12 +3665,19 @@ ha-icon{--mdc-icon-size:20px}`;
 ${!loc.set ? this.locCard() : ""}
 <section class="box" aria-label="${esc(w.upcoming)}"><div class="caps">${esc(w.upcoming)}</div>
 <p class="sunl"><ha-icon icon="mdi:weather-sunset"></ha-icon><span>${rise && set ? esc(w.sunLine(this.when(rise), this.when(set))) : esc(w.noSun)}</span></p>
+${this.tz && this.tz !== VIEWER_TZ ? `<p class="hint">${esc(w.tzNote(this.tz))}</p>` : ""}
+${this.tzAsk ? this.tzHtml() : ""}
 ${tl ? `<ul class="tl">${tl}</ul>` : `<p class="muted">${esc(w.nothing)}</p>`}</section>
+${this.presHtml()}
 ${sugg.length ? `<section class="box"><div class="caps">${esc(w.sugg)}</div><div class="sg">${sugg.map((s) => `<div class="card"><b>${esc(s.title)}</b><span class="muted">${esc(s.sub)}</span><button class="btn sm pri" data-sugg="${esc(s.key)}">+ ${esc(w.addOne)}</button></div>`).join("")}</div></section>` : ""}
 <section class="box"><div class="hd"><h2>${esc(w.mine)}</h2><button class="btn sm pri" data-new>+ ${esc(w.add)}</button></div>
 ${this.msg ? `<p class="msg ${this.bad ? "bad" : ""}" role="status">${esc(this.msg)}</p>` : ""}
-${d.rules.length ? `<ul class="rl">${d.rules.map((r) => this.ruleRow(r)).join("")}</ul>` : `<p class="muted">${esc(w.empty)}</p>`}</section>
-${loc.set ? `<p class="muted">${esc(w.locNow(loc.latitude.toFixed(3), loc.longitude.toFixed(3)))} · <button class="lnk" data-loc>${esc(w.change)}</button></p>` : ""}`;
+${d.rules.length || this.gone ? `<ul class="rl">${(() => {
+          const rows = d.rules.map((r) => this.ruleRow(r));
+          if (this.gone) rows.splice(Math.min(this.gone.at, rows.length), 0, this.ruleRow(this.gone.rule).replace(/^<li class="/, '<li aria-hidden="true" class="bye '));
+          return rows.join("");
+        })()}</ul>` : `<p class="muted">${esc(w.empty)}</p>`}</section>
+${loc.set ? `<p class="muted">${esc(w.locNow(loc.latitude.toFixed(3), loc.longitude.toFixed(3)))}${this.isAdmin() ? ` · <button class="lnk" data-loc>${esc(w.change)}</button>` : ""}</p>` : ""}`;
       }
       ruleRow(r) {
         const w = this.w;
@@ -3093,22 +3685,60 @@ ${loc.set ? `<p class="muted">${esc(w.locNow(loc.latitude.toFixed(3), loc.longit
         const on = r.state === "on";
         const t = this.nextOf(r);
         const last = s?.attributes?.last_triggered;
-        const meta = r.state === "missing" ? w.missing : [this.daysText(r.days), t && on ? `→ ${this.when(t)}` : "", last ? w.last(this.when(Date.parse(last))) : w.never].filter(Boolean).join(" · ");
+        const meta = r.state === "missing" ? w.missing : [r.changed ? w.changedTag : "", this.daysText(r.days), t && on ? `→ ${this.when(t)}` : "", last ? w.last(this.when(Date.parse(last))) : w.never].filter(Boolean).join(" · ");
         return `<li class="${on ? "" : "dis"}"><span class="ic"><ha-icon icon="${this.icon(r.when)}"></ha-icon></span>
 <button class="bd" data-open="${esc(r.id)}"><div class="nm">${esc(r.name || this.autoName(r))}</div><div class="ds">${esc(this.actsText(r))}</div><div class="ds">${esc(meta)}</div></button>
 <button class="sw" role="switch" aria-checked="${on}" aria-label="${esc(on ? w.on : w.offShort)}" data-sw="${esc(r.id)}" ${r.state === "missing" ? "disabled" : ""}></button></li>`;
       }
+      // Family review 28.10: three equal buttons and two empty boxes lost a person. One way first (by the internet, on a
+      // map, «Да, дом здесь»); a town search second; the coordinates tucked away with an example.
       locCard() {
         const w = this.w;
         const loc = this.data.location;
         const c = this.cand;
         if (loc.yaml) return `<section class="box"><div class="caps">${esc(w.loc)}</div><p class="muted">${esc(w.yamlLoc)}</p></section>`;
+        // HA's home location moves zone.home (presence, every sun rule): an administrator's (security review 28.10).
+        if (!this.isAdmin()) return `<section class="box"><div class="caps">${esc(w.loc)}</div><p class="muted">${esc(w.adminLoc)}</p></section>`;
+        const hits = this.hits || [];
         return `<section class="box" data-loccard><div class="caps">${esc(w.loc)}</div><p class="muted">${esc(w.locWhy)}</p>
-${c ? `${this.mapHtml(c.latitude, c.longitude)}<p class="msg">${esc(w.detected([c.city, c.country].filter(Boolean).join(", ")))} <span class="muted">${esc(`${c.latitude.toFixed(4)}, ${c.longitude.toFixed(4)}`)}</span></p>
-<div class="row"><button class="btn pri" data-locok>${esc(w.confirm)}</button><button class="btn" data-geo>${esc(w.byPhone)}</button><button class="btn" data-man>${esc(w.manual)}</button></div>`
-          : `<div class="row"><button class="btn pri" data-detect ${this.busy ? "disabled" : ""}>${esc(this.busy ? w.detecting : w.detect)}</button><button class="btn" data-geo>${esc(w.byPhone)}</button><button class="btn" data-man>${esc(w.manual)}</button></div>`}
-${this.manual ? `<div class="row fld"><label class="grow">${esc(w.lat)}<input inputmode="decimal" data-lat value="${esc(c?.latitude ?? "")}"></label><label class="grow">${esc(w.lon)}<input inputmode="decimal" data-lon value="${esc(c?.longitude ?? "")}"></label><button class="btn pri" data-mansave>${esc(w.saveLoc)}</button></div>` : ""}
+${c ? `${this.mapHtml(c.latitude, c.longitude)}<p class="msg">${esc(w.detected([c.city, c.country].filter(Boolean).join(", ")))} <span class="muted">${esc(`${c.latitude.toFixed(3)}, ${c.longitude.toFixed(3)}`)}</span></p>
+<div class="row"><button class="btn pri" data-locok>${esc(w.confirm)}</button><button class="btn" data-again>${esc(w.notThis)}</button></div>`
+          : `<div class="row"><button class="btn pri" data-detect ${this.busy ? "disabled" : ""}>${esc(this.busy ? w.detecting : w.detect)}</button></div>
+<div class="alt"><span class="muted">${esc(w.or)}</span><input type="search" data-q placeholder="${esc(w.cityPh)}" aria-label="${esc(w.findCity)}" value="${esc(this.q || "")}"><button class="btn" data-find>${esc(w.findCity)}</button></div>
+${hits.length ? `<ul class="hits">${hits.map((h, i) => `<li><button data-hit="${i}">${esc(h.label)}</button></li>`).join("")}</ul>` : ""}
+<details class="man"${this.manual ? " open" : ""}><summary>${esc(w.manualLink)}</summary><div class="row fld"><input class="grow" inputmode="decimal" data-ll placeholder="${esc(w.llPh)}" aria-label="${esc(w.manualLink)}"><button class="btn" data-mansave>${esc(w.saveLoc)}</button><button class="lnk" data-geo>${esc(w.byPhone)}</button></div></details>`}
 ${this.locMsg ? `<p class="msg ${this.locBad ? "bad" : ""}" role="status">${esc(this.locMsg)}</p>` : ""}</section>`;
+      }
+      tzHtml() {
+        const w = this.w;
+        return `<div class="ask"><p class="msg">${esc(w.tzAsk(this.tzAsk, this.data.location.time_zone || "UTC"))}</p><div class="row"><button class="btn pri" data-tzfix>${esc(w.tzFix(this.tzAsk))}</button><button class="btn" data-tzno>${esc(w.cancel)}</button></div></div>`;
+      }
+      async findCity(q) {
+        this.q = q;
+        if (!q.trim()) return;
+        try {
+          const r = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&addressdetails=1&q=${encodeURIComponent(q)}&accept-language=${this.lang}`);
+          const list = await r.json();
+          this.hits = (Array.isArray(list) ? list : []).map((x) => ({ latitude: Math.round(Number(x.lat) * 1000) / 1000, longitude: Math.round(Number(x.lon) * 1000) / 1000, label: String(x.display_name || "").split(",").slice(0, 3).join(","), city: x.address?.city || x.address?.town || x.address?.village || x.name || "", country: String(x.address?.country_code || "").toUpperCase() })).filter((x, i, all) => isFinite(x.latitude) && isFinite(x.longitude) && all.findIndex((y) => y.label === x.label) === i);
+          this.locMsg = this.hits.length ? "" : this.w.noCity;
+          this.locBad = !this.hits.length;
+        } catch (e) {
+          this.locMsg = this.w.errNet;
+          this.locBad = true;
+        }
+        this.draw();
+      }
+      async fixTz() {
+        try {
+          await this.api("POST", { op: "timezone", time_zone: this.tzAsk });
+          this.data = await this.api("GET");
+          this.tzAsk = null;
+          this.msg = this.w.tzDone;
+          this.bad = false;
+        } catch (e) {
+          this.fail(e);
+        }
+        this.draw();
       }
       locHtml() {
         return `<div class="row"><button class="btn sm" data-back>← ${esc(this.w.back)}</button></div>${this.locCard()}`;
@@ -3148,13 +3778,14 @@ ${this.locMsg ? `<p class="msg ${this.locBad ? "bad" : ""}" role="status">${esc(
           if (r.when.event === "alarm_android") whenBody += offRow("alarm");
           else {
             const code = r.when.code;
-            whenBody += `<div class="fld"><div class="caps">${esc(w.iphoneTitle)}</div>${code ? `<ol>${w.iphoneSteps(code).map((s, i) => `<li>${i === 3 ? `${esc(s.split(":")[0])}: <code>${esc(code)}</code> <button class="btn sm" data-copy="${esc(code)}">${esc(w.copy)}</button>` : esc(s)}</li>`).join("")}</ol>` : `<p class="hint">${esc(w.iphoneLater)}</p>`}</div>`;
+            whenBody += `<div class="fld"><div class="caps">${esc(w.iphoneTitle)}</div>${code ? `<ol class="steps">${w.iphoneSteps.map((s, i) => `<li><span class="sti" aria-hidden="true">${STEP_ART[i]}</span><span class="stt"><b>${i + 1}.</b> ${esc(s)}${i === 4 ? `<span class="row"><code>${esc(code)}</code><button class="btn sm" data-copy="${esc(code)}">${esc(w.copy)}</button></span>` : ""}</span></li>`).join("")}</ol><button class="btn sm" data-share="${esc(code)}">${esc(w.share)}</button>` : `<p class="hint">${esc(w.iphoneLater)}</p>`}</div>`;
           }
         }
         const days = r.days || DAYS;
         const acts = r.actions.map((a, i) => this.actHtml(a, i)).join("");
         const opt = (v, label) => `<option value="${esc(v)}">${esc(label)}</option>`;
         const picker = `<select data-addact aria-label="${esc(w.addAction)}"><option value="">${esc(w.addAction)}</option>
+${(t.cover_rooms || []).length ? `<optgroup label="${esc(w.grp.coverRooms)}">${t.cover_rooms.map((c) => opt(`rc:${c.area_id}`, `${c.name} · ${c.covers}`)).join("")}</optgroup>` : ""}
 ${t.covers.length ? `<optgroup label="${esc(w.grp.covers)}">${t.covers.map((c) => opt(c.entity_id, this.name(c.entity_id) + (c.area ? ` · ${this.room(c.area)}` : ""))).join("")}</optgroup>` : ""}
 ${t.lights.length ? `<optgroup label="${esc(w.grp.lights)}">${t.lights.map((c) => opt(c.entity_id, this.name(c.entity_id) + (c.area ? ` · ${this.room(c.area)}` : ""))).join("")}</optgroup>` : ""}
 ${t.scenes.length ? `<optgroup label="${esc(w.grp.scenes)}">${t.scenes.map((c) => opt(c.entity_id, this.name(c.entity_id))).join("")}</optgroup>` : ""}
@@ -3169,8 +3800,9 @@ ${t.rooms.length ? `<optgroup label="${esc(w.grp.rooms)}">${t.rooms.map((c) => o
 <p class="msg" data-next>${esc(r.when.event === "alarm_iphone" ? w.willNot : next ? `${w.willRun(this.when(next))} (${this.rel(next)})` : "")}</p>
 ${this.msg ? `<p class="msg ${this.bad ? "bad" : ""}" role="status">${esc(this.msg)}</p>` : ""}
 ${this.asking === "run" ? `<div class="ask"><p class="msg">${esc(w.runAsk(this.actsText(r)))}${r.actions.some((a) => a.do === "ramp") ? ` ${esc(w.rampNote)}` : ""}</p><div class="row"><button class="btn pri" data-runyes>${esc(w.runYes)}</button><button class="btn" data-no>${esc(w.cancel)}</button></div></div>` : ""}
+${r.changed ? `<div class="ask"><p class="msg">${esc(w.changedNote)}</p>${this.asking === "restore" ? `<p class="msg">${esc(w.restoreAsk)}</p><div class="row"><button class="btn dan" data-restoreyes>${esc(w.restoreYes)}</button><button class="btn" data-no>${esc(w.cancel)}</button></div>` : `<button class="btn sm" data-restore>${esc(w.restore)}</button>`}</div>` : ""}
 ${this.asking === "del" ? `<div class="ask"><p class="msg">${esc(w.delAsk)}</p><div class="row"><button class="btn dan" data-delyes>${esc(w.delYes)}</button><button class="btn" data-no>${esc(w.cancel)}</button></div></div>` : ""}
-<div class="row fld"><button class="btn pri" data-save ${this.busy ? "disabled" : ""}>${esc(w.save)}</button><button class="btn" data-back>${esc(w.cancel)}</button><span class="grow"></span>
+<div class="row fld">${r.changed ? "" : `<button class="btn pri" data-save ${this.busy ? "disabled" : ""}>${esc(w.save)}</button>`}<button class="btn" data-back>${esc(w.cancel)}</button><span class="grow"></span>
 ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.run)}</button><button class="btn dan" data-del>${esc(w.del)}</button>` : ""}</div></section>`;
       }
       actHtml(a, i) {
@@ -3180,8 +3812,14 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
         let title = "";
         let body = "";
         if (a.do === "room_off") title = `${w.grp.rooms}: ${this.room(a.area_id)}`;
-        else {
-          title = this.name(a.entity_id);
+        else if (a.do === "room_covers") {
+          const cr = this.coverRoom(a.area_id);
+          title = `${w.coverRooms(this.room(a.area_id))}${cr ? ` · ${cr.covers}` : ""}`;
+          body = `<div class="seg" role="group">${[["open", w.do.open], ["close", w.do.close], ...(cr?.position ? [["position", w.do.position]] : [])].map(([v, l]) => `<button data-rc="${i}:${v}" aria-pressed="${a.cover === v}">${esc(l)}</button>`).join("")}</div>`;
+          if (a.cover === "position") body += stepper("value", a.value ?? 50, " %", "");
+          if ((cr?.covers || 0) > 1) body += `<button class="lnk" data-split="${i}">${esc(w.split)}</button>`;
+        } else {
+          title = this.nameIn(a.entity_id);
           const d = a.entity_id.split(".")[0];
           if (d === "cover") {
             body = seg([["open", w.do.open], ["close", w.do.close], ["position", w.do.position]]);
@@ -3201,28 +3839,50 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
         const on = (sel, fn) => sr.querySelectorAll(sel).forEach((el) => el.addEventListener("click", (e) => fn(el, e)));
         on("[data-open]", (el) => this.edit(this.data.rules.find((r) => r.id === el.dataset.open)));
         on("[data-new]", () => this.edit(null));
-        on("[data-back]", () => {
-          this.view = "list";
-          this.msg = "";
-          this.asking = null;
-          this.draw();
-        });
+        on("[data-back]", () => this.toList({ msg: "" }));
         on("[data-loc]", () => {
+          this._listScroll = this.scrollers();
           this.view = "loc";
           this.cand = null;
           this.locMsg = "";
-          this.draw();
+          this.draw({ top: true });
         });
         on("[data-sw]", (el) => this.toggle(el.dataset.sw, el.getAttribute("aria-checked") !== "true"));
         on("[data-sugg]", (el) => this.addSuggestion(el.dataset.sugg));
-        on("[data-detect]", () => this.detect());
-        on("[data-geo]", () => this.geo());
-        on("[data-man]", () => {
-          this.manual = true;
+        on("[data-psw]", (el) => this.setPres({ enabled: el.getAttribute("aria-checked") !== "true" }));
+        on("[data-pk]", (el) => this.setPres({ [el.dataset.pk]: el.getAttribute("aria-pressed") !== "true" }));
+        on("[data-pmode]", (el) => this.pres?.mode !== el.dataset.pmode && this.setPres({ mode: el.dataset.pmode }));
+        on("[data-puclear]", () => this.setPres({ until: null }));
+        on("[data-pall]", () => {
+          this.pAll = !this.pAll;
           this.draw();
         });
+        sr.querySelector("[data-puntil]")?.addEventListener("change", (e) => e.target.value && this.setPres({ until: e.target.value }));
+        on("[data-detect]", () => this.detect());
+        on("[data-geo]", () => this.geo());
         on("[data-locok]", () => this.saveLoc(this.cand.latitude, this.cand.longitude, this.cand.elevation));
-        on("[data-mansave]", () => this.saveLoc(Number(String(sr.querySelector("[data-lat]").value).replace(",", ".")), Number(String(sr.querySelector("[data-lon]").value).replace(",", "."))));
+        on("[data-again]", () => {
+          this.cand = null;
+          this.hits = null;
+          this.draw();
+        });
+        on("[data-find]", () => this.findCity(sr.querySelector("[data-q]")?.value || ""));
+        sr.querySelector("[data-q]")?.addEventListener("keydown", (e) => e.key === "Enter" && this.findCity(e.target.value));
+        on("[data-hit]", (el) => {
+          this.cand = this.hits[Number(el.dataset.hit)];
+          this.draw();
+        });
+        on("[data-mansave]", () => {
+          // «55.75, 37.62» in one box (a comma or a space between, a decimal comma too).
+          const nums = String(sr.querySelector("[data-ll]")?.value || "").replace(/(\d),(\d)/g, "$1.$2").match(/-?\d+(?:\.\d+)?/g) || [];
+          this.manual = true;
+          this.saveLoc(Number(nums[0]), Number(nums[1]));
+        });
+        on("[data-tzfix]", () => this.fixTz());
+        on("[data-tzno]", () => {
+          this.tzAsk = null;
+          this.draw();
+        });
         if (this.view !== "edit") return;
         const r = this.draft;
         const redraw = () => this.draw();
@@ -3259,7 +3919,24 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
           const v = e.target.value;
           if (!v) return;
           if (v.startsWith("room:")) r.actions.push({ do: "room_off", area_id: v.slice(5) });
+          else if (v.startsWith("rc:")) r.actions.push({ do: "room_covers", area_id: v.slice(3), cover: "close" });
           else r.actions.push({ entity_id: v, do: v.startsWith("cover.") ? "close" : "on" });
+          redraw();
+        });
+        on("[data-rc]", (el) => {
+          const [i, v] = el.dataset.rc.split(":");
+          const a = r.actions[Number(i)];
+          a.cover = v;
+          if (v === "position") a.value = a.value ?? 50;
+          else delete a.value;
+          redraw();
+        });
+        on("[data-split]", (el) => {
+          // «По отдельности»: the room's blinds as their own actions, doing the same.
+          const i = Number(el.dataset.split);
+          const a = r.actions[i];
+          const one = (this.data.targets.covers || []).filter((c) => c.area === a.area_id && !c.group && (a.cover !== "position" || c.position));
+          r.actions.splice(i, 1, ...one.map((c) => ({ entity_id: c.entity_id, do: a.cover, ...(a.cover === "position" ? { value: a.value ?? 50 } : {}) })));
           redraw();
         });
         on("[data-rm]", (el) => {
@@ -3282,11 +3959,27 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
           const [i, field, dir] = el.dataset.val.split(":");
           const a = r.actions[Number(i)];
           const step = field === "minutes" ? 5 : 5;
-          const lo = field === "minutes" ? 5 : a.do === "position" ? 0 : 5;
+          const pos = a.do === "position" || a.do === "room_covers";
+          const lo = field === "minutes" ? 5 : pos ? 0 : 5;
           const hi = field === "minutes" ? 60 : 100;
-          const cur = a[field] ?? (field === "minutes" ? 15 : a.do === "position" ? 50 : a.do === "ramp" ? 25 : 100);
+          const cur = a[field] ?? (field === "minutes" ? 15 : pos ? 50 : a.do === "ramp" ? 25 : 100);
           a[field] = Math.max(lo, Math.min(hi, cur + Number(dir) * step));
           redraw();
+        });
+        on("[data-share]", async () => {
+          const w = this.w;
+          const text = `${w.shareTitle}\n\n${w.iphoneSteps.map((x, i) => `${i + 1}. ${x}${i === 4 ? ` ${el_code(this)}` : ""}`).join("\n")}`;
+          try {
+            if (navigator.share) await navigator.share({ title: w.shareTitle, text });
+            else {
+              await navigator.clipboard.writeText(text);
+              this.msg = w.shared;
+              this.bad = false;
+              redraw();
+            }
+          } catch (e) {
+            /* the share sheet closed */
+          }
         });
         on("[data-copy]", async (el) => {
           try {
@@ -3314,15 +4007,23 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
           redraw();
         });
         on("[data-runyes]", () => this.run());
+        on("[data-restore]", () => {
+          this.asking = "restore";
+          redraw();
+        });
+        on("[data-restoreyes]", () => {
+          this.asking = null;
+          this.save(true);
+        });
         on("[data-delyes]", () => this.del());
       }
       edit(rule) {
-        this.draft = rule ? JSON.parse(JSON.stringify({ id: rule.id, name: rule.name, when: rule.when, days: rule.days, actions: rule.actions, enabled: rule.enabled, from: rule.from })) : { when: { event: "sunset", offset: 0 }, days: [...DAYS], actions: [], enabled: true };
+        if (this.view === "list") this._listScroll = this.scrollers();
+        this.draft = rule ? JSON.parse(JSON.stringify({ id: rule.id, name: rule.name, when: rule.when, days: rule.days, actions: rule.actions, enabled: rule.enabled, from: rule.from, changed: rule.changed })) : { when: { event: "sunset", offset: 0 }, days: [...DAYS], actions: [], enabled: true };
         this.view = "edit";
         this.msg = "";
         this.asking = null;
-        this.draw();
-        this.scrollIntoView?.({ block: "start" });
+        this.draw({ top: true });
       }
       body(r) {
         const out = { when: r.when, days: r.days, actions: r.actions, enabled: r.enabled !== false, name: r.from && r.name ? r.name : this.autoName(r) };  // a ready one keeps its title
@@ -3330,7 +4031,7 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
         if (r.from) out.from = r.from;
         return out;
       }
-      async save() {
+      async save(force = false) {
         const r = this.draft;
         const w = this.w;
         this.bad = true;
@@ -3342,7 +4043,7 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
           this.msg = "";
           this.draw();
           try {
-            const saved = await this.api("POST", { op: "save", rule: this.body(r) });
+            const saved = await this.api("POST", { op: "save", rule: this.body(r), ...(force ? { force: true } : {}) });
             this.data = await this.api("GET");
             this.busy = false;
             if (saved.when?.event === "alarm_iphone" && !r.id) {
@@ -3353,9 +4054,8 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
               this.draw();
               return;
             }
-            this.view = "list";
-            this.msg = w.saved;
-            this.bad = false;
+            this.toList({ msg: w.saved, bad: false });
+            return;
           } catch (e) {
             this.busy = false;
             this.fail(e);
@@ -3363,25 +4063,14 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
         }
         this.draw();
       }
-      async addSuggestion(key) {
+      addSuggestion(key) {
+        // A ready rule opens filled in: the family sees which rooms before it's saved.
         const s = this.suggestions().find((x) => x.key === key);
         if (!s) return;
-        try {
-          const saved = await this.api("POST", { op: "save", rule: this.body({ ...s.rule, enabled: true, name: s.title, from: key }) });
-          this.data = await this.api("GET");
-          if (saved.when?.event === "alarm_iphone") {
-            this.edit(this.data.rules.find((x) => x.id === saved.id));
-            this.msg = this.w.added;
-            this.bad = false;
-            this.draw();
-            return;
-          }
-          this.msg = this.w.added;
-          this.bad = false;
-        } catch (e) {
-          this.fail(e);
-        }
-        this.draw();
+        this.edit({ ...s.rule, enabled: true, name: s.title, from: key });
+        this.msg = this.w.review;
+        this.bad = false;
+        this.draw({ top: true });
       }
       async toggle(id, enabled) {
         try {
@@ -3409,11 +4098,19 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
       }
       async del() {
         this.asking = null;
+        const at = this.data.rules.findIndex((x) => x.id === this.draft.id);
+        const gone = this.data.rules[at];
         try {
           await this.api("POST", { op: "delete", id: this.draft.id });
           this.data = await this.api("GET");
-          this.view = "list";
-          this.msg = "";
+          // Back where the list was; the rule folds away in its place.
+          this.gone = gone ? { rule: gone, at } : null;
+          this.toList({ msg: "" });
+          setTimeout(() => {
+            this.gone = null;
+            if (this.view === "list") this.draw();
+          }, 420);
+          return;
         } catch (e) {
           this.fail(e);
         }
@@ -3461,7 +4158,8 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
       // only to show the person, never saved. Without the internet: the coordinates alone.
       async cityOf(c) {
         try {
-          const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=10&lat=${c.latitude}&lon=${c.longitude}&accept-language=${this.lang}`);
+          // Rounded to 2 decimals (~1 km) — the town is enough; the exact place never leaves for OpenStreetMap.
+          const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=10&lat=${Number(c.latitude).toFixed(2)}&lon=${Number(c.longitude).toFixed(2)}&accept-language=${this.lang}`);
           const a = (await r.json())?.address || {};
           const city = a.city || a.town || a.village || a.municipality || a.state || "";
           if (city && this.cand === c) {
@@ -3485,11 +4183,14 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
           if (isFinite(elevation)) body.elevation = Math.round(elevation);
           await this.api("POST", body);
           this.data = await this.api("GET");
+          // The house's clock: the zone of the place found by the internet, else the phone's — offered when HA's differs.
+          const zone = this.cand?.time_zone || VIEWER_TZ;
+          this.tzAsk = zone && this.data.location.time_zone !== zone && this._hass?.user?.is_admin ? zone : null;
           this.cand = null;
+          this.hits = null;
           this.manual = false;
-          this.view = "list";
-          this.msg = this.w.locSaved;
-          this.bad = false;
+          this.toList({ msg: this.w.locSaved, bad: false });
+          return;
         } catch (e) {
           const m = e?.body?.message || e?.message;
           this.locMsg = m ? this.w.err + m : this.w.errNet;
@@ -3498,35 +4199,76 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
         this.draw();
       }
     }
-    if (!customElements.get("hauflo-automations")) customElements.define("hauflo-automations", Automations);
-    window.customCards = window.customCards || [];
-    if (!window.customCards.some((c) => c.type === "hauflo-automations"))
-      window.customCards.push({ type: "hauflo-automations", name: "Hauflo · Автоматизации", description: "Рассвет, закат, время и будильник — правила клиента", preview: false });
+    // Defined with the other cards (define() below, once HA's own elements are there): an element defined at this
+    // file's load went into a registry HA no longer looked cards up in — «Configuration error» on 2 of 8 cold loads (HA
+    // expert 28.10).
     // HA draws «Custom element doesn't exist» when a card comes before this file and redraws it once the element is
     // defined — but its redraw event is lost when the card isn't on the page yet (live 28.10: «Ошибка конфигурации» now
     // and then over the whole «Автоматизации» tab). Such a card of ours is asked to redraw again.
+    // Family review 28.10: a reload of the tab left the pink card for good — HA's error card keeps the message in `error`
+    // now (it was `message`), so the old check never matched. Matched by the card's own type; rebuilt once the element is
+    // defined; after three tries the card says to refresh instead of HA's error.
+    const tries = new WeakMap();
     const heal = () => {
       const walk = (root) => {
         for (const el of root.querySelectorAll("*")) {
-          if (el.tagName === "HUI-ERROR-CARD" && /doesn't exist: hauflo-/.test(String(el._config?.message || "")) && customElements.get(String(el._config.message).match(/hauflo-[a-z-]+/)?.[0]))
-            el.dispatchEvent(new Event("ll-rebuild", { bubbles: true, composed: true }));
+          if (el.tagName === "HUI-ERROR-CARD") {
+            const cfg = el._config || el.config || {};
+            const text = `${cfg.error || ""} ${cfg.message || ""} ${el.error || ""}`;
+            const type = String(cfg.origConfig?.type || "");
+            const tag = (type.match(/^custom:(hauflo-[a-z-]+)$/) || text.match(/\b(hauflo-[a-z-]+)\b/) || [])[1];
+            if (tag && text.includes(tag)) {
+              const n = (tries.get(el) || 0) + 1;
+              tries.set(el, n);
+              const rebuild = () => el.dispatchEvent(new Event("ll-rebuild", { bubbles: true, composed: true }));
+              if (n > 3 && !el.nextElementSibling?.classList?.contains("hauflo-fail")) {
+                const ru = langOf(AGENT.hass) === "ru";
+                const box = document.createElement("div");
+                box.className = "hauflo-fail";
+                box.style.cssText = "padding:16px;border-radius:20px;background:var(--ha-card-background,var(--card-background-color,#fff));font:500 15px/1.4 system-ui,sans-serif;display:flex;gap:12px;align-items:center;flex-wrap:wrap";
+                box.innerHTML = `<span style="flex:1;min-width:200px">${ru ? "Не загрузилось — обновите страницу." : "Didn't load — refresh the page."}</span><button style="font:inherit;border:0;border-radius:12px;min-height:44px;padding:8px 16px;cursor:pointer">${ru ? "Обновить" : "Refresh"}</button>`;
+                box.querySelector("button").addEventListener("click", () => location.reload());
+                el.style.display = "none";
+                el.insertAdjacentElement("afterend", box);
+              } else if (customElements.get(tag)) rebuild();
+              else customElements.whenDefined(tag).then(rebuild);
+            }
+          }
           if (el.shadowRoot) walk(el.shadowRoot);
         }
       };
       if (/^\/hauflo-/.test(location.pathname)) walk(document);
     };
-    for (const ms of [1500, 4000, 9000]) setTimeout(heal, ms);
-    window.addEventListener("location-changed", () => setTimeout(heal, 1500));
+    for (const ms of [800, 1500, 3000, 5000, 9000, 15000]) setTimeout(heal, ms);
+    window.addEventListener("location-changed", () => [600, 1500, 4000].forEach((ms) => setTimeout(heal, ms)));
 
     // From the settings sheet: the dashboard's own tab when it has one, otherwise the same page over the screen.
-    const open = (hass) => {
+    const find = (root, sel) => {
+      for (const el of root.querySelectorAll("*")) {
+        if (el.matches(sel)) return el;
+        const inner = el.shadowRoot && find(el.shadowRoot, sel);
+        if (inner) return inner;
+      }
+      return null;
+    };
+    // The card inside «Сервис» (or its own tab): scrolled to once it's drawn — to «Нет дома» when asked.
+    const reach = (part, left = 30) => {
+      const el = find(document, "hauflo-automations");
+      const target = el && (part ? el.shadowRoot?.querySelector(part) : el);
+      if (target && el.data) return target.scrollIntoView({ behavior: REDUCED ? "auto" : "smooth", block: "start" });
+      if (left > 0) setTimeout(() => reach(part, left - 1), 200);
+    };
+    const open = (hass, part) => {
       const panel = document.querySelector("home-assistant")?.shadowRoot?.querySelector("home-assistant-main")?.shadowRoot?.querySelector("ha-drawer partial-panel-resolver ha-panel-lovelace");
       const views = panel?.lovelace?.config?.views || [];
       const base = location.pathname.split("/")[1];
       const page = views.find((v) => JSON.stringify(v.cards || v.sections || []).includes("hauflo-automations"));
       if (page?.path) {
-        history.pushState(null, "", `/${base}/${page.path}`);
-        window.dispatchEvent(new CustomEvent("location-changed", { detail: { replace: false } }));
+        if (location.pathname !== `/${base}/${page.path}`) {
+          history.pushState(null, "", `/${base}/${page.path}`);
+          window.dispatchEvent(new CustomEvent("location-changed", { detail: { replace: false } }));
+        }
+        setTimeout(() => reach(part), 300);
         return;
       }
       const wrap = document.createElement("div");
@@ -3549,7 +4291,7 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
       wrap.appendChild(el);
       document.body.appendChild(wrap);
     };
-    return { open };
+    return { open, Automations };
   })();
 
   // --- «Настройки» of the client's dashboard (owner 27.10: «непонятно, как переключить тему»; «видимый переключатель не
@@ -3575,6 +4317,8 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
         large: "Крупно", compact: "Компактно", reset: "Как настроил интегратор",
         viewHint: (d) => `Только для вас, на этом и других ваших устройствах. Интегратор настроил: ${d}.`,
         viewSaved: "Сохранено для вас.", viewError: "Не сохранилось — проверьте связь с домом.",
+        names: "Названия блоков", namesHint: "Для всего дома — так увидят все жители. Пусто — как у интегратора. Названия сохраняются при следующих выкатках.",
+        save: "Сохранить названия", namesSaved: "Сохранено для всего дома.", namesError: "Не сохранилось — нет связи с домом или агент Hauflo устарел (нужен 0.14.7+).",
       },
       en: {
         title: "Settings", close: "Close", theme: "Theme", light: "Light", dark: "Dark", auto: "As the phone",
@@ -3594,6 +4338,8 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
         large: "Large", compact: "Compact", reset: "As the integrator set it",
         viewHint: (d) => `Just for you, on this and your other devices. The integrator set: ${d}.`,
         viewSaved: "Saved for you.", viewError: "Not saved — check the link to the house.",
+        names: "Block titles", namesHint: "For the whole house — everyone living here sees them. Empty — as the integrator set it. The titles stay over the next deploys.",
+        save: "Save titles", namesSaved: "Saved for the whole house.", namesError: "Not saved — no link to the house, or the Hauflo agent is out of date (0.14.7+ needed).",
       },
     };
     const root = () => document.querySelector("home-assistant");
@@ -3660,6 +4406,9 @@ ha-icon{--mdc-icon-size:20px}
 details{margin-top:10px;font:400 13px Onest,sans-serif;color:var(--eh-ink2,var(--secondary-text-color))}summary{cursor:pointer;min-height:32px;display:flex;align-items:center}
 ul{margin:4px 0 0;padding:0 0 0 18px}li{margin:2px 0}
 .seg.two{grid-template-columns:1fr 1fr}.vl{font:500 13px Onest,sans-serif;margin:12px 2px 6px}
+.nm{display:flex;flex-direction:column;gap:8px}.nm label{display:flex;flex-direction:column;gap:4px;font:400 12px Onest,sans-serif;color:var(--eh-ink2,var(--secondary-text-color))}
+.nm input{min-height:44px;padding:0 12px;border-radius:14px;border:1px solid var(--divider-color,rgba(127,127,127,.3));background:var(--eh-track,rgba(127,127,127,.08));color:inherit;font:500 15px Onest,sans-serif;width:100%}
+.nm input:focus{outline:2px solid var(--eh-ice,#3C82F0);outline-offset:1px}
 .reset{margin-top:10px;min-height:40px;padding:0 14px;border:0;border-radius:14px;background:var(--eh-track,rgba(127,127,127,.12));color:inherit;font:500 13px Onest,sans-serif;cursor:pointer}
 .go{display:flex;align-items:center;gap:12px;width:100%;margin:18px 0 0;padding:14px;border:0;border-radius:20px;background:var(--eh-track,rgba(127,127,127,.12));color:inherit;text-align:left;cursor:pointer;min-height:64px}
 .go span{flex:1;display:flex;flex-direction:column;gap:2px}.go b{font:600 15px Onest,sans-serif}.go small{font:400 12px/1.35 Onest,sans-serif;color:var(--eh-ink2,var(--secondary-text-color))}.go i{font-style:normal;font-size:22px;opacity:.6}.go ha-icon{color:var(--eh-amber,#E8901F)}
@@ -3673,6 +4422,8 @@ ul{margin:4px 0 0;padding:0 0 0 18px}li{margin:2px 0}
           if (Array.isArray(v)) return v.forEach(walk);
           if (!v || typeof v !== "object") return;
           if (v.scene_layout && out.scenes === undefined) out.scenes = v.scene_layout;
+          // The blocks the client may rename, each with the title the integrator's deploy gave it (the first one seen).
+          if (typeof v.block === "string" && typeof v.type === "string" && v.type.startsWith("custom:hauflo-") && !(v.block in (out._blocks ||= {}))) out._blocks[v.block] = String(v.title || v.block);
           if (v.type === "custom:hauflo-climate" && v.size_class && !v.zones) {
             const k = v.size_class === "floor" ? "floor" : "climate";
             // The room's main one says it: a second thermostat of a room is a line anyway.
@@ -3707,6 +4458,18 @@ ul{margin:4px 0 0;padding:0 0 0 18px}li{margin:2px 0}
       let busy = false;
       let defs = {};
       let viewRes = "";
+      let namesRes = "";
+      let typed = null;
+      loadTitles(h);
+      /** «Названия блоков» (owner 28.10): for the whole house, kept by the agent; the integrator's title as the placeholder. */
+      const namesBlock = () => {
+        const blocks = Object.entries(defs._blocks || {});
+        if (!blocks.length) return "";
+        const own = TITLES.data || {};
+        return `<p class="vl">${esc(w.names)}</p><div class="nm">${blocks
+          .map(([k, t]) => `<label><span>${esc(t)}</span><input data-name="${esc(k)}" maxlength="40" placeholder="${esc(t)}" value="${esc(typed?.[k] ?? own[k] ?? "")}" autocomplete="off"></label>`)
+          .join("")}</div><p class="hint">${esc(w.namesHint)}</p><button class="reset" data-names-save>${esc(w.save)}</button>${namesRes ? `<p class="res">${esc(namesRes)}</p>` : ""}`;
+      };
       /** «Вид»: scenes in blocks / on top, ACs and floor heating large / compact — what this dashboard has. */
       const viewBlock = () => {
         const opts = [
@@ -3714,15 +4477,19 @@ ul{margin:4px 0 0;padding:0 0 0 18px}li{margin:2px 0}
           ["climate", w.climate, [["large", w.large], ["compact", w.compact]]],
           ["floor", w.floor, [["large", w.large], ["compact", w.compact]]],
         ].filter(([k]) => defs[k] !== undefined);
-        if (!opts.length) return "";
+        const names = namesBlock();
+        if (!opts.length) return names ? `<div class="caps">${esc(w.view)}</div>${names}${Object.keys(TITLES.data || {}).length ? `<button class="reset" data-view-reset>${esc(w.reset)}</button>` : ""}${viewRes ? `<p class="res">${esc(viewRes)}</p>` : ""}` : "";
         const mine = VIEW.data || {};
         const said = opts.map(([k, label, vs]) => `${label.toLowerCase()} — ${vs.find(([v]) => v === defs[k])[1].toLowerCase()}`).join("; ");
         return `<div class="caps">${esc(w.view)}</div>${opts
           .map(([k, label, vs]) => `<p class="vl">${esc(label)}</p><div class="seg two" role="group" aria-label="${esc(label)}">${vs.map(([v, l]) => `<button data-view="${k}:${v}" aria-pressed="${(mine[k] ?? defs[k]) === v}">${esc(l)}</button>`).join("")}</div>`)
           .join("")}
-<p class="hint">${esc(w.viewHint(said))}</p>${Object.keys(mine).some((k) => defs[k] !== undefined) ? `<button class="reset" data-view-reset>${esc(w.reset)}</button>` : ""}${viewRes ? `<p class="res">${esc(viewRes)}</p>` : ""}`;
+<p class="hint">${esc(w.viewHint(said))}</p>${names}${Object.keys(mine).some((k) => defs[k] !== undefined) || Object.keys(TITLES.data || {}).length ? `<button class="reset" data-view-reset>${esc(w.reset)}</button>` : ""}${viewRes ? `<p class="res">${esc(viewRes)}</p>` : ""}`;
       };
       const draw = () => {
+        // What's being typed survives a redraw (the season loads after the sheet opens).
+        const inputs = [...sr.querySelectorAll("input[data-name]")];
+        if (inputs.length) typed = Object.fromEntries(inputs.map((i) => [i.dataset.name, i.value]));
         const th = themeNow();
         const acs = info?.acs || [];
         const on = acs.filter((a) => a.state === "heat" || a.state === "cool");
@@ -3763,11 +4530,31 @@ ${acs.length ? `<div class="caps">${esc(w.season)}</div><p class="now" data-now>
           draw();
         }));
         sr.querySelector("[data-view-reset]")?.addEventListener("click", async () => {
+          // «Как настроил интегратор»: the person's view and the house's block titles.
           try {
             await setViewPrefs(hassOf(), {});
+            if (Object.keys(TITLES.data || {}).length) await setTitles(hassOf(), {});
+            typed = null;
+            sr.querySelectorAll("input[data-name]").forEach((i) => (i.value = ""));
             viewRes = w.viewSaved;
           } catch (e) {
             viewRes = w.viewError;
+          }
+          draw();
+        });
+        sr.querySelector("[data-names-save]")?.addEventListener("click", async () => {
+          const next = {};
+          sr.querySelectorAll("input[data-name]").forEach((i) => {
+            const v = i.value.replace(/\s+/g, " ").trim().slice(0, 40);
+            if (v) next[i.dataset.name] = v;
+          });
+          try {
+            await setTitles(hassOf(), next);
+            typed = null;
+            sr.querySelectorAll("input[data-name]").forEach((i) => (i.value = TITLES.data?.[i.dataset.name] ?? ""));
+            namesRes = w.namesSaved;
+          } catch (e) {
+            namesRes = w.namesError;
           }
           draw();
         });
@@ -4045,7 +4832,7 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
     if (what === "none") return "";
     if (what === "name") return null;
     if (what === "last_changed" || what === "last_updated") return ago(s[what]);
-    return nd(s) ? "нет связи" : k.word(s);
+    return (k.action ? !s || s.state === "unavailable" : nd(s)) ? "нет связи" : k.word(s);
   };
   class Entity extends EHCard {
     watched() {
@@ -4150,6 +4937,7 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
   ];
   STUB["hauflo-entity"] = (h) => ({ entity: ids(h, "light", 1)[0] || ids(h, "switch", 1)[0] || Object.keys(h?.states || {})[0] });
   STUB["hauflo-title"] = (h) => ({ title: langOf(h) === "ru" ? "Гостиная" : "Living room" });
+  STUB["hauflo-area"] = (h) => ({ area: Object.keys(h?.areas || {})[0] });
 
   // --- HA's card picker (owner 28.10: «как сделать любой элемент в нашем стиле с любой интеграцией»): every card is in
   // «Добавить карточку» → search «Hauflo», named in the HA user's language, starts filled with this home's entities of the
@@ -4171,10 +4959,12 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
     "hauflo-media": [["Hauflo · Мультимедиа", "Любой media_player: обложка, управление, громкость"], ["Hauflo · Media", "Any media_player: artwork, controls, volume"]],
     "hauflo-graph": [["Hauflo · График", "Датчики за последние часы — энергия, температура, что угодно"], ["Hauflo · Graph", "Sensors over the last hours — energy, temperature, anything"]],
     "hauflo-auto": [["Hauflo · Автоматизации", "Автоматизации и скрипты: вкл/выкл, запуск, когда сработали"], ["Hauflo · Automations", "Automations and scripts: on/off, run, last triggered"]],
+    "hauflo-automations": [["Hauflo · Правила дома", "Рассвет, закат, время, будильник и «Нет дома» — правила семьи"], ["Hauflo · Home rules", "Sunrise, sunset, time, alarm clock and «Away» — the family's rules"]],
     "hauflo-status": [["Hauflo · Диспетчеризация", "Инженерные системы: работает, авария, нет связи"], ["Hauflo · Building systems", "Plant status: running, fault, offline"]],
     "hauflo-security": [["Hauflo · Охрана", "Любая охранная панель, замки, двери и окна"], ["Hauflo · Security", "Any alarm panel, locks, doors and windows"]],
     "hauflo-camera": [["Hauflo · Камера", "Любая камера: кадр, тап — трансляция"], ["Hauflo · Camera", "Any camera: snapshot, tap for live view"]],
     "hauflo-acs": [["Hauflo · Кондиционеры", "Все кондиционеры: какие работают, температура, выключить все"], ["Hauflo · Air conditioners", "All ACs: which run, temperature, all off"]],
+    "hauflo-area": [["Hauflo · Комната HA", "Всё, что Home Assistant отнёс к комнате (любые интеграции), — в стиле Hauflo"], ["Hauflo · HA area", "Everything Home Assistant puts in an area (any integration), in the Hauflo style"]],
     "hauflo-devices": [["Hauflo · Устройства", "Вентиляторы, клапаны, замки, пылесосы, бойлеры, розетки…"], ["Hauflo · Devices", "Fans, valves, locks, vacuums, boilers, plugs…"]],
   };
   const dc = (...classes) => (s) => classes.includes(s.attributes.device_class);
@@ -4240,10 +5030,11 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
     "hauflo-camera": [E("entity", "camera"), G(TXT("name"), NUM("refresh", 2, 600))],
     "hauflo-acs": [G(TXT("title"), SEL("kind", [["ac", "Кондиционеры", "Air conditioners"], ["floor_heating", "Тёплые полы", "Floor heating"]])), E("entities", "climate", true)],
     "hauflo-devices": [TXT("title"), E("entities", null, true)],
+    "hauflo-area": [{ name: "area", selector: { area: {} } }, TXT("title")],
   };
   const LABEL = {
-    ru: { label: "Подпись", name: "Название", title: "Заголовок", subtitle: "Подзаголовок", icon: "Иконка", icon_type: "Что слева", color: "Цвет, когда включено", layout: "Расположение", show_level: "Полоска уровня (яркость, положение)", primary_info: "Первая строка", secondary_info: "Вторая строка", tap_action: "Нажатие", hold_action: "Удержание", double_tap_action: "Двойное нажатие", path: "Страница по тапу (путь)", picture: "Фото комнаты (URL)", temperature: "Температура (термостаты, датчики)", humidity: "Влажность", lights: "Свет", alarms: "Аварийные датчики", devices: "Устройства (нет связи)", weather: "Погода", climate: "Термостат", covers: "Шторы", kind: "Вид", scenes: "Сценарии", entity: "Объект", entities: "Объекты", days: "Дней прогноза", forecast: "Прогноз", pm25: "PM2.5", pm10: "PM10", co2: "CO₂", voc: "Летучие в-ва", hours: "Часов", locks: "Замки", openings: "Двери, окна, движение", refresh: "Обновлять кадр, с", chart: "График за сутки", hide_ok: "Прятать, когда всё в норме", compact: "Компактно (строкой)", heat_setpoint: "Уставка нагрева (number)", cool_setpoint: "Уставка охлаждения (number)", scene_layout: "Где сценарии" },
-    en: { label: "Label", name: "Name", title: "Title", subtitle: "Subtitle", icon: "Icon", icon_type: "On the left", color: "Colour when on", layout: "Layout", show_level: "Level bar (brightness, position)", primary_info: "First line", secondary_info: "Second line", tap_action: "Tap", hold_action: "Hold", double_tap_action: "Double tap", path: "Page on tap (path)", picture: "Room photo (URL)", temperature: "Temperature (thermostats, sensors)", humidity: "Humidity", lights: "Lights", alarms: "Alarm sensors", devices: "Devices (offline check)", weather: "Weather", climate: "Thermostat", covers: "Blinds", kind: "Kind", scenes: "Scenes", entity: "Entity", entities: "Entities", days: "Forecast days", forecast: "Forecast", pm25: "PM2.5", pm10: "PM10", co2: "CO₂", voc: "VOC", hours: "Hours", locks: "Locks", openings: "Doors, windows, motion", refresh: "Snapshot refresh, s", chart: "24 h chart", hide_ok: "Hide when all is OK", compact: "Compact (one row)", heat_setpoint: "Heating setpoint (number)", cool_setpoint: "Cooling setpoint (number)", scene_layout: "Where scenes go" },
+    ru: { area: "Комната в Home Assistant", label: "Подпись", name: "Название", title: "Заголовок", subtitle: "Подзаголовок", icon: "Иконка", icon_type: "Что слева", color: "Цвет, когда включено", layout: "Расположение", show_level: "Полоска уровня (яркость, положение)", primary_info: "Первая строка", secondary_info: "Вторая строка", tap_action: "Нажатие", hold_action: "Удержание", double_tap_action: "Двойное нажатие", path: "Страница по тапу (путь)", picture: "Фото комнаты (URL)", temperature: "Температура (термостаты, датчики)", humidity: "Влажность", lights: "Свет", alarms: "Аварийные датчики", devices: "Устройства (нет связи)", weather: "Погода", climate: "Термостат", covers: "Шторы", kind: "Вид", scenes: "Сценарии", entity: "Объект", entities: "Объекты", days: "Дней прогноза", forecast: "Прогноз", pm25: "PM2.5", pm10: "PM10", co2: "CO₂", voc: "Летучие в-ва", hours: "Часов", locks: "Замки", openings: "Двери, окна, движение", refresh: "Обновлять кадр, с", chart: "График за сутки", hide_ok: "Прятать, когда всё в норме", compact: "Компактно (строкой)", heat_setpoint: "Уставка нагрева (number)", cool_setpoint: "Уставка охлаждения (number)", scene_layout: "Где сценарии" },
+    en: { area: "Home Assistant area", label: "Label", name: "Name", title: "Title", subtitle: "Subtitle", icon: "Icon", icon_type: "On the left", color: "Colour when on", layout: "Layout", show_level: "Level bar (brightness, position)", primary_info: "First line", secondary_info: "Second line", tap_action: "Tap", hold_action: "Hold", double_tap_action: "Double tap", path: "Page on tap (path)", picture: "Room photo (URL)", temperature: "Temperature (thermostats, sensors)", humidity: "Humidity", lights: "Lights", alarms: "Alarm sensors", devices: "Devices (offline check)", weather: "Weather", climate: "Thermostat", covers: "Blinds", kind: "Kind", scenes: "Scenes", entity: "Entity", entities: "Entities", days: "Forecast days", forecast: "Forecast", pm25: "PM2.5", pm10: "PM10", co2: "CO₂", voc: "VOC", hours: "Hours", locks: "Locks", openings: "Doors, windows, motion", refresh: "Snapshot refresh, s", chart: "24 h chart", hide_ok: "Hide when all is OK", compact: "Compact (one row)", heat_setpoint: "Heating setpoint (number)", cool_setpoint: "Cooling setpoint (number)", scene_layout: "Where scenes go" },
   };
   const idOf = (x) => (typeof x === "string" ? x : x?.entity);
   const flat = (schema) => schema.flatMap((s) => (s.type === "grid" ? flat(s.schema) : [s]));
@@ -4287,6 +5078,25 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
         return;
       }
       const fields = flat(schema);
+      // On a dashboard Hauflo made: what a change here means (owner 28.10: «не понял, почему карточки не редактируются»).
+      if (!this._note && /^\/hauflo-/.test(location.pathname)) {
+        this._note = document.createElement("div");
+        this._note.style.cssText = "margin:0 0 16px;padding:10px 14px;border-radius:12px;background:rgba(127,127,127,.1);font-size:13px;line-height:1.45;color:var(--secondary-text-color)";
+        this._note.textContent =
+          langOf(this._hass) === "ru"
+            ? "Свои карточки можно добавлять — Hauflo сохранит их при следующей выкатке. Названия блоков — «Настройки → Вид» на панели."
+            : "You can add your own cards — Hauflo keeps them on the next deploy. Block titles — «Settings → View» on the dashboard.";
+        this.prepend(this._note);
+        this._noteBase = this._note.textContent;
+      }
+      // A house name for this block wins over the «Заголовок» here — said, or a changed title looks ignored.
+      if (this._note) {
+        loadTitles(this._hass);
+        const own = this._config.block && TITLES.data?.[this._config.block];
+        const ru = langOf(this._hass) === "ru";
+        const text = own ? `${this._noteBase} ${ru ? `Для этого блока в доме задано название «${own}» — оно показывается вместо заголовка (сбросить — там же).` : `This block has a house name «${own}» — it is shown instead of the title (reset it there).`}` : this._noteBase;
+        if (this._note.textContent !== text) this._note.textContent = text;
+      }
       if (!this._form) {
         this._form = document.createElement("ha-form");
         this._form.computeLabel = (s) => LABEL[langOf(this._hass)][s.name] || s.name;
@@ -4317,8 +5127,8 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
     }
   }
   const picker = (tag, cls, name, description) => {
-    if (STUB[tag] && !cls.getStubConfig) cls.getStubConfig = (hass) => stubOf(tag, hass);
-    if (FORM[tag] && !cls.getConfigElement)
+    if (STUB[tag] && !Object.hasOwn(cls, "getStubConfig")) cls.getStubConfig = (hass) => stubOf(tag, hass);
+    if (FORM[tag] && !Object.hasOwn(cls, "getConfigElement"))
       cls.getConfigElement = () => {
         const e = document.createElement("hauflo-card-editor");
         e.tag = tag;
@@ -4346,11 +5156,14 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
     if (!reg.get("home-assistant") && !reg.get("hui-view")) return setTimeout(define, 120);
     window.customCards = window.customCards || [];
     if (!reg.get("hauflo-card-editor")) reg.define("hauflo-card-editor", Editor);
-    for (const [tag, cls, name, description] of [...MORE, ...cards]) {
+    for (const [tag, cls, name, description] of [...MORE, ...cards, ["hauflo-automations", AUTO.Automations]]) {
       if (reg.get(tag)) continue;
       picker(tag, cls, name, description);
       reg.define(tag, cls);
     }
+    // The whole page in a picker preview is too much.
+    const auto = window.customCards.find((c) => c.type === "hauflo-automations");
+    if (auto) Object.defineProperty(auto, "preview", { value: false });
   };
   define();
 })();

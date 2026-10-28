@@ -117,7 +117,8 @@ async def test_sunset_rule_end_to_end(hass: HomeAssistant, hass_client, hass_rea
         {"action": "cover.close_cover", "target": {"entity_id": BLIND}},
         {"action": "light.turn_on", "target": {"entity_id": LIGHT}, "data": {"brightness_pct": 30}},
     ]
-    assert mine["initial_state"] is True and mine["alias"] == "Hauflo · Закат −15 мин"
+    # No initial_state: HA keeps a switch a person made in HA over restarts (HA expert 28.10).
+    assert "initial_state" not in mine and mine["alias"] == "Hauflo · Закат −15 мин" and mine["description"] in ("Создано в Hauflo.", "Made in Hauflo.")
     assert [a for a in _file(hass) if a.get("id") == THEIRS["id"]] == [THEIRS]  # the integrator's stays as it was
     eid = er.async_get(hass).async_get_entity_id("automation", "automation", rid)
     assert eid and hass.states.get(eid).state == "on"
@@ -134,7 +135,8 @@ async def test_sunset_rule_end_to_end(hass: HomeAssistant, hass_client, hass_rea
     assert res.status == 200
     await hass.async_block_till_done()
     assert hass.states.get(eid).state == "off"
-    assert [a for a in _file(hass) if a.get("id") == rid][0]["initial_state"] is False
+    assert [a for a in _file(hass) if a.get("id") == rid][0] == mine  # switching never rewrites the file
+    assert (await (await client.get(URL)).json())["rules"][0]["enabled"] is False
     res = await client.post(URL, json={"op": "save", "rule": {**SUNSET, "id": rid, "days": ["mon", "fri"], "enabled": True}})
     assert res.status == 200
     await hass.async_block_till_done()
@@ -212,7 +214,8 @@ async def test_time_alarm_and_room(hass: HomeAssistant, hass_client, entry, bus)
     r = await (await client.post(URL, json={"op": "save", "rule": room})).json()
     mine = [a for a in _file(hass) if a.get("id") == r["id"]][0]
     assert mine["triggers"] == [{"trigger": "time", "at": "23:30:00"}]
-    assert mine["actions"][0] == {"action": "light.turn_off", "target": {"entity_id": [LIGHT, LAMP]}}  # Hauflo's lights only
+    # Every light of the room is Hauflo's: the room itself (a lamp added later follows).
+    assert mine["actions"][0] == {"action": "light.turn_off", "target": {"area_id": entry.area}}
     assert mine["actions"][1] == {"action": "scene.turn_on", "target": {"entity_id": SCENE}}
 
     # Android: 20 min before the phone's alarm the light comes up 1 → 25 % in steps (KNX has no transition), the blind
@@ -252,11 +255,79 @@ async def test_time_alarm_and_room(hass: HomeAssistant, hass_client, entry, bus)
     assert [m[0] for m in bus] == ["cover.open_cover"]
 
 
+async def test_room_with_the_integrators_light_is_listed(hass: HomeAssistant, hass_client, entry, bus) -> None:
+    er.async_get(hass).async_update_entity(HAND, area_id=entry.area)
+    client = await hass_client()
+    rule = {"when": {"event": "time", "at": "23:30"}, "actions": [{"do": "room_off", "area_id": entry.area}]}
+    r = await (await client.post(URL, json={"op": "save", "rule": rule})).json()
+    mine = [a for a in _file(hass) if a.get("id") == r["id"]][0]
+    assert mine["actions"] == [{"action": "light.turn_off", "target": {"entity_id": [LIGHT, LAMP]}}]  # never HAND
+
+
+async def test_edited_in_ha_is_never_overwritten(hass: HomeAssistant, hass_client, entry, bus) -> None:
+    """Edited in HA's own editor (HA expert 28.10): Hauflo says so, switching keeps the edit, a save is refused unless
+    «Вернуть как в Hauflo» (force) was asked."""
+    client = await hass_client()
+    r = await (await client.post(URL, json={"op": "save", "rule": SUNSET})).json()
+    rid = r["id"]
+    await hass.async_block_till_done()
+    data = _file(hass)
+    for a in data:
+        if a.get("id") == rid:
+            a["actions"] = [{"action": "light.turn_on", "target": {"entity_id": LIGHT}, "data": {"brightness_pct": 70}}]
+    Path(hass.config.path("automations.yaml")).write_text(dump(data))
+    listed = (await (await client.get(URL)).json())["rules"]
+    assert listed[0]["changed"] is True
+    assert (await client.post(URL, json={"op": "enable", "id": rid, "enabled": False})).status == 200
+    assert [a for a in _file(hass) if a.get("id") == rid][0]["actions"][0]["data"] == {"brightness_pct": 70}
+    res = await client.post(URL, json={"op": "save", "rule": {**SUNSET, "id": rid}})
+    assert res.status == 409
+    assert [a for a in _file(hass) if a.get("id") == rid][0]["actions"][0]["data"] == {"brightness_pct": 70}
+    res = await client.post(URL, json={"op": "save", "rule": {**SUNSET, "id": rid}, "force": True})
+    assert res.status == 200
+    assert (await (await client.get(URL)).json())["rules"][0]["changed"] is False
+
+
+async def test_room_blinds_as_one(hass: HomeAssistant, hass_client, entry, bus) -> None:
+    """«Все шторы спальни» as one action (family review 28.10): the room's own Hauflo blinds, never its garage door."""
+    er.async_get(hass).async_update_entity(GARAGE, area_id=entry.area)
+    client = await hass_client()
+    got = await (await client.get(URL)).json()
+    assert got["targets"]["cover_rooms"] == [{"area_id": entry.area, "name": "Гостиная", "covers": 1, "position": True}]
+    rule = {"when": {"event": "time", "at": "21:00"}, "actions": [{"do": "room_covers", "area_id": entry.area, "cover": "position", "value": 30}]}
+    r = await (await client.post(URL, json={"op": "save", "rule": rule})).json()
+    mine = [a for a in _file(hass) if a.get("id") == r["id"]][0]
+    assert mine["actions"] == [{"action": "cover.set_cover_position", "target": {"entity_id": [BLIND]}, "data": {"position": 30}}]
+    for bad in ({"do": "room_covers", "area_id": "nowhere", "cover": "close"}, {"do": "room_covers", "area_id": entry.area, "cover": "unlock"}, {"do": "room_covers", "area_id": entry.area, "cover": "position", "value": 101}):
+        res = await client.post(URL, json={"op": "save", "rule": {**rule, "actions": [bad]}})
+        assert res.status == 400, bad
+
+
+async def test_time_zone_admin_only(hass: HomeAssistant, hass_client, hass_read_only_access_token, entry) -> None:
+    """HA in UTC showed a Moscow family sunset at 13:58 (family review 28.10): the owner may fix the zone, nobody else."""
+    reader = await hass_client(hass_read_only_access_token)
+    assert (await reader.post(URL, json={"op": "timezone", "time_zone": "Europe/Moscow"})).status == 403
+    admin = await hass_client()
+    for bad in ("Mars/Olympus", "", 5):
+        assert (await admin.post(URL, json={"op": "timezone", "time_zone": bad})).status == 400
+    res = await admin.post(URL, json={"op": "timezone", "time_zone": "Europe/Moscow"})
+    assert res.status == 200 and (await res.json())["time_zone"] == "Europe/Moscow"
+    assert hass.config.time_zone == "Europe/Moscow"
+
+
 async def test_location(hass: HomeAssistant, hass_client, hass_read_only_access_token, entry) -> None:
     hass.config.latitude, hass.config.longitude = 0, 0
-    client = await hass_client(hass_read_only_access_token)
-    got = await (await client.get(URL)).json()
+    family = await hass_client(hass_read_only_access_token)
+    got = await (await family.get(URL)).json()
     assert got["location"]["set"] is False and len(got["days"]) == 8 and got["days"][0]["sunset"] is None  # times only
+    # Security review 28.10: a household member (not an admin) moved HA's home (zone.home) — now an admin's only.
+    for body in ({"op": "location", "latitude": 59.938, "longitude": 30.314}, {"op": "detect"}):
+        res = await family.post(URL, json=body)
+        assert res.status == 403, body
+        assert (await res.json())["code"] == "admin_only"
+    assert (hass.config.latitude, hass.config.longitude) == (0, 0)
+    assert hass.states.get("zone.home") is None or (hass.states.get("zone.home").attributes.get("latitude"), hass.states.get("zone.home").attributes.get("longitude")) == (0, 0)
+    client = await hass_client()  # the owner (an admin)
     for bad in ({"latitude": 91, "longitude": 0}, {"latitude": "59", "longitude": 30}, {"latitude": 59.9, "longitude": 30.3, "location_name": "x"}, {"latitude": 0, "longitude": 0}, {"latitude": float("nan"), "longitude": 1}):
         res = await client.post(URL, data=__import__("json").dumps({"op": "location", **bad}).replace("NaN", "NaN"), headers={"Content-Type": "application/json"})
         assert res.status == 400, bad
@@ -275,6 +346,69 @@ async def test_location(hass: HomeAssistant, hass_client, hass_read_only_access_
         d = await (await client.post(URL, json={"op": "detect"})).json()
     assert d["city"] == "Moscow" and d["latitude"] == 55.75 and d["region"] == "Moscow" and "ip" not in d and "zip_code" not in d
     assert hass.config.latitude == 59.938  # detecting never saves
+
+
+NIGHT = {"when": {"event": "time", "at": "23:30"}, "actions": [{"entity_id": SCENE, "do": "on"}]}
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "# Integrator: keep the gate rule first\n" + dump([THEIRS]),
+        dump([THEIRS]).replace("alias:", "alias:  ", 1),  # hand formatting
+        dump([THEIRS]) + "- !include more_automations.yaml\n",
+        dump([{**THEIRS, "alias": "x"}]).replace("alias: x", "alias: !secret gate_alias"),
+        "!include_dir_list automations/\n",
+    ],
+    ids=["comment", "hand-formatting", "include", "secret", "include-dir"],
+)
+async def test_not_plain_file_is_never_rewritten(hass: HomeAssistant, hass_client, hass_read_only_access_token, entry, bus, text) -> None:
+    # Security review 28.10: the agent re-dumped automations.yaml — comments and !include of the integrator's gone.
+    path = Path(hass.config.path("automations.yaml"))
+    path.write_text(text)
+    client = await hass_client(hass_read_only_access_token)
+    res = await client.post(URL, json={"op": "save", "rule": NIGHT})
+    assert res.status == 409, await res.text()
+    got = await res.json()
+    assert got["code"] == "not_plain" and "automations.yaml" in got["message"]
+    assert path.read_text() == text  # byte for byte
+    assert not list(path.parent.glob("automations.yaml.hauflo-bak-*"))
+    assert (await (await client.get(URL)).json())["rules"] == []  # nothing half-saved
+
+
+async def test_backups_lock_and_migration(hass: HomeAssistant, hass_client, entry, bus) -> None:
+    path = Path(hass.config.path("automations.yaml"))
+    # Migration: a rule agent 0.14.4 wrote tonight sits in the file next to the integrator's (both as HA dumps them).
+    client = await hass_client()
+    old = await (await client.post(URL, json={"op": "save", "rule": NIGHT})).json()
+    assert path.read_text() == dump([THEIRS, [a for a in _file(hass) if a["id"] == old["id"]][0]])
+    # Two saves at once (two phones): both land — one read-modify-write at a time.
+    a, b = await asyncio.gather(*(client.post(URL, json={"op": "save", "rule": {**NIGHT, "name": n}}) for n in ("A", "B")))
+    assert a.status == b.status == 200
+    ids = {r["id"] for r in (await a.json(), await b.json())}
+    assert ids | {old["id"], THEIRS["id"]} == {x["id"] for x in _file(hass)}
+    # The old rule still edits, enables and deletes.
+    assert (await client.post(URL, json={"op": "enable", "id": old["id"], "enabled": False})).status == 200
+    assert (await client.post(URL, json={"op": "delete", "id": old["id"]})).status == 200
+    assert old["id"] not in {x["id"] for x in _file(hass)}
+    # A copy before every write, the last 3 kept; the newest is the file as it was before the delete.
+    baks = sorted(path.parent.glob("automations.yaml.hauflo-bak-*"))
+    assert len(baks) == 3
+    assert old["id"] in baks[-1].read_text() and load_yaml(str(baks[-1]))[0] == THEIRS
+    assert [x for x in _file(hass) if x["id"] == THEIRS["id"]] == [THEIRS]
+
+
+async def test_empty_or_missing_file(hass: HomeAssistant, hass_client, entry, bus) -> None:
+    path = Path(hass.config.path("automations.yaml"))
+    client = await hass_client()
+    for text in ("[]", "", None):
+        if text is None:
+            path.unlink()
+        else:
+            path.write_text(text)
+        res = await client.post(URL, json={"op": "save", "rule": NIGHT})
+        assert res.status == 200, (text, await res.text())
+        assert len(_file(hass)) == 1
 
 
 async def test_tunnel_cannot_reach(hass: HomeAssistant) -> None:

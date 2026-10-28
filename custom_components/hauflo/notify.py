@@ -28,10 +28,12 @@ from homeassistant.components import persistent_notification
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import Event, HomeAssistant, State, callback
-from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er
+from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er, label_registry as lr
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util, slugify
+
+from .const import LOCKED_CODE, MONITOR_LABELS
 
 _LOGGER = logging.getLogger(__name__)
 STORE_KEY = "hauflo.notify"
@@ -40,6 +42,9 @@ ACTION_EVENT = "mobile_app_notification_action"
 ACK = "HAUFLO_ACK"
 # What a push button may do: shut a valve / switch something off — never unlock, open, arm (security review 25.10).
 RUN_SERVICES = {"valve.close_valve", "switch.turn_off"}
+# Loud (critical: rings through silent mode) only for what endangers the house; a repeat no more often than this.
+CRITICAL_CLASSES = {"moisture", "smoke", "gas", "carbon_monoxide", "heat", "problem", "safety"}
+REPEAT_MIN = 5
 RUN = "HAUFLO_RUN"
 # Device classes worth an alarm, for Hauflo's suggestions.
 ALARM_CLASSES = {"connectivity", "moisture", "smoke", "gas", "carbon_monoxide", "problem", "safety", "heat", "cold", "tamper", "door", "window", "opening", "motion", "battery"}
@@ -95,24 +100,96 @@ HEARTBEAT = re.compile(r"heartbeat|hearbeat|связь|связи|link|alive|onl
 SOURCE_DOMAINS = ("binary_sensor.", "sensor.")
 
 
-def _source_ok(hass: HomeAssistant | None, eid: str) -> bool:
+def labelled(hass: HomeAssistant | None, eid: str) -> bool:
+    """The integrator marked it «Hauflo мониторинг» in HA (on the entity or its device) — HA's admin's say, not the
+    cloud's."""
+    if hass is None:
+        return False
+    try:
+        entry = er.async_get(hass).async_get(eid)
+        if entry is None:
+            return False
+        ids = set(entry.labels)
+        if entry.device_id and (device := dr.async_get(hass).async_get(entry.device_id)):
+            ids |= set(device.labels)
+        reg = lr.async_get(hass)
+        return any((label := reg.async_get_label(i)) is not None and label.name.casefold() in MONITOR_LABELS for i in ids)
+    except Exception:  # noqa: BLE001 — not knowable: not marked
+        return False
+
+
+def _source_ok(hass: HomeAssistant | None, eid: str, owns: Callable[[str], bool] | None = None) -> bool:
     """An alarm watches a sensor of the house — never a person, a tracker or a phone's own sensors (panel round 6: a
-    rule on «person.…» told the server when the family left)."""
+    rule on «person.…» told the server when the family left) — and only one of Hauflo's own or one the integrator
+    marked «Hauflo мониторинг» in HA (security review 28.10: the cloud put the family's motion sensor on a critical
+    rule repeating every minute)."""
     if not eid.startswith(SOURCE_DOMAINS):
         return False
     entry = er.async_get(hass).async_get(eid) if hass is not None else None
-    return entry is None or entry.platform != "mobile_app"
+    if entry is not None and entry.platform == "mobile_app":
+        return False
+    return bool(owns is not None and owns(eid)) or labelled(hass, eid)
+
+
+def _device_class(hass: HomeAssistant | None, eid: str) -> str | None:
+    if hass is None:
+        return None
+    entry = er.async_get(hass).async_get(eid)
+    dc = (entry.device_class or entry.original_device_class) if entry is not None else None
+    if dc is None and (st := hass.states.get(eid)) is not None:
+        dc = st.attributes.get("device_class")
+    return str(dc) if dc is not None else None
 
 
 def _action_ok(action: dict[str, Any] | None, owns: Callable[[str], bool] | None) -> bool:
-    """A push button closes a valve or switches off one of Hauflo's own switches — never the integrator's gate
-    relay (integrator run 22: a rule from the server turned off «switch.rele_vorot»)."""
+    """A push button closes one of Hauflo's own valves or switches off one of its own switches — never the
+    integrator's gate relay (integrator run 22) nor a valve that isn't Hauflo's (security review 28.10)."""
     if not action:
         return False
     service, eid = str(action.get("service")), str(action.get("entity_id"))
     if service not in RUN_SERVICES or eid.split(".")[0] != service.split(".")[0]:
         return False
-    return service == "valve.close_valve" or (owns is not None and owns(eid))
+    return owns is not None and bool(owns(eid))
+
+
+_SCOPE_RANK = {"off": 0, "critical": 1, "all": 2}
+
+
+def narrowing(new: dict[str, Any], old: dict[str, Any]) -> str | None:
+    """While the owner keeps the house closed, Hauflo may only narrow the alarm rules: fewer sources, recipients,
+    repeats, a rule off, a button gone — never a new rule, source, recipient, button, louder or more often (security
+    review 28.10). Both cleaned. None = narrowing; else what widens."""
+    before = {r["id"]: r for r in old.get("rules") or []}
+    for r in new.get("rules") or []:
+        p = before.get(r["id"])
+        if p is None:
+            return f"new rule {r['id']}"
+        if (r["kind"], r["title"], r["alarm_states"]) != (p["kind"], p["title"], p["alarm_states"]):
+            return f"{r['id']}: changed text or alarm states"
+        if not set(r["sources"]) <= set(p["sources"]):
+            return f"{r['id']}: new source"
+        rc, pc = r["recipients"], p["recipients"]
+        if (rc["all"] and not pc["all"]) or any(not set(rc[k]) <= set(pc[k]) for k in ("people", "groups", "phones")):
+            return f"{r['id']}: new recipient"
+        if r.get("action") and r.get("action") != p.get("action"):
+            return f"{r['id']}: new button"
+        if r["priority"] == "critical" and p["priority"] != "critical":
+            return f"{r['id']}: critical"
+        if r["repeat_min"] and (not p["repeat_min"] or r["repeat_min"] < p["repeat_min"]):
+            return f"{r['id']}: repeats more often"
+        if r["enabled"] and not p["enabled"]:
+            return f"{r['id']}: switched on"
+    groups = {g["id"]: g for g in old.get("groups") or []}
+    for g in new.get("groups") or []:
+        if g["id"] not in groups or not set(g["people"]) <= set(groups[g["id"]]["people"]):
+            return f"group {g['id']}: new people"
+    na, oa = new.get("audience") or {}, old.get("audience") or {}
+    if set(oa) - set(na):
+        return "audience: a setting removed"
+    for k, v in na.items():
+        if _SCOPE_RANK[v] > _SCOPE_RANK[oa[k]] if k in oa else v != "off":
+            return f"audience {k}: more"
+    return None
 
 
 def _button(action: dict[str, Any], name: str) -> str:
@@ -179,12 +256,17 @@ def _clean_rules(raw: Any, hass: HomeAssistant | None = None, owns: Callable[[st
             continue
         rec = r.get("recipients") or {}
         action = r.get("action") if isinstance(r.get("action"), dict) else None
+        sources = [str(s) for s in r["sources"] if _source_ok(hass, str(s), owns)]
+        # Critical only when every source is a safety one (security review 28.10: a motion sensor rang through silent
+        # mode every minute); repeats no more often than every REPEAT_MIN minutes.
+        critical = r.get("priority") == "critical" and bool(sources) and all(_device_class(hass, s) in CRITICAL_CLASSES for s in sources)
+        repeat = max(0, min(_int(r.get("repeat_min")), 240))
         out["rules"].append(
             {
                 "id": str(r["id"]),
                 "kind": str(r.get("kind") or "custom"),
                 "title": str(r.get("title") or "Авария")[:80],
-                "sources": [str(s) for s in r["sources"] if _source_ok(hass, str(s))],
+                "sources": sources,
                 "alarm_states": [str(s) for s in (r.get("alarm_states") or ["on"])],
                 "recipients": {
                     "all": bool(rec.get("all")),
@@ -192,8 +274,8 @@ def _clean_rules(raw: Any, hass: HomeAssistant | None = None, owns: Callable[[st
                     "groups": [str(g) for g in rec.get("groups") or []],
                     "phones": [str(p) for p in rec.get("phones") or [] if PHONE_ID.match(str(p))],
                 },
-                "priority": "critical" if r.get("priority") == "critical" else "normal",
-                "repeat_min": max(0, min(_int(r.get("repeat_min")), 240)),
+                "priority": "critical" if critical else "normal",
+                "repeat_min": max(REPEAT_MIN, repeat) if repeat else 0,
                 "enabled": r.get("enabled", True) is not False,
                 **(
                     {"action": {"title": str(action.get("title") or "")[:40], "service": str(action.get("service") or ""), "entity_id": str(action.get("entity_id") or "")}}
@@ -224,6 +306,10 @@ def _int(v: Any) -> int:
         return int(float(v or 0))
     except (TypeError, ValueError):
         return 0
+
+class LockedChange(PermissionError):
+    """The owner closed the house and the new rules would widen what is told (423 locked_by_owner)."""
+
 
 class NotifyEngine:
     def __init__(self, hass: HomeAssistant) -> None:
@@ -256,6 +342,8 @@ class NotifyEngine:
         self.on_change = None
         # Set by the link to Hauflo: is an entity Hauflo's own (a push button may switch off only those).
         self.owns: Callable[[str], bool] | None = None
+        # Set by the link to Hauflo: the owner closed the house (options) — rules may then only narrow.
+        self.locked: Callable[[], bool] | None = None
         # Link/heartbeat sensors seen healthy at least once: before that an «off» is commissioning, not a lost link
         # (integrator run 25.10: «Связь со щитом — 39 устройств» right after saving the rules on a site without a bus).
         self._seen_ok: set[str] = set()
@@ -308,7 +396,10 @@ class NotifyEngine:
         self.groups.clear()
 
     async def async_set(self, raw: Any) -> dict[str, Any]:
-        self.config = _clean_rules(raw, self.hass, self.owns)
+        config = _clean_rules(raw, self.hass, self.owns)
+        if self.locked is not None and self.locked() and (why := narrowing(config, self.config)):
+            raise LockedChange(why)
+        self.config = config
         await self.store.async_save(self.config)
         self._apply()
         self._changed()
@@ -1066,7 +1157,7 @@ class NotifyEngine:
                 entry = er.async_get(self.hass).async_get(s.entity_id)
                 # Whose it is: Hauflo's own (suggested by itself) or another integration's — taken only when the
                 # integrator picks it (owner 27.10: a suggested rule rang about another integration's gas boiler).
-                candidates.append({"entity_id": s.entity_id, "name": s.attributes.get("friendly_name") or s.entity_id, "device_class": dc, "area": self._where(s), "state": s.state, "own": bool(self.owns and self.owns(s.entity_id)), "platform": entry.platform if entry else ""})
+                candidates.append({"entity_id": s.entity_id, "name": s.attributes.get("friendly_name") or s.entity_id, "device_class": dc, "area": self._where(s), "state": s.state, "own": bool(self.owns and self.owns(s.entity_id)), "monitored": labelled(self.hass, s.entity_id), "platform": entry.platform if entry else ""})
         valves = [
             {"entity_id": s.entity_id, "name": s.attributes.get("friendly_name") or s.entity_id, "area": self._where(s)}
             for s in self.hass.states.async_all(["valve", "switch"])
@@ -1115,7 +1206,11 @@ class NotifyView(HomeAssistantView):
             return self.json_message("invalid JSON", 400)
         if not isinstance(body, dict):
             return self.json_message("an object expected", 400)
-        config = await engine.async_set(body)
+        try:
+            config = await engine.async_set(body)
+        except LockedChange as err:
+            # The rules kept as they are; Hauflo says where the owner opens the house (security review 28.10).
+            return self.json({"code": LOCKED_CODE, "reason": str(err)}, 423)
         return self.json({"config": config})
 
 

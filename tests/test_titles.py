@@ -1,0 +1,74 @@
+"""The client's names of the dashboard's blocks (titles.py, owner 28.10): for the whole house, any signed-in person, kept
+over deploys; text only — known kinds, one line, 40 characters; never through the tunnel."""
+
+from unittest.mock import patch
+
+import pytest
+from homeassistant.core import HomeAssistant
+from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+from custom_components.hauflo import _http_allowed
+from custom_components.hauflo.const import CONF_SECRET, CONF_SERVER, DOMAIN
+from custom_components.hauflo.titles import clean
+
+
+@pytest.fixture
+async def entry(hass: HomeAssistant):
+    async def idle(self):
+        return None
+
+    entry = MockConfigEntry(domain=DOMAIN, title="Hauflo — test", data={CONF_SERVER: "https://app.hauflo.ru", CONF_SECRET: "s"})
+    entry.add_to_hass(hass)
+    with patch("custom_components.hauflo.Agent.run", idle):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    yield entry
+
+
+async def test_any_person_renames_for_the_house(hass: HomeAssistant, hass_client, hass_read_only_access_token, entry) -> None:
+    # The client isn't an admin: allowed.
+    client = await hass_client(hass_read_only_access_token)
+    got = await (await client.get("/api/hauflo/titles")).json()
+    assert got["titles"] == {} and "climate" in got["kinds"] and got["max"] == 40
+
+    res = await client.post("/api/hauflo/titles", json={"titles": {"climate": "  Климат\n дома ", "lights": "", "nope": "x", "covers": "Ш" * 60}})
+    assert res.status == 200
+    assert (await res.json())["titles"] == {"climate": "Климат дома", "covers": "Ш" * 40}
+    # Kept for everyone (another person's session reads the same).
+    other = await hass_client()
+    assert (await (await other.get("/api/hauflo/titles")).json())["titles"] == {"climate": "Климат дома", "covers": "Ш" * 40}
+
+    # «Как настроил интегратор»: all back.
+    assert (await (await client.post("/api/hauflo/titles", json={"titles": {}})).json())["titles"] == {}
+
+
+async def test_only_text(hass: HomeAssistant, hass_client, entry) -> None:
+    client = await hass_client()
+    for body in ({"titles": {"climate": 5}}, {"titles": ["Климат"]}, {"titles": "Климат"}, {}, []):
+        assert (await client.post("/api/hauflo/titles", json=body)).status == 400
+    assert (await client.post("/api/hauflo/titles", data="{")).status == 400
+    # Markup is kept as text (the cards escape it), control characters go.
+    assert clean({"climate": "<b>x</b> \x00y"}) == {"climate": "<b>x</b> y"}
+
+
+async def test_needs_a_signed_in_person(hass: HomeAssistant, hass_client_no_auth, entry) -> None:
+    client = await hass_client_no_auth()
+    assert (await client.get("/api/hauflo/titles")).status == 401
+    assert (await client.post("/api/hauflo/titles", json={"titles": {"climate": "x"}})).status == 401
+
+
+async def test_tunnel_cannot_rename(hass: HomeAssistant) -> None:
+    assert not _http_allowed(hass, "POST", "/api/hauflo/titles", {"titles": {"climate": "x"}})
+    assert not _http_allowed(hass, "GET", "/api/hauflo/titles", "")
+
+
+async def test_kept_after_a_restart_of_the_integration(hass: HomeAssistant, hass_client, entry) -> None:
+    client = await hass_client()
+    await client.post("/api/hauflo/titles", json={"titles": {"floor_heating": "Полы"}})
+    async def idle(self):
+        return None
+
+    with patch("custom_components.hauflo.Agent.run", idle):
+        assert await hass.config_entries.async_reload(entry.entry_id)
+        await hass.async_block_till_done()
+    assert (await (await client.get("/api/hauflo/titles")).json())["titles"] == {"floor_heating": "Полы"}
