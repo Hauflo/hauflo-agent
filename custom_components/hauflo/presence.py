@@ -191,7 +191,9 @@ def drop_ours(history: dict[str, list[State]], ours: list[Any]) -> dict[str, lis
     evenings» were its own). HA's history keeps no context, so a state within OURS_AFTER of a command it sent to that
     device (`ours`: [entity, epoch seconds]) is its echo. A light's «on» right before its own «off» that was dropped goes
     too (verifier 28.10: after a restart the bus's late «on» of a light it lit belongs to no command; kept alone, the
-    family's evening stayed «on» for days)."""
+    family's evening stayed «on» for days) — only when it isn't a person's (re-verifier 28.10: the family lit it at
+    18:30, its planned «off» at 22:00 → the family's evening was lost): the light was last its own «on» and the «off» in
+    between (a restart's bool(None)) lasted less than WATCH_OFF. A person's «on» keeps that «off» as its end."""
     sent: dict[str, list[float]] = {}
     for item in ours:
         if isinstance(item, (list, tuple)) and len(item) == 2 and isinstance(item[1], (int, float)):
@@ -204,17 +206,39 @@ def drop_ours(history: dict[str, list[State]], ours: list[Any]) -> dict[str, lis
             continue
         keep: list[State] = []
         light = eid.startswith("light.")
+        mine: list[State] = []  # its own states (dropped), in order
         for st in sorted(states, key=lambda s: s.last_updated):
             ts = st.last_updated.timestamp()
             i = bisect_right(times, ts + 1) - 1
             if i < 0 or ts > times[i] + OURS_AFTER:
                 keep.append(st)
-            elif light and st.state == "off":
-                # Its own «off»: what was «on» just before it was its own evening, not the family's.
-                while keep and keep[-1].state != "off":
-                    keep.pop()
+                continue
+            if light and st.state == "off":
+                # Its own «off»: the «on» just before it is its own evening when it is the bus answering again for a
+                # light it lit (its own «on» last, a short «off» in between) — not when a person lit it.
+                j = len(keep)
+                while j and keep[j - 1].state != "off":
+                    j -= 1
+                if j < len(keep):
+                    if _bus_again(keep[j], keep[j - 1] if j else None, mine):
+                        del keep[j:]
+                    else:
+                        keep.append(st)  # a person's evening: it did end then (dropped, it stayed «on» for days)
+            mine.append(st)
         out[eid] = keep
     return out
+
+
+def _bus_again(first_on: State, off: State | None, mine: list[State]) -> bool:
+    """The «on» run from `first_on` is the bus re-reporting a light it lit itself: the last of its own states before it
+    was «on», and the «off» right before (bool(None) while HA restarts) lasted less than WATCH_OFF."""
+    t = first_on.last_updated
+    last = next((m for m in reversed(mine) if m.last_updated <= t), None)
+    if last is None or last.state == "off":
+        return False
+    if off is None or off.last_updated < last.last_updated:
+        return True  # nothing in between: still its own evening
+    return (t - off.last_updated).total_seconds() < WATCH_OFF
 
 
 def build_model(
@@ -479,6 +503,7 @@ class Presence:
         self._ctx: deque[str] = deque(maxlen=400)
         self._sent: dict[str, float] = {}
         self._waits: dict[str, CALLBACK_TYPE] = {}
+        self._claims: dict[str, CALLBACK_TYPE] = {}  # lit lights whose first «on» after `_arm` is its own (`_claim`)
         # Lights it lit watched after it was switched off (`_watch_out`) — not cleared by `_cancel`, only on unload.
         self._outs: dict[str, CALLBACK_TYPE] = {}
         self._started = False
@@ -601,6 +626,9 @@ class Presence:
         for unsub in list(self._waits.values()):
             unsub()
         self._waits.clear()
+        for unsub in list(self._claims.values()):
+            unsub()
+        self._claims.clear()
         for name in ("_daily", "_off"):
             if (unsub := getattr(self, name)) is not None:
                 unsub()
@@ -639,6 +667,8 @@ class Presence:
             # as the family's evening (verifier 28.10).
             self._remember(eid)
             st = self.hass.states.get(eid)
+            if st is None or st.state != "on":
+                self._claim(eid)
             nxt = min((ev["at"] for _, ev in self.pending.values() if ev["entity_id"] == eid), default=None)
             if nxt is not None and nxt <= soon:
                 continue
@@ -838,6 +868,38 @@ class Presence:
     def _unlit(self, eid: str) -> None:
         self.data["lit"] = [e for e in self.data["lit"] if e != eid]
         self.data["lit_at"] = {k: v for k, v in self.data["lit_at"].items() if k != eid}
+
+    def _claim(self, eid: str) -> None:
+        """A light it lit not «on» yet at `_arm`: its first «on» report within WATCH_OFF is the bus answering for the
+        simulation's own light (re-verifier 28.10: +201 s, past OURS_AFTER, a person's «off» after it — that «on» was
+        learned as the family's evening), remembered as its own. An «on» by an HA user (the app) stays a person's."""
+        if eid in self._claims:
+            return
+        unsubs: list[CALLBACK_TYPE] = []
+
+        def done() -> None:
+            self._claims.pop(eid, None)
+            for unsub in unsubs:
+                unsub()
+
+        @callback
+        def changed(event: Any) -> None:
+            new = event.data.get("new_state")
+            if new is None or new.state != "on" or eid not in self._claims:
+                return
+            done()
+            if not new.context.user_id:
+                self._remember(eid)
+                self.store.async_delay_save(lambda: self.data, 5)
+
+        @callback
+        def expired(_now: dt.datetime) -> None:
+            if eid in self._claims:
+                done()
+
+        unsubs.append(async_track_state_change_event(self.hass, [eid], changed))
+        unsubs.append(async_track_point_in_time(self.hass, expired, dt_util.now() + dt.timedelta(seconds=WATCH_OFF)))
+        self._claims[eid] = done
 
     def _wait(self, eid: str, until: dt.datetime | None = None) -> None:
         """A light it lit whose state isn't known yet: switched off once it reads «on», let go once it reads «off» — or,

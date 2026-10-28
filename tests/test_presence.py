@@ -694,6 +694,67 @@ def test_restart_bus_answer_of_its_own_light_is_never_learned(tz) -> None:
     assert [(a.strftime("%H:%M"), b.strftime("%H:%M")) for a, b, _ in got] == [("18:00", "18:30"), ("21:00", "22:00")]
 
 
+def test_family_evening_before_its_own_off_is_kept(tz) -> None:
+    """Re-verifier 28.10: the family lit it at 18:30, the simulation's planned «off» at 22:00 — the family's «on» used to
+    be dropped with it (learned [], the real evening lost)."""
+    d = dt.date(2026, 10, 20)
+    end = _at(d + dt.timedelta(days=3), "19:00")
+    states = [_st(LIVING, "off", _at(d, "12:00")), _st(LIVING, "on", _at(d, "18:30")), _st(LIVING, "off", _at(d, "22:00"))]
+    got = P.on_intervals(P.drop_ours({LIVING: states}, [[LIVING, _at(d, "22:00").timestamp() - 1]])[LIVING], end)
+    assert [(a.strftime("%H:%M"), b.strftime("%H:%M")) for a, b, _ in got] == [("18:30", "22:00")]
+    # Its own «on» at 19:00, a person's «off» at 19:30 and «on» at 21:00 (90 min later — no restart blip), its «off».
+    states = [
+        _st(LIVING, "off", _at(d, "12:00")),
+        _st(LIVING, "on", _at(d, "19:00")),
+        _st(LIVING, "off", _at(d, "19:30")),
+        _st(LIVING, "on", _at(d, "21:00")),
+        _st(LIVING, "off", _at(d, "22:00")),
+    ]
+    ours = [[LIVING, _at(d, "19:00").timestamp() - 1], [LIVING, _at(d, "22:00").timestamp() - 1]]
+    got = P.on_intervals(P.drop_ours({LIVING: states}, ours)[LIVING], end)
+    assert [(a.strftime("%H:%M"), b.strftime("%H:%M")) for a, b, _ in got] == [("21:00", "22:00")]
+
+
+async def test_first_on_after_arm_is_its_own(hass: HomeAssistant, entry, bus, freezer) -> None:
+    """Re-verifier 28.10: after a restart the bus's «on» of a light it lit came +201 s (past OURS_AFTER), a person
+    switched it off, then its own «off» — the bus's «on» was learned as the family's evening."""
+    freezer.move_to(_now("2026-10-28", "19:00"))
+    engine = entry.runtime_data.presence
+    with _hist(engine):
+        await engine.set({"enabled": True, "mode": "sun", "covers": False}, "Мама")
+    engine.data["lit"] = [LIVING, KITCHEN]
+    freezer.tick(dt.timedelta(minutes=30))
+    again = await _boot(hass, engine, {KITCHEN: "off", LIVING: "off"})
+    t0 = dt_util.utcnow()
+    arm_marks = list(again.data["ours"])
+    assert set(again._claims) == {KITCHEN, LIVING}
+    freezer.tick(dt.timedelta(seconds=201))
+    hass.states.async_set(LIVING, "on", DIM, context=Context())  # the bus answers
+    await hass.async_block_till_done()
+    t_on = dt_util.utcnow()
+    assert again.data["ours"][-1] == [LIVING, pytest.approx(t_on.timestamp(), abs=1)] and LIVING not in again._claims
+    # An HA user's «on» is a person's: not claimed.
+    hass.states.async_set(KITCHEN, "on", ONOFF, context=Context(user_id="someone"))
+    await hass.async_block_till_done()
+    assert KITCHEN not in again._claims and again.data["ours"][-1][0] == LIVING
+    # The history: the bus's «on», a person's «off», then its own planned «off» — nothing learned.
+    states = [
+        _st(LIVING, "off", t0 - dt.timedelta(hours=3)),
+        _st(LIVING, "on", t_on),
+        _st(LIVING, "off", t_on + dt.timedelta(minutes=5)),  # a person
+    ]
+    end = t_on + dt.timedelta(days=1)
+    own_off = [LIVING, (t_on + dt.timedelta(minutes=9)).timestamp()]
+    assert P.on_intervals(P.drop_ours({LIVING: states}, [*arm_marks, own_off])[LIVING], end), "the shape: unclaimed, an evening"
+    assert P.on_intervals(P.drop_ours({LIVING: states}, [*again.data["ours"], own_off])[LIVING], end) == []
+    # Past WATCH_OFF nothing is claimed any more.
+    freezer.tick(dt.timedelta(seconds=P.WATCH_OFF))
+    async_fire_time_changed(hass, dt_util.utcnow())
+    await hass.async_block_till_done()
+    assert not again._claims
+    again.async_stop()
+
+
 async def test_states_written_while_ha_starts_are_no_persons_touch(hass: HomeAssistant, entry, bus, freezer) -> None:
     """For 10 minutes after a restart every light looked «touched by someone» and planned «on»s were skipped."""
     freezer.move_to(_now("2026-10-28", "19:00"))

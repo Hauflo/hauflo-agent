@@ -434,3 +434,12 @@ async def test_tunnel_cannot_reach(hass: HomeAssistant) -> None:
         assert not _http_allowed(hass, method, URL, body)
     # Nor HA's own automation editor (a generic automation-create).
     assert not _http_allowed(hass, "POST", "/api/config/automation/config/hauflo_auto_0123456789ab", SUNSET)
+
+
+def test_saved_without_location_is_a_caution_not_an_error() -> None:
+    """Re-verifier 28.10: «saved, but the home's location isn't set» showed in red (.msg.bad) — it is saved: amber."""
+    js = (Path(__file__).parents[1] / "custom_components/hauflo/www/hauflo-cards.js").read_text(encoding="utf-8")
+    line = next(x for x in js.splitlines() if "w.locWarn" in x and "toList" in x)
+    assert "warn: true" in line and "bad: true" not in line
+    assert ".msg.warn{" in js and "eh-amber" in js.split(".msg.warn{", 1)[1].split("}", 1)[0]
+    assert js.count('this.bad ? "bad" : this.warn ? "warn" : ""') == 2

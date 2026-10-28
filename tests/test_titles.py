@@ -84,3 +84,15 @@ async def test_kept_after_a_restart_of_the_integration(hass: HomeAssistant, hass
         assert await hass.config_entries.async_reload(entry.entry_id)
         await hass.async_block_till_done()
     assert (await (await client.get("/api/hauflo/titles")).json())["titles"] == {"floor_heating": "Полы"}
+
+
+def test_marks_only_name_is_the_integrators() -> None:
+    """Re-verifier 28.10: combining marks / variation selectors alone survived and looked blank."""
+    marks = {"lights": "\u0301\u0301", "climate": " \ufe0f\ufe0f ", "covers": "\u20dd\U000e0100"}
+    assert clean(marks) == {}
+    assert clean({"lights": "Свет\u0301", "scenes": "\u2764\ufe0f", "sockets": "1", "covers": "!"}) == {
+        "lights": "Свет\u0301",
+        "scenes": "\u2764\ufe0f",
+        "sockets": "1",
+        "covers": "!",
+    }

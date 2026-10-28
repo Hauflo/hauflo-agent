@@ -3435,7 +3435,7 @@ h1{font:600 26px/1.15 Onest,sans-serif;letter-spacing:-.02em;margin:6px 0 4px}h2
 select,input{font:400 15px Onest,sans-serif;color:inherit;background:var(--card-background-color,#fff);border:1px solid var(--eh-hair,var(--divider-color,rgba(127,127,127,.35)));border-radius:12px;min-height:44px;padding:8px 12px;width:100%;max-width:100%}
 input[type=time]{width:auto;min-width:140px}
 .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.row.end{justify-content:flex-end}.grow{flex:1}
-.msg{font:500 14px/1.4 Onest,sans-serif;margin:10px 0 0}.msg.bad{color:var(--eh-alert,#D93F3F)}
+.msg{font:500 14px/1.4 Onest,sans-serif;margin:10px 0 0}.msg.bad{color:var(--eh-alert,#D93F3F)}.msg.warn{padding:10px 12px;border-radius:14px;background:color-mix(in srgb,var(--eh-amber,#E8901F) 12%,transparent)}
 .ask{margin:12px 0 0;padding:12px;border-radius:16px;background:color-mix(in srgb,var(--eh-amber,#E8901F) 14%,transparent)}
 .map{position:relative;height:180px;border-radius:18px;overflow:hidden;margin:10px 0;background:var(--eh-track,rgba(127,127,127,.12))}.map img{position:absolute;width:256px;height:256px;max-width:none}
 .pin{position:absolute;left:50%;top:50%;width:22px;height:22px;margin:-22px 0 0 -11px;border-radius:11px 11px 11px 0;transform:rotate(-45deg);background:var(--eh-alert,#E5484D);box-shadow:0 2px 6px rgba(0,0,0,.4)}
@@ -3814,6 +3814,7 @@ ${logHtml}</section>`;
       toList(extra) {
         this.view = "list";
         this.asking = null;
+        this.warn = false; // a caution (amber), not an error: only when asked for
         Object.assign(this, extra || {});
         this.draw({ restore: this._listScroll });
       }
@@ -3881,7 +3882,7 @@ ${tl ? `<ul class="tl">${tl}</ul>` : `<p class="muted">${esc(w.nothing)}</p>`}</
 ${this.presHtml()}
 ${sugg.length ? `<section class="box"><div class="caps">${esc(w.sugg)}</div><div class="sg">${sugg.map((s) => `<div class="card"><b>${esc(s.title)}</b><span class="muted">${esc(s.sub)}</span><button class="btn sm pri" data-sugg="${esc(s.key)}">+ ${esc(w.addOne)}</button></div>`).join("")}</div></section>` : ""}
 <section class="box"><div class="hd"><h2>${esc(w.mine)}</h2><button class="btn sm pri" data-new>+ ${esc(w.add)}</button></div>
-${this.msg ? `<p class="msg ${this.bad ? "bad" : ""}" role="status">${esc(this.msg)}</p>` : ""}
+${this.msg ? `<p class="msg ${this.bad ? "bad" : this.warn ? "warn" : ""}" role="status">${esc(this.msg)}</p>` : ""}
 ${d.rules.length || this.gone ? `<ul class="rl">${(() => {
           const rows = d.rules.map((r) => this.ruleRow(r));
           if (this.gone) rows.splice(Math.min(this.gone.at, rows.length), 0, this.ruleRow(this.gone.rule).replace(/^<li class="/, '<li aria-hidden="true" class="bye '));
@@ -3944,7 +3945,7 @@ ${this.locMsg ? `<p class="msg ${this.locBad ? "bad" : ""}" role="status">${esc(
           this.data = await this.api("GET");
           this.tzAsk = null;
           this.msg = this.w.tzDone;
-          this.bad = false;
+          this.bad = this.warn = false;
         } catch (e) {
           this.fail(e);
         }
@@ -4008,7 +4009,7 @@ ${t.rooms.length ? `<optgroup label="${esc(w.grp.rooms)}">${t.rooms.map((c) => o
 <div class="fld"><div class="caps">${esc(w.days)}</div><div class="chips">${DAYS.map((d, i) => `<button data-day="${d}" aria-pressed="${days.includes(d)}">${esc(w.wd[i])}</button>`).join("")}</div></div>
 <div class="fld"><div class="caps">${esc(w.what)}</div>${acts}${picker}</div>
 <p class="msg" data-next>${esc(r.when.event === "alarm_iphone" ? w.willNot : next ? `${w.willRun(this.when(next))} (${this.rel(next)})` : "")}</p>
-${this.msg ? `<p class="msg ${this.bad ? "bad" : ""}" role="status">${esc(this.msg)}</p>` : ""}
+${this.msg ? `<p class="msg ${this.bad ? "bad" : this.warn ? "warn" : ""}" role="status">${esc(this.msg)}</p>` : ""}
 ${this.asking === "run" ? `<div class="ask"><p class="msg">${esc(w.runAsk(this.actsText(r)))}${r.actions.some((a) => a.do === "ramp") ? ` ${esc(w.rampNote)}` : ""}</p><div class="row"><button class="btn pri" data-runyes>${esc(w.runYes)}</button><button class="btn" data-no>${esc(w.cancel)}</button></div></div>` : ""}
 ${r.changed ? `<div class="ask"><p class="msg">${esc(w.changedNote)}</p>${this.asking === "restore" ? `<p class="msg">${esc(w.restoreAsk)}</p><div class="row"><button class="btn dan" data-restoreyes>${esc(w.restoreYes)}</button><button class="btn" data-no>${esc(w.cancel)}</button></div>` : `<button class="btn sm" data-restore>${esc(w.restore)}</button>`}</div>` : ""}
 ${this.asking === "del" ? `<div class="ask"><p class="msg">${esc(w.delAsk)}</p><div class="row"><button class="btn dan" data-delyes>${esc(w.delYes)}</button><button class="btn" data-no>${esc(w.cancel)}</button></div></div>` : ""}
@@ -4190,7 +4191,7 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
             else {
               await navigator.clipboard.writeText(text);
               this.msg = w.shared;
-              this.bad = false;
+              this.bad = this.warn = false;
               redraw();
             }
           } catch (e) {
@@ -4251,6 +4252,7 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
         const r = this.draft;
         const w = this.w;
         this.bad = true;
+        this.warn = false;
         if (!r.actions.length) this.msg = w.needAction;
         else if (!(r.days || DAYS).length) this.msg = w.needDay;
         else {
@@ -4265,11 +4267,11 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
               // The code for Shortcuts is the agent's: show the steps on the saved rule.
               this.edit(this.data.rules.find((x) => x.id === saved.id));
               this.msg = w.saved;
-              this.bad = false;
+              this.bad = this.warn = false;
               this.draw();
               return;
             }
-            this.toList(saved?.warning === "no_location" ? { msg: `${w.locWarn} ${this.isAdmin() ? w.needLocAdmin : w.needLocUser}`, bad: true } : { msg: w.saved, bad: false });
+            this.toList(saved?.warning === "no_location" ? { msg: `${w.locWarn} ${this.isAdmin() ? w.needLocAdmin : w.needLocUser}`, bad: false, warn: true } : { msg: w.saved, bad: false });
             return;
           } catch (e) {
             this.busy = false;
@@ -4284,7 +4286,7 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
         if (!s) return;
         this.edit({ ...s.rule, enabled: true, name: s.title, from: key });
         this.msg = this.w.review;
-        this.bad = false;
+        this.bad = this.warn = false;
         this.draw({ top: true });
       }
       async toggle(id, enabled) {
@@ -4304,7 +4306,7 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
         try {
           await this.api("POST", { op: "run", id: this.draft.id });
           this.msg = this.w.ran;
-          this.bad = false;
+          this.bad = this.warn = false;
         } catch (e) {
           this.fail(e);
         }

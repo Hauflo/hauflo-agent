@@ -56,7 +56,9 @@ def clean(body: Any) -> dict[str, str] | None:
         # Bidi / format characters (Unicode Cf: RLO, zero-width…) go too — a name can't flip or hide text.
         raw = _BLANK.sub("", "".join(ch for ch in raw if unicodedata.category(ch) != "Cf"))
         text = " ".join(_CONTROL.sub(" ", raw).split())[:MAX_LEN].strip()
-        if text:
+        # Only marks / variation selectors (a lone «́́», «️️» — re-verifier 28.10) draw nothing either: a name needs a
+        # letter, digit, punctuation or symbol.
+        if any(unicodedata.category(ch)[0] in "LNPS" for ch in text):
             out[kind] = text
     return out
 
