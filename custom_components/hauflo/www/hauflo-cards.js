@@ -349,6 +349,73 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
   // Device codes («DKP1-1», «B1-2») keep a non-breaking hyphen: «Протечка (DKP1-» / «1)» on two lines read as
   // nonsense (integrator run 15). Only upper-case codes — icon names and entity ids are lower case.
   const esc = (t) => String(t ?? "").replace(/\b([A-Z]{1,6}\d*)-(\d+)\b/g, "$1\u2011$2").replace(/[&<>"'()]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;", "(": "&#40;", ")": "&#41;" })[c]);
+  // --- text size (owner 28.10: an elderly client's phone has a large system font, the HA app enlarges our text, cards bloat).
+  // All text sizes of the cards are px; TZ() rewrites every font size (font:… / font-size) in the CSS and markup the cards
+  // set into calc(Npx*var(--hf-ts,1)), so ONE variable on <html> — inherited by every shadow root, sheets and dialogs
+  // included — rescales ALL our text live, while boxes, paddings and icons keep their size (the layout stays intact).
+  // --hf-ts = chosen size / detected phone text scale: «Как в телефоне» leaves it 1 (the app's enlargement stays).
+  const TS = { mode: "phone", k: 1 };
+  const TS_MULT = { normal: 1, big: 1.15, small: 0.9 };
+  const tsGet = () => {
+    try {
+      const v = localStorage.getItem("hauflo_textsize");
+      return v in TS_MULT ? v : "phone";
+    } catch (e) {
+      return "phone";
+    }
+  };
+  /** The browser's text enlargement (Android WebView textZoom, a large system font): the width of text in the page against
+   * the same text in a canvas (which the enlargement doesn't touch). 1 when nothing is enlarged. */
+  const tsDetect = () => {
+    try {
+      const f = "100px sans-serif";
+      const t = "Hauflo MWmw 0123456789";
+      const c = document.createElement("canvas").getContext("2d");
+      c.font = f;
+      const ref = c.measureText(t).width;
+      const el = document.createElement("span");
+      el.style.cssText = `position:absolute;left:-9999px;top:0;white-space:nowrap;visibility:hidden;font:${f};letter-spacing:0`;
+      el.textContent = t;
+      document.body.appendChild(el);
+      const got = el.getBoundingClientRect().width;
+      el.remove();
+      const k = ref > 0 && got > 0 ? got / ref : 1;
+      return Math.abs(k - 1) < 0.04 ? 1 : Math.min(2, Math.max(0.6, Math.round(k * 20) / 20));
+    } catch (e) {
+      return 1;
+    }
+  };
+  const tsApply = () => {
+    TS.mode = tsGet();
+    TS.k = TS.mode === "phone" ? 1 : tsDetect();
+    const s = TS.mode === "phone" ? 1 : Math.round((TS_MULT[TS.mode] / TS.k) * 1000) / 1000;
+    document.documentElement.style.setProperty("--hf-ts", String(s));
+  };
+  const tsSet = (mode) => {
+    try {
+      if (mode === "phone") localStorage.removeItem("hauflo_textsize");
+      else localStorage.setItem("hauflo_textsize", mode);
+    } catch (e) {
+      /* private mode: lives until reload */
+    }
+    tsApply();
+  };
+  if (document.body) tsApply();
+  else document.addEventListener("DOMContentLoaded", tsApply, { once: true });
+  // A changed system font / the app back from the background / another tab of the same device.
+  for (const [t, n] of [["resize", window], ["visibilitychange", document], ["storage", window]]) n.addEventListener(t, () => (t !== "visibilitychange" || !document.hidden) && tsApply());
+  const TZ_MEMO = new Map();
+  const TZ_FONT = /(font:\s*(?:[^;}"(),]*?\s)?)(\d*\.?\d+)px(\/\d*\.?\d+px)?(?=[\s;}"'])|(font-size:\s*)(\d*\.?\d+)px/g;
+  const tzPx = (n) => `calc(${n}px*var(--hf-ts,1))`;
+  const TZ = (css, memo = true) => {
+    if (memo && TZ_MEMO.has(css)) return TZ_MEMO.get(css);
+    const out = css.replace(TZ_FONT, (m, pre, n, lh, pre2, n2) => (pre2 ? pre2 + tzPx(n2) : pre + tzPx(n) + (lh ? "/" + tzPx(lh.slice(1, -2)) : "")));
+    if (memo) {
+      if (TZ_MEMO.size > 40) TZ_MEMO.clear();
+      TZ_MEMO.set(css, out);
+    }
+    return out;
+  };
   const isOn = (s) => !!s && ["on", "open", "opening", "heat", "cool", "heat_cool", "auto", "dry", "fan_only"].includes(s.state);
   const avg = (xs) => {
     const v = xs.filter((x) => x !== undefined);
@@ -545,6 +612,14 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
         });
     }
     return VIEW.data || {};
+  };
+  /** Where a card's scenes of a kind are shown, «blocks» or «top» (owner 28.10: light on top, blinds in their block). Light
+   * (and mixed) scenes: the person's choice, else the card's `scene_layout`. Blind scenes: their own choice, else the one
+   * choice an older version kept (it meant both), else the card's `cover_scene_layout`, else `scene_layout`. */
+  const sceneWhere = (card, kind) => {
+    const p = viewPrefs(card);
+    const c = card._config || {};
+    return (kind === "cover" ? p.cover_scenes || p.scenes || c.cover_scene_layout || c.scene_layout : p.scenes || c.scene_layout) || "blocks";
   };
   const setViewPrefs = async (h, next) => {
     VIEW.data = next;
@@ -932,7 +1007,7 @@ button:focus-visible{outline:2px solid var(--eh-ice,#3C82F0);outline-offset:1px}
     const row = (x, i, n) =>
       `<li data-id="${esc(x.id)}"><span class="gr" data-grip aria-hidden="true"><ha-icon icon="mdi:drag"></ha-icon></span>${x.icon ? `<ha-icon class="ic" icon="${esc(x.icon)}"></ha-icon>` : ""}<span class="nm">${esc(x.name)}</span><button class="mv" data-up aria-label="${esc(`${w.up}: ${x.name}`)}"${i ? "" : " disabled"}>↑</button><button class="mv" data-down aria-label="${esc(`${w.down}: ${x.name}`)}"${i < n - 1 ? "" : " disabled"}>↓</button></li>`;
     const draw = (focus) => {
-      sr.innerHTML = `<style>${OCSS}</style><div class="sh" role="dialog" aria-modal="true" aria-label="${esc(`${w.title}: ${orderName(card)}`)}">
+      sr.innerHTML = `<style>${TZ(OCSS)}</style><div class="sh" role="dialog" aria-modal="true" aria-label="${esc(`${w.title}: ${orderName(card)}`)}">
 <div class="hd"><h2>${esc(w.title)} · ${esc(orderName(card))}</h2><button class="x" data-x aria-label="${esc(w.close)}">×</button></div>
 <p class="hint">${esc(w.hint)}</p>
 ${secs.map((s, si) => `${s.label ? `<p class="vl">${esc(s.label)}</p>` : ""}<ol data-s="${si}">${s.items.map((x, i) => row(x, i, s.items.length)).join("")}</ol>`).join("")}
@@ -1200,7 +1275,7 @@ input{height:48px;border-radius:14px;border:1px solid var(--divider-color);paddi
     document.addEventListener("keydown", onKey);
     host.addEventListener("click", (e) => e.composedPath()[0] === host && close());
     const draw = (html) => {
-      sr.innerHTML = `<style>${sceneSheetCss()}</style><div class="sh" role="dialog" aria-modal="true">${html}</div>`;
+      sr.innerHTML = `<style>${TZ(sceneSheetCss())}</style><div class="sh" role="dialog" aria-modal="true">${html}</div>`;
       if (LANG !== "ru") translate(sr);
     };
     document.body.appendChild(host);
@@ -1698,7 +1773,7 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>З
       this.lang = LANG; // hyphenation in the card's language («Полотенце-сушитель»)
       if (this._config.panel) this.style.cssText = "display:block;max-width:980px;margin:24px auto;padding:0 16px";
       orderApply(this);
-      const html = `<style>${CSS}${this.css ? this.css() : ""}</style>${this.render()}`;
+      const html = `<style>${TZ(CSS + (this.css ? this.css() : ""))}</style>${TZ(this.render(), false)}`;
       // A state update that changes nothing on the card (a thermostat repeating its reading) leaves it alone.
       // A forced render (after a drag, a tab) always goes: the DOM may have been changed by hand.
       if (!forced && html === this._html) return;
@@ -1752,7 +1827,7 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>З
       const c = this._config;
       const room = rowRoom(this, this.kind === "cover" ? "cover" : "light");
       if (!c.scenes?.length && !room) return "";
-      const where = viewPrefs(this).scenes || c.scene_layout || "blocks";
+      const where = sceneWhere(this, this.kind === "cover" ? "cover" : "light");
       if (where !== "blocks") return "";
       return `<div class="srow"><span class="caps">${blockTitle(this, this.kind === "cover" ? "Сценарии штор" : "Сценарии света", this.kind === "cover" ? "cover_scenes" : "light_scenes")}</span>${sceneChips(this._hass, c.scenes || [], this.kind === "cover" ? "cover" : "light", room, this)}</div>`;
     }
@@ -2033,8 +2108,7 @@ ${(c.alarms || []).length && ok ? `<div><span class="caps">Датчики</span>
       // The room's top card: a labelled row per kind («Свет», «Шторы») — never one mixed row (owner 28.10); a kind is here
       // when scenes go on top (the integrator's choice or the client's) or it has no block of its own.
       if (Array.isArray(c.rows)) {
-        const where = viewPrefs(this).scenes || c.scene_layout || "blocks";
-        const rows = c.rows.filter((r) => (r.always || where === "top") && (r.scenes || []).some((x) => st(this._hass, x.entity)));
+        const rows = c.rows.filter((r) => (r.always || sceneWhere(this, r.kind === "cover" ? "cover" : "light") === "top") && (r.scenes || []).some((x) => st(this._hass, x.entity)));
         this.hideCard(!rows.length);
         if (!rows.length) return "";
         return `<div class="glass m rows"><div class="hd"><span class="ic"><ha-icon icon="hauflo:scene"></ha-icon></span><span class="caps">${blockTitle(this, "Сценарии")}</span></div>
@@ -2095,7 +2169,7 @@ ${rows.map((r) => `<div class="rw"><span class="caps sub">${esc(r.title || (r.ki
     const host = document.createElement("div");
     host.className = "hauflo-climate-sheet";
     const sr = host.attachShadow({ mode: "open" });
-    sr.innerHTML = `<style>${SHEET_CSS}</style><div class="sh" role="dialog" aria-modal="true" aria-label="${esc(card._config.label || "Климат")}"><button class="x" aria-label="Закрыть">×</button></div>`;
+    sr.innerHTML = `<style>${TZ(SHEET_CSS)}</style><div class="sh" role="dialog" aria-modal="true" aria-label="${esc(card._config.label || "Климат")}"><button class="x" aria-label="Закрыть">×</button></div>`;
     const el = document.createElement("hauflo-climate");
     const { compact: _c, size_class: _s, ...rest } = card._config;
     el.setConfig({ ...rest, popup: true });
@@ -4545,7 +4619,6 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
         do: { open: "Открыть", close: "Закрыть", position: "Положение", on: "Включить", off: "Выключить", ramp: "Плавно", sceneOn: "Включить" },
         bright: "Яркость", upTo: "до", over: "за", remove: "Убрать",
         phone: "Чей будильник", iphoneOpt: "iPhone (через «Команды»)",
-        androidHint: "Android: откройте приложение Home Assistant → Настройки → Приложение → Управление датчиками → «Следующий будильник» → включить. Больше ничего не нужно — время будильника Hauflo узнает сам.",
         iphoneTitle: "Один раз на iPhone — 2 минуты",
         iphoneSteps: [
           "Откройте на iPhone приложение «Команды».",
@@ -4557,6 +4630,16 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
         ],
         share: "Отправить инструкцию", shareTitle: "Будильник iPhone → дом", shared: "Инструкция скопирована — вставьте её в сообщение.",
         iphoneLater: "Сохраните правило — здесь появится код для «Команд».",
+        androidSteps: ["Приложение Home Assistant → Настройки → Приложение → Управление датчиками → «Следующий будильник» → включить.", "Поставьте будильник на телефоне (приложение «Часы»).", "Нажмите «Проверить» — Hauflo покажет, какой будильник он видит."],
+        chk: "Проверить", chkTitle: "Что видит Hauflo",
+        chkAndroidOk: (t) => `Hauflo видит ближайший будильник: ${t}. Всё работает.`,
+        chkAndroidNone: "Датчик есть, но будильника не видно — сделайте шаг 2: поставьте будильник на телефоне и откройте приложение Home Assistant. Потом нажмите «Проверить» ещё раз.",
+        chkAndroidOff: "Датчик недоступен (телефон выключен или приложение давно не открывали) — откройте приложение Home Assistant на телефоне и проверьте ещё раз.",
+        chkAndroidMissing: "Датчика будильника ещё нет — сделайте шаг 1: включите «Следующий будильник» в приложении Home Assistant.",
+        chkIphoneSave: "Правило ещё не сохранено — сохраните его, и появится код для «Команд» (шаг 5).",
+        chkIphoneOk: (t) => `Команда с iPhone приходила: ${t}. Всё работает.`,
+        chkIphoneNo: "Пока ни разу не приходила команда с iPhone — сделайте шаги 1–6, потом остановите будильник и нажмите «Проверить» ещё раз. Быстрая проверка: в «Командах» откройте эту автоматизацию и нажмите «Запустить».",
+        chkIphoneOff: "Правило выключено в Home Assistant — включите его в списке правил.",
         copy: "Скопировать", copied: "Скопировано",
         willRun: (x) => `Сработает: ${x}`, willNot: "Сработает: по будильнику iPhone",
         save: "Сохранить", cancel: "Отмена", saved: "Сохранено.", deleted: "Правило удалено.", del: "Удалить", delAsk: "Удалить это правило?", delYes: "Да, удалить",
@@ -4651,7 +4734,6 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
         do: { open: "Open", close: "Close", position: "Position", on: "On", off: "Off", ramp: "Slowly", sceneOn: "Turn on" },
         bright: "Brightness", upTo: "up to", over: "over", remove: "Remove",
         phone: "Whose alarm", iphoneOpt: "iPhone (via Shortcuts)",
-        androidHint: "Android: open the Home Assistant app → Settings → Companion app → Manage sensors → «Next alarm» → turn it on. Nothing else — Hauflo learns the alarm time by itself.",
         iphoneTitle: "Once on the iPhone — 2 minutes",
         iphoneSteps: [
           "Open the Shortcuts app on the iPhone.",
@@ -4663,6 +4745,16 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
         ],
         share: "Send the steps", shareTitle: "iPhone alarm → home", shared: "Steps copied — paste them into a message.",
         iphoneLater: "Save the rule — the code for Shortcuts shows up here.",
+        androidSteps: ["Home Assistant app → Settings → Companion app → Manage sensors → «Next alarm» → turn it on.", "Set an alarm on the phone (the Clock app).", "Tap «Check» — Hauflo shows which alarm it sees."],
+        chk: "Check", chkTitle: "What Hauflo sees",
+        chkAndroidOk: (t) => `Hauflo sees the next alarm: ${t}. All works.`,
+        chkAndroidNone: "The sensor is there but no alarm is visible — do step 2: set an alarm on the phone and open the Home Assistant app. Then tap «Check» again.",
+        chkAndroidOff: "The sensor is unavailable (phone off, or the app wasn't opened for a long time) — open the Home Assistant app on the phone and check again.",
+        chkAndroidMissing: "There is no alarm sensor yet — do step 1: turn on «Next alarm» in the Home Assistant app.",
+        chkIphoneSave: "The rule isn't saved yet — save it and the code for Shortcuts appears (step 5).",
+        chkIphoneOk: (t) => `The iPhone's command came: ${t}. All works.`,
+        chkIphoneNo: "No command from the iPhone has come yet — do steps 1–6, then stop the alarm and tap «Check» again. Quick test: open this automation in Shortcuts and tap «Run».",
+        chkIphoneOff: "The rule is switched off in Home Assistant — switch it on in the rules list.",
         copy: "Copy", copied: "Copied",
         willRun: (x) => `Runs: ${x}`, willNot: "Runs: with the iPhone alarm",
         save: "Save", cancel: "Cancel", saved: "Saved.", deleted: "Rule deleted.", del: "Delete", delAsk: "Delete this rule?", delYes: "Yes, delete",
@@ -5198,15 +5290,15 @@ ${logHtml}</section>`;
         };
         if (this.noAgent) {
           const why = this.noAgent === "gone" ? w.agentGone : this.noAgent === "old" ? w.noAgent : w.errNet;
-          sr.innerHTML = `<style>${CSS3}</style><div class="pg"><h1>${esc(w.title)}</h1><p class="sub">${esc(why)}</p></div>`;
+          sr.innerHTML = `<style>${TZ(CSS3)}</style><div class="pg"><h1>${esc(w.title)}</h1><p class="sub">${esc(why)}</p></div>`;
           return done();
         }
         if (!this.data) {
-          sr.innerHTML = `<style>${CSS3}</style><div class="pg"><h1>${esc(w.title)}</h1></div>`;
+          sr.innerHTML = `<style>${TZ(CSS3)}</style><div class="pg"><h1>${esc(w.title)}</h1></div>`;
           return done();
         }
         const body = this.view === "edit" ? this.editHtml() : this.view === "loc" ? this.locHtml() : this.listHtml();
-        sr.innerHTML = `<style>${CSS3}</style><div class="pg">${this._config?.overlay ? `<div class="row end"><button class="btn sm" data-close>${esc(w.close)}</button></div>` : ""}${body}</div>`;
+        sr.innerHTML = `<style>${TZ(CSS3)}</style><div class="pg">${this._config?.overlay ? `<div class="row end"><button class="btn sm" data-close>${esc(w.close)}</button></div>` : ""}${body}</div>`;
         sr.querySelector("[data-close]")?.addEventListener("click", () => this.dispatchEvent(new CustomEvent("hauflo-close", { bubbles: true, composed: true })));
         this.bind();
         done();
@@ -5346,11 +5438,11 @@ ${this.locMsg ? `<p class="msg ${this.locBad ? "bad" : ""}" role="status">${esc(
         else if (ev === "time") whenBody = `<div class="fld"><input type="time" data-at value="${esc(r.when.at || "07:00")}"></div>`;
         else {
           const opts = [...(t.alarms || []).map((a) => `<option value="${esc(a.entity_id)}" ${r.when.sensor === a.entity_id ? "selected" : ""}>${esc(`Android · ${a.phone}`)}</option>`), `<option value="iphone" ${r.when.event === "alarm_iphone" ? "selected" : ""}>${esc(w.iphoneOpt)}</option>`];
-          whenBody = `<div class="fld"><div class="caps">${esc(w.phone)}</div><select data-phone>${opts.join("")}</select>${(t.alarms || []).length ? "" : `<p class="hint">${esc(w.androidHint)}</p>`}</div>`;
-          if (r.when.event === "alarm_android") whenBody += offRow("alarm");
+          whenBody = `<div class="fld"><div class="caps">${esc(w.phone)}</div><select data-phone>${opts.join("")}</select>${r.when.event === "alarm_android" || !(t.alarms || []).length ? `<ol class="steps">${w.androidSteps.map((x, i) => `<li><span class="stt"><b>${i + 1}.</b> ${esc(x)}</span></li>`).join("")}</ol>` : ""}</div>`;
+          if (r.when.event === "alarm_android") whenBody += offRow("alarm") + this.checkHtml();
           else {
             const code = r.when.code;
-            whenBody += `<div class="fld"><div class="caps">${esc(w.iphoneTitle)}</div>${code ? `<ol class="steps">${w.iphoneSteps.map((s, i) => `<li><span class="sti" aria-hidden="true">${STEP_ART[i]}</span><span class="stt"><b>${i + 1}.</b> ${esc(s)}${i === 4 ? `<span class="row"><code>${esc(code)}</code><button class="btn sm" data-copy="${esc(code)}">${esc(w.copy)}</button></span>` : ""}</span></li>`).join("")}</ol><button class="btn sm" data-share="${esc(code)}">${esc(w.share)}</button>` : `<p class="hint">${esc(w.iphoneLater)}</p>`}</div>`;
+            whenBody += `<div class="fld"><div class="caps">${esc(w.iphoneTitle)}</div>${code ? `<ol class="steps">${w.iphoneSteps.map((s, i) => `<li><span class="sti" aria-hidden="true">${STEP_ART[i]}</span><span class="stt"><b>${i + 1}.</b> ${esc(s)}${i === 4 ? `<span class="row"><code>${esc(code)}</code><button class="btn sm" data-copy="${esc(code)}">${esc(w.copy)}</button></span>` : ""}</span></li>`).join("")}</ol><button class="btn sm" data-share="${esc(code)}">${esc(w.share)}</button>` : `<p class="hint">${esc(w.iphoneLater)}</p>`}</div>` + this.checkHtml();
           }
         }
         const days = r.days || DAYS;
@@ -5376,6 +5468,43 @@ ${r.changed ? `<div class="ask"><p class="msg">${esc(w.changedNote)}</p>${this.a
 ${this.asking === "del" ? `<div class="ask"><p class="msg">${esc(w.delAsk)}</p><div class="row"><button class="btn dan" data-delyes>${esc(w.delYes)}</button><button class="btn" data-no>${esc(w.cancel)}</button></div></div>` : ""}
 <div class="row fld">${r.changed ? "" : `<button class="btn pri" data-save ${this.busy ? "disabled" : ""}>${esc(w.save)}</button>`}<button class="btn" data-back>${esc(w.cancel)}</button><span class="grow"></span>
 ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.run)}</button><button class="btn dan" data-del>${esc(w.del)}</button>` : ""}</div></section>`;
+      }
+      /** «Проверить» on an alarm-clock rule: what Hauflo sees right now — the phone's next-alarm sensor (Android) or the
+       * last command from Shortcuts (iPhone) — else the step to do (owner 28.10: «не понял, как включить/проверить»). */
+      checkHtml() {
+        const w = this.w;
+        const c = this.chk;
+        return `<div class="fld"><div class="row"><button class="btn sm" data-acheck>${esc(w.chk)}</button></div>${c ? `<p class="msg ${c.ok ? "" : "warn"}" role="status" data-chk><b>${esc(w.chkTitle)}:</b> ${esc(c.text)}</p>` : ""}</div>`;
+      }
+      check() {
+        const w = this.w;
+        const r = this.draft;
+        const h = this._hass;
+        let ok = false;
+        let text;
+        if (r.when.event === "alarm_android") {
+          const st = r.when.sensor ? h.states[r.when.sensor] : null;
+          const at = st && Date.parse(st.state);
+          if (!st) text = w.chkAndroidMissing;
+          else if (st.state === "unavailable") text = w.chkAndroidOff;
+          else if (!at || isNaN(at)) text = w.chkAndroidNone;
+          else {
+            ok = true;
+            text = w.chkAndroidOk(this.when(at));
+          }
+        } else if (!r.id || !r.when.code) text = w.chkIphoneSave;
+        else {
+          const rule = this.data.rules.find((x) => x.id === r.id);
+          const a = rule && h.states[rule.entity_id];
+          const last = a?.attributes?.last_triggered;
+          if (a && a.state === "off") text = w.chkIphoneOff;
+          else if (last) {
+            ok = true;
+            text = w.chkIphoneOk(this.when(Date.parse(last)));
+          } else text = w.chkIphoneNo;
+        }
+        this.chk = { ok, text };
+        this.draw();
       }
       actHtml(a, i) {
         const w = this.w;
@@ -5572,6 +5701,7 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
           }
         });
         on("[data-save]", () => this.save());
+        on("[data-acheck]", () => this.check());
         on("[data-run]", () => {
           this.asking = "run";
           redraw();
@@ -5599,6 +5729,7 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
         if (this.view === "list") this._listScroll = this.scrollers();
         this.draft = rule ? JSON.parse(JSON.stringify({ id: rule.id, name: rule.name, when: rule.when, days: rule.days, actions: rule.actions, enabled: rule.enabled, from: rule.from, changed: rule.changed })) : { when: { event: "sunset", offset: 0 }, days: [...DAYS], actions: [], enabled: true };
         this.view = "edit";
+        this.chk = null;
         this.msg = "";
         this.asking = null;
         this.draw({ top: true });
@@ -5898,7 +6029,9 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
         list: "Кондиционеры",
         autos: "Автоматизации", autosSub: "Шторы и свет по рассвету, закату, времени, будильнику",
         heat: "обогрев", cool: "охлаждение", off: "выкл.",
-        view: "Вид", scenes: "Сценарии", inBlocks: "В своих блоках", onTop: "Сверху комнаты", climate: "Кондиционеры и термостаты", floor: "Тёплые полы",
+        view: "Вид", scenes: "Сценарии", scenesLight: "Сценарии света", scenesCover: "Сценарии штор", inBlocks: "В своих блоках", onTop: "Сверху комнаты", climate: "Кондиционеры и термостаты", floor: "Тёплые полы",
+        textSize: "Размер текста", tsPhone: "Как в телефоне", tsNormal: "Обычный", tsBig: "Крупнее", tsSmall: "Мельче",
+        tsHint: "Только на этом устройстве. «Обычный» — не зависит от крупного шрифта в телефоне; «Как в телефоне» — как приложение Home Assistant показывает сейчас.",
         large: "Крупно", compact: "Компактно", reset: "Как настроил интегратор",
         viewHint: (d) => `Только для вас, на этом и других ваших устройствах. Интегратор настроил: ${d}.`,
         viewSaved: "Сохранено для вас.", viewError: "Не сохранилось — проверьте связь с домом.",
@@ -5919,7 +6052,9 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
         list: "ACs",
         autos: "Automations", autosSub: "Blinds and lights by sunrise, sunset, the clock, your alarm",
         heat: "heating", cool: "cooling", off: "off",
-        view: "View", scenes: "Scenes", inBlocks: "In their blocks", onTop: "On top of the room", climate: "ACs and thermostats", floor: "Floor heating",
+        view: "View", scenes: "Scenes", scenesLight: "Light scenes", scenesCover: "Blind scenes", inBlocks: "In their blocks", onTop: "On top of the room", climate: "ACs and thermostats", floor: "Floor heating",
+        textSize: "Text size", tsPhone: "As the phone", tsNormal: "Normal", tsBig: "Larger", tsSmall: "Smaller",
+        tsHint: "On this device only. «Normal» ignores the large font of the phone; «As the phone» is how the Home Assistant app shows it now.",
         large: "Large", compact: "Compact", reset: "As the integrator set it",
         viewHint: (d) => `Just for you, on this and your other devices. The integrator set: ${d}.`,
         viewSaved: "Saved for you.", viewError: "Not saved — check the link to the house.",
@@ -6008,6 +6143,7 @@ ul{margin:4px 0 0;padding:0 0 0 18px}li{margin:2px 0}
           if (Array.isArray(v)) return v.forEach(walk);
           if (!v || typeof v !== "object") return;
           if (v.scene_layout && out.scenes === undefined) out.scenes = v.scene_layout;
+          if (v.scene_layout && out.cover_scenes === undefined) out.cover_scenes = v.cover_scene_layout || v.scene_layout;
           // The blocks the client may rename, each with the title the integrator's deploy gave it (the first one seen).
           if (typeof v.block === "string" && typeof v.type === "string" && v.type.startsWith("custom:hauflo-") && !(v.block in (out._blocks ||= {}))) out._blocks[v.block] = String(v.title || v.block);
           if (v.type === "custom:hauflo-climate" && v.size_class && !v.zones) {
@@ -6061,7 +6197,8 @@ ul{margin:4px 0 0;padding:0 0 0 18px}li{margin:2px 0}
       /** «Вид»: scenes in blocks / on top, ACs and floor heating large / compact — what this dashboard has. */
       const viewBlock = () => {
         const opts = [
-          ["scenes", w.scenes, [["blocks", w.inBlocks], ["top", w.onTop]]],
+          ["scenes", w.scenesLight, [["blocks", w.inBlocks], ["top", w.onTop]]],
+          ["cover_scenes", w.scenesCover, [["blocks", w.inBlocks], ["top", w.onTop]]],
           ["climate", w.climate, [["large", w.large], ["compact", w.compact]]],
           ["floor", w.floor, [["large", w.large], ["compact", w.compact]]],
         ].filter(([k]) => defs[k] !== undefined);
@@ -6070,7 +6207,7 @@ ul{margin:4px 0 0;padding:0 0 0 18px}li{margin:2px 0}
         const mine = VIEW.data || {};
         const said = opts.map(([k, label, vs]) => `${label.toLowerCase()} — ${vs.find(([v]) => v === defs[k])[1].toLowerCase()}`).join("; ");
         return `<div class="caps">${esc(w.view)}</div>${opts
-          .map(([k, label, vs]) => `<p class="vl">${esc(label)}</p><div class="seg two" role="group" aria-label="${esc(label)}">${vs.map(([v, l]) => `<button data-view="${k}:${v}" aria-pressed="${(mine[k] ?? defs[k]) === v}">${esc(l)}</button>`).join("")}</div>`)
+          .map(([k, label, vs]) => `<p class="vl">${esc(label)}</p><div class="seg two" role="group" aria-label="${esc(label)}">${vs.map(([v, l]) => `<button data-view="${k}:${v}" aria-pressed="${((k === "cover_scenes" ? mine.cover_scenes ?? mine.scenes : mine[k]) ?? defs[k]) === v}">${esc(l)}</button>`).join("")}</div>`)
           .join("")}
 <p class="hint">${esc(w.viewHint(said))}</p>${names}${Object.keys(mine).some((k) => defs[k] !== undefined) || Object.keys(TITLES.data || {}).length ? `<button class="reset" data-view-reset>${esc(w.reset)}</button>` : ""}${viewRes ? `<p class="res">${esc(viewRes)}</p>` : ""}`;
       };
@@ -6096,11 +6233,14 @@ ul{margin:4px 0 0;padding:0 0 0 18px}li{margin:2px 0}
         const cool = on.length - heat;
         const now = !info ? "" : !on.length ? w.allOff(info.chosen ?? info.season) : heat && cool ? w.mixed(heat, cool) : w.now(heat ? "heat" : "cool");
         const pressed = info && on.length && !(heat && cool) ? (heat ? "heat" : "cool") : info && !on.length ? (info.chosen ?? info.season) : null;
-        sr.innerHTML = `<style>${CSS2}</style><div class="sh" role="dialog" aria-modal="true" aria-label="${esc(w.title)}">
+        sr.innerHTML = `<style>${TZ(CSS2)}</style><div class="sh" role="dialog" aria-modal="true" aria-label="${esc(w.title)}">
 <div class="hd"><h2>${esc(w.title)}</h2><button class="x" data-x aria-label="${esc(w.close)}">×</button></div>
 <div class="caps">${esc(w.theme)}</div>
 <div class="seg" role="group" aria-label="${esc(w.theme)}">${["light", "dark", "auto"].map((v) => `<button data-theme="${v}" aria-pressed="${th === v}">${esc(w[v])}</button>`).join("")}</div>
 <p class="hint">${esc(w.themeHint)}</p>
+<div class="caps">${esc(w.textSize)}</div>
+<div class="seg two" role="group" aria-label="${esc(w.textSize)}">${[["phone", w.tsPhone], ["normal", w.tsNormal], ["big", w.tsBig], ["small", w.tsSmall]].map(([v, l]) => `<button data-ts="${v}" aria-pressed="${TS.mode === v}">${esc(l)}</button>`).join("")}</div>
+<p class="hint">${esc(w.tsHint)}</p>
 <button class="go" data-autos><ha-icon icon="mdi:weather-sunset"></ha-icon><span><b>${esc(w.autos)}</b><small>${esc(w.autosSub)}</small></span><i aria-hidden="true">›</i></button>
 ${viewBlock()}
 ${orderMenu()}
@@ -6123,9 +6263,15 @@ ${acs.length ? `<div class="caps">${esc(w.season)}</div><p class="now" data-now>
         };
         sr.querySelectorAll("[data-view]").forEach((b) => (b.onclick = async () => {
           const [k, v] = b.dataset.view.split(":");
-          const next = { ...(VIEW.data || {}) };
+          const mineNow = VIEW.data || {};
+          const next = { ...mineNow };
+          // An older version kept one choice for both kinds: it stays the blinds' until they get their own (owner 28.10).
+          const coverNow = mineNow.cover_scenes || mineNow.scenes || defs.cover_scenes;
           if (v === defs[k]) delete next[k];
           else next[k] = v;
+          if (k === "scenes" && next.cover_scenes === undefined) next.cover_scenes = coverNow;
+          if (next.cover_scenes === defs.cover_scenes && next.scenes === undefined) delete next.cover_scenes;
+          else if (k === "cover_scenes" && next.scenes !== undefined && next.cover_scenes === undefined) next.cover_scenes = v;
           try {
             await setViewPrefs(hassOf(), next);
             viewRes = w.viewSaved;
@@ -6188,6 +6334,10 @@ ${acs.length ? `<div class="caps">${esc(w.season)}</div><p class="now" data-now>
             namesT = setTimeout(() => saveNames(false), 300);
           });
         });
+        sr.querySelectorAll("[data-ts]").forEach((b) => (b.onclick = () => {
+          tsSet(b.dataset.ts);
+          draw();
+        }));
         sr.querySelectorAll("[data-theme]").forEach((b) => (b.onclick = () => {
           setTheme(b.dataset.theme);
           setTimeout(draw, 50);

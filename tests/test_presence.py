@@ -302,6 +302,7 @@ async def test_view_switch_plan_and_refusals(hass: HomeAssistant, hass_client, h
 
 async def test_manual_touch_is_left_alone(hass: HomeAssistant, entry, bus, freezer) -> None:
     freezer.move_to(_now("2026-10-28", "19:00"))
+    _restamp(hass, KITCHEN, LIVING, BED)
     engine = entry.runtime_data.presence
     with _hist(engine):
         await engine.set({"enabled": True}, "test")
@@ -496,6 +497,15 @@ async def test_not_known_yet_after_restart_is_switched_off_once_on(hass: HomeAss
     again.async_stop()
 
 
+def _restamp(hass: HomeAssistant, *eids: str) -> None:
+    """States written by the fixtures carry the real clock; after freezer.move_to they may be «in the future» and
+    look touched by a person (failed once the real date passed the frozen one). Rewrite them at the frozen time."""
+    for eid in eids:
+        st = hass.states.get(eid)
+        if st is not None:
+            hass.states.async_set(eid, st.state, dict(st.attributes), force_update=True)
+
+
 async def test_its_own_evenings_are_never_learned(hass: HomeAssistant, entry, bus, freezer) -> None:
     """Two weeks away: the history is mostly the simulation's own — dropped, the family's evenings stay what they were."""
     now = _now()
@@ -511,6 +521,7 @@ async def test_its_own_evenings_are_never_learned(hass: HomeAssistant, entry, bu
     assert P.build_model(P.drop_ours(fam, late), INFO, ROOMS, now - dt.timedelta(days=14), now)["lights"][KITCHEN]["evening"] == real["lights"][KITCHEN]["evening"]
     # The engine remembers what it sent (in the store: survives a restart) and plans from the history without it.
     freezer.move_to(_now("2026-10-28", "19:00"))
+    _restamp(hass, KITCHEN, LIVING, BED)
     engine = entry.runtime_data.presence
     with _hist(engine):
         await engine.set({"enabled": True}, "Мама")
@@ -538,6 +549,7 @@ async def test_its_own_evenings_are_never_learned(hass: HomeAssistant, entry, bu
 
 async def test_switched_off_turns_off_what_it_lit(hass: HomeAssistant, entry, bus, freezer, hass_admin_user) -> None:
     freezer.move_to(_now("2026-10-28", "19:00"))
+    _restamp(hass, KITCHEN, LIVING, BED)
     engine = entry.runtime_data.presence
     with _hist(engine):
         await engine.set({"enabled": True}, "Мама")
@@ -567,6 +579,7 @@ async def test_switched_off_turns_off_what_it_lit(hass: HomeAssistant, entry, bu
 
 async def test_unload_switches_off_what_it_lit(hass: HomeAssistant, entry, bus, freezer) -> None:
     freezer.move_to(_now("2026-10-28", "19:00"))
+    _restamp(hass, KITCHEN, LIVING, BED)
     engine = entry.runtime_data.presence
     with _hist(engine):
         await engine.set({"enabled": True}, "Мама")
@@ -719,6 +732,7 @@ async def test_first_on_after_arm_is_its_own(hass: HomeAssistant, entry, bus, fr
     """Re-verifier 28.10: after a restart the bus's «on» of a light it lit came +201 s (past OURS_AFTER), a person
     switched it off, then its own «off» — the bus's «on» was learned as the family's evening."""
     freezer.move_to(_now("2026-10-28", "19:00"))
+    _restamp(hass, KITCHEN, LIVING, BED)
     engine = entry.runtime_data.presence
     with _hist(engine):
         await engine.set({"enabled": True, "mode": "sun", "covers": False}, "Мама")
@@ -758,6 +772,7 @@ async def test_first_on_after_arm_is_its_own(hass: HomeAssistant, entry, bus, fr
 async def test_states_written_while_ha_starts_are_no_persons_touch(hass: HomeAssistant, entry, bus, freezer) -> None:
     """For 10 minutes after a restart every light looked «touched by someone» and planned «on»s were skipped."""
     freezer.move_to(_now("2026-10-28", "19:00"))
+    _restamp(hass, KITCHEN, LIVING, BED)
     engine = entry.runtime_data.presence
     with _hist(engine):
         await engine.set({"enabled": True}, "Мама")

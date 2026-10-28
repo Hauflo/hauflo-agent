@@ -141,6 +141,30 @@ def _device_class(hass: HomeAssistant | None, eid: str) -> str | None:
     return str(dc) if dc is not None else None
 
 
+# A source without a device class (KNX binary sensors often have none) may ring loud — but not one that says it is a
+# motion/presence sensor (security review 28.10: the family's motion sensor on a critical rule).
+QUIET_NAME = re.compile(r"motion|presence|occupan|движен|присутств", re.I)
+DOWNGRADE = re.compile(r"^(no_sources|quiet_class:[a-z_]{1,32}|quiet_name)$")
+
+
+def loud_verdict(hass: HomeAssistant | None, sources: list[str]) -> str | None:
+    """Why a rule the integrator marked critical rings only normally; None = rings loud, even in silent mode.
+    Loud: every source is moisture/smoke/gas/CO/heat/problem/safety or has no device class at all (a KNX sensor).
+    Normal: no source left, any source of another class (motion, door, window, occupancy, presence, battery…), or
+    a classless one that is named like a motion/presence sensor."""
+    if not sources:
+        return "no_sources"
+    for s in sources:
+        dc = _device_class(hass, s)
+        if dc is not None and dc not in CRITICAL_CLASSES:
+            return f"quiet_class:{dc}"[:45]
+        if dc is None:
+            st = hass.states.get(s) if hass is not None else None
+            if QUIET_NAME.search(f"{s} {st.attributes.get('friendly_name') or '' if st else ''}"):
+                return "quiet_name"
+    return None
+
+
 def _action_ok(action: dict[str, Any] | None, owns: Callable[[str], bool] | None) -> bool:
     """A push button closes one of Hauflo's own valves or switches off one of its own switches — never the
     integrator's gate relay (integrator run 22) nor a valve that isn't Hauflo's (security review 28.10)."""
@@ -257,9 +281,13 @@ def _clean_rules(raw: Any, hass: HomeAssistant | None = None, owns: Callable[[st
         rec = r.get("recipients") or {}
         action = r.get("action") if isinstance(r.get("action"), dict) else None
         sources = [str(s) for s in r["sources"] if _source_ok(hass, str(s), owns)]
-        # Critical only when every source is a safety one (security review 28.10: a motion sensor rang through silent
+        # Loud only for safety sources or classless ones (security review 28.10: a motion sensor rang through silent
         # mode every minute); repeats no more often than every REPEAT_MIN minutes.
-        critical = r.get("priority") == "critical" and bool(sources) and all(_device_class(hass, s) in CRITICAL_CLASSES for s in sources)
+        # Owner 28.10: a rule marked critical never goes quiet unseen — the reason is kept in «downgrade» and shown.
+        wanted = r.get("priority") == "critical"
+        verdict = loud_verdict(hass, sources) if wanted else None
+        critical = wanted and verdict is None
+        downgrade = verdict if wanted else (str(r["downgrade"]) if DOWNGRADE.match(str(r.get("downgrade") or "")) else None)
         repeat = max(0, min(_int(r.get("repeat_min")), 240))
         out["rules"].append(
             {
@@ -275,6 +303,7 @@ def _clean_rules(raw: Any, hass: HomeAssistant | None = None, owns: Callable[[st
                     "phones": [str(p) for p in rec.get("phones") or [] if PHONE_ID.match(str(p))],
                 },
                 "priority": "critical" if critical else "normal",
+                **({"downgrade": downgrade} if downgrade and not critical else {}),
                 "repeat_min": max(REPEAT_MIN, repeat) if repeat else 0,
                 "enabled": r.get("enabled", True) is not False,
                 **(
@@ -1110,7 +1139,7 @@ class NotifyEngine:
             targets=targets,
             results=results,
         )
-        return {"targets": len(targets), "sent": sent, "results": [{"service": p["service"], "name": p["name"], "status": results.get(p["service"], "failed")} for p in targets]}
+        return {"targets": len(targets), "sent": sent, "results": [{"service": p["service"], "name": p["name"], "os": p.get("os"), "status": results.get(p["service"], "failed")} for p in targets]}
 
     def active_list(self) -> list[dict[str, Any]]:
         """Open alarms for Hauflo's monitoring: which rule, what, since when, accepted by whom — the ones taken

@@ -118,3 +118,49 @@ def test_narrowing_is_pure() -> None:
     a = clean({"rules": [{"id": "r", "sources": []}], "groups": []})
     assert notify.narrowing(a, a) is None
     assert notify.narrowing(clean({"rules": [], "groups": []}), a) is None  # a rule removed
+
+
+# Owner 28.10: a critical rule must not go quiet unseen. Loud: safety classes or no class at all (KNX); never motion,
+# door, window, occupancy, presence (nor anything else); a classless sensor named like a motion one stays normal too.
+LOUD_TABLE = [
+    # (device classes of the sources, name of the first, priority kept, reason)
+    ([None], "Протечка кухня", "critical", None),
+    (["moisture"], "Leak", "critical", None),
+    (["smoke", "gas", "carbon_monoxide", "heat", "problem", "safety"], "Mix", "critical", None),
+    (["moisture", None], "Leak + KNX", "critical", None),
+    (["motion"], "Hall", "normal", "quiet_class:motion"),
+    (["door"], "Door", "normal", "quiet_class:door"),
+    (["window"], "Window", "normal", "quiet_class:window"),
+    (["occupancy"], "Occ", "normal", "quiet_class:occupancy"),
+    (["presence"], "Pres", "normal", "quiet_class:presence"),
+    (["moisture", "motion"], "Mixed", "normal", "quiet_class:motion"),
+    ([None], "Датчик движения коридор", "normal", "quiet_name"),
+    ([None, "moisture"], "Presence hall", "normal", "quiet_name"),
+    ([], "None", "normal", "no_sources"),
+]
+
+
+@pytest.mark.parametrize(("classes", "name", "priority", "why"), LOUD_TABLE)
+async def test_critical_decision_table(hass: HomeAssistant, entry, classes, name, priority, why) -> None:
+    eng = entry.runtime_data.engine
+    ids = []
+    for i, dc in enumerate(classes):
+        eid = f"binary_sensor.t{i}_x"
+        hass.states.async_set(eid, "off", {**({"device_class": dc} if dc else {}), **({"friendly_name": name} if i == 0 else {})})
+        ids.append(eid)
+    eng.owns = lambda eid: eid in ids
+    cfg = await eng.async_set({"rules": [_rule(sources=ids)], "groups": []})
+    r = cfg["rules"][0]
+    assert r["priority"] == priority
+    assert r.get("downgrade") == why
+    # Stored and read again (a restart): the reason stays.
+    again = await eng.async_set({"rules": [{**r}], "groups": []})
+    assert again["rules"][0].get("downgrade") == why
+
+
+async def test_test_push_names_the_phone_os(hass: HomeAssistant, entry) -> None:
+    eng = entry.runtime_data.engine
+    eng.phones = lambda: [{"service": "mobile_app_a", "name": "A", "os": "ios", "person": None}]
+    hass.services.async_register("notify", "mobile_app_a", lambda call: None)
+    out = await eng.async_test({"all": True, "priority": "critical"})
+    assert out["results"][0]["os"] == "ios"
