@@ -136,6 +136,21 @@ LOUD_TABLE = [
     (["moisture", "motion"], "Mixed", "normal", "quiet_class:motion"),
     ([None], "Датчик движения коридор", "normal", "quiet_name"),
     ([None, "moisture"], "Presence hall", "normal", "quiet_name"),
+    # Д8 (29.10): a classless door / window / gate contact is no alarm either — RU and EN.
+    ([None], "Окно спальня", "normal", "quiet_name"),
+    ([None], "Входная дверь", "normal", "quiet_name"),
+    ([None], "Створка гостиная", "normal", "quiet_name"),
+    ([None], "Ворота", "normal", "quiet_name"),
+    ([None], "Геркон кухня", "normal", "quiet_name"),
+    ([None], "Front door", "normal", "quiet_name"),
+    ([None], "Window kitchen", "normal", "quiet_name"),
+    ([None], "Garage gate", "normal", "quiet_name"),
+    ([None], "Contact terrace", "normal", "quiet_name"),
+    # …but a leak sensor by the window still rings, and «outdoor» / «поворот» are no door or gate.
+    ([None], "Протечка у окна", "critical", None),
+    ([None], "Leak under window", "critical", None),
+    ([None], "Outdoor temperature alarm", "critical", None),
+    ([None], "Авария поворотного крана", "critical", None),
     ([], "None", "normal", "no_sources"),
 ]
 

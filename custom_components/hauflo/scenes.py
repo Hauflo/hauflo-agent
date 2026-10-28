@@ -76,8 +76,21 @@ class Locked(RuntimeError):
 
 
 class TooSoon(RuntimeError):
+    """The same scene again within seconds — or (`house`) the house-wide limit a minute (tester 29.10: that one said
+    «только что отправлено» though nothing of this scene had been)."""
+
     RU = "Только что отправлено. Подождите несколько секунд."
     EN = "Just sent. Wait a few seconds."
+
+    def __init__(self, house: bool = False) -> None:
+        super().__init__("house" if house else "scene")
+        self.house = house
+
+    def text(self, ru: bool) -> str:
+        if self.house:
+            n = LEARN_PER_MINUTE
+            return f"Не больше {n} сцен в минуту — подождите минуту." if ru else f"No more than {n} scenes a minute — wait a minute."
+        return self.RU if ru else self.EN
 
 
 @dataclass
@@ -282,8 +295,10 @@ class FamilyScenes:
         # No await between the check and the stamps: two presses at once can't both pass.
         now = _clock()
         self._learn_times = [t for t in self._learn_times if now - t < 60]
-        if now - self._learned.get(entity_id, -1e9) < LEARN_EVERY or len(self._learn_times) >= LEARN_PER_MINUTE:
+        if now - self._learned.get(entity_id, -1e9) < LEARN_EVERY:
             raise TooSoon
+        if len(self._learn_times) >= LEARN_PER_MINUTE:
+            raise TooSoon(house=True)
         self._learned[entity_id] = now
         self._learn_times.append(now)
         payload = 0x80 | (number - 1)  # DPT 18.001: bit 7 = learn, bits 0–5 = scene number − 1
@@ -435,8 +450,8 @@ class ScenesView(HomeAssistantView):
             return self.json({"message": NotPlain.RU if ru else NotPlain.EN, "code": "not_plain"}, 409)
         except Locked:
             return self.json({"message": Locked.RU if ru else Locked.EN, "code": LOCKED_CODE}, 423)
-        except TooSoon:
-            return self.json({"message": TooSoon.RU if ru else TooSoon.EN, "code": "too_soon"}, 429)
+        except TooSoon as err:
+            return self.json({"message": err.text(ru), "code": "too_soon"}, 429)
         except PermissionError as err:
             return self.json_message(str(err), 403)
         except KeyError:

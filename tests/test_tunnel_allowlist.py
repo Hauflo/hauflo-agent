@@ -3,10 +3,17 @@ Runs without Home Assistant installed: python3 agent/tests/test_tunnel_allowlist
 import ast, contextlib, glob, ipaddress, json, pathlib, re, sys, types
 src = open(pathlib.Path(__file__).parents[1] / "custom_components/hauflo/__init__.py").read()
 tree = ast.parse(src)
-keep = [n for n in tree.body if (isinstance(n, ast.Assign) and any(getattr(t, "id", "").startswith("_") for t in n.targets)) or (isinstance(n, ast.FunctionDef) and n.name in ("_ws_allowed", "_ga_key", "_knx_listens", "_entry_domain", "_flow_handler", "_http_allowed", "_own_entity", "_own_device", "_owned_knx", "_forbidden", "_lan_host", "_flow_input_ok", "_unused_label", "_device_entities_owned", "_protected", "_own_dashboard", "_alice_labels", "_homekit_step_ok", "_hauflo_entity", "_knx_writes", "_foreign_knx_writes", "_knx_config_ok", "_flow_step", "_platform", "_lovelace_ok", "_area_lights_owned", "_image_ok", "_owned_knx_writes", "_label_ok", "_scrub_states", "_scrub_devices", "_scrub_monitor", "_scrub_notes", "_ws_changes", "_http_changes", "_owns", "_area_floor_empty", "_foreign_holders", "_scrub_diagnostics"))]
+HELPERS = ("_ws_allowed", "_ga_key", "_knx_listens", "_entry_domain", "_flow_handler", "_http_allowed", "_own_entity", "_own_device", "_owned_knx", "_forbidden", "_lan_host", "_flow_input_ok", "_unused_label", "_device_entities_owned", "_protected", "_own_dashboard", "_alice_labels", "_homekit_step_ok", "_hauflo_entity", "_knx_writes", "_foreign_knx_writes", "_knx_config_ok", "_flow_step", "_platform", "_lovelace_ok", "_area_lights_owned", "_image_ok", "_owned_knx_writes", "_label_ok", "_scrub_states", "_scrub_devices", "_scrub_monitor", "_scrub_notes", "_ws_changes", "_http_changes", "_owns", "_area_floor_empty", "_foreign_holders", "_scrub_diagnostics")
+keep = [n for n in tree.body if (isinstance(n, ast.Assign) and any(getattr(t, "id", "").startswith("_") for t in n.targets)) or (isinstance(n, ast.FunctionDef) and n.name in HELPERS)]
 import logging
 ns = {"json": json, "re": re, "contextlib": contextlib, "ipaddress": ipaddress, "Any": object, "HomeAssistant": object, "logging": logging, "__name__": "agent", "DOMAIN": "hauflo"}
-exec(compile(ast.Module(body=keep, type_ignores=[]), "agent", "exec"), ns)
+# Compiled as the module is (`from __future__ import annotations`): annotations stay strings, so a name used only in
+# a signature (Callable, ConfigEntry…) needs no stub here — Python 3.13 evaluated them and the whole file failed to load.
+import __future__
+exec(compile(ast.Module(body=keep, type_ignores=[]), "agent", "exec", flags=__future__.annotations.compiler_flag, dont_inherit=True), ns)
+# Every helper the list names must be found: one renamed in __init__.py would otherwise be skipped without a word.
+_missing = [n for n in HELPERS if n not in ns]
+assert not _missing, f"helpers not found in __init__.py: {_missing}"
 class E:  # entry
     def __init__(s, d): s.domain = d
 class M:

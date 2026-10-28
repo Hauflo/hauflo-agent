@@ -36,8 +36,8 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
 @keyframes eh-run{from{background-position:200% 0}to{background-position:-200% 0}}
 .mv .f,.g.gc.mv{background-image:linear-gradient(90deg,transparent,color-mix(in srgb,var(--ice) 32%,transparent),transparent)!important;background-size:200% 100%!important;animation:eh-run 1.6s linear infinite}
 @media (prefers-reduced-motion: reduce){.mv .f,.g.gc.mv{animation:none}}
-.scn{display:flex;flex-wrap:wrap;gap:8px}.scn button{height:44px;padding:0 15px 0 12px;border-radius:15px;display:flex;align-items:center;gap:8px;flex:0 1 auto;max-width:100%;min-width:0;color:var(--ink);box-shadow:var(--eh-edge,inset 0 0 0 1px var(--hair));background:var(--eh-glass,transparent);font:500 13px Onest,sans-serif;transition:background .3s,box-shadow .3s}
-.scn button span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.scn button ha-icon{color:var(--sacc);flex:0 0 auto;--mdc-icon-size:17px}
+.scn{display:flex;flex-wrap:wrap;gap:8px}.scn button{height:auto;min-height:44px;padding:6px 15px 6px 12px;border-radius:15px;display:flex;align-items:center;gap:8px;flex:0 1 auto;max-width:100%;min-width:0;color:var(--ink);box-shadow:var(--eh-edge,inset 0 0 0 1px var(--hair));background:var(--eh-glass,transparent);font:500 13px Onest,sans-serif;transition:background .3s,box-shadow .3s}
+.scn button span{min-width:0;white-space:normal;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-height:1.2;overflow-wrap:anywhere;text-align:left}.scn button ha-icon{color:var(--sacc);flex:0 0 auto;--mdc-icon-size:17px}
 .scn button.go{background:color-mix(in srgb,var(--sacc) 26%,transparent)}.scn.light{--sacc:var(--amber)}.scn.cover{--sacc:var(--ink2)}.scn.mixed{--sacc:var(--mint)}
 .scn button.add{box-shadow:inset 0 0 0 1px var(--hair);background:transparent;color:var(--ink2);padding:0 14px 0 10px}.scn button.add ha-icon{color:var(--ink2)}
 .scn button{position:relative}.scn button .src{position:absolute;top:3px;right:6px;font:600 8px/1 Onest,sans-serif;font-style:normal;letter-spacing:.04em;color:var(--ink2);opacity:.75;pointer-events:none}
@@ -3062,7 +3062,7 @@ ${act ? `<div class="sl"><div class="k"><ha-icon icon="${esc(c.action.icon || "h
       return `.k{padding:16px}.hd{display:flex;align-items:center;gap:12px}.hd .sum{flex:1;min-width:0}
 .pill.wide{grid-column:span 2}.more{margin-top:10px;width:100%;height:44px;border-radius:14px;font:500 13px Onest,sans-serif;color:var(--ink2);box-shadow:inset 0 0 0 1px var(--hair)}
 .cover .hd{flex-wrap:nowrap}.cover .hd .sum{flex:1 1 auto;min-width:0}
-.hd b{font:300 24px Onest,sans-serif;letter-spacing:-.03em;display:block;line-height:1.05;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hd b{font:300 24px Onest,sans-serif;letter-spacing:-.03em;display:block;line-height:1.1;white-space:normal;overflow-wrap:anywhere}
 .hd b.nd{font:400 15px/1.3 Onest,sans-serif;letter-spacing:0;color:var(--ink3);margin-top:4px;white-space:normal}
 .grp{margin-top:14px}.grp .caps{display:block;margin-bottom:8px}.grow{display:flex;gap:6px;flex-wrap:wrap}
 .g{display:flex;align-items:center;gap:6px;padding:5px 5px 5px 14px;border-radius:18px;box-shadow:inset 0 0 0 1px var(--hair);font:500 12px Onest,sans-serif;max-width:100%}
@@ -3070,7 +3070,7 @@ ${act ? `<div class="sl"><div class="k"><ha-icon icon="${esc(c.action.icon || "h
 .g button{width:44px;height:44px;border-radius:14px;display:grid;place-items:center;color:var(--ink);box-shadow:inset 0 0 0 1px var(--hair);background:var(--eh-glass,transparent);flex:0 0 auto}.g button ha-icon{--mdc-icon-size:20px}.g button:active,.ud button:active{transform:scale(.92)}
 .g.lt{padding:0 16px;height:44px;cursor:pointer}
 .g.gc{display:grid;grid-template-columns:1fr repeat(3,44px);gap:6px;width:100%;padding:5px 5px 5px 16px;font:500 13px Onest,sans-serif}
-.g.gc span{min-width:0;overflow:hidden;white-space:normal;line-height:1.25;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;align-self:center;overflow-wrap:anywhere}.g.gc small{font:400 12px Onest,sans-serif;color:var(--ice)}
+.g.gc span{min-width:0;overflow:hidden;white-space:normal;line-height:1.25;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;align-self:center;overflow-wrap:anywhere}.g.gc small{font:400 12px Onest,sans-serif;color:var(--ice)}
 .g.gc.mv{background:color-mix(in srgb,var(--ice) 14%,transparent);box-shadow:none}.hd .caps{display:block;margin-bottom:4px}
 .mst{height:44px;border-radius:22px;display:flex;align-items:center;gap:8px;padding:0 6px}
 .mst button{height:44px;min-width:44px;padding:0 16px;border-radius:22px;font:500 13px Onest,sans-serif;color:var(--ink);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--ink) 22%,transparent)}

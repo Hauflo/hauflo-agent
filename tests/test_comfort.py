@@ -184,6 +184,8 @@ async def test_floor_follows_the_room_within_limits(hass: HomeAssistant, hass_cl
     _due(engine)
     await engine._tick(None)
     assert len(calls) == n
+    # The state listener runs on the next loop turn in older HA (`_async_dispatch_entity_id_event_soon`), at once in newer.
+    await hass.async_block_till_done()
     assert hass.states.get(COMFORT).attributes.get("current_temperature") is None
 
 

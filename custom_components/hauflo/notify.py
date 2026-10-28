@@ -142,8 +142,17 @@ def _device_class(hass: HomeAssistant | None, eid: str) -> str | None:
 
 
 # A source without a device class (KNX binary sensors often have none) may ring loud — but not one that says it is a
-# motion/presence sensor (security review 28.10: the family's motion sensor on a critical rule).
-QUIET_NAME = re.compile(r"motion|presence|occupan|движен|присутств", re.I)
+# motion/presence sensor (security review 28.10: the family's motion sensor on a critical rule), nor a door / window /
+# gate contact (Д8, 29.10) — by its name or its entity id (transliterated: okno, dver…). Word starts only: «outdoor»,
+# «поворот» are no door or gate.
+QUIET_NAME = re.compile(
+    r"motion|presence|occupan|движен|присутств"
+    r"|(?<![a-z])(door|window|gate|contact|reed)|(?<![а-я])(окн|окон|двер|створк|ворот|калитк|геркон)"
+    r"|(?<![a-z])(okn|okon|dver|stvork|vorot|kalitk|gerkon)",
+    re.I,
+)
+# …unless it says it is a leak / smoke / gas sensor: «Протечка у окна» stays loud.
+LOUD_NAME = re.compile(r"leak|flood|water|smoke|fire|(?<![a-z])gas|протеч|залив|вод[аы]|дым|пожар|(?<![а-я])газ|protech|zaliv|dym", re.I)
 DOWNGRADE = re.compile(r"^(no_sources|quiet_class:[a-z_]{1,32}|quiet_name)$")
 
 
@@ -160,7 +169,8 @@ def loud_verdict(hass: HomeAssistant | None, sources: list[str]) -> str | None:
             return f"quiet_class:{dc}"[:45]
         if dc is None:
             st = hass.states.get(s) if hass is not None else None
-            if QUIET_NAME.search(f"{s} {st.attributes.get('friendly_name') or '' if st else ''}"):
+            name = f"{s} {(st.attributes.get('friendly_name') or '') if st else ''}"
+            if QUIET_NAME.search(name) and not LOUD_NAME.search(name):
                 return "quiet_name"
     return None
 

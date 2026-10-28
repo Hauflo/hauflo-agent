@@ -158,7 +158,8 @@ async def test_rate_limit(hass: HomeAssistant, hass_client, entry, sent) -> None
     with patch.object(scenes_mod, "_clock", lambda: clock[0]):
         assert (await client.post(URL, json={"op": "knx_learn", "entity_id": eid("u-sc3")})).status == 200
         res = await client.post(URL, json={"op": "knx_learn", "entity_id": eid("u-sc3")})
-        assert res.status == 429 and (await res.json())["code"] == "too_soon"
+        body = await res.json()
+        assert res.status == 429 and body["code"] == "too_soon" and "Wait a few seconds" in body["message"]
         # Another scene: its own clock.
         assert (await client.post(URL, json={"op": "knx_learn", "entity_id": eid("u-sc1")})).status == 200
         clock[0] += scenes_mod.LEARN_EVERY + 0.1
@@ -167,6 +168,13 @@ async def test_rate_limit(hass: HomeAssistant, hass_client, entry, sent) -> None
         for _ in range(scenes_mod.LEARN_PER_MINUTE):
             clock[0] += scenes_mod.LEARN_EVERY + 0.1
             await client.post(URL, json={"op": "knx_learn", "entity_id": eid("u-sc1")})
+        assert len(sent) == scenes_mod.LEARN_PER_MINUTE
+        # The house-wide limit says so — not «just sent» (tester 29.10).
+        clock[0] += scenes_mod.LEARN_EVERY + 0.1
+        res = await client.post(URL, json={"op": "knx_learn", "entity_id": eid("u-sc3")})
+        body = await res.json()
+        assert res.status == 429 and body["code"] == "too_soon"
+        assert body["message"] == f"No more than {scenes_mod.LEARN_PER_MINUTE} scenes a minute — wait a minute."
         assert len(sent) == scenes_mod.LEARN_PER_MINUTE
         clock[0] += 61
         assert (await client.post(URL, json={"op": "knx_learn", "entity_id": eid("u-sc1")})).status == 200
