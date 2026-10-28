@@ -36,7 +36,11 @@ KINDS = (
     "house_lights",
     "house_covers",
 )
-_CONTROL = re.compile(r"[\x00-\x1f\x7f  ]+")
+_CONTROL = re.compile("[\x00-\x1f\x7f-\x9f\u2028\u2029]+")
+
+# Letters that draw nothing (Hangul fillers, the blank braille cell, the combining grapheme joiner, Khmer inherent vowels —
+# verifier 28.10): a name of them only looks blank, so they go too and such a name is the integrator's again.
+_BLANK = re.compile("[\u034f\u115f\u1160\u17b4\u17b5\u2800\u3164\uffa0]+")
 
 
 def clean(body: Any) -> dict[str, str] | None:
@@ -50,7 +54,7 @@ def clean(body: Any) -> dict[str, str] | None:
         if kind not in KINDS:
             continue
         # Bidi / format characters (Unicode Cf: RLO, zero-width…) go too — a name can't flip or hide text.
-        raw = "".join(ch for ch in raw if unicodedata.category(ch) != "Cf")
+        raw = _BLANK.sub("", "".join(ch for ch in raw if unicodedata.category(ch) != "Cf"))
         text = " ".join(_CONTROL.sub(" ", raw).split())[:MAX_LEN].strip()
         if text:
             out[kind] = text

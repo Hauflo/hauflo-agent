@@ -636,3 +636,40 @@ async def test_a_read_through_the_tunnel_shows_hauflos_part_only(hass: HomeAssis
     # A Hauflo dashboard the agent never saved: relayed to HA as before (nothing tells his items there).
     await t.send({"id": 6, "type": "lovelace/config", "url_path": "hauflo-other"})
     assert json.loads(agent.channels[1].sent[-1])["url_path"] == "hauflo-other"
+
+
+async def test_a_copy_made_before_a_take_save_is_never_pruned(hass: HomeAssistant, entry) -> None:
+    """Verifier 28.10: a take-save loses his card nested in Hauflo's vertical-stack (the plan says so, a copy keeps it),
+    then three trivial saves in the same second used to prune that copy — the only place his card was left."""
+
+    def stacked(name="Климат"):
+        cfg = hauflo()
+        cards_of(cfg, 0, 1)[1] = {"type": "vertical-stack", ID: "v/living/s:climate/c:t", "title": name, "cards": [{"type": "tile", "entity": "climate.living"}]}
+        return cfg
+
+    agent = entry.runtime_data
+    dash = _Dash(None)
+    t = _Tunnel(agent, dash)
+    assert (await t.send({"id": 1, "type": dashmerge.SAVE, "url_path": "hauflo-home", "config": stacked()}))["success"]
+    dash.config = _with_his_cards()
+    cards_of(dash.config, 0, 1)[1] = copy.deepcopy(cards_of(stacked(), 0, 1)[1])
+    cards_of(dash.config, 0, 1)[1]["cards"].append(copy.deepcopy(GARAGE))  # his card inside Hauflo's stack
+    plan = await t.send({"id": 2, "type": dashmerge.PLAN, "url_path": "hauflo-home", "config": stacked("Тепло")})
+    assert [c["id"] for c in plan["result"]["conflicts"]] == ["v/living/s:climate/c:t"], plan
+    r = await t.send({"id": 3, "type": dashmerge.SAVE, "url_path": "hauflo-home", "config": stacked("Тепло"), "take": True})
+    assert r["success"] and r["result"]["taken"] == 1, r
+    kept = r["result"]["copy"]
+    assert "Мой гараж" not in json.dumps(cards_of(dash.config, 0, 1), ensure_ascii=False)  # taken over: only the copy has it
+    assert agent.dashboards.taken_copies == {kept}
+    # Trivial saves in the same second (more than three): ordinary copies are pruned to three, the take copy stays.
+    for i in range(5):
+        cards_of(dash.config, 0, 0)[0]["heading"] = f"правка {i}"
+        r = await t.send({"id": 4 + i, "type": dashmerge.SAVE, "url_path": "hauflo-home", "config": stacked(f"Тепло {i}"), "title": "Дом"})
+        assert r["success"] and r["result"]["copy"], r
+    urls = [d["url_path"] for d in t.dashboards]
+    assert kept in urls and kept in agent.dashboards.copies["hauflo-home"]
+    assert len([u for u in agent.dashboards.copies["hauflo-home"] if u != kept]) == dashmerge.MAX_COPIES
+    assert len([u for u in urls if "-copy-" in u]) == dashmerge.MAX_COPIES + 1
+    # Kept over a restart of the agent (its store).
+    await agent.dashboards.async_load()
+    assert agent.dashboards.taken_copies == {kept}

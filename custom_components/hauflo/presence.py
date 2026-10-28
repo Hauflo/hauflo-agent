@@ -18,7 +18,8 @@ Safety as automations.py: never a lock, the alarm, a valve, a garage door / gate
 entity, a hidden / disabled one or a group (its lamps take part instead); only on / off (+ brightness) and open / close /
 position. A device someone at home touched in the last 10 minutes is left alone — but the «off» of a light it lit itself
 always goes unless a person changed that light in HA since (a restart's fresh states, the bus don't count; a light not
-known yet is switched off once it is). Switched off — by a person, by its date, the agent unloaded — what it lit goes off.
+known yet is switched off once it is). Switched off — by a person, by its date, the agent unloaded — what it lit goes off,
+a light that reads «off» only because the bus hasn't answered since a restart too (watched, or sent «off» on unload).
 What it did itself is never learned as the family's evenings (its commands are kept two weeks, their echo dropped). Rooms the family left out (`skip_rooms`,
 HA areas: a façade, a guest room) are never planned. Kept in the agent's store (on / until / mode / rooms left out / the
 last 20 actions / what it left on): survives restarts. Planned at 00:05 and when switched on; off after the
@@ -41,7 +42,7 @@ import time
 from typing import Any
 
 from homeassistant.components.http import HomeAssistantView
-from homeassistant.core import CALLBACK_TYPE, Context, HomeAssistant, State, callback
+from homeassistant.core import CALLBACK_TYPE, Context, CoreState, HomeAssistant, State, callback
 from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er
 from homeassistant.helpers.event import async_track_point_in_time, async_track_state_change_event, async_track_time_change
 from homeassistant.helpers.start import async_at_started
@@ -188,7 +189,9 @@ def on_intervals(states: list[State], end: dt.datetime) -> list[tuple[dt.datetim
 def drop_ours(history: dict[str, list[State]], ours: list[Any]) -> dict[str, list[State]]:
     """The simulation's own changes out of what it learns from (HA expert 28.10: two weeks away and the «family's
     evenings» were its own). HA's history keeps no context, so a state within OURS_AFTER of a command it sent to that
-    device (`ours`: [entity, epoch seconds]) is its echo."""
+    device (`ours`: [entity, epoch seconds]) is its echo. A light's «on» right before its own «off» that was dropped goes
+    too (verifier 28.10: after a restart the bus's late «on» of a light it lit belongs to no command; kept alone, the
+    family's evening stayed «on» for days)."""
     sent: dict[str, list[float]] = {}
     for item in ours:
         if isinstance(item, (list, tuple)) and len(item) == 2 and isinstance(item[1], (int, float)):
@@ -199,12 +202,17 @@ def drop_ours(history: dict[str, list[State]], ours: list[Any]) -> dict[str, lis
         if not times:
             out[eid] = states
             continue
-        keep = []
-        for st in states:
+        keep: list[State] = []
+        light = eid.startswith("light.")
+        for st in sorted(states, key=lambda s: s.last_updated):
             ts = st.last_updated.timestamp()
             i = bisect_right(times, ts + 1) - 1
             if i < 0 or ts > times[i] + OURS_AFTER:
                 keep.append(st)
+            elif light and st.state == "off":
+                # Its own «off»: what was «on» just before it was its own evening, not the family's.
+                while keep and keep[-1].state != "off":
+                    keep.pop()
         out[eid] = keep
     return out
 
@@ -471,7 +479,11 @@ class Presence:
         self._ctx: deque[str] = deque(maxlen=400)
         self._sent: dict[str, float] = {}
         self._waits: dict[str, CALLBACK_TYPE] = {}
+        # Lights it lit watched after it was switched off (`_watch_out`) — not cleared by `_cancel`, only on unload.
+        self._outs: dict[str, CALLBACK_TYPE] = {}
         self._started = False
+        self._t0: float | None = None  # set up while HA was starting (a restart): when
+        self._boot: float | None = None  # and when HA had started then
 
     # --- what takes part ----------------------------------------------------------------------------------------------
     def _pickable(self, eid: str) -> bool:
@@ -539,7 +551,25 @@ class Presence:
             if self.data.get("mode") not in MODES:
                 self.data["mode"] = "learned"
         self._started = True
+        if self.hass.state is not CoreState.running:
+            # A restart: KNX lights read «off» until the bus answers (`_restarting`), and the states HA writes while it
+            # starts are no person's touch (`_touched`).
+            self._t0 = time.time()
+
+            @callback
+            def _up(_hass: HomeAssistant) -> None:
+                self._boot = time.time()
+
+            async_at_started(self.hass, _up)
         if not self.data["enabled"]:
+            if self.data["lit"]:
+                # Switched off while lights it lit were still watched (a restart in between): watched again.
+                @callback
+                def _out(_hass: HomeAssistant) -> None:
+                    if self._started and not self.data["enabled"]:
+                        self.hass.async_create_task(self._lights_out_saved(), eager_start=True)
+
+                async_at_started(self.hass, _out)
             return
         if self._expired():
             await self._switch_off("auto_off")
@@ -557,6 +587,12 @@ class Presence:
     def async_stop(self) -> None:
         self._started = False
         self._cancel()
+        self._stop_outs()
+
+    def _stop_outs(self) -> None:
+        for done in list(self._outs.values()):
+            done()
+        self._outs.clear()
 
     def _cancel(self) -> None:
         for unsub, _ in self.pending.values():
@@ -591,6 +627,7 @@ class Presence:
         self._daily = async_track_time_change(self.hass, self._replan, hour=REPLAN[0], minute=REPLAN[1], second=0)
         if (off := self._off_at()) is not None:
             self._off = async_track_point_in_time(self.hass, self._auto_off, off)
+        self._stop_outs()  # on again: what it lit is handled below
         await self.plan()
         # What it left on before a restart or a change of plan is switched off soon, not left burning all night — a
         # light whose state isn't known yet (KNX answers a while after a restart) too: it's switched off once it is.
@@ -598,6 +635,9 @@ class Presence:
         # event is hours away (it would burn until then).
         soon = dt_util.now() + dt.timedelta(minutes=20)
         for eid in list(self.data["lit"]):
+            # Its own: the states of a light it lit that come right after a restart (the bus's answer) are never learned
+            # as the family's evening (verifier 28.10).
+            self._remember(eid)
             st = self.hass.states.get(eid)
             nxt = min((ev["at"] for _, ev in self.pending.values() if ev["entity_id"] == eid), default=None)
             if nxt is not None and nxt <= soon:
@@ -608,6 +648,8 @@ class Presence:
                 # «Off», unknown or not there yet. Right after a restart HA's KNX light reads «off» until the bus answers
                 # (bool(None) — live check 28.10): watched for WATCH_OFF and switched off if it turns out «on».
                 self._wait(eid, dt_util.now() + dt.timedelta(seconds=WATCH_OFF))
+        if self.data["lit"]:
+            self.store.async_delay_save(lambda: self.data, 5)
 
     async def _replan(self, _now: dt.datetime) -> None:
         if self._expired():
@@ -630,24 +672,93 @@ class Presence:
             self._log({"sys": why})
         await self.store.async_save(self.data)
 
-    async def _lights_out(self) -> None:
+    async def _lights_out(self, final: bool = False) -> None:
         """Off (by a person, its date, the agent unloaded): the lights it lit and no person changed since go off (HA
-        expert 28.10: switched off, the lamps it had lit burned on)."""
+        expert 28.10: switched off, the lamps it had lit burned on).
+
+        A light it lit whose state isn't known — not there yet, unknown / unavailable, or «off» within WATCH_OFF of a
+        restart (KNX reads bool(None) → «off» until the bus answers, live check 28.10) — is not let go (verifier 28.10:
+        its date passed overnight, HA restarted, the bus answered «on» later and it burned on): it stays in `lit` and is
+        watched (`_watch_out`, survives `_cancel`) for WATCH_OFF, switched off once it reads «on». `final` (the agent
+        unloads — no watch can outlive it): such a light is sent «off» at once instead; an «off» to a light that is off
+        changes nothing, one left burning with nobody to switch it off does harm."""
         for eid in list(self.data["lit"]):
             st = self.hass.states.get(eid)
-            self._unlit(eid)
-            if st is None or st.state != "on" or not self._pickable(eid) or self._person_since(st):
+            if st is not None and st.state == "on":
+                person = self._person_since(st)
+                self._unlit(eid)
+                if self._pickable(eid) and not person:
+                    await self._off_now(eid, st)
                 continue
-            ev = {"entity_id": eid, "do": "off", "value": None}
-            name = st.attributes.get("friendly_name") or eid
-            if await self._send(ev, name):
-                key, room = self.rooms([eid])[eid]
-                self._log({**_brief(ev), "name": name, "room": room if key != eid else None})
+            if st is not None and st.state == "off" and not self._restarting():
+                self._unlit(eid)  # known «off»
+                continue
+            if not final:
+                self._watch_out(eid)
+                continue
+            self._unlit(eid)
+            if st is not None and self._pickable(eid):
+                await self._off_now(eid, st)
+
+    async def _lights_out_saved(self) -> None:
+        await self._lights_out()
+        await self.store.async_save(self.data)
+
+    async def _off_now(self, eid: str, st: State) -> None:
+        ev = {"entity_id": eid, "do": "off", "value": None}
+        name = st.attributes.get("friendly_name") or eid
+        if await self._send(ev, name):
+            key, room = self.rooms([eid])[eid]
+            self._log({**_brief(ev), "name": name, "room": room if key != eid else None})
+
+    def _restarting(self) -> bool:
+        """Set up during HA's start less than WATCH_OFF ago: a KNX light's «off» may be only «the bus hasn't answered»."""
+        return self._t0 is not None and time.time() < self._t0 + WATCH_OFF
+
+    def _watch_out(self, eid: str) -> None:
+        """Switched off, a light it lit isn't known yet: switched off if it reads «on» within WATCH_OFF (unless a person
+        changed it since it lit it), let go after that. Kept in `lit` meanwhile (in the store: a restart watches again)."""
+        if eid in self._outs:
+            return
+        unsubs: list[CALLBACK_TYPE] = []
+
+        def done() -> None:
+            self._outs.pop(eid, None)
+            for unsub in unsubs:
+                unsub()
+
+        async def settle(st: State | None) -> None:
+            if eid not in self.data["lit"] or self.data["enabled"]:
+                return  # let go meanwhile, or on again (`_arm` handles it)
+            on = st is not None and st.state == "on"
+            person = on and self._person_since(st)
+            self._unlit(eid)
+            if on and not person and self._pickable(eid):
+                await self._off_now(eid, st)
+            await self.store.async_save(self.data)
+
+        @callback
+        def changed(event: Any) -> None:
+            new = event.data.get("new_state")
+            if new is None or new.state != "on" or eid not in self._outs:
+                return
+            done()
+            self.hass.async_create_task(settle(new), eager_start=True)
+
+        @callback
+        def expired(_now: dt.datetime) -> None:
+            if eid in self._outs:
+                done()
+                self.hass.async_create_task(settle(self.hass.states.get(eid)), eager_start=True)
+
+        unsubs.append(async_track_state_change_event(self.hass, [eid], changed))
+        unsubs.append(async_track_point_in_time(self.hass, expired, dt_util.now() + dt.timedelta(seconds=WATCH_OFF)))
+        self._outs[eid] = done
 
     async def async_lights_out(self) -> None:
         """The agent unloaded or removed: nothing it lit keeps burning with nobody left to switch it off."""
         self.async_stop()
-        await self._lights_out()
+        await self._lights_out(final=True)
         await self.store.async_save(self.data)
 
     async def _history(self, entity_ids: list[str], start: dt.datetime, end: dt.datetime) -> dict[str, list[State]] | None:
@@ -708,6 +819,8 @@ class Presence:
         """Someone at home changed it in the last 10 minutes (not the simulation's own command and its echo)."""
         if (dt_util.utcnow() - st.last_updated).total_seconds() > MANUAL:
             return False
+        if self._boot is not None and st.last_updated.timestamp() <= self._boot:
+            return False  # written while HA was starting (verifier 28.10): a restart's state, no person's touch
         if st.context.id in self._ctx or (st.context.parent_id and st.context.parent_id in self._ctx):
             return False
         sent = self._sent.get(st.entity_id)
@@ -775,11 +888,14 @@ class Presence:
             _LOGGER.warning("Hauflo presence: %s %s failed: %s", eid, service, err)
             self._log({**_brief(ev), "name": name, "skip": "error"})
             return False
-        # Remembered for two weeks: what it did itself is never learned as the family's evenings.
+        self._remember(eid)
+        return True
+
+    def _remember(self, eid: str) -> None:
+        """Remembered for two weeks: what it did itself is never learned as the family's evenings."""
         cut = time.time() - (LEARN_DAYS + 1) * 86400
         kept = [x for x in self.data.get("ours") or [] if isinstance(x, list) and len(x) == 2 and isinstance(x[1], (int, float)) and x[1] >= cut]
         self.data["ours"] = [*kept[-(MAX_OURS - 1) :], [eid, round(time.time(), 1)]]
-        return True
 
     async def fire(self, ev: dict[str, Any]) -> None:
         if not self.data["enabled"]:

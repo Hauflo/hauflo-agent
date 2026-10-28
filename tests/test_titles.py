@@ -48,12 +48,19 @@ async def test_only_text(hass: HomeAssistant, hass_client, entry) -> None:
         assert (await client.post("/api/hauflo/titles", json=body)).status == 400
     assert (await client.post("/api/hauflo/titles", data="{")).status == 400
     # Markup is kept as text (the cards escape it), control characters go.
-    assert clean({"climate": "<b>x</b> \x00y"}) == {"climate": "<b>x</b> y"}
+    assert clean({"climate": "<b>x</b>\u2028\x00y"}) == {"climate": "<b>x</b> y"}
 
 
 def test_bidi_and_format_characters_go() -> None:
     # Unicode Cf (security re-review 28.10): RLO / LRI / zero-width / BOM can't flip or hide a name.
     assert clean({"lights": "\u202eТРЕВОГА\u2066x\u200by\ufeff", "climate": "\u200b\u200d"}) == {"lights": "ТРЕВОГАxy"}
+
+
+def test_invisible_letters_go_and_a_blank_name_is_the_integrators() -> None:
+    # Verifier 28.10: Hangul fillers, the blank braille cell, CGJ draw nothing — a name of them only looks empty.
+    blank = "\u3164\u2800\u034f\u115f\u1160\uffa0\u17b4\u17b5"
+    assert clean({"lights": blank, "climate": f" {blank} ", "covers": f"Шт\u3164оры\u2800"}) == {"covers": "Шторы"}
+    assert clean({"lights": "\u2028Свет\u0085дома\u2029"}) == {"lights": "Свет дома"}
 
 
 async def test_needs_a_signed_in_person(hass: HomeAssistant, hass_client_no_auth, entry) -> None:

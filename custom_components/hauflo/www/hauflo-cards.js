@@ -335,22 +335,55 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
   /** A tap that sends a command (a scene, «Вкл./Выкл. все», ▲ ■ ▼): a tick and «отправлено» for a moment, as the KNX
    * preset buttons (final review 28.10: «нажал — непонятно, ушло ли»); «нет ответа от дома» when HA says the call
    * failed or nothing came back in 10 s. HA's own technical error toast is off for these calls. */
+  /** One key per button that survives a re-render (the entity flips «Вкл. все» → «Выкл. все» at once and the card is
+   * rebuilt: the «отправлено» is kept per key with its end time and put back on the new button — UI verifier 0.15.3). */
+  const ackKey = (b) => {
+    const d = b.dataset;
+    const par = b.parentElement ? [...b.parentElement.children].indexOf(b) : 0;
+    return [d.scene, "all" in d ? "all" : d.gc, d.g, d.c, b.closest("[data-e]")?.dataset.e, par].join("|");
+  };
+  const ackShow = (b, until) => {
+    const ic = b.querySelector("ha-icon");
+    const lab = b.querySelector("span") || (ic ? null : b);
+    b._ack ??= { icon: ic?.getAttribute("icon"), txt: lab?.textContent, aria: b.getAttribute("aria-label"), title: b.getAttribute("title") };
+    const was = b._ack;
+    b.classList.add("go", "sent");
+    ic?.setAttribute("icon", "mdi:check");
+    if (lab) lab.textContent = tr("отправлено");
+    else if (was.aria !== null) {
+      // An icon-only button (▲ ■ ▼) has no room for the word: it is read out and in the tooltip.
+      b.setAttribute("aria-label", tr("отправлено"));
+      b.setAttribute("title", tr("отправлено"));
+    }
+    clearTimeout(b._ackT);
+    b._ackT = setTimeout(() => {
+      b.classList.remove("go", "sent");
+      if (was.icon) ic?.setAttribute("icon", was.icon);
+      if (lab && was.txt !== undefined) lab.textContent = was.txt;
+      if (was.aria !== null && !lab) {
+        b.setAttribute("aria-label", was.aria);
+        was.title === null ? b.removeAttribute("title") : b.setAttribute("title", was.title);
+      }
+      b._ack = null;
+    }, Math.max(0, until - Date.now()));
+  };
+  /** After a card is rebuilt: the buttons that are still within their «отправлено» get it back. */
+  const reAck = (card) => {
+    const m = card._acks;
+    if (!m) return;
+    const now = Date.now();
+    for (const k of Object.keys(m)) if (m[k] <= now) delete m[k];
+    if (!Object.keys(m).length) return;
+    card.shadowRoot.querySelectorAll("button").forEach((b) => {
+      const u = m[ackKey(b)];
+      if (u) ackShow(b, u);
+    });
+  };
   const sendAck = (card, b, domain, service, data) => {
     if (b) {
-      const ic = b.querySelector("ha-icon");
-      const lab = b.querySelector("span") || (ic ? null : b);
-      b._ack ??= { icon: ic?.getAttribute("icon"), txt: lab?.textContent };
-      const was = b._ack;
-      b.classList.add("go", "sent");
-      ic?.setAttribute("icon", "mdi:check");
-      if (lab) lab.textContent = tr("отправлено");
-      clearTimeout(b._ackT);
-      b._ackT = setTimeout(() => {
-        b.classList.remove("go", "sent");
-        if (was.icon) ic?.setAttribute("icon", was.icon);
-        if (lab && was.txt !== undefined) lab.textContent = was.txt;
-        b._ack = null;
-      }, 1500);
+      const until = Date.now() + 1500;
+      (card._acks ??= {})[ackKey(b)] = until;
+      ackShow(b, until);
     }
     let done = false;
     const fail = () => {
@@ -754,6 +787,7 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
       if (h) requestAnimationFrame(() => (this.style.minHeight = ""));
       translate(this.shadowRoot);
       this.bind && this.bind();
+      reAck(this);
       if (first || REDUCED) return;
       [...this.shadowRoot.querySelectorAll(SEL)].forEach((e, i) => {
         if (before[i] !== undefined && before[i] !== e.textContent) e.animate([{ opacity: 0.25, transform: "translateY(3px)" }, { opacity: 1, transform: "none" }], { duration: 240, easing: "cubic-bezier(.2,.8,.2,1)" });
@@ -2769,7 +2803,7 @@ ${locks.length || opens.length ? `<div class="lst">${locks
 .r .w{font:400 13px Onest,sans-serif;color:var(--ink2);white-space:nowrap}.r .t{font:300 22px Onest,sans-serif;min-width:52px;text-align:right}.r.un{opacity:.5}
 .r button.t{min-height:44px;padding:0 6px;margin-right:-6px;border-radius:14px;color:var(--ink);font-variant-numeric:tabular-nums}.r button.t.hint::after{content:"±";font:500 11px Onest,sans-serif;color:var(--ink3);margin-left:3px;vertical-align:super}.r button.t:hover{background:var(--track)}.r .t.pend{color:var(--ice)}.fh .r .t.pend{color:var(--amber)}
 .r .ed{display:flex;align-items:center;gap:2px;margin-right:-6px}.r .ed button{width:44px;height:44px;border-radius:22px;background:var(--track);color:var(--ink);font:400 22px/1 Onest,sans-serif;display:grid;place-items:center}
-.r .ed b{font:300 22px Onest,sans-serif;min-width:58px;text-align:center;color:var(--ice)}.fh .r .ed b{color:var(--amber)}.r .ed button:disabled{opacity:.35;cursor:default}
+.r .ed b{font:300 22px Onest,sans-serif;min-width:58px;text-align:center;color:var(--ink)}.fh .r .ed b,.r.warm .ed b{color:var(--amber)}.r.chill .ed b{color:var(--ice)}.r .ed button:disabled{opacity:.35;cursor:default}
 .r .nm small{display:block;font:400 12px Onest,sans-serif;color:var(--ink2);margin-top:1px;overflow:hidden;text-overflow:ellipsis}.r .nm small.err{color:var(--alert)}.fh .r.on ha-icon{color:var(--amber)}.fl{font:500 11px/1.2 Onest,sans-serif;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);padding:14px 0 6px;border-top:1px solid var(--hair)}.fl:first-child{border-top:0;padding-top:4px}`;
     }
     /** A row's setpoint and how to send a new one: the climate's own; a climate kept between two values (heat_cool:
@@ -2843,6 +2877,7 @@ ${locks.length || opens.length ? `<div class="lst">${locks
         const state = `${word}${cur !== undefined ? `${word === "поддерживает" ? " " : " · "}${fmt(cur, 1)}°` : ""}`;
         // A heating row is warm — no blue AC icon over «Нагрев» (final review 28.10).
         const warm = !fh && known(e.s) && e.s.state !== "off" && activeMode(e.s) === "heat";
+        const chill = !fh && known(e.s) && e.s.state !== "off" && activeMode(e.s) === "cool";
         const failed = this._failed?.id === e.entity && now - this._failed.at < 6000;
         const name = e.zone && String(e.name || "").endsWith(` · ${e.zone}`) ? e.name.slice(0, -e.zone.length - 3) : e.name || nameOf(e.s, e.entity);
         // Under the name: the zone; while the stepper is open — the state (no room for both on a phone); a failed send.
@@ -2854,7 +2889,7 @@ ${locks.length || opens.length ? `<div class="lst">${locks
           : target === undefined || e.s.state === "off" || !sp
             ? `<div class="t">—</div>`
             : `<button class="t${pend ? " pend" : ""}${hint ? " hint" : ""}" data-t="${esc(e.entity)}" aria-label="Изменить уставку">${digits(target)}°</button>`;
-        return `${head}<div class="r ${lit ? "on" : ""} ${known(e.s) ? "" : "un"}${warm ? " warm" : ""}" data-i="${esc(e.entity)}"${e.path ? ` data-p="${esc(e.path)}"` : ""}><ha-icon icon="hauflo:${fh ? "floor-heat" : warm ? "radiator" : "ac"}"></ha-icon><div class="nm">${esc(name)}${sub}</div>${editing ? "" : `<div class="w">${esc(state)}</div>`}${tail}</div>`;
+        return `${head}<div class="r ${lit ? "on" : ""} ${known(e.s) ? "" : "un"}${warm ? " warm" : chill ? " chill" : ""}" data-i="${esc(e.entity)}"${e.path ? ` data-p="${esc(e.path)}"` : ""}><ha-icon icon="hauflo:${fh ? "floor-heat" : warm ? "radiator" : "ac"}"></ha-icon><div class="nm">${esc(name)}${sub}</div>${editing ? "" : `<div class="w">${esc(state)}</div>`}${tail}</div>`;
       });
       const sum = fh
         ? on.length ? `${on.length} из ${items.length} греют` : items.some((e) => known(e.s)) ? "Сейчас не греют" : "Нет связи"
@@ -3130,7 +3165,7 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
         offLong: (ev, o) => (o < 0 ? `за ${dur(-o, "ru")} до ${W.ru.evGen[ev]}` : o > 0 ? `через ${dur(o, "ru")} после ${W.ru.evGen[ev]}` : ev === "alarm" ? "со звонком будильника" : `ровно на ${ev === "sunset" ? "закате" : "рассвете"}`),
         act: {
           open: (n) => `Открыть ${n}`, close: (n) => `Закрыть ${n}`, position: (n, v) => `${n} на ${v} %`, on: (n, v) => (v ? `${n} ${v} %` : `Включить ${n}`),
-          off: (n) => `Выключить ${n}`, ramp: (n, v, m) => `${n} плавно до ${v} % за ${dur(m, "ru")}`, scene: (n) => `Сцена «${n}»`, room_off: (n) => `Весь свет выкл: ${n}`,
+          off: (n) => `Выключить ${n}`, ramp: (n, v, m) => `${n} плавно до ${v} % за ${dur(m, "ru")}`, scene: (n) => `Сцена «${n}»`, room_off: (n) => `Весь свет выкл: ${n}`, room_offs: (l) => `Весь свет выкл: ${l}`,
         },
         more: (n) => ` и ещё ${n}`,
         mine: "Ваши правила", empty: "Пока ни одного — возьмите готовое выше или добавьте своё.", add: "Добавить",
@@ -3166,8 +3201,8 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
         save: "Сохранить", cancel: "Отмена", saved: "Сохранено.", deleted: "Правило удалено.", del: "Удалить", delAsk: "Удалить это правило?", delYes: "Да, удалить",
         run: "Проверить сейчас", runAsk: (x) => `Сейчас выполнится: ${x}. Продолжить?`, runYes: "Выполнить", ran: "Выполнено — смотрите на шторы и свет.",
         rampNote: "Плавный свет займёт заданные минуты.",
-        needLoc: "Сначала укажите, где дом, — без этого рассвет и закат не посчитать.", needAction: "Добавьте хотя бы одно действие.", needDay: "Выберите хотя бы один день.",
-        err: "Не получилось: ", errNet: "Нет связи с домом — попробуйте ещё раз.", noAgent: "Нужен агент Hauflo новее — обновите его в HACS.", agentGone: "Агент Hauflo не установлен — без него правила и «Нет дома» не работают.", locWarn: "Сохранено, но место дома не задано — рассвет и закат посчитаются неправильно. Укажите, где дом.",
+        needLoc: "Место дома не задано — время рассвета и заката будет приблизительным.", needLocAdmin: "Укажите, где дом, в блоке «Где дом» на этой странице.", needLocUser: "Попросите администратора указать место дома в Home Assistant.", approx: "время приблизительное", needAction: "Добавьте хотя бы одно действие.", needDay: "Выберите хотя бы один день.",
+        err: "Не получилось: ", errNet: "Нет связи с домом — попробуйте ещё раз.", noAgent: "Нужен агент Hauflo новее — обновите его в HACS.", agentGone: "Агент Hauflo не установлен — без него правила и «Нет дома» не работают.", locWarn: "Сохранено, но место дома не задано — время рассвета и заката приблизительное.",
         last: (t) => `Последний раз: ${t}`, never: "ещё не срабатывало", missing: "нет в Home Assistant — сохраните заново",
         changedTag: "изменено в Home Assistant",
         changedNote: "Это правило поменяли в редакторе Home Assistant — Hauflo его не трогает: включать, выключать и проверять можно, править — там. Или верните как было в Hauflo (правка из Home Assistant пропадёт).",
@@ -3236,7 +3271,7 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
         offLong: (ev, o) => (o < 0 ? `${dur(-o, "en")} before ${W.en.evGen[ev]}` : o > 0 ? `${dur(o, "en")} after ${W.en.evGen[ev]}` : ev === "alarm" ? "as the alarm rings" : `right at ${ev}`),
         act: {
           open: (n) => `Open ${n}`, close: (n) => `Close ${n}`, position: (n, v) => `${n} to ${v} %`, on: (n, v) => (v ? `${n} ${v} %` : `Turn on ${n}`),
-          off: (n) => `Turn off ${n}`, ramp: (n, v, m) => `${n} slowly up to ${v} % over ${dur(m, "en")}`, scene: (n) => `Scene «${n}»`, room_off: (n) => `All lights off: ${n}`,
+          off: (n) => `Turn off ${n}`, ramp: (n, v, m) => `${n} slowly up to ${v} % over ${dur(m, "en")}`, scene: (n) => `Scene «${n}»`, room_off: (n) => `All lights off: ${n}`, room_offs: (l) => `All lights off: ${l}`,
         },
         more: (n) => ` and ${n} more`,
         mine: "Your rules", empty: "None yet — take a ready one above or add your own.", add: "Add",
@@ -3272,8 +3307,8 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
         save: "Save", cancel: "Cancel", saved: "Saved.", deleted: "Rule deleted.", del: "Delete", delAsk: "Delete this rule?", delYes: "Yes, delete",
         run: "Test now", runAsk: (x) => `This runs now: ${x}. Go on?`, runYes: "Run", ran: "Done — look at the blinds and lights.",
         rampNote: "The slow light takes the minutes set.",
-        needLoc: "Set where the house is first — sunrise and sunset need it.", needAction: "Add at least one action.", needDay: "Pick at least one day.",
-        err: "Didn't work: ", errNet: "No link to the house — try again.", noAgent: "This needs a newer Hauflo agent — update it in HACS.", agentGone: "The Hauflo agent isn't installed — rules and “Away” don't work without it.", locWarn: "Saved, but the home's location isn't set — sunrise and sunset will be wrong. Set where the house is.",
+        needLoc: "The home location isn't set — sunrise and sunset times will be approximate.", needLocAdmin: "Set where the house is in the «Where the house is» block on this page.", needLocUser: "Ask the administrator to set the home location in Home Assistant.", approx: "time is approximate", needAction: "Add at least one action.", needDay: "Pick at least one day.",
+        err: "Didn't work: ", errNet: "No link to the house — try again.", noAgent: "This needs a newer Hauflo agent — update it in HACS.", agentGone: "The Hauflo agent isn't installed — rules and “Away” don't work without it.", locWarn: "Saved, but the home's location isn't set — sunrise and sunset times are approximate.",
         last: (t) => `Last run: ${t}`, never: "hasn't run yet", missing: "not in Home Assistant — save it again",
         changedTag: "changed in Home Assistant",
         changedNote: "This rule was changed in Home Assistant's editor — Hauflo leaves it alone: switch it on / off and test it here, edit it there. Or put it back as it was in Hauflo (the Home Assistant edit is lost).",
@@ -3716,10 +3751,17 @@ ${logHtml}</section>`;
               order.push(a.do);
             }
             groups.get(a.do).push(this.nameIn(a.entity_id));
+          } else if (a.do === "room_off") {
+            // One «Весь свет выкл: Комната 1, Комната 2…», not a «Весь свет выкл:» per room.
+            if (!rooms.has("_off")) {
+              rooms.set("_off", []);
+              order.push({ roomOff: true });
+            }
+            rooms.get("_off").push(a.area_id);
           } else order.push(a);
         }
         const list = (n) => (n.length > 3 ? `${n.slice(0, 2).join(", ")}${this.w.more(n.length - 2)}` : n.join(", "));
-        return order.map((x) => (typeof x === "string" ? this.w.act[x](list(groups.get(x))) : x.rooms ? this.w.roomCovers[x.rooms](this.roomsList(rooms.get(x.rooms))) : this.actText(x))).join(", ");
+        return order.map((x) => (typeof x === "string" ? this.w.act[x](list(groups.get(x))) : x.rooms ? this.w.roomCovers[x.rooms](this.roomsList(rooms.get(x.rooms))) : x.roomOff ? this.w.act.room_offs(this.roomsList(rooms.get("_off"))) : this.actText(x))).join(", ");
       }
       icon(w) {
         return w.event === "sunrise" ? "mdi:weather-sunset-up" : w.event === "sunset" ? "mdi:weather-sunset-down" : w.event === "time" ? "mdi:clock-outline" : "mdi:alarm";
@@ -3853,7 +3895,7 @@ ${loc.set && this.isAdmin() ? `<p class="muted">${esc(w.locNow(loc.latitude.toFi
         const on = r.state === "on";
         const t = this.nextOf(r);
         const last = s?.attributes?.last_triggered;
-        const meta = r.state === "missing" ? w.missing : [r.changed ? w.changedTag : "", this.daysText(r.days), t && on ? `→ ${this.when(t)}` : "", last ? w.last(this.when(Date.parse(last))) : w.never].filter(Boolean).join(" · ");
+        const meta = r.state === "missing" ? w.missing : [r.changed ? w.changedTag : "", this.daysText(r.days), (r.when.event === "sunrise" || r.when.event === "sunset") && !this.data.location.set ? `⚠ ${w.approx}` : "", t && on ? `→ ${this.when(t)}` : "", last ? w.last(this.when(Date.parse(last))) : w.never].filter(Boolean).join(" · ");
         return `<li class="${on ? "" : "dis"}"><span class="ic"><ha-icon icon="${this.icon(r.when)}"></ha-icon></span>
 <button class="bd" data-open="${esc(r.id)}"><div class="nm">${esc(r.name || this.autoName(r))}</div><div class="ds">${esc(this.actsText(r))}</div><div class="ds">${esc(meta)}</div></button>
 <button class="sw" role="switch" aria-checked="${on}" aria-label="${esc(on ? w.on : w.offShort)}" data-sw="${esc(r.id)}" ${r.state === "missing" ? "disabled" : ""}></button></li>`;
@@ -3938,7 +3980,7 @@ ${this.locMsg ? `<p class="msg ${this.locBad ? "bad" : ""}" role="status">${esc(
         const off = r.when.offset || 0;
         const offRow = (evName) => `<div class="step fld"><button data-off="-5" aria-label="−5">−</button><span data-offtxt>${esc(w.offLong(evName, off))}</span><button data-off="5" aria-label="+5">+</button></div>`;
         let whenBody = "";
-        if (ev === "sunrise" || ev === "sunset") whenBody = (this.data.location.set ? "" : `<p class="msg bad">${esc(w.needLoc)}</p>`) + offRow(ev);
+        if (ev === "sunrise" || ev === "sunset") whenBody = (this.data.location.set ? "" : `<p class="tn">${esc(w.needLoc)} ${esc(this.isAdmin() ? w.needLocAdmin : w.needLocUser)}</p>`) + offRow(ev);
         else if (ev === "time") whenBody = `<div class="fld"><input type="time" data-at value="${esc(r.when.at || "07:00")}"></div>`;
         else {
           const opts = [...(t.alarms || []).map((a) => `<option value="${esc(a.entity_id)}" ${r.when.sensor === a.entity_id ? "selected" : ""}>${esc(`Android · ${a.phone}`)}</option>`), `<option value="iphone" ${r.when.event === "alarm_iphone" ? "selected" : ""}>${esc(w.iphoneOpt)}</option>`];
@@ -4211,7 +4253,6 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
         this.bad = true;
         if (!r.actions.length) this.msg = w.needAction;
         else if (!(r.days || DAYS).length) this.msg = w.needDay;
-        else if ((r.when.event === "sunrise" || r.when.event === "sunset") && !this.data.location.set) this.msg = w.needLoc;
         else {
           this.busy = true;
           this.msg = "";
@@ -4228,7 +4269,7 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
               this.draw();
               return;
             }
-            this.toList(saved?.warning === "no_location" ? { msg: w.locWarn, bad: true } : { msg: w.saved, bad: false });
+            this.toList(saved?.warning === "no_location" ? { msg: `${w.locWarn} ${this.isAdmin() ? w.needLocAdmin : w.needLocUser}`, bad: true } : { msg: w.saved, bad: false });
             return;
           } catch (e) {
             this.busy = false;

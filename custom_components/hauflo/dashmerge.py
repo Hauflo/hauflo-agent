@@ -17,7 +17,8 @@ a section's id sent as a card dropped the integrator's cards in it): sent at ano
 old one goes as dropped. And whatever the merge, every item of the integrator's must still be in what is saved —
 else the save is refused (`merge_lost_local`). Every `lovelace/config/save` of a `hauflo-…` dashboard goes through the
 same merge (none stored yet: the pre-save config is copied first). Before a save that changes what the integrator
-made, the pre-save config is kept as a hidden copy (the last 3 per dashboard — only copies the agent made itself);
+made, the pre-save config is kept as a hidden copy (the last 3 per dashboard — only copies the agent made itself; one
+made before a save that took Hauflo's version over an edit of the integrator's is never pruned for those, up to 10);
 copies are never read or written through the tunnel. A read of a merged dashboard through the tunnel shows Hauflo's
 part only: the integrator's items are opaque placeholders (a keyed hash — a change still changes the config's hash).
 """
@@ -48,6 +49,10 @@ SAVE = "hauflo/dashboard/save"
 STORE_KEY = "hauflo.dashboard_base"
 META_KEY = "hauflo.dashboard_meta"  # the copies the agent made, the key of the read placeholders
 MAX_COPIES = 3
+# Copies made before a save that took Hauflo's version over the integrator's edit (`take`): the only place his version
+# is left, so never pruned for ordinary copies (verifier 28.10: a take-save, then three trivial saves erased it). Only a
+# real edit of his can be taken over, so these grow with his edits, not with the cloud's saves; capped all the same.
+MAX_TAKEN_COPIES = 10
 # A copy of a dashboard (hauflo-…-copy-<stamp>[-<random>]): never read or written through the tunnel.
 COPY_RE = re.compile(r"-copy-\d")
 LOCAL = "hauflo-local"  # a placeholder of the integrator's item in a read through the tunnel
@@ -602,6 +607,7 @@ class DashboardMerge:
         self.bases: dict[str, dict[str, Any]] = {}
         # url → the copies of it the agent made itself, oldest first: only these are ever pruned.
         self.copies: dict[str, list[str]] = {}
+        self.taken_copies: set[str] = set()  # of those, the ones made before a take-save
         self.key: bytes = b""
 
     async def async_load(self) -> None:
@@ -611,6 +617,8 @@ class DashboardMerge:
         meta = meta if isinstance(meta, dict) else {}
         copies = meta.get("copies")
         self.copies = {k: [x for x in v if isinstance(x, str)] for k, v in copies.items() if isinstance(v, list)} if isinstance(copies, dict) else {}
+        taken = meta.get("taken")
+        self.taken_copies = {x for x in taken if isinstance(x, str)} if isinstance(taken, list) else set()
         key = meta.get("key")
         if not (isinstance(key, str) and len(key) == 64):
             key = secrets.token_hex(32)
@@ -618,7 +626,7 @@ class DashboardMerge:
         self.key = bytes.fromhex(key)
 
     async def _save_meta(self, key: str | None = None) -> None:
-        await self.meta_store.async_save({"copies": self.copies, "key": key or self.key.hex()})
+        await self.meta_store.async_save({"copies": self.copies, "taken": sorted(self.taken_copies), "key": key or self.key.hex()})
 
     def manages(self, url_path: Any) -> bool:
         return isinstance(url_path, str) and url_path in self.bases
@@ -678,7 +686,7 @@ class DashboardMerge:
             if title is None:
                 shown = getattr(self._dashboard(url_path), "config", None) or {}
                 title = shown.get("title") if isinstance(shown.get("title"), str) else None
-            copy_url = await self._copy(url_path, current, title, local_ws, lang)
+            copy_url = await self._copy(url_path, current, title, local_ws, lang, before_take=bool(report.get("taken")))
         if merged != current:
             await self._dashboard(url_path).async_save(merged)
         self.bases[url_path] = new
@@ -687,7 +695,7 @@ class DashboardMerge:
         # known to have edited the dashboard; «edited»: it differs from what Hauflo saved last.
         return {**report, "saved": merged != current, **({"copy": copy_url, "copy_reason": "upgrade" if base is None else "edited"} if copy_url else {})}
 
-    async def _copy(self, url_path: str, config: Any, title: str | None, local_ws: Callable[[list[dict[str, Any]]], Any], lang: str | None = None) -> str:
+    async def _copy(self, url_path: str, config: Any, title: str | None, local_ws: Callable[[list[dict[str, Any]]], Any], lang: str | None = None, before_take: bool = False) -> str:
         now = dt_util.now()
         # Seconds and a random tail (security re-review 28.10): two saves a minute apart (or less) never meet one copy,
         # and the cloud can't guess a name ahead.
@@ -705,10 +713,17 @@ class DashboardMerge:
         await local_ws([{"type": "lovelace/dashboards/create", "url_path": copy_url, "title": name[:60], "icon": "mdi:content-copy", "show_in_sidebar": False, "require_admin": True, "mode": "storage"}])
         await local_ws([{"type": "lovelace/config/save", "url_path": copy_url, "config": config}])
         mine = [*self.copies.get(url_path, []), copy_url]
-        # The last MAX_COPIES of this dashboard: the oldest of the agent's own copies go — never a dashboard it didn't make.
+        if before_take:
+            self.taken_copies.add(copy_url)
+        # The last MAX_COPIES of this dashboard: the oldest of the agent's own copies go — never a dashboard it didn't make,
+        # never one made before a take-save for ordinary ones (those: the last MAX_TAKEN_COPIES of them).
+        plain = [u for u in mine if u not in self.taken_copies]
+        marked = [u for u in mine if u in self.taken_copies]
+        drop = set(plain[: max(0, len(plain) - MAX_COPIES)] + marked[: max(0, len(marked) - MAX_TAKEN_COPIES)])
         ids = {str(d.get("url_path")): d.get("id") for d in dashboards if isinstance(d, dict)}
-        while len(mine) > MAX_COPIES:
-            old = mine.pop(0)
+        for old in [u for u in mine if u in drop]:
+            mine.remove(old)
+            self.taken_copies.discard(old)
             if ids.get(old):
                 try:
                     await local_ws([{"type": "lovelace/dashboards/delete", "dashboard_id": ids[old]}])

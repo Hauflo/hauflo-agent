@@ -9,7 +9,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from homeassistant.core import Context, HomeAssistant, ServiceCall, State
+from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
+from homeassistant.core import Context, CoreState, HomeAssistant, ServiceCall, State
 from homeassistant.helpers import area_registry as ar, entity_registry as er
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import CLIENT_ID, MockConfigEntry, async_fire_time_changed
@@ -576,3 +577,136 @@ async def test_unload_switches_off_what_it_lit(hass: HomeAssistant, entry, bus, 
     await hass.async_block_till_done()
     assert bus == [("light.turn_off", KITCHEN, {})] and not engine.pending
     assert (await engine.store.async_load())["lit"] == []
+
+
+# --- verifier 28.10: a restart's «off» (the bus hasn't answered), its own restart states learned, restart touches ------
+ONOFF = {"supported_color_modes": ["onoff"]}
+DIM = {"supported_color_modes": ["brightness"]}
+
+
+async def _boot(hass: HomeAssistant, engine, reads: dict[str, str]) -> P.Presence:
+    """HA restarts: the engine is set up while HA starts, the KNX lights read as given (bool(None) → «off»)."""
+    await engine.store.async_save(engine.data)
+    engine.async_stop()
+    hass.set_state(CoreState.not_running)
+    for eid, state in reads.items():
+        hass.states.async_set(eid, state, DIM if eid == LIVING else ONOFF, context=Context(), force_update=True)
+    again = P.Presence(hass, engine.owns)
+    with _hist(again):
+        await again.async_start()
+        hass.set_state(CoreState.running)
+        hass.bus.async_fire(EVENT_HOMEASSISTANT_STARTED)
+        await hass.async_block_till_done()
+    return again
+
+
+async def test_its_date_passing_at_a_restart_switches_off_what_the_bus_shows_late(hass: HomeAssistant, entry, bus, freezer) -> None:
+    """«До» passes overnight, HA restarts, the switch-off runs while the KNX lights still read «off»; the bus answers «on»
+    later — it is switched off, not left burning (it used to be dropped at once)."""
+    freezer.move_to(_now("2026-10-28", "20:00"))
+    engine = entry.runtime_data.presence
+    with _hist(engine):
+        await engine.set({"enabled": True, "until": "2026-10-28"}, "Мама")
+    t = dt_util.utcnow().timestamp()
+    engine.data["lit"], engine.data["lit_at"] = [KITCHEN, LIVING], {KITCHEN: t, LIVING: t}
+    bus.clear()
+    freezer.move_to(_now("2026-10-29", "03:00"))
+    again = await _boot(hass, engine, {KITCHEN: "off", LIVING: "off"})
+    assert not again.data["enabled"] and again.data["log"][0]["sys"] == "auto_off" and not bus
+    assert set(again.data["lit"]) == {KITCHEN, LIVING} and set(again._outs) == {KITCHEN, LIVING}  # not dropped
+    assert set((await again.store.async_load())["lit"]) == {KITCHEN, LIVING}  # a restart in the window watches again
+    freezer.tick(dt.timedelta(minutes=4))
+    hass.states.async_set(KITCHEN, "on", ONOFF, context=Context())  # the bus answers
+    await hass.async_block_till_done()
+    assert bus == [("light.turn_off", KITCHEN, {})] and KITCHEN not in again.data["lit"]
+    # The other one stays «off»: let go after the watch, nothing sent.
+    freezer.tick(dt.timedelta(seconds=P.WATCH_OFF))
+    async_fire_time_changed(hass, dt_util.utcnow())
+    await hass.async_block_till_done()
+    assert len(bus) == 1 and again.data["lit"] == [] and not again._outs
+    assert (await again.store.async_load())["lit"] == []
+    again.async_stop()
+
+
+async def test_switched_off_or_unloaded_right_after_a_restart(hass: HomeAssistant, entry, bus, freezer) -> None:
+    freezer.move_to(_now("2026-10-28", "12:00"))
+    engine = entry.runtime_data.presence
+    with _hist(engine):
+        await engine.set({"enabled": True, "mode": "sun", "covers": False}, "Мама")
+    # Long after a start (a reload — HA was running): «off» is known «off», let go, nothing sent.
+    engine.data["lit"] = [KITCHEN]
+    hass.states.async_set(KITCHEN, "off", ONOFF, force_update=True)
+    await engine.set({"enabled": False}, "Папа")
+    assert not bus and engine.data["lit"] == [] and not engine._outs
+    with _hist(engine):
+        await engine.set({"enabled": True, "mode": "sun", "covers": False}, "Мама")
+    engine.data["lit"] = [KITCHEN, LIVING]
+    freezer.tick(dt.timedelta(minutes=30))
+    again = await _boot(hass, engine, {KITCHEN: "off", LIVING: "off"})
+    # Restart: both read «off» — watched (the bus hasn't answered); its own: their restart states are never learned.
+    assert set(again._waits) == {KITCHEN, LIVING}
+    assert {e for e, _ in again.data["ours"][-2:]} == {KITCHEN, LIVING} and again.data["ours"][-1][1] == pytest.approx(dt_util.utcnow().timestamp(), abs=2)
+    # Switched off two minutes later, still «off»: not let go.
+    freezer.tick(dt.timedelta(minutes=2))
+    await again.set({"enabled": False}, "Папа")
+    assert not bus and set(again.data["lit"]) == {KITCHEN, LIVING} and set(again._outs) == {KITCHEN, LIVING}
+    hass.states.async_set(LIVING, "on", DIM, context=Context())  # the bus answers
+    await hass.async_block_till_done()
+    assert bus == [("light.turn_off", LIVING, {})] and again.data["lit"] == [KITCHEN]
+    # The agent unloads in that window: no watch outlives it — the one not known yet is sent «off» (off to off is nothing).
+    bus.clear()
+    await again.async_lights_out()
+    assert bus == [("light.turn_off", KITCHEN, {})] and again.data["lit"] == [] and not again._outs
+    assert (await again.store.async_load())["lit"] == []
+
+
+def test_restart_bus_answer_of_its_own_light_is_never_learned(tz) -> None:
+    """The verifier's shape: lit by it at 19:00, HA restarts at 20:00 (KNX «off»), the bus answers «on», its own «off»
+    a few minutes later — the bus's «on» used to stay a family's evening open for days ([('20 20:01', '23 19:00')])."""
+    d = dt.date(2026, 10, 20)
+    end = _at(d + dt.timedelta(days=3), "19:00")
+    sec = dt.timedelta(seconds=1)
+    for answer, arm in (("20:01", True), ("20:01", False), ("20:05", False)):
+        states = [
+            _st(LIVING, "off", _at(d, "12:00")),
+            _st(LIVING, "on", _at(d, "19:00") + sec, brightness=128),  # its own «on»
+            _st(LIVING, "off", _at(d, "20:00") + 30 * sec),  # the restart: bool(None)
+            _st(LIVING, "on", _at(d, answer), brightness=128),  # the bus answers
+            _st(LIVING, "off", _at(d, "20:08") + sec),  # its own «off»
+        ]
+        ours = [[LIVING, _at(d, "19:00").timestamp()], [LIVING, _at(d, "20:08").timestamp()]]
+        if arm:
+            ours.append([LIVING, (_at(d, "20:00") + 40 * sec).timestamp()])  # `_arm` at the restart
+        assert P.on_intervals(states, end), "the shape: without dropping, an interval is open"
+        assert P.on_intervals(P.drop_ours({LIVING: states}, ours)[LIVING], end) == [], (answer, arm)
+    # The family's evening before, and its «on» after its own «off», stay the family's.
+    states = [
+        _st(LIVING, "off", _at(d, "12:00")),
+        _st(LIVING, "on", _at(d, "18:00")),
+        _st(LIVING, "off", _at(d, "18:30")),
+        _st(LIVING, "on", _at(d, "19:00") + sec),
+        _st(LIVING, "off", _at(d, "20:08") + sec),
+        _st(LIVING, "on", _at(d, "21:00")),
+        _st(LIVING, "off", _at(d, "22:00")),
+    ]
+    ours = [[LIVING, _at(d, "19:00").timestamp()], [LIVING, _at(d, "20:08").timestamp()]]
+    got = P.on_intervals(P.drop_ours({LIVING: states}, ours)[LIVING], end)
+    assert [(a.strftime("%H:%M"), b.strftime("%H:%M")) for a, b, _ in got] == [("18:00", "18:30"), ("21:00", "22:00")]
+
+
+async def test_states_written_while_ha_starts_are_no_persons_touch(hass: HomeAssistant, entry, bus, freezer) -> None:
+    """For 10 minutes after a restart every light looked «touched by someone» and planned «on»s were skipped."""
+    freezer.move_to(_now("2026-10-28", "19:00"))
+    engine = entry.runtime_data.presence
+    with _hist(engine):
+        await engine.set({"enabled": True}, "Мама")
+    freezer.tick(dt.timedelta(minutes=30))
+    again = await _boot(hass, engine, {KITCHEN: "off", LIVING: "off"})
+    freezer.tick(dt.timedelta(minutes=2))
+    await again.fire({"entity_id": KITCHEN, "do": "on", "value": None})
+    assert bus[-1][:2] == ("light.turn_on", KITCHEN) and KITCHEN in again.data["lit"]
+    # A change after HA started is still someone at home.
+    hass.states.async_set(LIVING, "on", DIM, context=Context())
+    await again.fire({"entity_id": LIVING, "do": "off", "value": None})
+    assert bus[-1][:2] == ("light.turn_on", KITCHEN) and again.data["log"][0]["skip"] == "manual"
+    again.async_stop()
