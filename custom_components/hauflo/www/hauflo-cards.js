@@ -520,6 +520,398 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
     const own = kind && TITLES.data?.[kind];
     return own ? `<span data-own>${esc(own)}</span>` : esc((kind === card._config?.block && card._config?.title) || fallback);
   };
+  // --- the client's order of a block's items (owner 28.10: «не понял, как поменять последовательность элементов любого
+  // блока… надо дать возможность перетаскивать, чтобы выстраивалось как надо»): for the whole house, kept by the agent
+  // (/api/hauflo/order, agent 0.16.2+) over deploys. A block = this dashboard + view + the card's slot (agent order.py
+  // `slot`): the phone and tablet copies of a block share it; the room tiles of a page are one block (by their paths).
+  // Applied over the cloud's order — what isn't in it (added later) goes at the end, what's gone is dropped. Changed in a
+  // sheet (drag the handle with a finger or the mouse, or ↑ ↓), opened by a long press on a block's title or from
+  // «Настройки» → «Порядок элементов». Self-contained: the cards only call orderApply / orderAfter / orderIds.
+  const ORDER = { data: null, state: "", ok: false, wait: null, cards: new Set() };
+  const ORDER_TYPES = new Set(["lights", "covers", "sliders", "scenes", "climate", "acs", "devices", "status", "area", "alert"]);
+  const ORDER_FIELDS = ["groups", "entities", "zones", "scenes", "alarms", "sensors"];
+  const OW = {
+    ru: {
+      title: "Порядок", hint: "Перетащите за ⠿ пальцем или мышью, или нажимайте ↑ ↓. Порядок — для всего дома и сохраняется при следующих выкатках.",
+      done: "Готово", cancel: "Отмена", reset: "Как в Hauflo", up: "Выше", down: "Ниже", close: "Закрыть",
+      error: "Не сохранилось — нет связи с домом или агент Hauflo устарел (нужен 0.16.2+).",
+      groups: "Группы", scenes: "Сценарии", alarms: "Тревоги", menu: "Порядок элементов", menuHint: "Блоки этой страницы. Ещё можно долго нажать на заголовок блока.",
+      names: { lights: "Свет", covers: "Шторы", sliders: "Свет", scenes: "Сценарии", climate: "Тёплый пол", acs: "Кондиционеры", devices: "Устройства", status: "Датчики", area: "Комната", alert: "Тревоги", room: "Комнаты" },
+      items: (n) => `${n} ${n % 10 === 1 && n % 100 !== 11 ? "элемент" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? "элемента" : "элементов"}`,
+    },
+    en: {
+      title: "Order", hint: "Drag by ⠿ with a finger or the mouse, or tap ↑ ↓. The order is for the whole house and stays over the next deploys.",
+      done: "Done", cancel: "Cancel", reset: "Hauflo's order", up: "Up", down: "Down", close: "Close",
+      error: "Not saved — no link to the house, or the Hauflo agent is out of date (0.16.2+ needed).",
+      groups: "Groups", scenes: "Scenes", alarms: "Alarms", menu: "Order of items", menuHint: "The blocks of this page. Or long-press a block's title.",
+      names: { lights: "Lights", covers: "Blinds", sliders: "Lights", scenes: "Scenes", climate: "Floor heating", acs: "Air conditioners", devices: "Devices", status: "Sensors", area: "Room", alert: "Alarms", room: "Rooms" },
+      items: (n) => `${n} item${n === 1 ? "" : "s"}`,
+    },
+  };
+  const itemId = (x) => (typeof x === "string" ? x : x && typeof x === "object" && typeof x.entity === "string" ? x.entity : undefined);
+  /** The card's slot on its view — the same as the agent's (order.py `slot`). */
+  const orderSlot = (c) => {
+    const t = String(c.type).replace(/^custom:hauflo-/, "");
+    if (t === "room" && c.path) return "room:tiles";
+    const title = typeof c.title === "string" ? c.title : "";
+    // Untitled light and blind sliders of one room are two blocks: by the domain of their first item.
+    const first = !title && Array.isArray(c.entities) ? itemId(c.entities[0]) : undefined;
+    const k = [c.block, c.kind, Array.isArray(c.zones) && c.zones.length ? "zones" : "", c.area, typeof first === "string" ? first.split(".")[0] : ""].find((x) => typeof x === "string" && x) || "";
+    return `${t}:${k}:${title}`;
+  };
+  /** The block's key — found once the card is on its page (HA builds a view's cards for that view's URL). */
+  const orderKey = (card) => {
+    if (card._okeyRaw === card._raw && card._okey !== undefined) return card._okey;
+    const c = card._raw;
+    if (!c || typeof c.type !== "string" || !card.isConnected) return "";
+    const t = c.type.replace(/^custom:hauflo-/, "");
+    let key = "";
+    if (ORDER_TYPES.has(t) || (t === "room" && c.path)) {
+      const p = location.pathname.split("/");
+      let dash = "";
+      let view = "";
+      try {
+        dash = decodeURIComponent(p[1] || "");
+        view = decodeURIComponent(p[2] || "");
+      } catch (e) {
+        /* a broken URL: no order */
+      }
+      if (/^hauflo-/.test(dash) && !/-copy-\d/.test(dash) && view) key = `${dash}|${view}|${orderSlot(c)}`;
+    }
+    card._okey = key;
+    card._okeyRaw = c;
+    return key;
+  };
+  const orderSave = () => {
+    try {
+      localStorage.setItem("hauflo_order", JSON.stringify(ORDER.data));
+    } catch (e) {
+      /* private mode */
+    }
+  };
+  const orderRedraw = () => {
+    for (const c of ORDER.cards) {
+      c._sig = "";
+      c._update();
+    }
+  };
+  const loadOrder = (h) => {
+    if (ORDER.state || !h?.callApi) return ORDER.wait;
+    ORDER.state = "loading";
+    try {
+      ORDER.data = JSON.parse(localStorage.getItem("hauflo_order") || "null");
+    } catch (e) {
+      ORDER.data = null;
+    }
+    ORDER.wait = h
+      .callApi("GET", "hauflo/order")
+      .then((r) => {
+        ORDER.data = r && typeof r.order === "object" && r.order ? r.order : {};
+        ORDER.ok = true;
+      })
+      // An older agent (no such view) or no link: Hauflo's order, and nothing to change it with.
+      .catch(() => (ORDER.data = ORDER.data || {}))
+      .finally(() => {
+        ORDER.state = "done";
+        orderSave();
+        orderRedraw();
+      });
+    return ORDER.wait;
+  };
+  /** A list in the block's order: the kept ones first, as kept; the rest after them, as they came. */
+  const orderSort = (list, arr, idOf = itemId) => {
+    if (!Array.isArray(list) || !list.length || !Array.isArray(arr)) return arr;
+    const rank = new Map(list.map((id, i) => [id, i]));
+    return arr
+      .map((x, i) => [x, rank.has(idOf(x)) ? rank.get(idOf(x)) : 1e6 + i])
+      .sort((a, b) => a[1] - b[1])
+      .map(([x]) => x);
+  };
+  /** Before a card draws: its config's lists in the block's order (a copy; the config itself is left as it is). */
+  const orderApply = (card) => {
+    const c = card._raw;
+    if (!c) return;
+    const key = orderKey(card);
+    if (key) {
+      ORDER.cards.add(card);
+      loadOrder(card._hass);
+    }
+    const list = key ? ORDER.data?.[key] : undefined;
+    const sig = Array.isArray(list) && list.length ? list.join("\n") : "";
+    if (card._osig === sig && card._oraw === c) return;
+    card._osig = sig;
+    card._oraw = c;
+    if (!sig) {
+      card._config = c;
+      return;
+    }
+    const out = { ...c };
+    for (const f of ORDER_FIELDS) if (Array.isArray(c[f])) out[f] = orderSort(list, c[f]);
+    if (Array.isArray(c.rows)) out.rows = c.rows.map((r) => (r && Array.isArray(r.scenes) ? { ...r, scenes: orderSort(list, r.scenes) } : r));
+    card._config = out;
+  };
+  /** Ids a card finds itself (an area's entities) in the block's order. */
+  const orderIds = (card, ids) => orderSort(ORDER.data?.[orderKey(card)], ids, (x) => x);
+  const orderHas = (card) => !!ORDER.data?.[orderKey(card)]?.length;
+  /** The cell of HA's grid a card sits in (a room tile is a card of its own: the tiles are ordered by CSS `order`). */
+  const orderCell = (card) => {
+    let el = card;
+    for (let n = 0; n < 5 && el; n++) {
+      const up = el.parentElement || el.getRootNode?.()?.host || null;
+      if (!up || /^HUI-CARD-OPTIONS$|^HUI-SECTION-EDIT/.test(up.tagName)) return null; // the dashboard being edited
+      const d = getComputedStyle(up).display;
+      if (d === "grid" || d === "inline-grid" || d === "flex") return el;
+      el = up;
+    }
+    return null;
+  };
+  /** After a card drew (and when it's put on the page): a room tile takes its place; a block's title opens the sheet on a long press. */
+  const orderAfter = (card) => {
+    const key = orderKey(card);
+    if (!key) return;
+    ORDER.cards.add(card);
+    if (card._raw?.type === "custom:hauflo-room") {
+      const list = ORDER.data?.[key] || [];
+      const i = list.indexOf(card._raw.path);
+      const cell = orderCell(card);
+      if (cell) cell.style.order = list.length ? String(i >= 0 ? i : list.length) : "";
+      return;
+    }
+    const head = card.shadowRoot?.querySelector(".caps");
+    if (!head || head._orderPress) return;
+    head._orderPress = true;
+    let t = 0;
+    let at = null;
+    const stop = () => {
+      clearTimeout(t);
+      at = null;
+    };
+    head.addEventListener("pointerdown", (e) => {
+      if (!ORDER.ok || (e.pointerType === "mouse" && e.button !== 0)) return;
+      at = [e.clientX, e.clientY];
+      clearTimeout(t);
+      t = setTimeout(() => {
+        at = null;
+        if (orderSections(card).every((s) => s.items.length < 2)) return;
+        haptic(card, "medium");
+        // The tap that ends the press isn't a tap on the block, nor on the sheet's backdrop.
+        const swallow = (ev) => {
+          ev.stopPropagation();
+          ev.preventDefault();
+        };
+        window.addEventListener("click", swallow, { capture: true, once: true });
+        head.addEventListener("pointerup", () => setTimeout(() => window.removeEventListener("click", swallow, { capture: true }), 400), { once: true });
+        openOrder(card);
+      }, 600);
+    });
+    head.addEventListener("pointermove", (e) => at && Math.hypot(e.clientX - at[0], e.clientY - at[1]) > 10 && stop());
+    head.addEventListener("pointerup", stop);
+    head.addEventListener("pointercancel", stop);
+    head.addEventListener("contextmenu", (e) => ORDER.ok && e.preventDefault());
+  };
+  /** What the sheet lists: a section per list of the card (groups, items, scenes…), each item with its name and icon. */
+  const orderSections = (card) => {
+    const h = card._hass;
+    const w = OW[langOf(h)];
+    const c = card._config || {};
+    if (card._raw?.type === "custom:hauflo-room") {
+      const key = orderKey(card);
+      const seen = new Set();
+      const tiles = [...ORDER.cards]
+        .filter((x) => x.isConnected && orderKey(x) === key && !seen.has(x._raw.path) && seen.add(x._raw.path))
+        .map((x) => ({ id: x._raw.path, name: x._raw.name || x._raw.path, icon: x._raw.icon || "" }));
+      return [{ label: "", items: orderSort(ORDER.data?.[key], tiles, (x) => x.id) }];
+    }
+    const it = (x) => {
+      const id = itemId(x);
+      const s = st(h, id);
+      if (!s) return null;
+      return { id, name: (x && typeof x === "object" && x.name) || (typeof card.label === "function" ? card.label(id) : nameOf(s, id)), icon: (x && typeof x === "object" && x.icon) || "" }; // the card's own icon only: a device's raw one looked out of place
+    };
+    const secs = [];
+    const add = (label, arr) => {
+      const items = (Array.isArray(arr) ? arr : []).map(it).filter(Boolean);
+      if (items.length) secs.push({ label, items });
+    };
+    if (typeof card.members === "function") {
+      // An area card: a section per group it draws (climate, switches, values…), in its order.
+      const ids = orderIds(card, card.members()).filter((id) => st(h, id));
+      const by = new Map();
+      for (const id of ids) {
+        const k = typeof card.kind === "function" ? card.kind(id) : "";
+        by.set(k, [...(by.get(k) || []), id]);
+      }
+      for (const list of by.values()) add("", list);
+    }
+    add(w.groups, c.groups);
+    add("", c.entities);
+    add("", c.zones);
+    add("", c.sensors);
+    add(c.type === "custom:hauflo-alert" ? "" : w.alarms, c.alarms);
+    // Scenes with the family's own ones of the room (agent scenes.py) after the integrator's, as the block draws them.
+    const withFamily = (arr, room, kind) => orderSort(ORDER.data?.[orderKey(card)], [...(arr || []), ...(room ? familyScenes(h, room, kind).filter((x) => !(arr || []).some((y) => itemId(y) === x.entity)) : [])]);
+    if (Array.isArray(c.rows)) for (const r of c.rows) add(r?.title || (r?.kind === "cover" ? w.names.covers : w.names.lights), withFamily(r?.scenes, r?.scene_room, r?.kind === "cover" ? "cover" : "light"));
+    add(secs.length ? w.scenes : "", withFamily(c.scenes, c.scene_room, card.kind === "cover" || c.kind === "cover" ? "cover" : "light"));
+    if (secs.length === 1) secs[0].label = "";
+    return secs;
+  };
+  /** The block's name in the sheet: the house's title for it, the integrator's, else the card's own word. */
+  const orderName = (card) => {
+    const c = card._raw || {};
+    const w = OW[langOf(card._hass)];
+    const t = String(c.type || "").replace(/^custom:hauflo-/, "");
+    const own = c.block && TITLES.data?.[c.block];
+    if (own) return own;
+    if (t === "area") return c.title || card._hass?.areas?.[c.area]?.name || w.names.area;
+    if (t === "sliders") return JSON.stringify(c.entities || []).includes('"cover.') ? w.names.covers : w.names.lights;
+    return c.title || c.label || w.names[t] || t;
+  };
+  /** This page's blocks that can be ordered (one per block — a tablet copy is the same block), top to bottom. */
+  const orderBlocksHere = () => {
+    const by = new Map();
+    for (const card of ORDER.cards) {
+      const key = card.isConnected && orderKey(card);
+      if (!key) continue;
+      const shown = card.getBoundingClientRect().height > 0;
+      const have = by.get(key);
+      if (have && (have.shown || !shown)) continue;
+      const n = orderSections(card).reduce((a, s) => a + s.items.length, 0);
+      if (n >= 2) by.set(key, { card, shown, n, top: card.getBoundingClientRect().top });
+    }
+    return [...by.values()].sort((a, b) => Number(b.shown) - Number(a.shown) || a.top - b.top);
+  };
+  const OCSS = `:host{position:fixed;inset:0;z-index:10000;display:grid;place-items:end center;background:rgba(0,0,0,.42);font-family:Onest,var(--ha-font-family-body),system-ui,sans-serif;color:var(--eh-ink,var(--primary-text-color));-webkit-tap-highlight-color:transparent}
+@media (min-width:600px){:host{place-items:center}}
+*{box-sizing:border-box}
+.sh{width:min(100%,480px);max-height:92vh;overflow:auto;overscroll-behavior:contain;background:var(--card-background-color,#fff);background-image:var(--eh-glass,none);border-radius:28px 28px 0 0;padding:20px 16px calc(16px + env(safe-area-inset-bottom));box-shadow:0 20px 60px rgba(0,0,0,.35)}
+@media (min-width:600px){.sh{border-radius:28px;padding:20px}}
+.hd{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:4px}.hd h2{font:600 20px/1.2 Onest,sans-serif;margin:0;letter-spacing:-.01em;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.x{width:44px;height:44px;flex:none;border-radius:22px;border:0;background:var(--eh-track,rgba(127,127,127,.12));color:inherit;font-size:22px;cursor:pointer}
+.hint{font:400 13px/1.45 Onest,sans-serif;color:var(--eh-ink2,var(--secondary-text-color));margin:4px 2px 10px}
+.vl{font:500 11px/1.2 Onest,sans-serif;letter-spacing:.14em;text-transform:uppercase;color:var(--eh-ink2,var(--secondary-text-color));margin:16px 2px 6px}
+ol{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+li{display:flex;align-items:center;gap:8px;min-height:56px;padding:4px 4px 4px 0;border-radius:16px;background:var(--eh-track,rgba(127,127,127,.10));user-select:none;-webkit-user-select:none;transition:box-shadow .15s,transform .15s}
+li.drag{background:var(--card-background-color,#fff);box-shadow:0 8px 24px rgba(0,0,0,.25),inset 0 0 0 2px var(--eh-ice,#3C82F0);transform:scale(1.02);position:relative;z-index:1}
+.gr{flex:none;width:44px;height:48px;display:grid;place-items:center;color:var(--eh-ink2,var(--secondary-text-color));cursor:grab;touch-action:none}.gr:active{cursor:grabbing}
+.ic{--mdc-icon-size:20px;color:var(--eh-ink2,var(--secondary-text-color));flex:none}
+.nm{flex:1;min-width:0;font:500 15px/1.3 Onest,sans-serif;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere}
+.mv{flex:none;width:44px;height:44px;border:0;border-radius:14px;background:none;color:inherit;font:500 18px Onest,sans-serif;cursor:pointer}.mv:disabled{opacity:.25;cursor:default}.mv:not(:disabled):hover{background:rgba(127,127,127,.14)}
+button:focus-visible{outline:2px solid var(--eh-ice,#3C82F0);outline-offset:1px}
+.res{font:400 13px/1.45 Onest,sans-serif;margin:10px 2px 0;color:var(--error-color,#c62828)}.res:empty{display:none}
+.ft{display:flex;align-items:center;gap:8px;margin:16px -16px 0;position:sticky;bottom:calc(-16px - env(safe-area-inset-bottom));padding:10px 16px calc(4px + env(safe-area-inset-bottom));background:var(--card-background-color,#fff);border-top:1px solid var(--divider-color,rgba(127,127,127,.18))}.ft .sp{flex:1}
+@media (min-width:600px){.ft{margin:16px -20px 0;padding:12px 20px 0;bottom:-20px}}
+.ft button{min-height:44px;padding:0 16px;border:0;border-radius:14px;font:500 14px Onest,sans-serif;color:inherit;cursor:pointer;background:var(--eh-track,rgba(127,127,127,.12))}
+.ft .b1{background:var(--eh-ink,var(--primary-text-color));color:var(--card-background-color,#fff);font-weight:600}.ft .lnk{background:none;padding:0 8px;color:var(--eh-ink2,var(--secondary-text-color));text-decoration:underline;text-underline-offset:3px}
+.ft button:disabled{opacity:.5}`;
+  let orderOpen = null;
+  /** The sheet: the block's items in its order — drag by the handle (pointer events: a finger, a pen, the mouse) or ↑ ↓; Done saves for the house. */
+  const openOrder = (card) => {
+    const key = orderKey(card);
+    if (orderOpen || !key) return;
+    const h = card._hass;
+    const w = OW[langOf(h)];
+    const secs = orderSections(card).map((s) => ({ ...s, items: [...s.items] }));
+    const host = document.createElement("div");
+    host.className = "hauflo-order";
+    const sr = host.attachShadow({ mode: "open" });
+    orderOpen = host;
+    let res = "";
+    let busy = false;
+    const onKey = (e) => e.key === "Escape" && close();
+    const close = () => {
+      host.remove();
+      orderOpen = null;
+      document.removeEventListener("keydown", onKey);
+    };
+    document.addEventListener("keydown", onKey);
+    const ids = () => [...new Set(secs.flatMap((s) => s.items.map((x) => x.id)))];
+    const save = async (items) => {
+      busy = true;
+      draw();
+      try {
+        const r = await h.callApi("POST", "hauflo/order", { key, items });
+        ORDER.data = r?.order || {};
+        orderSave();
+        orderRedraw();
+        close();
+      } catch (e) {
+        busy = false;
+        res = w.error;
+        draw();
+      }
+    };
+    const row = (x, i, n) =>
+      `<li data-id="${esc(x.id)}"><span class="gr" data-grip aria-hidden="true"><ha-icon icon="mdi:drag"></ha-icon></span>${x.icon ? `<ha-icon class="ic" icon="${esc(x.icon)}"></ha-icon>` : ""}<span class="nm">${esc(x.name)}</span><button class="mv" data-up aria-label="${esc(`${w.up}: ${x.name}`)}"${i ? "" : " disabled"}>↑</button><button class="mv" data-down aria-label="${esc(`${w.down}: ${x.name}`)}"${i < n - 1 ? "" : " disabled"}>↓</button></li>`;
+    const draw = (focus) => {
+      sr.innerHTML = `<style>${OCSS}</style><div class="sh" role="dialog" aria-modal="true" aria-label="${esc(`${w.title}: ${orderName(card)}`)}">
+<div class="hd"><h2>${esc(w.title)} · ${esc(orderName(card))}</h2><button class="x" data-x aria-label="${esc(w.close)}">×</button></div>
+<p class="hint">${esc(w.hint)}</p>
+${secs.map((s, si) => `${s.label ? `<p class="vl">${esc(s.label)}</p>` : ""}<ol data-s="${si}">${s.items.map((x, i) => row(x, i, s.items.length)).join("")}</ol>`).join("")}
+<p class="res" role="status">${esc(res)}</p>
+<div class="ft">${ORDER.data?.[key] ? `<button class="lnk" data-reset${busy ? " disabled" : ""}>${esc(w.reset)}</button>` : ""}<span class="sp"></span><button data-cancel>${esc(w.cancel)}</button><button class="b1" data-done${busy ? " disabled" : ""}>${esc(w.done)}</button></div></div>`;
+      sr.querySelector("[data-x]").onclick = close;
+      sr.querySelector("[data-cancel]").onclick = close;
+      sr.querySelector("[data-done]").onclick = () => !busy && save(ids());
+      const reset = sr.querySelector("[data-reset]");
+      if (reset) reset.onclick = () => !busy && save([]);
+      sr.querySelectorAll("ol").forEach((ol) => {
+        const s = secs[Number(ol.dataset.s)];
+        ol.querySelectorAll("li").forEach((li, i) => {
+          const move = (by, which) => {
+            const j = i + by;
+            if (j < 0 || j >= s.items.length) return;
+            [s.items[i], s.items[j]] = [s.items[j], s.items[i]];
+            draw({ id: s.items[j].id, which: j === 0 ? "down" : j === s.items.length - 1 ? "up" : which });
+          };
+          li.querySelector("[data-up]").onclick = () => move(-1, "up");
+          li.querySelector("[data-down]").onclick = () => move(1, "down");
+          li.querySelector("[data-grip]").addEventListener("pointerdown", (e) => {
+            if (e.pointerType === "mouse" && e.button !== 0) return;
+            e.preventDefault();
+            li.classList.add("drag");
+            const sh = sr.querySelector(".sh");
+            const onMove = (ev) => {
+              ev.preventDefault();
+              const y = ev.clientY;
+              let before = null;
+              for (const o of ol.children) {
+                if (o === li) continue;
+                const r = o.getBoundingClientRect();
+                if (y < r.top + r.height / 2) {
+                  before = o;
+                  break;
+                }
+              }
+              if (before !== li.nextElementSibling && before !== li) ol.insertBefore(li, before);
+              // Near the sheet's edge: it scrolls (a long list on a phone).
+              const b = sh.getBoundingClientRect();
+              if (y < b.top + 48) sh.scrollTop -= 12;
+              else if (y > b.bottom - 72) sh.scrollTop += 12;
+            };
+            const onUp = () => {
+              document.removeEventListener("pointermove", onMove);
+              document.removeEventListener("pointerup", onUp);
+              document.removeEventListener("pointercancel", onUp);
+              const byId = new Map(s.items.map((x) => [x.id, x]));
+              s.items = [...ol.children].map((o) => byId.get(o.dataset.id)).filter(Boolean);
+              haptic(card);
+              draw();
+            };
+            document.addEventListener("pointermove", onMove, { passive: false });
+            document.addEventListener("pointerup", onUp);
+            document.addEventListener("pointercancel", onUp);
+          });
+        });
+      });
+      if (focus) sr.querySelector(`li[data-id="${CSS.escape(focus.id)}"] [data-${focus.which}]`)?.focus();
+    };
+    // A tap on the dim backdrop closes — not the click that ends the long press which opened it (it lands on the backdrop).
+    const opened = Date.now();
+    host.addEventListener("click", (e) => e.composedPath()[0] === host && Date.now() - opened > 700 && close());
+    draw();
+    document.body.appendChild(host);
+    sr.querySelector("[data-done]")?.focus();
+  };
   // --- the family's own room scenes (owner 28.10: «сцены, как и сцены света, должны создаваться и редактироваться мной и
   // клиентом»; agent scenes.py, 0.16.0+): a block with `scene_room` gets «+ Сцена» → a name → «Запомнить как сейчас»;
   // a long press on a scene Hauflo made (the integrator's or the family's) → rename / remember again / delete (hide).
@@ -575,10 +967,11 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
   };
   /** Scene buttons of one kind (light amber, blinds neutral, both mint) — the room's top card and the blocks share them.
    * `room` (the card's `scene_room`): the family's own scenes after the integrator's, and «+ Сцена». */
-  const sceneChips = (hass, list, kind, room) => {
+  const sceneChips = (hass, list, kind, room, card) => {
     const own = room && hass ? familyScenes(hass, room, kind) : [];
     const hidden = new Set(FAM.hidden || []);
-    const all = [...(list || []), ...own.filter((x) => !(list || []).some((y) => y.entity === x.entity))].filter((x) => st(hass, x.entity) && !hidden.has(x.entity));
+    // The family's own scenes in the block's order too (`card` — the block: «Порядок»).
+    const all = orderSort(card && ORDER.data?.[orderKey(card)], [...(list || []), ...own.filter((x) => !(list || []).some((y) => y.entity === x.entity))], (x) => x.entity).filter((x) => st(hass, x.entity) && !hidden.has(x.entity));
     return `<div class="scn ${kind}">${all
       .map((x) => {
         const s = st(hass, x.entity);
@@ -962,6 +1355,7 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b" data-rename>П
     }
     setConfig(config) {
       this._config = { ...config };
+      this._raw = this._config; // as configured — the block's order is put over a copy (orderApply)
       this._sig = "";
       if (this._hass) this._update();
     }
@@ -995,6 +1389,7 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b" data-rename>П
       this._dark = dark;
       this.lang = LANG; // hyphenation in the card's language («Полотенце-сушитель»)
       if (this._config.panel) this.style.cssText = "display:block;max-width:980px;margin:24px auto;padding:0 16px";
+      orderApply(this);
       const html = `<style>${CSS}${this.css ? this.css() : ""}</style>${this.render()}`;
       // A state update that changes nothing on the card (a thermostat repeating its reading) leaves it alone.
       // A forced render (after a drag, a tab) always goes: the DOM may have been changed by hand.
@@ -1014,6 +1409,7 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b" data-rename>П
       if (h) requestAnimationFrame(() => (this.style.minHeight = ""));
       translate(this.shadowRoot);
       this.bind && this.bind();
+      orderAfter(this);
       reAck(this);
       if (first || REDUCED) return;
       [...this.shadowRoot.querySelectorAll(SEL)].forEach((e, i) => {
@@ -1024,6 +1420,15 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b" data-rename>П
     }
     getCardSize() {
       return 3;
+    }
+    /** Put on its page: the block's key is known now — drawn in the block's order; a room tile takes its place. */
+    connectedCallback() {
+      if (!this._raw || !this._hass) return;
+      const fresh = this._okeyRaw !== this._raw;
+      if (orderKey(this) && fresh) {
+        this._sig = "";
+        this._update();
+      } else orderAfter(this);
     }
     /** Nothing to show (scenes that are in their blocks): the card and HA's wrapper around it take no room. */
     hideCard(hide) {
@@ -1040,7 +1445,7 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b" data-rename>П
       if (!c.scenes?.length && !c.scene_room) return "";
       const where = viewPrefs(this).scenes || c.scene_layout || "blocks";
       if (where !== "blocks") return "";
-      return `<div class="srow"><span class="caps">${blockTitle(this, this.kind === "cover" ? "Сценарии штор" : "Сценарии света", this.kind === "cover" ? "cover_scenes" : "light_scenes")}</span>${sceneChips(this._hass, c.scenes || [], this.kind === "cover" ? "cover" : "light", c.scene_room)}</div>`;
+      return `<div class="srow"><span class="caps">${blockTitle(this, this.kind === "cover" ? "Сценарии штор" : "Сценарии света", this.kind === "cover" ? "cover_scenes" : "light_scenes")}</span>${sceneChips(this._hass, c.scenes || [], this.kind === "cover" ? "cover" : "light", c.scene_room, this)}</div>`;
     }
   }
 
@@ -1315,7 +1720,7 @@ ${(c.alarms || []).length && ok ? `<div><span class="caps">Датчики</span>
         this.hideCard(!rows.length);
         if (!rows.length) return "";
         return `<div class="glass m rows"><div class="hd"><span class="ic"><ha-icon icon="hauflo:scene"></ha-icon></span><span class="caps">${blockTitle(this, "Сценарии")}</span></div>
-${rows.map((r) => `<div class="rw"><span class="caps sub">${esc(r.title || (r.kind === "cover" ? "Шторы" : "Свет"))}</span>${sceneChips(this._hass, r.scenes, r.kind === "cover" ? "cover" : r.kind === "mixed" ? "mixed" : "light", r.scene_room)}</div>`).join("")}</div>`;
+${rows.map((r) => `<div class="rw"><span class="caps sub">${esc(r.title || (r.kind === "cover" ? "Шторы" : "Свет"))}</span>${sceneChips(this._hass, r.scenes, r.kind === "cover" ? "cover" : r.kind === "mixed" ? "mixed" : "light", r.scene_room, this)}</div>`).join("")}</div>`;
       }
       const list = (c.scenes || []).map((x) => ({ ...x, st: st(this._hass, x.entity) })).filter((x) => x.st);
       const kind = c.kind === "cover" ? "cover" : c.kind === "mixed" ? "mixed" : "light";
@@ -3013,7 +3418,7 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
     }
     render() {
       const h = this._hass;
-      const ids = this.members().filter((id) => h.states[id]);
+      const ids = orderIds(this, this.members()).filter((id) => h.states[id]);
       const areaName = h.areas?.[this._config.area]?.name;
       const title = this._config.title || areaName || "Комната";
       const admin = h.user?.is_admin === true;
@@ -3512,7 +3917,7 @@ ${locks.length || opens.length ? `<div class="lst">${locks
         const tone = d.tone ? d.tone(e.s) : "";
         return tone === "alarm" ? 0 : tone === "warn" ? 1 : (d.on ? d.on(e.s) : e.s.state === "on") ? 2 : 3;
       };
-      const items = (this._config.entities || []).map((e) => (typeof e === "string" ? { entity: e } : e)).map((e, i) => ({ ...e, s: st(this._hass, e.entity), i })).filter((e) => e.s).sort((a, b) => rank(a) - rank(b) || a.i - b.i);
+      const items = (this._config.entities || []).map((e) => (typeof e === "string" ? { entity: e } : e)).map((e, i) => ({ ...e, s: st(this._hass, e.entity), i })).filter((e) => e.s).sort((a, b) => (orderHas(this) ? 0 : rank(a) - rank(b)) || a.i - b.i); // the house's own order wins
       this.hideCard(!items.length);
       if (!items.length) return "";
       return `<div class="glass k">${this._config.title ? `<span class="caps">${esc(this._config.title)}</span>` : ""}<div class="grid">${items
@@ -5129,6 +5534,7 @@ ul{margin:4px 0 0;padding:0 0 0 18px}li{margin:2px 0}
 .nm input:focus{outline:2px solid var(--eh-ice,#3C82F0);outline-offset:1px}
 .reset{margin-top:10px;min-height:40px;padding:0 14px;border:0;border-radius:14px;background:var(--eh-track,rgba(127,127,127,.12));color:inherit;font:500 13px Onest,sans-serif;cursor:pointer}
 .go{display:flex;align-items:center;gap:12px;width:100%;margin:18px 0 0;padding:14px;border:0;border-radius:20px;background:var(--eh-track,rgba(127,127,127,.12));color:inherit;text-align:left;cursor:pointer;min-height:64px}
+.go.ord{margin-top:8px;min-height:56px}.go.ord ha-icon{color:var(--eh-ink2,var(--secondary-text-color))}
 .go span{flex:1;display:flex;flex-direction:column;gap:2px}.go b{font:600 15px Onest,sans-serif}.go small{font:400 12px/1.35 Onest,sans-serif;color:var(--eh-ink2,var(--secondary-text-color))}.go i{font-style:normal;font-size:22px;opacity:.6}.go ha-icon{color:var(--eh-amber,#E8901F)}
 `;
     /** What this dashboard shows that the client may switch, and the integrator's choice for each. */
@@ -5180,6 +5586,7 @@ ul{margin:4px 0 0;padding:0 0 0 18px}li{margin:2px 0}
       let namesT = 0;
       let typed = null;
       loadTitles(h);
+      loadOrder(h)?.then(() => sheet && draw());
       /** «Названия блоков» (owner 28.10): for the whole house, kept by the agent; the integrator's title as the placeholder. */
       const namesBlock = () => {
         const blocks = Object.entries(defs._blocks || {});
@@ -5205,6 +5612,17 @@ ul{margin:4px 0 0;padding:0 0 0 18px}li{margin:2px 0}
           .join("")}
 <p class="hint">${esc(w.viewHint(said))}</p>${names}${Object.keys(mine).some((k) => defs[k] !== undefined) || Object.keys(TITLES.data || {}).length ? `<button class="reset" data-view-reset>${esc(w.reset)}</button>` : ""}${viewRes ? `<p class="res">${esc(viewRes)}</p>` : ""}`;
       };
+      /** «Порядок элементов» (owner 28.10: «как мне поменять последовательность элементов любого блока»): the blocks of
+       * this page, each opens its sheet (order of the block, for the whole house). */
+      let blocksHere = [];
+      const orderMenu = () => {
+        blocksHere = ORDER.ok ? orderBlocksHere() : [];
+        if (!blocksHere.length) return "";
+        const ow = OW[langOf(h)];
+        return `<div class="caps">${esc(ow.menu)}</div>${blocksHere
+          .map((b, i) => `<button class="go ord" data-order="${i}"><ha-icon icon="mdi:drag-variant"></ha-icon><span><b>${esc(orderName(b.card))}</b><small>${esc(ow.items(b.n))}</small></span><i aria-hidden="true">›</i></button>`)
+          .join("")}<p class="hint">${esc(ow.menuHint)}</p>`;
+      };
       const draw = () => {
         // What's being typed survives a redraw (the season loads after the sheet opens).
         const inputs = [...sr.querySelectorAll("input[data-name]")];
@@ -5223,6 +5641,7 @@ ul{margin:4px 0 0;padding:0 0 0 18px}li{margin:2px 0}
 <p class="hint">${esc(w.themeHint)}</p>
 <button class="go" data-autos><ha-icon icon="mdi:weather-sunset"></ha-icon><span><b>${esc(w.autos)}</b><small>${esc(w.autosSub)}</small></span><i aria-hidden="true">›</i></button>
 ${viewBlock()}
+${orderMenu()}
 ${acs.length ? `<div class="caps">${esc(w.season)}</div><p class="now" data-now>${esc(now)}</p>
 <div class="big" role="group" aria-label="${esc(w.season)}">
 <button class="heat" data-season="heat" aria-pressed="${pressed === "heat"}" ${busy ? "disabled" : ""}><b><ha-icon icon="hauflo:snow"></ha-icon>${esc(w.winter)}</b><span>${esc(w.winterSub)}</span></button>
@@ -5231,6 +5650,11 @@ ${acs.length ? `<div class="caps">${esc(w.season)}</div><p class="now" data-now>
 <details><summary>${esc(w.list)} · ${acs.length}</summary><ul>${acs.map((a) => `<li>${esc(a.name)} — ${esc(w[a.state] ?? a.state)}</li>`).join("")}</ul></details>` : ""}
 </div>`;
         sr.querySelector("[data-x]").onclick = close;
+        sr.querySelectorAll("[data-order]").forEach((b) => (b.onclick = () => {
+          const it = blocksHere[Number(b.dataset.order)];
+          close();
+          if (it) openOrder(it.card);
+        }));
         sr.querySelector("[data-autos]").onclick = () => {
           close();
           AUTO.open(hassOf());

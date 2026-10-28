@@ -34,6 +34,7 @@ from homeassistant.helpers.event import async_call_later, async_track_state_chan
 from homeassistant.helpers.storage import Store
 
 from . import automations, backup, comfort, dashmerge, keep, notify, presence, scenes, season, sidebar, theme, titles, voice
+from . import order as block_order
 from .const import CONF_REFRESH_TOKEN_ID, CONF_SECRET, CONF_SERVER, CONF_USER_ID, DATA_NOTIFY_VIEWS, DATA_UNLINKED, DOMAIN, MONITOR_LABEL, MONITOR_LABEL_EN, MONITOR_LABELS, OWNED_STORE, STATUS_EVERY, VERSION, CONF_RANGES, DATA_PENDING_RANGES, CONF_ALLOW_CHANGES, LOCKED_CODE
 
 _LOGGER = logging.getLogger(__name__)
@@ -1727,6 +1728,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
         hass.http.register_view(sidebar.SidebarView())
         hass.http.register_view(season.SeasonView(lambda: _season(hass)))
         hass.http.register_view(titles.TitlesView())
+        hass.http.register_view(block_order.OrderView())
         hass.http.register_view(automations.AutomationsView(lambda: _automations(hass)))
         hass.http.register_view(scenes.ScenesView(lambda: _scenes(hass)))
         hass.http.register_view(presence.PresenceView(lambda: _presence(hass)))
