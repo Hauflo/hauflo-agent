@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import re
 import time
+import unicodedata
 from typing import Any
 
 from homeassistant.components.http import KEY_HASS, HomeAssistantView
@@ -48,6 +49,8 @@ def clean(body: Any) -> dict[str, str] | None:
             return None
         if kind not in KINDS:
             continue
+        # Bidi / format characters (Unicode Cf: RLO, zero-width…) go too — a name can't flip or hide text.
+        raw = "".join(ch for ch in raw if unicodedata.category(ch) != "Cf")
         text = " ".join(_CONTROL.sub(" ", raw).split())[:MAX_LEN].strip()
         if text:
             out[kind] = text

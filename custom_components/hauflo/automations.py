@@ -62,6 +62,8 @@ _ALARM_CODE = re.compile(r"hauflo_alarm_[0-9a-f]{6}")
 _TIME = re.compile(r"([01]\d|2[0-3]):([0-5]\d)")
 # HA's place before anyone set it: 0/0 (a fresh install) or the old San Diego default.
 _UNSET = ((0.0, 0.0), (32.87336, -117.22743))
+NO_LOCATION_RU = "Место дома не задано — рассвет и закат посчитаются неправильно. Укажите, где дом."
+NO_LOCATION_EN = "The home's location isn't set — sunrise and sunset will be wrong. Set where the house is."
 # What a rule may do, by domain: the service and what its value is.
 _DO = {
     "cover": {"open": "cover.open_cover", "close": "cover.close_cover", "position": "cover.set_cover_position"},
@@ -517,7 +519,11 @@ class Automations:
             data["rules"][rule_id] = rule
             await self.store.async_save(data)
         await self._apply_enabled(rule_id, rule["enabled"])
-        return {"id": rule_id, **{k: v for k, v in rule.items() if k != "hash"}}
+        out = {"id": rule_id, **{k: v for k, v in rule.items() if k != "hash"}}
+        # A sunrise / sunset rule while HA doesn't know where the house is: saved, and said (HA expert 28.10).
+        if rule["when"].get("event") in ("sunrise", "sunset") and not self.location()["set"]:
+            out["warning"] = "no_location"
+        return out
 
     async def _apply_enabled(self, rule_id: str, enabled: bool) -> None:
         # HA keeps the switch over restarts (no initial_state); a reload keeps an unchanged automation's state.
@@ -699,7 +705,10 @@ class AutomationsView(HomeAssistantView):
             return self.json({"message": msg, "code": "admin_only"}, 403)
         try:
             if op == "save":
-                return self.json(await engine.save(body.get("rule"), user.name if user else None, body.get("force") is True))
+                saved = await engine.save(body.get("rule"), user.name if user else None, body.get("force") is True)
+                if saved.get("warning") == "no_location":
+                    saved["warning_text"] = NO_LOCATION_RU if ru else NO_LOCATION_EN
+                return self.json(saved)
             if op == "enable":
                 return self.json(await engine.set_enabled(body.get("id"), body.get("enabled")))
             if op == "delete":

@@ -70,6 +70,30 @@ def async_unload(hass: HomeAssistant) -> None:
 MENU_EXTRAS = {"map", "energy", "logbook", "history", "calendar", "media-browser", "todo"}
 
 
+async def async_remove(hass: HomeAssistant) -> int:
+    """The integration removed: the panels Hauflo hid (as it recorded them) come back for every person, and the choice
+    is forgotten — a person added later gets HA's full menu (HA expert 28.10). Returns how many people got them back."""
+    from homeassistant.components.frontend.storage import async_user_store  # noqa: PLC0415
+
+    saved = Store(hass, 1, STORE_KEY)
+    hidden_by_us = {p for p in ((await saved.async_load()) or {}).get("hide", []) if p in MENU_EXTRAS}
+    back = 0
+    if hidden_by_us:
+        for user in await hass.auth.async_get_users():
+            if user.system_generated:
+                continue
+            store = await async_user_store(hass, user.id)
+            sidebar = dict(store.data.get("sidebar") or {})
+            was = list(sidebar.get("hiddenPanels") or [])
+            now = [p for p in was if p not in hidden_by_us]
+            if now != was:
+                sidebar["hiddenPanels"] = now
+                await store.async_set_item("sidebar", sidebar)
+                back += 1
+    await saved.async_remove()
+    return back
+
+
 class SidebarView(HomeAssistantView):
     url = "/api/hauflo/sidebar"
     name = "api:hauflo:sidebar"

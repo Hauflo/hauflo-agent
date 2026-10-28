@@ -142,6 +142,7 @@ async def test_a_backup_before_a_deploy(hass: HomeAssistant, hass_client, entry)
     body = await res.json()
     assert res.status == 200, body
     assert body["state"] == "done" and body["name"].startswith("Hauflo ")
+    assert ":" not in body["name"]  # HA makes the file name from it: no colon for SMB / Windows / a NAS (HA expert 28.10)
     backups, _ = await hass.data[DATA_MANAGER].async_get_backups()
     assert any(b.name == body["name"] and not b.database_included for b in backups.values())
     assert (await (await client.get("/api/hauflo/backup")).json())["state"] == "done"
@@ -160,6 +161,10 @@ async def test_hauflo_backups_kept_by_age_and_asked_again_is_the_same(hass: Home
     manager = hass.data[DATA_MANAGER]
     agent_id = next(iter(manager.local_backup_agents))
     await manager.async_create_backup(agent_ids=[agent_id], include_addons=None, include_all_addons=False, include_database=False, include_folders=None, include_homeassistant=True, name="Mine before the holidays", password=None)
+    # An older agent's one (colons in the name): still Hauflo's, its retention goes on.
+    await manager.async_create_backup(agent_ids=[agent_id], include_addons=None, include_all_addons=False, include_database=False, include_folders=None, include_homeassistant=True, name="Hauflo 2026-10-01 10:00:00", password=None)
+    assert backup._OURS.match("Hauflo 2026-10-01 10:00:00") and backup._OURS.match("Hauflo 2026-10-28 03.49.56")
+    await asyncio.sleep(1.1)  # its date is older than the next ones'
     client = await hass_client()
 
     async def ours() -> int:
@@ -195,6 +200,7 @@ async def test_hauflo_backups_kept_by_age_and_asked_again_is_the_same(hass: Home
             assert await ours() == 3
     backups, _ = await manager.async_get_backups()
     assert "Mine before the holidays" in [b.name for b in backups.values()]  # never one the person made
+    assert "Hauflo 2026-10-01 10:00:00" not in [b.name for b in backups.values()]  # the old-named one was cleaned too
 
 
 async def test_without_a_backup_is_said_in_ha(hass: HomeAssistant, hass_client, entry) -> None:
@@ -476,6 +482,27 @@ async def test_only_has_extras_leave_the_menu(hass: HomeAssistant, hass_client, 
     client = await hass_client()
     assert (await client.post("/api/hauflo/sidebar", json={"hide": ["config"]})).status == 400
     assert (await client.post("/api/hauflo/sidebar", json={"hide": ["map", "logbook"]})).status == 200
+
+
+async def test_removed_agent_gives_the_menu_back(hass: HomeAssistant, hass_client, hass_admin_user, entry) -> None:
+    """HA expert 28.10: the panels «Убрать лишнее из меню» hid stayed hidden for everyone after the agent was removed."""
+    from homeassistant.components.frontend.storage import async_user_store
+    from homeassistant.helpers.storage import Store
+
+    from custom_components.hauflo import sidebar
+
+    mama = await hass.auth.async_create_user("Мама")
+    store = await async_user_store(hass, mama.id)
+    await store.async_set_item("sidebar", {"hiddenPanels": ["my-panel"], "panelOrder": ["lovelace"]})  # her own choice
+    client = await hass_client()
+    assert (await client.post("/api/hauflo/sidebar", json={"hide": ["map", "logbook"]})).status == 200
+    assert set(store.data["sidebar"]["hiddenPanels"]) == {"my-panel", "map", "logbook"}
+    await hass.config_entries.async_remove(entry.entry_id)
+    await hass.async_block_till_done()
+    assert store.data["sidebar"] == {"hiddenPanels": ["my-panel"], "panelOrder": ["lovelace"]}
+    admin = await async_user_store(hass, hass_admin_user.id)
+    assert not set(admin.data["sidebar"]["hiddenPanels"]) & {"map", "logbook"}
+    assert await Store(hass, 1, sidebar.STORE_KEY).async_load() is None  # forgotten: a person added later gets HA's menu
 
 
 async def test_an_alarm_sensor_without_data_is_said_and_its_return(hass: HomeAssistant) -> None:

@@ -699,7 +699,8 @@ _CARD_SERVICES = {
 _ENTITY_RE = re.compile(r"[a-z_]+\.[a-z0-9_]+")  # fullmatch only
 # A view / section / card's Hauflo id (dashmerge.py): plain text, no control characters.
 _HAUFLO_ID_RE = re.compile(r"^[^\x00-\x1f\x7f]{1,256}$")
-_COPY_RE = re.compile(r"^hauflo-[a-z0-9_-]{1,40}-copy-\d{12}$")
+# A copy of a dashboard (dashmerge.py: hauflo-…-copy-<stamp>[-<random>]): never read or written through the tunnel.
+_COPY_RE = re.compile(r"-copy-\d")
 _NAV_RE = re.compile(r"^/(hauflo-[a-z0-9_-]+(/[a-z0-9_-]*)?|config/scene/edit/hauflo_[a-z0-9_]+)$")
 
 
@@ -877,7 +878,8 @@ def _own_dashboard(hass: HomeAssistant | None, dashboard_id: Any) -> bool:
 
         for url_path, dash in hass.data[LOVELACE_DATA].dashboards.items():
             if (getattr(dash, "config", None) or {}).get("id") == dashboard_id:
-                return str(url_path).startswith("hauflo-")
+                # Never a copy: shown to everyone it would hand the integrator's old cards out (security re-review 28.10).
+                return str(url_path).startswith("hauflo-") and not _COPY_RE.search(str(url_path))
     except Exception:  # noqa: BLE001 — not knowable: not allowed
         return False
     return False
@@ -954,8 +956,12 @@ def _ws_allowed(msg: dict[str, Any], hass: HomeAssistant | None = None, owned: s
     if t == "config/label_registry/delete":
         # Only a label Hauflo made and nothing carries (its category labels of the other language).
         return _owns(owned_entries, "label", msg.get("label_id")) and _unused_label(hass, msg.get("label_id"))
+    if t.startswith("lovelace/") and _COPY_RE.search(str(msg.get("url_path") or "")):
+        # A copy of a dashboard (the integrator's cards as they were) is the agent's alone: the cloud neither reads,
+        # makes, nor writes one (security re-review 28.10: fake copies pruned the real ones, a copy overwritten).
+        return False
     if t == "lovelace/dashboards/create":
-        # Hauflo's own dashboards and their copies (hauflo-…), never the client's (security re-review round 4).
+        # Hauflo's own dashboards (hauflo-…), never the client's (security re-review round 4).
         return str(msg.get("url_path") or "").startswith("hauflo-")
     if t == "lovelace/config":
         # Reading: Hauflo's own dashboards only, not the family's (security expert 25.10).
@@ -1451,24 +1457,6 @@ class Agent:
             "hauflo_ranges",
         )
 
-    async def _own_dashboard_copy(self, msg: dict[str, Any]) -> bool:
-        """«Rebuild the dashboard» keeps the hand-edited one as a copy (hauflo-…-copy-<stamp>): allowed whatever it holds,
-        but only as exactly the content of a Hauflo dashboard already in this HA — never cards of the cloud's choosing."""
-        url = str(msg.get("url_path") or "")
-        if msg.get("type") != "lovelace/config/save" or not _COPY_RE.match(url) or not isinstance(msg.get("config"), dict):
-            return False
-        try:
-            from homeassistant.components.lovelace.const import LOVELACE_DATA  # noqa: PLC0415
-
-            for path, dash in list(self.hass.data[LOVELACE_DATA].dashboards.items()):
-                if str(path).startswith("hauflo-") and "-copy-" not in str(path):
-                    with contextlib.suppress(Exception):
-                        if await dash.async_load(False) == msg["config"]:
-                            return True
-        except Exception:  # noqa: BLE001 — not knowable: not allowed
-            return False
-        return False
-
     def _dashboard_ok(self, config: Any) -> bool:
         return _lovelace_ok(self.hass, config, self.owned, self.owned_entries)
 
@@ -1485,7 +1473,7 @@ class Agent:
         # Hauflo doesn't hold a token for this HA: the agent signs in with its own.
         if msg.get("type") == "auth":
             data = json.dumps({"type": "auth", "access_token": self.token})
-        elif msg.get("type") == dashmerge.PLAN:
+        elif msg.get("type") == dashmerge.PLAN or (msg.get("type") == "lovelace/config" and self.dashboards.manages(msg.get("url_path")) and not dashmerge.is_copy(msg.get("url_path"))):
             # Reads only: answered by the agent itself (no foreign card's content leaves the house).
             await dashmerge.handle(self, ch, msg, self._dashboard_ok, backup.fresh, LOCKED_CODE)
             return
@@ -1499,11 +1487,13 @@ class Agent:
             self._ask_ranges(outside)
             await self.send({"t": "ws_msg", "ch": ch, "data": json.dumps({"id": msg.get("id"), "type": "result", "success": False, "error": {"code": "address_not_allowed", "message": f"Hauflo agent: group addresses {', '.join(sorted(outside))} are not allowed in HA (Hauflo → Configure)"}})})
             return
-        elif msg.get("type") == dashmerge.SAVE or (msg.get("type") == "lovelace/config/save" and self.dashboards.manages(msg.get("url_path"))):
+        elif msg.get("type") == dashmerge.SAVE or (msg.get("type") == "lovelace/config/save" and str(msg.get("url_path") or "").startswith("hauflo-")):
             # Hauflo's part merged with what the integrator made in HA — by the agent: the cloud never writes his cards.
+            # Every save of a Hauflo dashboard (security re-review 28.10: one the agent had no version of was
+            # overwritten with no copy); a copy's is refused there.
             await dashmerge.handle(self, ch, msg, self._dashboard_ok, backup.fresh, LOCKED_CODE)
             return
-        elif not (await self._own_dashboard_copy(msg)) and not _ws_allowed(msg, self.hass, self.owned, self.owned_entries):
+        elif not _ws_allowed(msg, self.hass, self.owned, self.owned_entries):
             # Only what Hauflo deploys and reads — never backups, add-ons, arbitrary services (security review 25.10).
             _LOGGER.warning("Hauflo: «%s» isn't allowed through the tunnel", msg.get("type"))
             await self.send({"t": "ws_msg", "ch": ch, "data": json.dumps({"id": msg.get("id"), "type": "result", "success": False, "error": {"code": "not_allowed", "message": "Hauflo agent: not allowed"}})})
@@ -1832,9 +1822,17 @@ async def async_unload_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> b
     if not await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         return False
     entry.runtime_data.comfort.async_stop()
-    if entry.runtime_data.presence is not None:
-        entry.runtime_data.presence.async_stop()
+    if (sim := entry.runtime_data.presence) is not None:
         entry.runtime_data.presence = None
+        sim.async_stop()
+        # Unloaded or removed (not HA stopping — a restart picks them up again): the lights «Нет дома» lit go off, nobody
+        # is left to switch them off (HA expert 28.10).
+        if not hass.is_stopping:
+            try:
+                async with asyncio.timeout(15):
+                    await sim.async_lights_out()
+            except Exception:  # noqa: BLE001 — never blocks the unload
+                _LOGGER.warning("Hauflo presence: lights not switched off on unload", exc_info=True)
     await entry.runtime_data.stop()
     voice.async_unload(hass)
     sidebar.async_unload(hass)
@@ -1860,6 +1858,11 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         await notify.NotifyEngine(hass).async_remove()
     with contextlib.suppress(Exception):
         await comfort.ComfortEngine(hass).async_remove()
+    # HA's own menu back for everyone: the panels «Убрать лишнее из меню» hid (HA expert 28.10).
+    try:
+        await sidebar.async_remove(hass)
+    except Exception:  # noqa: BLE001
+        _LOGGER.exception("Hauflo: sidebar panels not restored")
     with contextlib.suppress(Exception):
         session = async_get_clientsession(hass)
         await session.post(

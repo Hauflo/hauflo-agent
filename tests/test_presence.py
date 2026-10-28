@@ -235,7 +235,7 @@ async def entry(hass: HomeAssistant, tmp_path: Path, tz):
     reg.async_update_entity(HIDDEN, hidden_by=er.RegistryEntryHider.INTEGRATION)
     entry.runtime_data.owned |= {"u-living", "u-kitchen", "u-blind", "u-garage", "u-hidden"}  # «u-hand»: the integrator's
     yield entry
-    if entry.runtime_data.presence:
+    if getattr(entry, "runtime_data", None) is not None and entry.runtime_data.presence:
         entry.runtime_data.presence.async_stop()
 
 
@@ -270,6 +270,7 @@ async def test_only_own_safe_lights_and_covers(hass: HomeAssistant, entry) -> No
 async def test_view_switch_plan_and_refusals(hass: HomeAssistant, hass_client, hass_read_only_user, entry, freezer) -> None:
     freezer.move_to(_now("2026-10-28", "12:00"))
     engine = entry.runtime_data.presence
+    engine.rng.random = lambda: 0.0  # tonight's draw fixed (it left every room out now and then — flaky since 28.10)
     refresh = await hass.auth.async_create_refresh_token(hass_read_only_user, CLIENT_ID)
     client = await hass_client(hass.auth.async_create_access_token(refresh))  # the client isn't an admin
     got = await (await client.get(URL)).json()
@@ -364,3 +365,214 @@ async def test_survives_restart(hass: HomeAssistant, entry, freezer) -> None:
 async def test_tunnel_cannot_reach(hass: HomeAssistant) -> None:
     for method in ("GET", "POST"):
         assert not _http_allowed(hass, method, URL, {"op": "set", "enabled": True})
+
+
+async def test_rooms_left_out(hass: HomeAssistant, hass_client, hass_read_only_user, entry, bus, freezer) -> None:
+    """The family leaves rooms out (a façade, a guest room): never planned, kept in the store, back in on a tap."""
+    freezer.move_to(_now("2026-10-28", "12:00"))
+    engine = entry.runtime_data.presence
+    # The kitchen is lit on 12 of the 13 learned days: a random draw left it out of tonight about one run in eight
+    # (flaky since 28.10) — the draw is fixed here, the rooms are what's tested.
+    engine.rng = random.Random(1)
+    engine.rng.random = lambda: 0.0
+    refresh = await hass.auth.async_create_refresh_token(hass_read_only_user, CLIENT_ID)
+    client = await hass_client(hass.auth.async_create_access_token(refresh))
+    got = await (await client.get(URL)).json()
+    rooms = {r["name"]: r for r in got["rooms"]}
+    assert set(rooms) == {"Гостиная", "Кухня"} and got["skip_rooms"] == []
+    assert {k: rooms["Гостиная"][k] for k in ("lights", "covers", "on")} == {"lights": 1, "covers": 1, "on": True}
+    living = rooms["Гостиная"]["id"]
+    with _hist(engine):
+        res = await client.post(URL, json={"op": "set", "enabled": True, "skip_rooms": [living, living]})
+        assert res.status == 200, await res.text()
+        got = await res.json()
+    assert got["skip_rooms"] == [living] and not next(r for r in got["rooms"] if r["id"] == living)["on"]
+    assert engine.pending and all(e["entity_id"] == KITCHEN for _, e in engine.pending.values())
+    assert got["tonight"]["rooms"] and all(r["name"] == "Кухня" for r in got["tonight"]["rooms"])
+    assert not got["tonight"]["covers"]["close"]
+    # A stale event of the room left out does nothing; an «off» of what it lit still goes.
+    freezer.tick(dt.timedelta(minutes=11))
+    await engine.fire({"entity_id": BLIND, "do": "close", "value": None})
+    await engine.fire({"entity_id": LIVING, "do": "on", "value": None})
+    assert not bus
+    hass.states.async_set(LIVING, "on", {"supported_color_modes": ["brightness"], "brightness": 255})
+    freezer.tick(dt.timedelta(minutes=11))
+    await engine.fire({"entity_id": LIVING, "do": "off", "value": None})
+    assert bus[-1][:2] == ("light.turn_off", LIVING)
+    for body in ({"op": "set", "skip_rooms": living}, {"op": "set", "skip_rooms": [1]}, {"op": "set", "skip_rooms": [""]}, {"op": "set", "skip_rooms": ["x"] * 201}):
+        assert (await client.post(URL, json=body)).status == 400, body
+    # Kept in the store (survives a restart).
+    assert (await engine.store.async_load())["skip_rooms"] == [living]
+    # Back in: the living room is planned again.
+    with _hist(engine):
+        got = await (await client.post(URL, json={"op": "set", "skip_rooms": []})).json()
+    assert got["skip_rooms"] == [] and any(e["entity_id"] in (LIVING, BLIND) for _, e in engine.pending.values())
+
+
+# --- HA expert 28.10: the safety «off», learning its own output, switched off / unloaded --------------------------------
+async def _restart(hass: HomeAssistant, engine) -> P.Presence:
+    await engine.store.async_save(engine.data)
+    engine.async_stop()
+    again = P.Presence(hass, engine.owns)
+    with _hist(again):
+        await again.async_start()
+        await hass.async_block_till_done()
+    return again
+
+
+async def _run_pending(hass: HomeAssistant, engine, freezer, eid: str) -> None:
+    at = min(e["at"] for _, e in engine.pending.values() if e["entity_id"] == eid)
+    freezer.move_to(at + dt.timedelta(seconds=1))
+    async_fire_time_changed(hass, dt_util.utcnow())
+    await hass.async_block_till_done()
+
+
+async def test_restart_fresh_states_still_switch_off_what_it_lit(hass: HomeAssistant, entry, bus, freezer) -> None:
+    """After a restart every state is fresh with a context nobody knows — not a person: its «off» still goes."""
+    freezer.move_to(_now("2026-10-28", "12:00"))
+    engine = entry.runtime_data.presence
+    with _hist(engine):
+        await engine.set({"enabled": True, "mode": "sun", "covers": False}, "Мама")
+    engine.data["lit"], engine.data["lit_at"] = [KITCHEN], {KITCHEN: dt_util.utcnow().timestamp() - 7200}
+    # HA comes back: the light reads «on» with a fresh, foreign context (no user), last_updated = now.
+    hass.states.async_set(KITCHEN, "on", {"supported_color_modes": ["onoff"]}, context=Context())
+    again = await _restart(hass, engine)
+    offs = [e for _, e in again.pending.values() if e["entity_id"] == KITCHEN]
+    assert offs and offs[0]["do"] == "off" and offs[0]["at"] <= dt_util.now() + dt.timedelta(minutes=10)
+    await _run_pending(hass, again, freezer, KITCHEN)
+    assert ("light.turn_off", KITCHEN) in [b[:2] for b in bus]
+    assert KITCHEN not in again.data["lit"] and again.data["log"][0]["do"] == "off" and "skip" not in again.data["log"][0]
+    again.async_stop()
+
+
+async def test_a_person_who_changed_it_since_keeps_it(hass: HomeAssistant, entry, bus, freezer, hass_admin_user) -> None:
+    freezer.move_to(_now("2026-10-28", "12:00"))
+    engine = entry.runtime_data.presence
+    with _hist(engine):
+        await engine.set({"enabled": True, "mode": "sun", "covers": False}, "Мама")
+    engine.data["lit"], engine.data["lit_at"] = [KITCHEN], {KITCHEN: dt_util.utcnow().timestamp() - 60}
+    hass.states.async_set(KITCHEN, "on", {"supported_color_modes": ["onoff"]}, context=Context(user_id=hass_admin_user.id))
+    await engine.fire({"entity_id": KITCHEN, "do": "off", "value": None})
+    assert not bus and engine.data["log"][0]["skip"] == "manual" and KITCHEN not in engine.data["lit"]
+
+
+async def test_not_known_yet_after_restart_is_switched_off_once_on(hass: HomeAssistant, entry, bus, freezer) -> None:
+    """After a restart HA's KNX light reads «off» (or «unknown») until the bus answers (live check 28.10): what it lit is
+    kept, watched, and switched off once it reads «on»; one that stays «off» is let go after the watch, nothing sent."""
+    freezer.move_to(_now("2026-10-28", "12:00"))
+    engine = entry.runtime_data.presence
+    with _hist(engine):
+        await engine.set({"enabled": True, "mode": "sun", "covers": False}, "Мама")
+    engine.data["lit"] = [KITCHEN, LIVING]
+    hass.states.async_set(KITCHEN, "off", {"supported_color_modes": ["onoff"]})  # KNX: bool(None) until the bus answers
+    hass.states.async_set(LIVING, "unknown", {"supported_color_modes": ["brightness"]})
+    again = await _restart(hass, engine)
+    assert set(again.data["lit"]) == {KITCHEN, LIVING} and set(again._waits) == {KITCHEN, LIVING}  # not dropped
+    freezer.tick(dt.timedelta(minutes=3))
+    hass.states.async_set(KITCHEN, "on", {"supported_color_modes": ["onoff"]}, context=Context())  # the bus answers
+    await hass.async_block_till_done()
+    assert KITCHEN not in again._waits
+    await _run_pending(hass, again, freezer, KITCHEN)
+    assert bus[-1][:2] == ("light.turn_off", KITCHEN) and KITCHEN not in again.data["lit"]
+    # The other one reads «off» too and stays so: let go after the watch, nothing sent.
+    n = len(bus)
+    hass.states.async_set(LIVING, "off", {"supported_color_modes": ["brightness"]})
+    await hass.async_block_till_done()
+    assert LIVING in again._waits  # «off» right after a restart proves nothing yet
+    freezer.tick(dt.timedelta(seconds=P.WATCH_OFF + 1))
+    async_fire_time_changed(hass, dt_util.utcnow())
+    await hass.async_block_till_done()
+    assert LIVING not in again.data["lit"] and len(bus) == n and not again._waits
+    # Its own «off» meeting an unavailable light (the gateway away): waits, switched off when it's back «on».
+    again.data["lit"] = [LIVING]
+    hass.states.async_set(LIVING, "unavailable", {})
+    await again.fire({"entity_id": LIVING, "do": "off", "value": None})
+    assert not bus[n:] and again.data["log"][0]["skip"] == "offline" and LIVING in again._waits
+    hass.states.async_set(LIVING, "on", {"supported_color_modes": ["brightness"]}, context=Context())
+    await hass.async_block_till_done()
+    await _run_pending(hass, again, freezer, LIVING)
+    assert bus[-1][:2] == ("light.turn_off", LIVING) and not again.data["lit"]
+    again.async_stop()
+
+
+async def test_its_own_evenings_are_never_learned(hass: HomeAssistant, entry, bus, freezer) -> None:
+    """Two weeks away: the history is mostly the simulation's own — dropped, the family's evenings stay what they were."""
+    now = _now()
+    fam = _family(now)
+    real = P.build_model(fam, INFO, ROOMS, now - dt.timedelta(days=14), now)
+    # Every on / off of the kitchen and the living room was its own (sent a second before HA wrote the state).
+    ours = [[eid, s.last_updated.timestamp() - 1] for eid in (KITCHEN, LIVING) for s in fam[eid][1:]]
+    learned = P.build_model(P.drop_ours(fam, ours), INFO, ROOMS, now - dt.timedelta(days=14), now)
+    assert real["lights"][KITCHEN]["evening"] > 0 and learned["lights"][KITCHEN]["evening"] == 0
+    assert learned["lights"][LIVING]["evening"] == 0 and learned["lights"][BED]["evening"] == real["lights"][BED]["evening"]
+    # A person's change long after its command is the family's.
+    late = [[KITCHEN, s.last_updated.timestamp() - P.OURS_AFTER - 60] for s in fam[KITCHEN][1:]]
+    assert P.build_model(P.drop_ours(fam, late), INFO, ROOMS, now - dt.timedelta(days=14), now)["lights"][KITCHEN]["evening"] == real["lights"][KITCHEN]["evening"]
+    # The engine remembers what it sent (in the store: survives a restart) and plans from the history without it.
+    freezer.move_to(_now("2026-10-28", "19:00"))
+    engine = entry.runtime_data.presence
+    with _hist(engine):
+        await engine.set({"enabled": True}, "Мама")
+    freezer.tick(dt.timedelta(minutes=11))
+    await engine.fire({"entity_id": KITCHEN, "do": "on", "value": None})
+    assert engine.data["ours"][-1][0] == KITCHEN and abs(engine.data["ours"][-1][1] - dt_util.utcnow().timestamp()) < 5
+    seen: dict = {}
+    build = P.build_model
+
+    def spy(history, *a):
+        seen.update(history)
+        return build(history, *a)
+
+    t = engine.data["ours"][-1][1]
+    echo = dt_util.utc_from_timestamp(t + 2)
+    mine = [_st(KITCHEN, "off", dt_util.utcnow() - dt.timedelta(hours=1)), State(KITCHEN, "on", {}, last_changed=echo, last_updated=echo)]
+
+    async def fake(entity_ids, start, end):
+        return {KITCHEN: mine}
+
+    with patch.object(engine, "_history", side_effect=fake), patch.object(P, "build_model", spy):
+        await engine.plan()
+    assert [s.state for s in seen[KITCHEN]] == ["off"]
+
+
+async def test_switched_off_turns_off_what_it_lit(hass: HomeAssistant, entry, bus, freezer, hass_admin_user) -> None:
+    freezer.move_to(_now("2026-10-28", "19:00"))
+    engine = entry.runtime_data.presence
+    with _hist(engine):
+        await engine.set({"enabled": True}, "Мама")
+    freezer.tick(dt.timedelta(minutes=11))
+    await engine.fire({"entity_id": KITCHEN, "do": "on", "value": None})
+    assert KITCHEN in engine.data["lit"]
+    hass.states.async_set(KITCHEN, "on", {"supported_color_modes": ["onoff"]}, context=Context(id=engine._ctx[-1]))
+    engine.data["lit"].append(LIVING)
+    # A person changed this one since: it stays on.
+    hass.states.async_set(LIVING, "on", {"supported_color_modes": ["brightness"]}, context=Context(user_id=hass_admin_user.id))
+    bus.clear()
+    got = await engine.set({"enabled": False}, "Папа")
+    assert bus == [("light.turn_off", KITCHEN, {})]
+    assert engine.data["lit"] == [] and engine.data["log"][0]["sys"] == "off" and engine.data["log"][0]["by"] == "Папа"
+    assert engine.data["log"][1]["entity_id"] == KITCHEN and engine.data["log"][1]["do"] == "off"
+    assert got["status"] == "off" and not engine.pending
+    # Its «До» date passing does the same.
+    with _hist(engine):
+        await engine.set({"enabled": True, "until": "2026-10-28"}, "Мама")
+    engine.data["lit"] = [KITCHEN]
+    bus.clear()
+    freezer.move_to(_now("2026-10-29", "00:00") + dt.timedelta(seconds=1))
+    async_fire_time_changed(hass, dt_util.utcnow())
+    await hass.async_block_till_done()
+    assert ("light.turn_off", KITCHEN, {}) in bus and engine.data["log"][0]["sys"] == "auto_off" and not engine.data["lit"]
+
+
+async def test_unload_switches_off_what_it_lit(hass: HomeAssistant, entry, bus, freezer) -> None:
+    freezer.move_to(_now("2026-10-28", "19:00"))
+    engine = entry.runtime_data.presence
+    with _hist(engine):
+        await engine.set({"enabled": True}, "Мама")
+    engine.data["lit"] = [KITCHEN]
+    hass.states.async_set(KITCHEN, "on", {"supported_color_modes": ["onoff"]})
+    bus.clear()
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert bus == [("light.turn_off", KITCHEN, {})] and not engine.pending
+    assert (await engine.store.async_load())["lit"] == []

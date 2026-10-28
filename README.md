@@ -71,7 +71,7 @@ Rules only use Hauflo’s own lights, blinds and scenes. They never touch locks,
 - **One outgoing encrypted connection.** Nothing listens on the home network. Hauflo keeps no Home Assistant token: the agent is its own system user, removed together with the integration.
 - **A fixed list of what Hauflo may do,** checked inside this Home Assistant. KNX commands go only to the addresses you confirmed.
 - **The owner’s switch.** In the integration’s options: **Allow Hauflo to change this home’s setup**. Off, and Hauflo changes nothing. Monitoring, alarms and voice keep working.
-- **A backup before every change.** Restore it from **Settings → System → Backups**, with or without Hauflo.
+- **A backup before changes.** Deploying without one is only an explicit choice, and then a notice stays in Home Assistant. Restore it from **Settings → System → Backups**, with or without Hauflo.
 - **Open to read.** The source code is here, so you can check what runs in the home.
 
 <details>
@@ -80,19 +80,23 @@ Rules only use Hauflo’s own lights, blinds and scenes. They never touch locks,
 **Hauflo may, through the agent:**
 
 - create rooms, floors and labels, and the KNX devices of the project;
-- create and update its own dashboards and scenes;
+- create and update its own dashboards and scenes, set its dashboard and theme as the default;
+- write its own rules (`hauflo_auto_*`) into `automations.yaml`, never touching other automations and never rewriting a hand-formatted file;
+- set the home's location and time zone in Home Assistant: only an administrator, from the family's **Automations** page;
+- hide Home Assistant's extra sidebar panels (Map, Energy, Logbook…) for every person, with the **Clean up the menu** option;
+- copy its card files to `/config/www/hauflo`;
 - set up the KNX connection to an interface in the house, light groups, voice exposure and the Apple Home bridge;
 - read states for monitoring and alarms;
 - send KNX commands only to the group address ranges you confirmed.
 
 **It may not:**
 
-- download backups, or touch add-ons, automations or arbitrary services;
+- download backups, or touch add-ons, other automations or arbitrary services;
 - change or delete devices and entities it didn’t create (your hand-made ones stay yours);
 - read KNX Secure keys or passwords;
 - give a lock, an alarm panel or a valve to a voice assistant, a group or a scene.
 
-**The backup** holds the settings without the history database. It is encrypted if your Home Assistant has a backup key. Without a fresh one, the agent refuses to change anything.
+**The backup** holds the settings without the history database. It is encrypted if your Home Assistant has a backup key. Without a fresh one, the agent changes nothing, unless the integrator explicitly chooses to deploy without it; then a notice stays in Home Assistant.
 
 **What leaves the house.** During a deploy: rooms and KNX devices. Ongoing: the Home Assistant version, the KNX bus connection and the states of devices that have alarms. Never: people’s locations, cameras, media, calendars or PIN codes.
 
@@ -126,7 +130,9 @@ To watch any other entity (a boiler fault, ventilation, a battery), give it the 
 
 No. A command goes to the bus when a person acts: a tap on the dashboard, a scene, voice, an alarm’s action button, the Winter/Summer switch, or a rule the family set in **Automations**.
 
-One exception, and only if the integrator turns it on for a room: the **comfort floor**. The client sets the room temperature, and the agent keeps that room’s floor heating between a comfortable minimum and an upper limit. It writes slowly (once per interval, 10 minutes by default) and only inside the limits.
+Two exceptions. The first, only if the integrator turns it on for a room: the **comfort floor**. The client sets the room temperature, and the agent keeps that room’s floor heating between a comfortable minimum and an upper limit. It writes slowly (once per interval, 10 minutes by default) and only inside the limits.
+
+The second, when the family switches it on: **Away — presence simulation**. Lights only in the evening dark, blinds at the usual times; only Hauflo’s own lights and blinds. Switched off, it turns off the lights it turned on.
 
 </details>
 
@@ -162,7 +168,7 @@ A code works once, for 30 minutes. Get a new one in Hauflo: your project → **C
 
 **Update** in HACS when it shows a new version, then restart Home Assistant. What changed is in the [releases](https://github.com/Hauflo/hauflo-agent/releases).
 
-**Remove** in **Settings → Devices & services → Hauflo → Delete**, then in HACS. The agent’s system user and voice sentences go with it. The client’s dashboard keeps working: its cards stay in `/config/www/hauflo`. In Hauflo the project shows “agent offline”. Unlink it there, or pair again later.
+**Remove** in **Settings → Devices & services → Hauflo → Delete**, then in HACS. The agent’s system user and voice sentences go with it, the hidden sidebar panels come back, and the lights “Away” turned on are switched off. The client’s dashboard keeps working: its cards stay in `/config/www/hauflo`. In Hauflo the project shows “agent offline”. Unlink it there, or pair again later.
 
 ## Support
 

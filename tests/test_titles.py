@@ -51,6 +51,11 @@ async def test_only_text(hass: HomeAssistant, hass_client, entry) -> None:
     assert clean({"climate": "<b>x</b> \x00y"}) == {"climate": "<b>x</b> y"}
 
 
+def test_bidi_and_format_characters_go() -> None:
+    # Unicode Cf (security re-review 28.10): RLO / LRI / zero-width / BOM can't flip or hide a name.
+    assert clean({"lights": "\u202eТРЕВОГА\u2066x\u200by\ufeff", "climate": "\u200b\u200d"}) == {"lights": "ТРЕВОГАxy"}
+
+
 async def test_needs_a_signed_in_person(hass: HomeAssistant, hass_client_no_auth, entry) -> None:
     client = await hass_client_no_auth()
     assert (await client.get("/api/hauflo/titles")).status == 401

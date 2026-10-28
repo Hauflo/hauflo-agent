@@ -16,14 +16,19 @@ and makes a new evening every day.
 
 Safety as automations.py: never a lock, the alarm, a valve, a garage door / gate / door cover, the integrator's own
 entity, a hidden / disabled one or a group (its lamps take part instead); only on / off (+ brightness) and open / close /
-position. A device someone at home touched in the last 10 minutes is left alone. Kept in the agent's store (on / until /
-mode / the last 20 actions / what it left on): survives restarts. Planned at 00:05 and when switched on; off after the
+position. A device someone at home touched in the last 10 minutes is left alone — but the «off» of a light it lit itself
+always goes unless a person changed that light in HA since (a restart's fresh states, the bus don't count; a light not
+known yet is switched off once it is). Switched off — by a person, by its date, the agent unloaded — what it lit goes off.
+What it did itself is never learned as the family's evenings (its commands are kept two weeks, their echo dropped). Rooms the family left out (`skip_rooms`,
+HA areas: a façade, a guest room) are never planned. Kept in the agent's store (on / until / mode / rooms left out / the
+last 20 actions / what it left on): survives restarts. Planned at 00:05 and when switched on; off after the
 «until» day. GET/POST /api/hauflo/presence — any signed-in person of this HA; not through the tunnel.
 Plan and limits: docs/automations.md («Нет дома — имитация присутствия»).
 """
 
 from __future__ import annotations
 
+from bisect import bisect_right
 from collections import deque
 from collections.abc import Callable
 import datetime as dt
@@ -38,7 +43,7 @@ from typing import Any
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import CALLBACK_TYPE, Context, HomeAssistant, State, callback
 from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er
-from homeassistant.helpers.event import async_track_point_in_time, async_track_time_change
+from homeassistant.helpers.event import async_track_point_in_time, async_track_state_change_event, async_track_time_change
 from homeassistant.helpers.start import async_at_started
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
@@ -63,6 +68,7 @@ LIGHTS_PER_ROOM = 2
 SUN_BRIGHTNESS = 60
 COALESCE = 180  # seconds: blind changes this close together are one
 MANUAL = 600  # seconds: touched by someone at home this recently — left alone
+WATCH_OFF = 1800  # seconds a light it lit that reads «off» after a restart is watched (KNX answers late)
 OURS_AFTER = 180  # seconds a device's reports after our command are still ours (a blind travels, KNX answers)
 MAX_EVENTS = 200  # a day
 LOG_SIZE = 20
@@ -71,7 +77,9 @@ REPLAN = (0, 5)
 MODES = ("learned", "sun")
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _LIVING = re.compile(r"гостин|кухн|столов|зал\b|living|kitchen|lounge|dining", re.I)
-DEFAULT: dict[str, Any] = {"enabled": False, "until": None, "lights": True, "covers": True, "mode": "learned", "since": None, "by": None, "log": [], "lit": []}
+MAX_SKIP = 200
+MAX_OURS = 3000  # its own commands remembered (14 days of them) — kept out of what it learns
+DEFAULT: dict[str, Any] = {"enabled": False, "until": None, "lights": True, "covers": True, "mode": "learned", "since": None, "by": None, "log": [], "lit": [], "lit_at": {}, "ours": [], "skip_rooms": []}
 
 
 class Invalid(ValueError):
@@ -177,6 +185,30 @@ def on_intervals(states: list[State], end: dt.datetime) -> list[tuple[dt.datetim
 
 
 # --- learning ---------------------------------------------------------------------------------------------------------
+def drop_ours(history: dict[str, list[State]], ours: list[Any]) -> dict[str, list[State]]:
+    """The simulation's own changes out of what it learns from (HA expert 28.10: two weeks away and the «family's
+    evenings» were its own). HA's history keeps no context, so a state within OURS_AFTER of a command it sent to that
+    device (`ours`: [entity, epoch seconds]) is its echo."""
+    sent: dict[str, list[float]] = {}
+    for item in ours:
+        if isinstance(item, (list, tuple)) and len(item) == 2 and isinstance(item[1], (int, float)):
+            sent.setdefault(str(item[0]), []).append(float(item[1]))
+    out: dict[str, list[State]] = {}
+    for eid, states in history.items():
+        times = sorted(sent.get(eid, []))
+        if not times:
+            out[eid] = states
+            continue
+        keep = []
+        for st in states:
+            ts = st.last_updated.timestamp()
+            i = bisect_right(times, ts + 1) - 1
+            if i < 0 or ts > times[i] + OURS_AFTER:
+                keep.append(st)
+        out[eid] = keep
+    return out
+
+
 def build_model(
     history: dict[str, list[State]],
     info: dict[str, dict[str, Any]],
@@ -428,7 +460,7 @@ class Presence:
         self.hass = hass
         self.owns = owns
         self.store = Store(hass, 1, STORE_KEY)
-        self.data: dict[str, Any] = {**DEFAULT, "log": [], "lit": []}
+        self.data: dict[str, Any] = {**DEFAULT, "log": [], "lit": [], "lit_at": {}, "ours": []}
         self.rng = random.Random()
         self.status = "off"
         self.tonight: dict[str, Any] | None = None
@@ -438,6 +470,7 @@ class Presence:
         self._off: CALLBACK_TYPE | None = None
         self._ctx: deque[str] = deque(maxlen=400)
         self._sent: dict[str, float] = {}
+        self._waits: dict[str, CALLBACK_TYPE] = {}
         self._started = False
 
     # --- what takes part ----------------------------------------------------------------------------------------------
@@ -497,9 +530,12 @@ class Presence:
         stored = await self.store.async_load()
         if isinstance(stored, dict):
             self.data = {**DEFAULT, **{k: v for k, v in stored.items() if k in DEFAULT}}
-            for k in ("log", "lit"):
+            for k in ("log", "lit", "ours", "skip_rooms"):
                 if not isinstance(self.data.get(k), list):
                     self.data[k] = []
+            if not isinstance(self.data.get("lit_at"), dict):
+                self.data["lit_at"] = {}
+            self.data["skip_rooms"] = [x for x in self.data["skip_rooms"] if isinstance(x, str)][:MAX_SKIP]
             if self.data.get("mode") not in MODES:
                 self.data["mode"] = "learned"
         self._started = True
@@ -526,6 +562,9 @@ class Presence:
         for unsub, _ in self.pending.values():
             unsub()
         self.pending.clear()
+        for unsub in list(self._waits.values()):
+            unsub()
+        self._waits.clear()
         for name in ("_daily", "_off"):
             if (unsub := getattr(self, name)) is not None:
                 unsub()
@@ -553,13 +592,22 @@ class Presence:
         if (off := self._off_at()) is not None:
             self._off = async_track_point_in_time(self.hass, self._auto_off, off)
         await self.plan()
-        # What it left on before a restart or a change of plan is switched off soon, not left burning all night.
+        # What it left on before a restart or a change of plan is switched off soon, not left burning all night — a
+        # light whose state isn't known yet (KNX answers a while after a restart) too: it's switched off once it is.
+        # Left alone only when tonight's plan moves it within 20 minutes anyway (a session going on) — not when its next
+        # event is hours away (it would burn until then).
+        soon = dt_util.now() + dt.timedelta(minutes=20)
         for eid in list(self.data["lit"]):
             st = self.hass.states.get(eid)
-            if st is None or st.state != "on":
-                self.data["lit"].remove(eid)
-            elif not any(ev["entity_id"] == eid for _, ev in self.pending.values()):
+            nxt = min((ev["at"] for _, ev in self.pending.values() if ev["entity_id"] == eid), default=None)
+            if nxt is not None and nxt <= soon:
+                continue
+            if st is not None and st.state == "on":
                 self._schedule({"at": dt_util.now() + dt.timedelta(minutes=self.rng.uniform(2, 10)), "entity_id": eid, "do": "off", "value": None})
+            else:
+                # «Off», unknown or not there yet. Right after a restart HA's KNX light reads «off» until the bus answers
+                # (bool(None) — live check 28.10): watched for WATCH_OFF and switched off if it turns out «on».
+                self._wait(eid, dt_util.now() + dt.timedelta(seconds=WATCH_OFF))
 
     async def _replan(self, _now: dt.datetime) -> None:
         if self._expired():
@@ -577,8 +625,29 @@ class Presence:
         self.data["enabled"] = False
         self.status = "off"
         self.tonight = None
+        await self._lights_out()
         if was:
             self._log({"sys": why})
+        await self.store.async_save(self.data)
+
+    async def _lights_out(self) -> None:
+        """Off (by a person, its date, the agent unloaded): the lights it lit and no person changed since go off (HA
+        expert 28.10: switched off, the lamps it had lit burned on)."""
+        for eid in list(self.data["lit"]):
+            st = self.hass.states.get(eid)
+            self._unlit(eid)
+            if st is None or st.state != "on" or not self._pickable(eid) or self._person_since(st):
+                continue
+            ev = {"entity_id": eid, "do": "off", "value": None}
+            name = st.attributes.get("friendly_name") or eid
+            if await self._send(ev, name):
+                key, room = self.rooms([eid])[eid]
+                self._log({**_brief(ev), "name": name, "room": room if key != eid else None})
+
+    async def async_lights_out(self) -> None:
+        """The agent unloaded or removed: nothing it lit keeps burning with nobody left to switch it off."""
+        self.async_stop()
+        await self._lights_out()
         await self.store.async_save(self.data)
 
     async def _history(self, entity_ids: list[str], start: dt.datetime, end: dt.datetime) -> dict[str, list[State]] | None:
@@ -597,6 +666,11 @@ class Presence:
         now = dt_util.now()
         day = dt_util.as_local(now).date()
         info = self.candidates()
+        # Rooms the family left out (a façade, a guest room — final review 28.10) are never planned.
+        skip = set(self.data.get("skip_rooms") or [])
+        if skip and info:
+            where = self.rooms(sorted(info))
+            info = {e: m for e, m in info.items() if where[e][0] not in skip}
         if not info:
             self.status, self.tonight = "no_devices", None
             return
@@ -608,6 +682,7 @@ class Presence:
         if history is None:
             self.status, self.tonight = "no_recorder", None
             return
+        history = drop_ours(history, self.data.get("ours") or [])
         rooms = self.rooms(sorted(info))
         model = await self.hass.async_add_executor_job(build_model, history, info, rooms, now - dt.timedelta(days=LEARN_DAYS), now)
         n_rooms = len({rooms[e][0] for e, m in info.items() if m["domain"] == "light"})
@@ -638,31 +713,58 @@ class Presence:
         sent = self._sent.get(st.entity_id)
         return not (sent is not None and sent - 1 <= st.last_updated.timestamp() <= sent + OURS_AFTER)
 
-    async def fire(self, ev: dict[str, Any]) -> None:
-        if not self.data["enabled"]:
+    def _person_since(self, st: State) -> bool:
+        """A person (an HA user: the app, HA's own buttons) changed a light after the simulation lit it — someone is
+        home, it's theirs now. A restart's fresh states, the KNX bus and automations carry no user: they don't count
+        (HA expert 28.10: after a restart every state looked «touched» and its lights burned all night)."""
+        c = st.context
+        if not c.user_id or c.id in self._ctx or (c.parent_id and c.parent_id in self._ctx):
+            return False
+        return st.last_updated.timestamp() > float(self.data["lit_at"].get(st.entity_id) or 0) + 1
+
+    def _unlit(self, eid: str) -> None:
+        self.data["lit"] = [e for e in self.data["lit"] if e != eid]
+        self.data["lit_at"] = {k: v for k, v in self.data["lit_at"].items() if k != eid}
+
+    def _wait(self, eid: str, until: dt.datetime | None = None) -> None:
+        """A light it lit whose state isn't known yet: switched off once it reads «on», let go once it reads «off» — or,
+        with `until` (it reads «off» already, maybe only until the bus answers), let go at that time."""
+        if eid in self._waits:
             return
-        if self._expired():
-            await self._switch_off("auto_off")
-            return
+        unsubs: list[CALLBACK_TYPE] = []
+
+        def done() -> None:
+            self._waits.pop(eid, None)
+            for unsub in unsubs:
+                unsub()
+
+        @callback
+        def changed(event: Any) -> None:
+            new = event.data.get("new_state")
+            if new is None or new.state in ("unavailable", "unknown") or eid not in self._waits:
+                return
+            if new.state == "on":
+                done()
+                self._schedule({"at": dt_util.now() + dt.timedelta(seconds=self.rng.uniform(30, 120)), "entity_id": eid, "do": "off", "value": None})
+            elif until is None:
+                done()
+                self._unlit(eid)
+
+        @callback
+        def expired(_now: dt.datetime) -> None:
+            if eid in self._waits:
+                done()
+                if (st := self.hass.states.get(eid)) is None or st.state != "on":
+                    self._unlit(eid)
+
+        unsubs.append(async_track_state_change_event(self.hass, [eid], changed))
+        if until is not None:
+            unsubs.append(async_track_point_in_time(self.hass, expired, until))
+        self._waits[eid] = done
+
+    async def _send(self, ev: dict[str, Any], name: str) -> bool:
         eid = ev["entity_id"]
         domain = eid.split(".")[0]
-        if (domain == "light" and not self.data["lights"]) or (domain == "cover" and not self.data["covers"]):
-            return
-        st = self.hass.states.get(eid)
-        if not self._pickable(eid) or st is None:
-            self._log({**_brief(ev), "name": eid, "skip": "gone"})
-            return
-        name = st.attributes.get("friendly_name") or eid
-        if st.state in ("unavailable", "unknown"):
-            self._log({**_brief(ev), "name": name, "skip": "offline"})
-            return
-        if self._touched(st):
-            self._log({**_brief(ev), "name": name, "skip": "manual"})
-            return
-        info = self.candidates().get(eid) or {"dim": False, "pos": False}
-        now_is = action_of(domain, st, info["dim"], info["pos"])
-        if now_is == (ev["do"], ev["value"]) or (ev["do"] == "on" and ev["value"] is None and now_is and now_is[0] == "on"):
-            return  # already so
         service, data = _service(domain, ev["do"], ev["value"])
         ctx = Context()
         self._ctx.append(ctx.id)
@@ -672,10 +774,61 @@ class Presence:
         except Exception as err:  # noqa: BLE001 — one device failing never stops the rest
             _LOGGER.warning("Hauflo presence: %s %s failed: %s", eid, service, err)
             self._log({**_brief(ev), "name": name, "skip": "error"})
+            return False
+        # Remembered for two weeks: what it did itself is never learned as the family's evenings.
+        cut = time.time() - (LEARN_DAYS + 1) * 86400
+        kept = [x for x in self.data.get("ours") or [] if isinstance(x, list) and len(x) == 2 and isinstance(x[1], (int, float)) and x[1] >= cut]
+        self.data["ours"] = [*kept[-(MAX_OURS - 1) :], [eid, round(time.time(), 1)]]
+        return True
+
+    async def fire(self, ev: dict[str, Any]) -> None:
+        if not self.data["enabled"]:
+            return
+        if self._expired():
+            await self._switch_off("auto_off")
+            return
+        eid = ev["entity_id"]
+        domain = eid.split(".")[0]
+        # The «off» of a light it lit itself always goes — only a person who changed it since keeps it on.
+        mine = domain == "light" and ev["do"] == "off" and eid in self.data["lit"]
+        if not mine and ((domain == "light" and not self.data["lights"]) or (domain == "cover" and not self.data["covers"])):
+            return
+        # A room left out since the plan: nothing new there (an «off» of what it lit still goes).
+        if ev["do"] != "off" and self.rooms([eid])[eid][0] in set(self.data.get("skip_rooms") or []):
+            return
+        st = self.hass.states.get(eid)
+        if mine and (st is None or st.state in ("unavailable", "unknown")):
+            if eid not in self._waits:
+                self._log({**_brief(ev), "name": (st.attributes.get("friendly_name") if st else None) or eid, "skip": "offline"})
+            self._wait(eid)
+            return
+        if not self._pickable(eid) or st is None:
+            self._log({**_brief(ev), "name": eid, "skip": "gone"})
+            if mine:
+                self._unlit(eid)
+            return
+        name = st.attributes.get("friendly_name") or eid
+        if st.state in ("unavailable", "unknown"):
+            self._log({**_brief(ev), "name": name, "skip": "offline"})
+            return
+        if self._person_since(st) if mine else self._touched(st):
+            self._log({**_brief(ev), "name": name, "skip": "manual"})
+            if mine:
+                self._unlit(eid)
+            return
+        info = self.candidates(every=True).get(eid) or {"dim": False, "pos": False}
+        now_is = action_of(domain, st, info["dim"], info["pos"])
+        if now_is == (ev["do"], ev["value"]) or (ev["do"] == "on" and ev["value"] is None and now_is and now_is[0] == "on"):
+            if mine:
+                self._unlit(eid)  # off already
+            return  # already so
+        if not await self._send(ev, name):
             return
         if domain == "light":
-            lit = [e for e in self.data["lit"] if e != eid]
-            self.data["lit"] = [*lit, eid] if ev["do"] == "on" else lit
+            self._unlit(eid)
+            if ev["do"] == "on":
+                self.data["lit"] = [*self.data["lit"], eid]
+                self.data["lit_at"] = {**self.data["lit_at"], eid: round(time.time(), 1)}
         key, room = self.rooms([eid])[eid]
         self._log({**_brief(ev), "name": name, "room": room if key != eid else None})
 
@@ -712,14 +865,22 @@ class Presence:
                 new["until"] = v
         elif new["enabled"] and not self.data["enabled"] and new.get("until") and new["until"] < today.isoformat():
             new["until"] = None  # an old «until» doesn't switch a new absence off at once
+        if "skip_rooms" in body:
+            v = body["skip_rooms"]
+            if not isinstance(v, list) or len(v) > MAX_SKIP or not all(isinstance(x, str) and 0 < len(x) <= 255 for x in v):
+                raise Invalid("skip_rooms: a list of room ids")
+            new["skip_rooms"] = list(dict.fromkeys(v))
         if not new["lights"] and not new["covers"]:
             raise Invalid("lights or covers: at least one")
         if new["enabled"] and not self.data["enabled"]:
             new["since"], new["by"] = dt_util.now().isoformat(timespec="seconds"), user
         turned = new["enabled"] != self.data["enabled"]
         self.data = new
+        if turned and not new["enabled"]:
+            self._cancel()
+            await self._lights_out()  # what it lit goes off with it
         if turned:
-            self._log({"sys": "on" if new["enabled"] else "off"})
+            self._log({"sys": "on" if new["enabled"] else "off", **({"by": user} if user else {})})
         await self.store.async_save(self.data)
         if new["enabled"]:
             await self._arm()
@@ -733,8 +894,20 @@ class Presence:
         nxt = sorted((ev for _, ev in self.pending.values()), key=lambda e: e["at"])
         name = lambda eid: (s.attributes.get("friendly_name") if (s := self.hass.states.get(eid)) else None) or eid  # noqa: E731
         off = self._off_at()
+        # The rooms (HA areas) the plan can use, each on / left out by the family.
+        skip = set(self.data.get("skip_rooms") or [])
+        where = self.rooms(sorted(info))
+        rooms: dict[str, dict[str, Any]] = {}
+        for eid, meta in info.items():
+            key, room_name = where[eid]
+            if key == eid:
+                continue  # a device in no room: not a room to leave out
+            r = rooms.setdefault(key, {"id": key, "name": room_name, "lights": 0, "covers": 0, "on": key not in skip})
+            r["lights" if meta["domain"] == "light" else "covers"] += 1
         return {
             **{k: self.data[k] for k in ("enabled", "until", "lights", "covers", "mode", "since")},
+            "skip_rooms": list(self.data.get("skip_rooms") or []),
+            "rooms": sorted(rooms.values(), key=lambda r: str(r["name"]).lower()),
             "status": self.status if self.data["enabled"] else "off",
             "tonight": self.tonight if self.data["enabled"] else None,
             "left": len(nxt),
@@ -784,8 +957,8 @@ class PresenceView(HomeAssistantView):
             return self.json_message("invalid JSON", 400)
         if not isinstance(body, dict) or body.get("op") != "set":
             return self.json_message("op: set", 400)
-        if set(body) - {"op", "enabled", "until", "lights", "covers", "mode"}:
-            return self.json_message("only enabled, until, lights, covers, mode", 400)
+        if set(body) - {"op", "enabled", "until", "lights", "covers", "mode", "skip_rooms"}:
+            return self.json_message("only enabled, until, lights, covers, mode, skip_rooms", 400)
         # A person's own switch, as HA's own buttons are; the tunnel can't reach this view (not in its allowlist).
         user = request["hass_user"]
         try:

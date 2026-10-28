@@ -4,6 +4,7 @@ card, a lock or a missing backup stops the save, the plan carries no foreign ent
 
 import copy
 import glob
+import re
 import json
 import pathlib
 from unittest.mock import patch
@@ -353,17 +354,23 @@ async def test_save_merges_keeps_a_copy_and_only_three(hass: HomeAssistant, entr
     assert r["success"], r
     assert dash.config == hauflo() and agent.dashboards.manages("hauflo-home")
     assert "lovelace/dashboards/create" not in t.ws_cmds  # nothing of the integrator's: no copy
-    # The integrator adds his card; four deploys later his card is there and three copies are left.
+    # «Copies» the agent didn't make (the cloud's from the future, security re-review 28.10) are never pruned for its own.
+    fakes = [f"hauflo-home-copy-20991231235{i}" for i in range(3)]
+    t.dashboards += [{"id": f"fake{i}", "url_path": u} for i, u in enumerate(fakes)]
+    # The integrator adds his card; four deploys later his card is there and three of the agent's copies are left.
     cards_of(dash.config, 0, 0).append(copy.deepcopy(MY_CARD))
-    for i in range(4):
-        t.dashboards.append({"id": f"old{i}", "url_path": f"hauflo-home-copy-20261001000{i}"})
     r = await t.send({"id": 2, "type": dashmerge.PLAN, "url_path": "hauflo-home", "config": hauflo("Люстра")})
     assert r["success"] and r["result"]["local"][0]["title"] == "Мой поливочный сценарий" and r["result"]["changes"] is True
-    r = await t.send({"id": 3, "type": dashmerge.SAVE, "url_path": "hauflo-home", "config": hauflo("Люстра"), "title": "Дом"})
-    assert r["success"] and r["result"]["copy"].startswith("hauflo-home-copy-")
-    assert MY_CARD in cards_of(dash.config, 0, 0) and cards_of(dash.config, 0, 0)[1]["name"] == "Люстра"
+    made = []
+    for i in range(4):
+        r = await t.send({"id": 3 + i, "type": dashmerge.SAVE, "url_path": "hauflo-home", "config": hauflo(f"Люстра {i}"), "title": "Дом"})
+        assert r["success"] and re.fullmatch(r"hauflo-home-copy-\d{14}-[0-9a-f]{6}", r["result"]["copy"]), r
+        made.append(r["result"]["copy"])
+        assert MY_CARD in cards_of(dash.config, 0, 0) and cards_of(dash.config, 0, 0)[1]["name"] == f"Люстра {i}"
+        cards_of(dash.config, 0, 0)[0]["heading"] = f"правка {i}"  # he edits again: the next deploy copies again
+    assert len(set(made)) == 4  # the same second: never one copy for two saves
     copies = [d["url_path"] for d in t.dashboards if "-copy-" in d["url_path"]]
-    assert len(copies) == 3 and r["result"]["copy"] in copies and "hauflo-home-copy-202610010000" not in copies
+    assert sorted(copies) == sorted(fakes + made[1:]) and agent.dashboards.copies["hauflo-home"] == made[1:]
 
 
 async def test_first_upgrade_copy_is_a_precaution_named_in_the_dashboards_language(hass: HomeAssistant, entry) -> None:
@@ -378,7 +385,7 @@ async def test_first_upgrade_copy_is_a_precaution_named_in_the_dashboards_langua
         with patch.object(dashmerge.dt_util, "now", return_value=local):
             r = await t.send({"id": 1, "type": dashmerge.SAVE, "url_path": "hauflo-home", "config": hauflo("Люстра"), "title": title, "lang": lang, "replace": True})
         assert r["success"], r
-        assert r["result"]["copy_reason"] == "upgrade" and r["result"]["copy"] == "hauflo-home-copy-202610280259"
+        assert r["result"]["copy_reason"] == "upgrade" and re.fullmatch(r"hauflo-home-copy-20261028025900-[0-9a-f]{6}", r["result"]["copy"])
         assert t.dashboards[-1]["title"] == want
     # Edited in HA after Hauflo's save: the reason is that.
     cards_of(dash.config, 0, 0).append(copy.deepcopy(MY_CARD))
@@ -454,3 +461,178 @@ def test_the_tunnel_check_knows_the_id():
         assert ok(None, {"views": [{"title": "x", ID: "v/living", "cards": [{"type": "tile", "entity": "light.a", ID: "v/living/c:light.a"}]}]}, set(), set())
         assert not ok(None, {"views": [{"title": "x", ID: {"type": "x"}}]}, set(), set())
         assert not ok(None, {"views": [{"title": "x", ID: "x" * 300}]}, set(), set())
+
+
+# --- security re-review 28.10: ids of another kind, the «nothing of his lost» rule, copies, reads -----------------------
+
+
+GARAGE = {"type": "entities", "title": "Мой гараж", "entities": ["lock.front_door", "cover.garage_door"]}
+GARDEN = {"type": "grid", "cards": [{"type": "tile", "entity": "valve.front_garden", "name": "Полив сада"}]}
+
+
+def _with_his_cards():
+    """Hauflo's dashboard as HA holds it after the integrator added a card in Hauflo's section and a section of his own
+    next to the kitchen's — the reviewer's dm1."""
+    cur = hauflo()
+    cards_of(cur, 0, 0).append(copy.deepcopy(GARAGE))
+    cur["views"][1]["sections"].append(copy.deepcopy(GARDEN))
+    return cur
+
+
+def _his(cfg):
+    txt = json.dumps(cfg, ensure_ascii=False)
+    return [e for e in ("lock.front_door", "cover.garage_door", "valve.front_garden") if e in txt]
+
+
+def _section_as_card_view_as_section():
+    """The reviewer's dm3: the section holding his card sent as a card, the view next to his section sent as a section."""
+    return {"views": [view("v/living", "living", "Гостиная", {"type": "grid", ID: "v/x", "cards": [
+        card("v/living/s:light", "light.living_main"), card("v/living/s:light/c:l1", "light.living_main")]},
+        {"type": "grid", ID: "v/kitchen", "cards": []})]}
+
+
+def test_an_id_sent_at_another_level_is_a_new_item_his_cards_stay():
+    base, cur = hauflo(), _with_his_cards()
+    merged, plan = plan_and_merge(_section_as_card_view_as_section(), cur, base)
+    assert _his(merged) == ["lock.front_door", "cover.garage_door", "valve.front_garden"]
+    assert plan["lost"] == 0
+    assert GARAGE in [c for v in merged["views"] for s in v.get("sections", []) for c in s.get("cards", [])]
+    # The new items got ids of their own; the base's section / view went as dropped (their own cards kept, said so).
+    assert "v/living/s:light~2" in ids(merged) and "v/kitchen~2" in ids(merged)
+    assert {x.get("title") for x in plan["local"]} >= {"Мой гараж"}
+
+
+def test_a_view_turned_masonry_is_another_kind():
+    base, cur = hauflo(), _with_his_cards()
+    new = hauflo()
+    new["views"][1] = {"title": "Кухня", "path": "kitchen", ID: "v/kitchen", "cards": [card("v/kitchen/c", "light.kitchen")]}
+    merged, plan = plan_and_merge(new, cur, base)
+    assert plan["lost"] == 0 and "valve.front_garden" in _his(merged)
+    assert "v/kitchen~2" in ids(merged)
+
+
+def test_his_item_under_a_hauflo_id_of_another_kind_is_his():
+    """HA holds a card under the id the base knows as a section (pasted in the raw editor): it is his, kept as it is."""
+    base = hauflo()
+    cur = hauflo()
+    mine = {"type": "markdown", "content": "моё", ID: "v/kitchen/s:light"}
+    cards_of(cur, 0, 0).append(mine)
+    merged, plan = plan_and_merge(hauflo(), cur, base)
+    assert {"type": "markdown", "content": "моё"} in cards_of(merged, 0, 0) and plan["lost"] == 0
+
+
+def test_lost_refuses_whatever_the_merge_did():
+    """The last line: with the kind check off (the old bug back), the merge loses his cards — and says so."""
+    base, cur = hauflo(), _with_his_cards()
+    with patch.object(dashmerge, "rekey", lambda cfg, base: cfg), patch.object(dashmerge, "_Index", _IndexNoKind):
+        merged, plan = plan_and_merge(_section_as_card_view_as_section(), cur, base)
+    assert plan["lost"] >= 1 and "lock.front_door" not in _his(merged)
+
+
+class _IndexNoKind(dashmerge._Index):
+    def __init__(self, cfg, expect=None):
+        super().__init__(cfg, None)
+
+
+def test_real_dashboards_lose_nothing_of_his():
+    assert GENERATED
+    for path in GENERATED:
+        cfg = dashmerge.ensure_ids(json.loads(pathlib.Path(path).read_text()))
+        cur = copy.deepcopy(cfg)
+        for v in cur["views"]:
+            (v.get("sections") or [{"cards": v.setdefault("cards", [])}])[0].setdefault("cards", []).append(copy.deepcopy(GARAGE))
+        for new in (cfg, {"views": cfg["views"][1:]}, {"views": []}):
+            merged, plan = plan_and_merge(new, cur, cfg)
+            assert plan["lost"] == 0, path
+
+
+async def test_level_attack_through_the_tunnel_keeps_his_cards(hass: HomeAssistant, entry) -> None:
+    agent = entry.runtime_data
+    dash = _Dash(None)
+    t = _Tunnel(agent, dash)
+    assert (await t.send({"id": 1, "type": dashmerge.SAVE, "url_path": "hauflo-home", "config": hauflo()}))["success"]
+    dash.config = _with_his_cards()
+    for typ in ("lovelace/config/save", dashmerge.SAVE):
+        dash.config = _with_his_cards()
+        agent.dashboards.bases["hauflo-home"] = dashmerge.ensure_ids(hauflo())
+        r = await t.send({"id": 2, "type": typ, "url_path": "hauflo-home", "config": _section_as_card_view_as_section()})
+        assert r["success"], r
+        assert _his(dash.config) == ["lock.front_door", "cover.garage_door", "valve.front_garden"], typ
+
+
+async def test_merge_lost_local_refuses_and_writes_nothing(hass: HomeAssistant, entry) -> None:
+    agent = entry.runtime_data
+    dash = _Dash(None)
+    t = _Tunnel(agent, dash)
+    assert (await t.send({"id": 1, "type": dashmerge.SAVE, "url_path": "hauflo-home", "config": hauflo()}))["success"]
+    dash.config = _with_his_cards()
+    saves, created = dash.saves, list(t.dashboards)
+    with patch.object(dashmerge, "rekey", lambda cfg, base: cfg), patch.object(dashmerge, "_Index", _IndexNoKind):
+        r = await t.send({"id": 2, "type": "lovelace/config/save", "url_path": "hauflo-home", "config": _section_as_card_view_as_section()})
+    assert not r["success"] and r["error"]["code"] == "merge_lost_local", r
+    assert dash.saves == saves and dash.config == _with_his_cards() and t.dashboards == created
+    assert agent.dashboards.bases["hauflo-home"] == dashmerge.ensure_ids(hauflo())  # Hauflo's version unchanged too
+
+
+async def test_plain_save_of_an_unmanaged_hauflo_dashboard_copies_first(hass: HomeAssistant, entry) -> None:
+    """Deployed by an older agent (no Hauflo version stored): a plain save is no longer a silent overwrite."""
+    agent = entry.runtime_data
+    dash = _Dash(_with_his_cards())
+    t = _Tunnel(agent, dash)
+    before = copy.deepcopy(dash.config)
+    r = await t.send({"id": 1, "type": "lovelace/config/save", "url_path": "hauflo-home", "config": {"views": [{"title": "x", "cards": [{"type": "heading", "heading": "пусто"}]}]}})
+    assert r["success"], r
+    assert t.ws_cmds[:3] == ["lovelace/dashboards/list", "lovelace/dashboards/create", "lovelace/config/save"]
+    assert agent.dashboards.copies["hauflo-home"] and agent.dashboards.manages("hauflo-home")
+    assert not agent.channels[1].sent and before != dash.config
+
+
+async def test_copies_are_the_agents_alone(hass: HomeAssistant, entry) -> None:
+    agent = entry.runtime_data
+    dash = _Dash(hauflo())
+    t = _Tunnel(agent, dash)
+    for msg in (
+        {"type": "lovelace/config/save", "url_path": "hauflo-home-copy-20261028035959-abcdef", "config": {"views": []}},
+        {"type": "lovelace/config/save", "url_path": "hauflo-home-copy-202610280359", "config": {"views": []}},
+        {"type": "lovelace/config", "url_path": "hauflo-home-copy-202610280359"},
+        {"type": "lovelace/dashboards/create", "url_path": "hauflo-home-copy-209912312359", "title": "x", "mode": "storage"},
+        {"type": dashmerge.SAVE, "url_path": "hauflo-home-copy-202610280359", "config": hauflo(), "replace": True},
+    ):
+        r = await t.send({"id": 1, **msg})
+        assert not r["success"] and r["error"]["code"] == "not_allowed", msg
+    assert not agent.channels[1].sent
+    # «Show the copy to everyone» (dashboards/update): only a Hauflo dashboard that isn't a copy.
+    from homeassistant.components.lovelace.const import LOVELACE_DATA  # noqa: PLC0415
+
+    import types  # noqa: PLC0415
+
+    fake = types.SimpleNamespace(data={LOVELACE_DATA: types.SimpleNamespace(dashboards={
+        "hauflo-home": types.SimpleNamespace(config={"id": "d1"}),
+        "hauflo-home-copy-20261028035959-abcdef": types.SimpleNamespace(config={"id": "d2"}),
+    })})
+    assert agent_mod._own_dashboard(fake, "d1") and not agent_mod._own_dashboard(fake, "d2")
+
+
+async def test_a_read_through_the_tunnel_shows_hauflos_part_only(hass: HomeAssistant, entry) -> None:
+    agent = entry.runtime_data
+    dash = _Dash(None)
+    t = _Tunnel(agent, dash)
+    assert (await t.send({"id": 1, "type": dashmerge.SAVE, "url_path": "hauflo-home", "config": hauflo()}))["success"]
+    plain = await t.send({"id": 2, "type": "lovelace/config", "url_path": "hauflo-home"})
+    assert plain["success"] and plain["result"] == dash.config  # nothing of his: Hauflo's config as it is
+    dash.config = _with_his_cards()
+    cards_of(dash.config, 0, 0)[1]["name"] = "lock.kitchen_door"  # he edits a Hauflo card too
+    r = await t.send({"id": 3, "type": "lovelace/config", "url_path": "hauflo-home"})
+    assert r["success"] and _his(r["result"]) == [] and "lock.kitchen_door" not in json.dumps(r["result"])
+    got = cards_of(r["result"], 0, 0)
+    assert got[1] == {ID: "v/living/s:light/c:l1", "type": dashmerge.LOCAL, "edited": got[1]["edited"]}
+    assert got[-1]["type"] == dashmerge.LOCAL and set(got[-1]) == {"type", "hash"}
+    assert r["result"]["views"][1]["sections"][-1]["type"] == dashmerge.LOCAL
+    # The same config reads the same; a change of his changes the read (the cloud's «edited in HA» check still works).
+    assert (await t.send({"id": 4, "type": "lovelace/config", "url_path": "hauflo-home"}))["result"] == r["result"]
+    cards_of(dash.config, 0, 0)[-1]["title"] = "Гараж"
+    assert (await t.send({"id": 5, "type": "lovelace/config", "url_path": "hauflo-home"}))["result"] != r["result"]
+    assert not agent.channels[1].sent
+    # A Hauflo dashboard the agent never saved: relayed to HA as before (nothing tells his items there).
+    await t.send({"id": 6, "type": "lovelace/config", "url_path": "hauflo-other"})
+    assert json.loads(agent.channels[1].sent[-1])["url_path"] == "hauflo-other"

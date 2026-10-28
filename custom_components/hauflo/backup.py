@@ -19,7 +19,10 @@ _LOGGER = logging.getLogger(__name__)
 
 # The last backup asked for: {"state": "running"|"done"|"failed", "name", "at", "error"?}
 LAST: dict[str, Any] = {}
-_OURS = re.compile(r"^Hauflo \d{4}-\d\d-\d\d \d\d:\d\d(:\d\d)?$")
+# «Hauflo 2026-10-28 03.49.56» — dots, not colons: HA makes the file name from it, and a colon breaks it on SMB / Windows
+# / a NAS (HA expert 28.10). The older «03:49:56» ones are still Hauflo's (their retention goes on).
+_OURS = re.compile(r"^Hauflo \d{4}-\d\d-\d\d \d\d[:.]\d\d([:.]\d\d)?$")
+NAME_FORMAT = "Hauflo %Y-%m-%d %H.%M.%S"
 # Hauflo's tunnel request lives 30 s: answer «running» well before, a longer backup is followed by GET (integrator
 # run 18: a 40 s backup always failed the deploy with «timed out»).
 _WAIT = 20
@@ -63,7 +66,7 @@ async def _create(hass: HomeAssistant, name: str) -> None:
         name=name,
         password=password,
     )
-    # Only Hauflo's own («Hauflo YYYY-MM-DD HH:MM:SS»), never one the person or HA's schedule made.
+    # Only Hauflo's own («Hauflo YYYY-MM-DD HH.MM.SS», older «HH:MM:SS»), never one the person or HA's schedule made.
     try:
         backups, _ = await manager.async_get_backups()
         ours = sorted((b for b in backups.values() if _OURS.match(b.name or "")), key=lambda b: b.date, reverse=True)
@@ -119,7 +122,7 @@ class BackupView(HomeAssistantView):
             return self.json({**LAST, "reused": True})
         if "backup" not in hass.config.components:
             return self.json({"state": "failed", "error": "no_backup_integration"}, 501)
-        name = f"Hauflo {dt_util.now().strftime('%Y-%m-%d %H:%M:%S')}"  # HA's own time zone
+        name = dt_util.now().strftime(NAME_FORMAT)  # HA's own time zone
         LAST.clear()
         LAST.update(state="running", name=name, at=time.time())
 

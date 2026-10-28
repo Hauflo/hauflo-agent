@@ -12,18 +12,27 @@ part (checked by the tunnel's `_lovelace_ok` like any dashboard); the merge happ
 - the rest becomes Hauflo's new version.
 
 The cloud can't name a local item (it has no id the base knows), so it can't remove or rewrite one; the plan it gets
-back holds counts, card types and titles — never a foreign entity id. A plain `lovelace/config/save` of a dashboard
-the agent manages goes through the same merge. Before a save that changes what the integrator made, the pre-save
-config is kept as a hidden copy (the last 3 per dashboard).
+back holds counts, card types and titles — never a foreign entity id. An id is its kind too (security re-review 28.10:
+a section's id sent as a card dropped the integrator's cards in it): sent at another level, it is a new item and the
+old one goes as dropped. And whatever the merge, every item of the integrator's must still be in what is saved —
+else the save is refused (`merge_lost_local`). Every `lovelace/config/save` of a `hauflo-…` dashboard goes through the
+same merge (none stored yet: the pre-save config is copied first). Before a save that changes what the integrator
+made, the pre-save config is kept as a hidden copy (the last 3 per dashboard — only copies the agent made itself);
+copies are never read or written through the tunnel. A read of a merged dashboard through the tunnel shows Hauflo's
+part only: the integrator's items are opaque placeholders (a keyed hash — a change still changes the config's hash).
 """
 
 from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
+import hmac
 import json
 import logging
 import re
+import secrets
+from collections import Counter
 from collections.abc import Callable
 from typing import Any
 
@@ -37,7 +46,11 @@ ID = "hauflo_id"
 PLAN = "hauflo/dashboard/plan"
 SAVE = "hauflo/dashboard/save"
 STORE_KEY = "hauflo.dashboard_base"
+META_KEY = "hauflo.dashboard_meta"  # the copies the agent made, the key of the read placeholders
 MAX_COPIES = 3
+# A copy of a dashboard (hauflo-…-copy-<stamp>[-<random>]): never read or written through the tunnel.
+COPY_RE = re.compile(r"-copy-\d")
+LOCAL = "hauflo-local"  # a placeholder of the integrator's item in a read through the tunnel
 _ENTITY_RE = re.compile(r"^[a-z_]+\.[a-z0-9_]+$")
 _TITLE_KEYS = ("title", "heading", "name", "text")
 ROOT = "\x00root"
@@ -79,15 +92,23 @@ def _hid(node: Any) -> str | None:
     return v if isinstance(v, str) and v else None
 
 
-class _Index:
-    """Hauflo ids of a config: the node, its level, its parent's id and the view it is on (first occurrence wins)."""
+def _kind(node: dict[str, Any], level: int) -> tuple[int, str | None]:
+    """What an id stands for: its level and what its children are (a sections view ≠ a masonry view)."""
+    return level, _kids_key(node, level)
 
-    def __init__(self, cfg: Any) -> None:
+
+class _Index:
+    """Hauflo ids of a config: the node, its level, its parent's id and the view it is on (first occurrence wins).
+    With `expect` (the base), an id of another kind there is no Hauflo id here — the node is local."""
+
+    def __init__(self, cfg: Any, expect: _Index | None = None) -> None:
         self.node: dict[str, dict[str, Any]] = {}
         self.level: dict[str, int] = {}
+        self.kind: dict[str, tuple[int, str | None]] = {}
         self.parent: dict[str, str] = {}
         self.view: dict[str, str | None] = {}
         self.first: set[int] = set()  # python ids of the nodes that hold their hauflo_id first
+        self.expect = expect
         if isinstance(cfg, dict):
             self._walk(cfg, 0, ROOT, None)
 
@@ -98,8 +119,10 @@ class _Index:
             cl = _child_level(level, _kids_key(node, level))
             h = _hid(c)
             here = pid
+            if h is not None and self.expect is not None and h in self.expect.kind and self.expect.kind[h] != _kind(c, cl):
+                h = None  # the base's id on another kind of item: not the base's item
             if h is not None and h not in self.node:
-                self.node[h], self.level[h], self.parent[h] = c, cl, pid
+                self.node[h], self.level[h], self.kind[h], self.parent[h] = c, cl, _kind(c, cl), pid
                 self.view[h] = h if cl == 1 else view
                 self.first.add(id(c))
                 here = h
@@ -129,6 +152,33 @@ def ensure_ids(cfg: dict[str, Any]) -> dict[str, Any]:
                 walk(c, cl, h)
 
     walk(cfg, 0, "")
+    return cfg
+
+
+def rekey(cfg: dict[str, Any], base: Any) -> dict[str, Any]:
+    """An id the base knows as another kind (a section's sent as a card, a view's as a section) is a new id here: the
+    base's item goes as dropped (its local children stay), never matched to something else (security re-review 28.10)."""
+    if not isinstance(base, dict):
+        return cfg
+    known = _Index(base).kind
+    used = set(_Index(cfg).node) | set(known)
+
+    def walk(node: dict[str, Any], level: int) -> None:
+        for c in _kids(node, level):
+            if not isinstance(c, dict):
+                continue
+            cl = _child_level(level, _kids_key(node, level))
+            h = _hid(c)
+            if h is not None and h in known and known[h] != _kind(c, cl):
+                k = 2
+                while f"{h}~{k}" in used:
+                    k += 1
+                c[ID] = f"{h}~{k}"
+                used.add(c[ID])
+            if cl < 3:
+                walk(c, cl)
+
+    walk(cfg, 0)
     return cfg
 
 
@@ -174,7 +224,10 @@ def _strip_ids(node: Any) -> Any:
 class Merge:
     def __init__(self, new: dict[str, Any], current: Any, base: dict[str, Any], take: Any = (), restore: Any = ()) -> None:
         self.new, self.current, self.base = new, current if isinstance(current, dict) else {"views": []}, base
-        self.N, self.B, self.C = _Index(new), _Index(base), _Index(self.current)
+        self.B = _Index(base)
+        # HA's items of another kind than the base's under its id are the integrator's; the new config's are new ids.
+        self.new = rekey(new, base)
+        self.N, self.C = _Index(self.new), _Index(self.current, expect=self.B)
         self.take_all, self.take = take is True, set(take) if isinstance(take, list) else set()
         self.restore_all, self.restore = restore is True, set(restore) if isinstance(restore, list) else set()
         self.local: list[dict[str, Any]] = []
@@ -441,6 +494,36 @@ class Merge:
             out["dropped"] = True  # Hauflo's, edited in HA, no longer in Hauflo's version: kept as the integrator's
         return out
 
+    # the integrator's items: all still there
+    @staticmethod
+    def _fp(node: dict[str, Any], level: int) -> str:
+        if level == 3:
+            return json.dumps(_strip_ids(node), sort_keys=True, ensure_ascii=False, default=str)
+        key = _kids_key(node, level)
+        return json.dumps([level, {k: v for k, v in node.items() if k not in (ID, key)}], sort_keys=True, ensure_ascii=False, default=str)
+
+    def _prints(self, cfg: dict[str, Any], local_only: bool) -> Counter[str]:
+        out: Counter[str] = Counter()
+
+        def walk(node: dict[str, Any], level: int) -> None:
+            for c in _kids(node, level):
+                if not isinstance(c, dict):
+                    continue
+                cl = _child_level(level, _kids_key(node, level))
+                if not local_only or self._hauflo(c) is None:
+                    out[self._fp(c, cl)] += 1
+                if cl < 3:
+                    walk(c, cl)
+
+        walk(cfg, 0)
+        return out
+
+    def lost(self) -> int:
+        """How many of the integrator's items (a view / section / card with no Hauflo id the base knows) the merged
+        config no longer holds as they are — above 0 the save is refused, whatever the cloud sent."""
+        missing = self._prints(self.current, True) - self._prints(self.result, False)
+        return sum(missing.values())
+
     # the summary
     def updates(self) -> dict[str, int]:
         nb, nn = _leaves(self.B), _leaves(self.N)
@@ -464,27 +547,78 @@ class Merge:
 
 def plan_and_merge(new: dict[str, Any], current: Any, base: dict[str, Any] | None, take: Any = (), restore: Any = ()) -> tuple[dict[str, Any], dict[str, Any]]:
     """(the config to save, what the plan says). No base: Hauflo's config as it is, nothing known about HA's."""
-    new = ensure_ids(copy.deepcopy(new))  # unique ids whatever the cloud sent
+    new = rekey(ensure_ids(copy.deepcopy(new)), base)  # unique ids whatever the cloud sent, none of another kind
     if base is None:
         return new, {"base": False}
     m = Merge(new, current, base, take, restore)
-    return m.result, {**m.summary(), "base": True, "edited": current != base, "changes": m.result != current}
+    return m.result, {**m.summary(), "base": True, "edited": current != base, "changes": m.result != current, "lost": m.lost()}
 
 
 # --- the agent's side -------------------------------------------------------------------------------------------------
 
 
+def redact(current: Any, base: dict[str, Any], key: bytes) -> Any:
+    """HA's config as the cloud may read it: Hauflo's items as they are; the integrator's (no Hauflo id the base knows,
+    or one of another kind) and what he changed in a Hauflo item — opaque placeholders, a keyed hash of what they hold
+    (security re-review 28.10: the cloud read his cards). Equal configs read equal, a change changes the read."""
+    if not isinstance(current, dict):
+        return current
+    B = _Index(base)
+    C = _Index(current, expect=B)
+
+    def sign(v: Any) -> str:
+        return hmac.new(key, json.dumps(v, sort_keys=True, ensure_ascii=False, default=str).encode(), hashlib.sha256).hexdigest()[:24]
+
+    def node_out(c: dict[str, Any], level: int) -> dict[str, Any]:
+        h = _hid(c)
+        if h is None or h not in B.node or id(c) not in C.first:
+            return {"type": LOCAL, "hash": sign(c)}
+        key_ = _kids_key(c, level)
+        own = _own(c, level)
+        out = copy.deepcopy(own) if own == _own(B.node[h], level) else {ID: h, "type": LOCAL, "edited": sign(own)}
+        if key_ is not None:
+            out[key_] = kids_out(c, level)
+        return out
+
+    def kids_out(node: dict[str, Any], level: int) -> list[Any]:
+        cl = _child_level(level, _kids_key(node, level))
+        return [node_out(x, cl) if isinstance(x, dict) else {"type": LOCAL, "hash": sign(x)} for x in _kids(node, level)]
+
+    own = {k: v for k, v in current.items() if k != "views"}
+    base_own = {k: v for k, v in base.items() if k != "views"}
+    out: dict[str, Any] = copy.deepcopy(own) if own == base_own else {"type": LOCAL, "edited": sign(own)}
+    if "views" in current:
+        out["views"] = kids_out(current, 0)
+    return out
+
+
 class DashboardMerge:
-    """Bases per dashboard (the agent's own store) and the two tunnel commands."""
+    """Bases per dashboard (the agent's own store), the copies it made, and the tunnel's dashboard commands."""
 
     def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass
         self.store: Store = Store(hass, 1, STORE_KEY)
+        self.meta_store: Store = Store(hass, 1, META_KEY)
         self.bases: dict[str, dict[str, Any]] = {}
+        # url → the copies of it the agent made itself, oldest first: only these are ever pruned.
+        self.copies: dict[str, list[str]] = {}
+        self.key: bytes = b""
 
     async def async_load(self) -> None:
         data = await self.store.async_load()
         self.bases = {k: v for k, v in data.items() if isinstance(v, dict)} if isinstance(data, dict) else {}
+        meta = await self.meta_store.async_load()
+        meta = meta if isinstance(meta, dict) else {}
+        copies = meta.get("copies")
+        self.copies = {k: [x for x in v if isinstance(x, str)] for k, v in copies.items() if isinstance(v, list)} if isinstance(copies, dict) else {}
+        key = meta.get("key")
+        if not (isinstance(key, str) and len(key) == 64):
+            key = secrets.token_hex(32)
+            await self._save_meta(key)
+        self.key = bytes.fromhex(key)
+
+    async def _save_meta(self, key: str | None = None) -> None:
+        await self.meta_store.async_save({"copies": self.copies, "key": key or self.key.hex()})
 
     def manages(self, url_path: Any) -> bool:
         return isinstance(url_path, str) and url_path in self.bases
@@ -506,6 +640,15 @@ class DashboardMerge:
         except ConfigNotFound:
             return True, None
 
+    async def read(self, url_path: str) -> Any:
+        """`lovelace/config` of a dashboard the agent merges, as the cloud may see it (redact). None: no config yet."""
+        exists, current = await self._current(url_path)
+        if not exists:
+            raise MergeError("not_found", "no such storage dashboard")
+        if current is None:
+            raise MergeError("config_not_found", "no config yet")
+        return redact(current, self.bases[url_path], self.key)
+
     async def plan(self, url_path: str, config: dict[str, Any]) -> dict[str, Any]:
         exists, current = await self._current(url_path)
         if not exists:
@@ -518,16 +661,23 @@ class DashboardMerge:
         exists, current = await self._current(url_path)
         if not exists:
             raise MergeError("not_found", "no such storage dashboard")
-        new = ensure_ids(copy.deepcopy(config))
         base = self.bases.get(url_path) if current is not None else None
+        new = rekey(ensure_ids(copy.deepcopy(config)), base)
         if base is None and current is not None and not replace:
             # Nothing known of what is Hauflo's here: no merge can tell the integrator's cards — refused, the cloud
             # decides (a hand-edited dashboard stays, or is rebuilt with a copy) as with an older agent.
             raise MergeError("no_base", "the agent has no Hauflo version of this dashboard to merge against")
         merged, report = plan_and_merge(new, current, base, take, restore)
+        if report.get("lost"):
+            # Whatever the cloud sent: an item of the integrator's would go — nothing is written (security re-review 28.10).
+            _LOGGER.warning("Hauflo: dashboard %s not saved — %s of the integrator's items would be lost", url_path, report["lost"])
+            raise MergeError("merge_lost_local", f"{report['lost']} of the integrator's own items would be lost; nothing saved")
         copy_url = None
         if current is not None and merged != current and (base is None or current != base):
             # What the integrator made is in it: kept as a hidden copy before anything is written.
+            if title is None:
+                shown = getattr(self._dashboard(url_path), "config", None) or {}
+                title = shown.get("title") if isinstance(shown.get("title"), str) else None
             copy_url = await self._copy(url_path, current, title, local_ws, lang)
         if merged != current:
             await self._dashboard(url_path).async_save(merged)
@@ -539,27 +689,33 @@ class DashboardMerge:
 
     async def _copy(self, url_path: str, config: Any, title: str | None, local_ws: Callable[[list[dict[str, Any]]], Any], lang: str | None = None) -> str:
         now = dt_util.now()
-        stamp = now.strftime("%Y%m%d%H%M")
+        # Seconds and a random tail (security re-review 28.10): two saves a minute apart (or less) never meet one copy,
+        # and the cloud can't guess a name ahead.
         prefix = f"{url_path[:40]}-copy-"
-        copy_url = f"{prefix}{stamp}"
         # The dashboard's language (the deploy's), else HA's; HA's own time zone (dt_util.now()), no year: «Дом (копия 28.10 02:59)».
         ru = str(lang or self.hass.config.language or "").startswith("ru")
         shown = now.strftime("%d.%m %H:%M") if ru else f"{now.day} {_MONTHS[now.month - 1]} {now.strftime('%H:%M')}"
         name = f"{title or ('Дом' if ru else 'Home')} ({'копия' if ru else 'copy'} {shown})"
         listed = await local_ws([{"type": "lovelace/dashboards/list"}])
         dashboards = listed[0] if listed and isinstance(listed[0], list) else []
-        if not any(isinstance(d, dict) and d.get("url_path") == copy_url for d in dashboards):
-            await local_ws([{"type": "lovelace/dashboards/create", "url_path": copy_url, "title": name[:60], "icon": "mdi:content-copy", "show_in_sidebar": False, "require_admin": True, "mode": "storage"}])
-            await local_ws([{"type": "lovelace/config/save", "url_path": copy_url, "config": config}])
-            dashboards = [*dashboards, {"url_path": copy_url, "id": None}]
-        # The last MAX_COPIES of this dashboard: the oldest go.
-        mine = sorted((d for d in dashboards if isinstance(d, dict) and re.fullmatch(re.escape(prefix) + r"\d{12}", str(d.get("url_path", "")))), key=lambda d: str(d["url_path"]))
-        for d in mine[:-MAX_COPIES]:
-            if d.get("id"):
+        taken = {str(d.get("url_path")) for d in dashboards if isinstance(d, dict)}
+        copy_url = f"{prefix}{now.strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
+        while copy_url in taken:
+            copy_url = f"{prefix}{now.strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(3)}"
+        await local_ws([{"type": "lovelace/dashboards/create", "url_path": copy_url, "title": name[:60], "icon": "mdi:content-copy", "show_in_sidebar": False, "require_admin": True, "mode": "storage"}])
+        await local_ws([{"type": "lovelace/config/save", "url_path": copy_url, "config": config}])
+        mine = [*self.copies.get(url_path, []), copy_url]
+        # The last MAX_COPIES of this dashboard: the oldest of the agent's own copies go — never a dashboard it didn't make.
+        ids = {str(d.get("url_path")): d.get("id") for d in dashboards if isinstance(d, dict)}
+        while len(mine) > MAX_COPIES:
+            old = mine.pop(0)
+            if ids.get(old):
                 try:
-                    await local_ws([{"type": "lovelace/dashboards/delete", "dashboard_id": d["id"]}])
+                    await local_ws([{"type": "lovelace/dashboards/delete", "dashboard_id": ids[old]}])
                 except Exception as err:  # noqa: BLE001 — an old copy left is no harm
-                    _LOGGER.warning("Hauflo: old dashboard copy %s not removed: %s", d.get("url_path"), err)
+                    _LOGGER.warning("Hauflo: old dashboard copy %s not removed: %s", old, err)
+        self.copies[url_path] = mine
+        await self._save_meta()
         return copy_url
 
 
@@ -569,7 +725,10 @@ class MergeError(Exception):
         self.code = code
 
 
-_COPY_RE = re.compile(r"-copy-\d{12}$")
+def is_copy(url: Any) -> bool:
+    return isinstance(url, str) and bool(COPY_RE.search(url))
+
+
 
 
 def _choice(v: Any) -> Any:
@@ -603,8 +762,8 @@ async def local_ws(session: Any, url: str, token: str, cmds: list[dict[str, Any]
 
 
 async def handle(agent: Any, ch: int, msg: dict[str, Any], validate: Callable[[Any], bool], fresh_backup: Callable[[], bool], locked_code: str) -> None:
-    """`hauflo/dashboard/plan` (reads), `hauflo/dashboard/save` and a plain `lovelace/config/save` of a dashboard the
-    agent manages (writes): answered here, never relayed to HA as they are."""
+    """`hauflo/dashboard/plan` and `lovelace/config` of a dashboard the agent merges (reads), `hauflo/dashboard/save`
+    and every plain `lovelace/config/save` of a `hauflo-…` dashboard (writes): answered here, never relayed to HA."""
     t, mid = msg.get("type"), msg.get("id")
 
     async def reply(result: Any = None, code: str | None = None, message: str = "") -> None:
@@ -616,13 +775,20 @@ async def handle(agent: Any, ch: int, msg: dict[str, Any], validate: Callable[[A
         await agent.send({"t": "ws_msg", "ch": ch, "data": json.dumps(frame, ensure_ascii=False)})
 
     url, config = msg.get("url_path"), msg.get("config")
+    merger: DashboardMerge = agent.dashboards
+    if t == "lovelace/config" and isinstance(url, str) and merger.manages(url) and not is_copy(url):
+        # Hauflo's part as it is, the integrator's as opaque placeholders (security re-review 28.10).
+        try:
+            await reply(await merger.read(url))
+        except MergeError as err:
+            await reply(code=err.code, message=str(err))
+        return
     # Hauflo's own dashboard only (never a copy, never the family's), and Hauflo's part only — the tunnel's dashboard
     # check exactly as for a plain save: no card, service or entity of the cloud's choosing.
-    if not (isinstance(url, str) and url.startswith("hauflo-") and not _COPY_RE.search(url)) or not isinstance(config, dict) or not validate(config):
+    if t == "lovelace/config" or not (isinstance(url, str) and url.startswith("hauflo-") and not is_copy(url)) or not isinstance(config, dict) or not validate(config):
         _LOGGER.warning("Hauflo: «%s» isn't allowed through the tunnel", t)
         await reply(code="not_allowed", message="not allowed")
         return
-    merger: DashboardMerge = agent.dashboards
     try:
         if t == PLAN:
             await reply(await merger.plan(url, config))
@@ -641,7 +807,9 @@ async def handle(agent: Any, ch: int, msg: dict[str, Any], validate: Callable[[A
             config,
             [] if plain else _choice(msg.get("take")),
             [] if plain else _choice(msg.get("restore")),
-            False if plain else msg.get("replace") is True,
+            # A plain save: merged where the agent knows Hauflo's version; none yet (deployed by an older agent) —
+            # Hauflo's config replaces it, the pre-save one kept as a hidden copy first (security re-review 28.10).
+            not merger.manages(url) if plain else msg.get("replace") is True,
             title[:60] if title else None,
             lambda cmds: local_ws(agent.local_session, f"{agent.local_base}/api/websocket", agent.token, cmds),
             lang[:5] if lang else None,

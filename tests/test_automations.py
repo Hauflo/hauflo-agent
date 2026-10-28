@@ -315,6 +315,24 @@ async def test_time_zone_admin_only(hass: HomeAssistant, hass_client, hass_read_
     assert hass.config.time_zone == "Europe/Moscow"
 
 
+async def test_sun_rule_without_the_home_location_is_said(hass: HomeAssistant, hass_client, entry, bus) -> None:
+    """HA expert 28.10: a sunset rule saved while HA's location is 0 / 0 — saved, with a warning."""
+    hass.config.latitude, hass.config.longitude = 0, 0
+    client = await hass_client()
+    res = await client.post(URL, json={"op": "save", "rule": SUNSET})
+    assert res.status == 200, await res.text()
+    got = await res.json()
+    assert got["warning"] == "no_location" and got["warning_text"]
+    hass.config.latitude, hass.config.longitude = 59.94, 30.31
+    got = await (await client.post(URL, json={"op": "save", "rule": {**SUNSET, "id": got["id"]}})).json()
+    assert "warning" not in got
+    # A time rule needs no place.
+    hass.config.latitude, hass.config.longitude = 0, 0
+    timed = {**SUNSET, "when": {"event": "time", "at": "07:00"}}
+    got = await (await client.post(URL, json={"op": "save", "rule": timed})).json()
+    assert "warning" not in got, got
+
+
 async def test_location(hass: HomeAssistant, hass_client, hass_read_only_access_token, entry) -> None:
     hass.config.latitude, hass.config.longitude = 0, 0
     family = await hass_client(hass_read_only_access_token)
