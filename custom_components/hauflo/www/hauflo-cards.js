@@ -1944,10 +1944,33 @@ ${(c.alarms || []).length && ok ? `<div><span class="caps">Датчики</span>
   };
 
   // --- hauflo-room: a room that glows with its state; tap = its page, hold = its light -----------
+  // Н3: the leak sensors of a room — every moisture binary_sensor of ANY integration (Neptun, Aqara, Zigbee…) in the room's
+  // HA area, beside those the cloud gave. The area is the card's own `area`, else that of its first device in HA's registry.
+  // Nothing is controlled from here: it only says «dry» or «leak: where» (the valve is an explicit button of the room page).
+  const MOIST = new WeakMap();
+  const leakIds = (card) => {
+    const h = card._hass;
+    const c = card._config;
+    const area = c.area || [...(c.lights || []), c.climate, ...(c.covers || []), ...(c.alarms || [])].map((id) => id && areaOf(h, id)).find(Boolean);
+    if (!area || !h?.entities) return [];
+    let by = MOIST.get(h.entities);
+    if (!by) {
+      by = new Map();
+      for (const [id, s] of Object.entries(h.states || {})) {
+        if (!id.startsWith("binary_sensor.") || s.attributes?.device_class !== "moisture") continue;
+        const e = h.entities[id];
+        if (e?.hidden || e?.disabled_by) continue;
+        const a = areaOf(h, id);
+        if (a) by.set(a, [...(by.get(a) || []), id]);
+      }
+      MOIST.set(h.entities, by);
+    }
+    return (by.get(area) || []).filter((id) => !(c.alarms || []).includes(id));
+  };
   class Room extends EHCard {
     watched() {
       const c = this._config;
-      return [...(c.lights || []), c.climate, ...(c.alarms || []), ...(c.covers || []), ...(c.temps || []).map((x) => x.entity), ...actIds(c.activity)].filter(Boolean);
+      return [...(c.lights || []), c.climate, ...(c.alarms || []), ...(this._hass ? leakIds(this) : []), ...(c.covers || []), ...(c.temps || []).map((x) => x.entity), ...actIds(c.activity)].filter(Boolean);
     }
     css() {
       return `.r{height:172px;padding:16px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;user-select:none;-webkit-user-select:none}
@@ -1992,6 +2015,8 @@ ${(c.alarms || []).length && ok ? `<div><span class="caps">Датчики</span>
       // A room in alarm: the red frame and the sign say it; a floor tile names where (persona review 25.10: said once).
       // Priority by colour (ISA-101): only a critical one is red, the rest amber — as on the alert card.
       if (alarm) return { kind: openList.some((a) => a.critical !== false && !a.ackedBy) ? "alarm" : "alarm warn", text: c.rooms?.[alarm.entity_id] ? `${c.rooms[alarm.entity_id]}${alarmsOn.length > 1 ? ` и ещё ${alarmsOn.length - 1}` : ""}` : alarmsOn.length > 1 ? `${alarmsOn.length} ${pluralAlarms(alarmsOn.length)}` : "" };
+      const wet = leakIds(this).map((id) => st(h, id)).filter((s) => s && s.state === "on");
+      if (wet.length) return { kind: "alarm", text: `Протечка: ${nameOf(wet[0], wet[0].entity_id)}${wet.length > 1 ? ` и ещё ${wet.length - 1}` : ""}` };
       const deaf = (c.alarms || []).filter((id) => nd(st(h, id))).length;
       if (deaf) return { kind: "", text: `Нет связи · ${deaf} ${sensorsWord(deaf)}` };
       if (on.length) {
@@ -2010,6 +2035,15 @@ ${(c.alarms || []).length && ok ? `<div><span class="caps">Датчики</span>
       if (lightsDeaf) return { kind: "", text: "Свет: нет данных" };
       if (clim && nd(clim)) return { kind: "", text: "Климат · нет данных" };
       return { kind: "", text: lights.length ? "Всё выключено" : "Всё в норме" };
+    }
+    /** «Без протечек» when the room has moisture sensors (any integration) and they all say dry; a silent sensor is said. */
+    leakChip() {
+      const h = this._hass;
+      const ids = [...leakIds(this), ...(this._config.alarms || []).filter((id) => st(h, id)?.attributes.device_class === "moisture")];
+      if (!ids.length) return "";
+      const deaf = ids.filter((id) => nd(st(h, id))).length;
+      if (ids.some((id) => st(h, id)?.state === "on")) return "";
+      return deaf ? `<span class="op"><ha-icon icon="mdi:water-off-outline"></ha-icon>датчик: нет связи</span>` : `<span><ha-icon icon="mdi:water-check-outline"></ha-icon>без протечек</span>`;
     }
     render() {
       const h = this._hass;
@@ -2030,6 +2064,7 @@ ${(c.alarms || []).length && ok ? `<div><span class="caps">Датчики</span>
         // «закр.» only when the blinds said so: unknown ones say nothing (persona round 3: tile «закр.», card «Нет данных»).
         (c.covers || []).some((id) => ["open", "opening", "closed", "closing"].includes(st(h, id)?.state)) ? `<span class="${coversOpen ? "op" : ""}"><ha-icon icon="hauflo:blind"></ha-icon>${coversOpen ? `откр. ${coversOpen}` : "закр."}</span>` : "",
         hum !== undefined ? `<span><ha-icon icon="hauflo:humidity"></ha-icon>${fmt(hum)} %</span>` : "",
+        this.leakChip(),
       ].filter(Boolean);
       return `<div class="glass r ${s.kind} ${c.picture ? "pic" : ""}" role="button" tabindex="0" aria-label="${esc(c.name)}">${c.picture ? `<div class="ph" style="background-image:url('${esc(c.picture)}')"></div>` : ""}<div class="glow"></div>
 <div class="top"><span class="caps">${esc(c.name)}</span>${mark}</div>
@@ -2401,7 +2436,9 @@ ${rows.map((r) => `<div class="rw"><span class="caps sub">${esc(r.title || (r.ki
       const floorNow = fl.length ? ` · пол ${Math.min(...fl) === Math.max(...fl) ? fmt(fl[0]) : `${fmt(Math.min(...fl))}–${fmt(Math.max(...fl))}`}°` : "";
       const chart = this.chart(this._config.entity, this._config.floor ? "Пол" : "В комнате", mood, 96);
       const edit = this.touching(this._config.entity);
-      const noTarget = target === undefined ? `<div class="nos">${["unavailable", "unknown"].includes(s.state) ? "нет связи с термостатом" : "уставка ещё не пришла от системы"}</div>` : "";
+      // A thermostat of another integration may take no setpoint at all (features: TARGET_TEMPERATURE 1, RANGE 2): no hint, no scale.
+      const fixed = target === undefined && !pair && num(a.supported_features) !== undefined && (num(a.supported_features) & 3) === 0 && !["unavailable", "unknown"].includes(s.state);
+      const noTarget = target === undefined && !fixed ? `<div class="nos">${["unavailable", "unknown"].includes(s.state) ? "нет связи с термостатом" : "уставка ещё не пришла от системы"}</div>` : "";
       // The BIG number is what is now (room air; the floor's own for floor heating); the setpoint is small — and big for ~3 s
       // while the person changes it (owner 28.10).
       const bigCur = `<div class="t thin tcur"><span class="v">${cur === undefined ? "—" : fmt(cur, 1)}</span>${cur === undefined ? "" : "<sup>°C</sup>"}</div>`;
@@ -2413,7 +2450,7 @@ ${rows.map((r) => `<div class="rw"><span class="caps sub">${esc(r.title || (r.ki
 <div class="sub">${doing ? `<span class="act"><i></i>${doing}</span>` : ""}${small ? `${doing ? " " : ""}${small}` : ""}${floorNow}${hum !== undefined ? ` · влажность ${fmt(hum)} %` : ""}</div>${readings.length ? this.readingsRow(readings) : ""}${valveIcons(this._hass, this._config.activity?.valves)}${pairRow}</div>
 ${target === undefined ? "" : `<div class="st"><button data-d="${step}" aria-label="Теплее">+</button><button data-d="${-step}" aria-label="Холоднее">−</button></div>`}</div>
 ${chart}
-<div class="scale" data-min="${min}" data-max="${max}" data-step="${step}"${pair ? ` data-pair="1"` : ""}><div class="ticks">${ticks}</div><div class="ends"><span>${fmt(min)}°</span><span>проведите, чтобы изменить</span><span>${fmt(max)}°</span></div></div>
+${fixed ? "" : `<div class="scale" data-min="${min}" data-max="${max}" data-step="${step}"${pair ? ` data-pair="1"` : ""}><div class="ticks">${ticks}</div><div class="ends"><span>${fmt(min)}°</span><span>проведите, чтобы изменить</span><span>${fmt(max)}°</span></div></div>`}
 ${opts.length ? `<div class="modes">${opts.slice(0, 5).map(([k, l, on]) => `<button class="${on ? "on" : ""}" data-${useModes ? "m" : "p"}="${esc(k)}">${esc(l)}</button>`).join("")}</div>` : ""}
 ${fans.length > 1 || swing ? `<div class="modes fan"><span class="fl"><ha-icon icon="hauflo:fan"></ha-icon></span>${fans.slice(0, 5).map((f) => `<button class="${known && a.fan_mode === f ? "on" : ""}" data-f="${esc(f)}">${esc(FAN[f] || f)}</button>`).join("")}${swing ? `<button class="${known && a.swing_mode && a.swing_mode !== "off" ? "on" : ""}" data-sw="${esc(a.swing_mode && a.swing_mode !== "off" ? "off" : swing)}">Обдув</button>` : ""}</div>` : ""}</div></div>`;
     }
@@ -2628,6 +2665,18 @@ ${this.cct(cur, target, step, this._config.entity)}
         const known = !["unknown", "unavailable"].includes(s.state);
         return { dom: "cover", name, pct: pos ?? (known && s.state !== "closed" ? 100 : 0), on: known && s.state !== "closed", known, dimmable: real, icon: e.icon || "hauflo:blind", s };
       }
+      // Any other integration's fan / player: speed and volume are the level where the entity has them (feature bits:
+      // fan SET_SPEED 1, media_player VOLUME_SET 4), else a plain tile. A playing player is «on».
+      const sf = num(s.attributes.supported_features) || 0;
+      if (dom === "fan") {
+        const p = num(s.attributes.percentage);
+        return { dom: "fan", name, pct: s.state === "on" ? p ?? 100 : 0, on: s.state === "on", dimmable: (sf & 1) !== 0 && p !== undefined, icon: e.icon || "hauflo:fan", s };
+      }
+      if (dom === "media_player") {
+        const v = num(s.attributes.volume_level);
+        const on = !["off", "unavailable", "unknown", "standby"].includes(s.state);
+        return { dom: "media_player", name, pct: v !== undefined ? Math.round(v * 100) : on ? 100 : 0, on, dimmable: (sf & 4) !== 0 && v !== undefined, icon: e.icon || "hauflo:speaker", s };
+      }
       return { dom: "switch", name, pct: s.state === "on" ? 100 : 0, on: s.state === "on", dimmable: false, icon: e.icon || "hauflo:power", s };
     }
     render() {
@@ -2641,7 +2690,7 @@ ${this.cct(cur, target, step, this._config.entity)}
           const unavailable = m.s.state === "unavailable";
           const moving = m.dom === "cover" && ["opening", "closing"].includes(m.s.state);
           const label = m.dom === "cover" ? (!m.known ? "—" : moving ? (m.s.state === "opening" ? "Откр…" : "Закр…") : m.dimmable && num(m.s.attributes.current_position) !== undefined ? `${m.pct}` : m.on ? "Откр." : "Закр.") : m.on ? (m.dimmable ? `${m.pct}` : "Вкл") : "Выкл";
-          return `<div class="glass v ${m.dom} ${m.on ? "" : "off"} ${moving ? "mv" : ""} ${unavailable ? "unavail" : ""}" data-e="${esc(e.entity)}" role="slider" aria-label="${esc(m.name)}" aria-valuenow="${m.pct}" tabindex="0">
+          return `<div class="glass v ${m.dom === "fan" || m.dom === "media_player" ? "switch" : m.dom} ${m.on ? "" : "off"} ${moving ? "mv" : ""} ${unavailable ? "unavail" : ""}" data-e="${esc(e.entity)}" role="slider" aria-label="${esc(m.name)}" aria-valuenow="${m.pct}" tabindex="0">
 <div class="lvl" style="height:${m.on || m.dom === "cover" ? m.pct : 0}%"></div><ha-icon class="ic" icon="${esc(m.icon)}"></ha-icon>
 <div><div class="p thin">${esc(label)}</div><div class="n">${esc(m.name)}</div>
 ${m.dom === "cover" && !m.dimmable ? `<div class="ud3">${coverButtons(coverDir({ ...e, s: m.s }, this._config), "data-c")}</div>` : ""}</div></div>`;
@@ -2770,6 +2819,13 @@ ${m.dom === "cover" && !m.dimmable ? `<div class="ud3">${coverButtons(coverDir({
           if (moved) {
             if (m.dom === "light") call(this._hass, "light", pct ? "turn_on" : "turn_off", pct ? { entity_id: id, brightness_pct: Math.max(1, pct) } : { entity_id: id });
             else if (m.dom === "cover") call(this._hass, "cover", "set_cover_position", { entity_id: id, position: pct });
+            else if (m.dom === "fan") call(this._hass, "fan", pct ? "set_percentage" : "turn_off", pct ? { entity_id: id, percentage: Math.max(1, pct) } : { entity_id: id });
+            else if (m.dom === "media_player") call(this._hass, "media_player", "volume_set", { entity_id: id, volume_level: pct / 100 });
+          } else if (m.dom === "media_player") {
+            const f = num(m.s.attributes.supported_features) || 0;
+            if (!m.on) call(this._hass, "media_player", "turn_on", { entity_id: id });
+            else if (f & (1 | 16384)) call(this._hass, "media_player", "media_play_pause", { entity_id: id });
+            else call(this._hass, "homeassistant", "toggle", { entity_id: id });
           } else if (m.dom === "cover") {
             call(this._hass, "cover", m.s.state === "opening" || m.s.state === "closing" ? "stop_cover" : m.s.state === "closed" ? "open_cover" : "close_cover", { entity_id: id });
           } else {
@@ -3649,7 +3705,8 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
       }
       if (d === "binary_sensor" && dc === "battery") return s.state === "on" ? ["батарея садится", "warn"] : ["батарея в норме", "ok"];
       if (d === "sensor" && dc === "battery" && num(s.state) !== undefined) return [`батарея ${fmt(num(s.state))} %`, num(s.state) < 20 ? "warn" : "ok"];
-      if (["sensor", "number", "input_number"].includes(d)) return [`${fmt(num(s.state), num(s.state) % 1 ? 1 : 0)} ${unitOf(s)}`.trim(), "val"];
+      // A text / date sensor of any integration: its own state, not a dash.
+      if (["sensor", "number", "input_number"].includes(d)) return [num(s.state) === undefined ? String(s.state) : `${fmt(num(s.state), num(s.state) % 1 ? 1 : 0)} ${unitOf(s)}`.trim(), "val"];
       if (d === "climate") {
         // What it does («греет · 23,4°»), not its mode (owner 28.10, Д16); the mode only when nothing says what it does.
         const k = climateNow(null, s);
@@ -4140,6 +4197,119 @@ ${locks.length || opens.length ? `<div class="lst">${locks
     }
   }
 
+  // --- hauflo-leaks: «Защита от протечек» (Н3) — leak sensors + a water valve of ANY integration (Neptun, Aqara, Zigbee…).
+  // The owner connects the integration himself; the card only reads and says «всё в порядке» / «протечка: где». It decides
+  // nothing: the valve closes (or opens) only by its own button, on a second tap within 4 s. `area` picks every moisture
+  // sensor and every valve of that HA area; `sensors` / `valves` name them by hand (both work together).
+  class Leaks extends EHCard {
+    ids() {
+      const c = this._config;
+      const h = this._hass;
+      const ent = (x) => (typeof x === "string" ? x : x?.entity);
+      let sensors = (c.sensors || []).map(ent).filter(Boolean);
+      let valves = (c.valves || []).map(ent).filter(Boolean);
+      if (c.area && h?.entities) {
+        for (const [id, s] of Object.entries(h.states || {})) {
+          const d = id.split(".")[0];
+          const e = h.entities[id];
+          if (e?.hidden || e?.disabled_by || areaOf(h, id) !== c.area) continue;
+          if (d === "binary_sensor" && s.attributes?.device_class === "moisture") sensors.push(id);
+          else if (d === "valve" && s.attributes?.device_class !== "gas") valves.push(id);
+          else if (d === "switch" && s.attributes?.device_class === "water") valves.push(id);
+        }
+      }
+      sensors = [...new Set(sensors)];
+      valves = [...new Set(valves)];
+      return { sensors, valves };
+    }
+    watched() {
+      if (!this._hass) return [];
+      const { sensors, valves } = this.ids();
+      return [...sensors, ...valves];
+    }
+    css() {
+      return `.k{padding:18px 20px}.big{display:flex;align-items:center;gap:14px;margin-top:8px}.sh{width:56px;height:56px;border-radius:20px;display:grid;place-items:center;flex:0 0 auto;background:color-mix(in srgb,var(--mint) 22%,transparent);color:var(--mint)}.sh ha-icon{--mdc-icon-size:28px}
+.wet .sh{background:var(--alert);color:#fff;box-shadow:0 0 30px var(--alertGlow)}.nolink .sh{background:var(--track);color:var(--ink2)}.empty .sh{background:var(--track);color:var(--ink3)}
+.st{font:300 24px Onest,sans-serif;letter-spacing:-.02em}.wet .st{color:var(--alert);font-weight:500}.sub{font:400 13px Onest,sans-serif;color:var(--ink2);margin-top:2px}
+.wet .glow{background:radial-gradient(60% 60% at 15% 10%,var(--alertGlow),transparent 70%)}
+.lst{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-top:12px}.it{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:14px;background:var(--track);cursor:pointer;min-width:0}
+.it .nm{font:500 13px/1.25 Onest,sans-serif;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:break-word}.it .w{font:400 13px Onest,sans-serif;color:var(--ink2)}
+.it.bad{background:color-mix(in srgb,var(--alert) 18%,transparent)}.it.bad .w{color:var(--alert);font-weight:600}.it.deaf{opacity:.6}
+.vl2{display:flex;align-items:center;gap:10px;margin-top:12px;padding:10px 12px;border-radius:14px;box-shadow:inset 0 0 0 1px var(--hair)}.vl2 .tx{flex:1;min-width:0}
+.vl2 button{height:44px;padding:0 16px;border-radius:14px;font:500 13px Onest,sans-serif;box-shadow:inset 0 0 0 1px var(--hair);color:var(--ink);white-space:nowrap}
+.vl2 button.arm{background:color-mix(in srgb,var(--amber) 22%,transparent);box-shadow:none}.vl2 button.go{background:color-mix(in srgb,var(--mint) 26%,transparent);box-shadow:none}
+.hint{font:400 13px/1.4 Onest,sans-serif;color:var(--ink2);margin-top:10px}`;
+    }
+    valveWord(s) {
+      const closed = s.state === "closed" || s.state === "off";
+      const open = s.state === "open" || s.state === "on";
+      if (nd(s)) return [LL("нет связи", "no signal"), "nd"];
+      if (s.state === "opening") return [LL("открывается…", "opening…"), "mv"];
+      if (s.state === "closing") return [LL("закрывается…", "closing…"), "mv"];
+      return closed ? [LL("вода перекрыта", "water is off"), "closed"] : open ? [LL("вода идёт", "water is on"), "open"] : [s.state, "x"];
+    }
+    render() {
+      const h = this._hass;
+      const { sensors, valves } = this.ids();
+      const ss = sensors.map((id) => ({ id, s: st(h, id) })).filter((x) => x.s);
+      const vs = valves.map((id) => ({ id, s: st(h, id) })).filter((x) => x.s);
+      const wet = ss.filter((x) => x.s.state === "on");
+      const deaf = ss.filter((x) => nd(x.s));
+      const kind = !ss.length ? "empty" : wet.length ? "wet" : deaf.length === ss.length ? "nolink" : "ok";
+      const name = (x) => nameOf(x.s, x.id);
+      const [word, sub] =
+        kind === "wet"
+          ? [LL("Протечка", "Leak"), wet.map(name).join(", ")]
+          : kind === "empty"
+            ? [LL("Датчиков пока нет", "No sensors yet"), LL("Подключите датчики протечки и кран в Home Assistant — они появятся здесь сами", "Connect leak sensors and a valve in Home Assistant — they show up here by themselves")]
+            : kind === "nolink"
+              ? [LL("Нет связи с датчиками", "No signal from the sensors"), `${deaf.length} ${LL("из", "of")} ${ss.length}`]
+              : [LL("Всё в порядке", "All is well"), `${LL("датчиков", "sensors")}: ${ss.length}${deaf.length ? ` · ${LL("нет связи", "no signal")}: ${deaf.length}` : ` · ${LL("сухо", "dry")}`}`];
+      const icon = kind === "wet" ? "mdi:water-alert" : kind === "ok" ? "mdi:water-check-outline" : "mdi:water-off-outline";
+      return `<div class="glass k ${kind}"><div class="glow"></div><div style="position:relative"><span class="caps" data-own>${esc(this._config.title || LL("Защита от протечек", "Leak protection"))}</span>
+<div class="big"><span class="sh"><ha-icon icon="${icon}"></ha-icon></span><div><div class="st" data-own>${esc(word)}</div><div class="sub" data-own>${esc(sub)}</div></div></div>
+${ss.length ? `<div class="lst">${ss.map((x) => `<div class="it ${x.s.state === "on" ? "bad" : nd(x.s) ? "deaf" : ""}" data-info="${esc(x.id)}"><ha-icon icon="${x.s.state === "on" ? "mdi:water-alert" : "mdi:water-outline"}"></ha-icon><div style="min-width:0"><div class="nm">${esc(name(x))}</div><div class="w" data-own>${nd(x.s) ? LL("нет связи", "no signal") : x.s.state === "on" ? LL("протечка", "leak") : LL("сухо", "dry")}</div></div></div>`).join("")}</div>` : ""}
+${vs.map((x) => { const [w, k] = this.valveWord(x.s); return `<div class="vl2"><ha-icon icon="${k === "closed" ? "mdi:valve-closed" : "mdi:valve-open"}" style="color:var(--${k === "closed" ? "ice" : "mint"})"></ha-icon><div class="tx" data-info="${esc(x.id)}"><div class="nm">${esc(name(x))}</div><div class="w" data-own>${esc(w)}</div></div>${k === "nd" || k === "mv" ? "" : `<button data-valve="${esc(x.id)}" data-k="${k}"><span data-own>${k === "closed" ? LL("Открыть воду", "Open the water") : LL("Перекрыть воду", "Shut off the water")}</span></button>`}</div>`; }).join("")}
+${!vs.length && ss.length ? `<div class="hint" data-own>${LL("Кран не найден: укажите его в карточке (valves) или отнесите к этой комнате в Home Assistant.", "No valve found: name it in the card (valves) or put it into this area in Home Assistant.")}</div>` : ""}
+</div></div>`;
+    }
+    bind() {
+      this.shadowRoot.querySelectorAll("[data-info]").forEach((el) => el.addEventListener("click", () => moreInfo(this, el.dataset.info)));
+      // Closing the water is by hand only, and on a second tap within 4 s (the first one says so).
+      this.shadowRoot.querySelectorAll("button[data-valve]").forEach((b) =>
+        b.addEventListener("click", () => {
+          const id = b.dataset.valve;
+          const span = b.querySelector("span");
+          if (this._armed !== id) {
+            this._armed = id;
+            b.classList.add("arm");
+            const was = span.textContent;
+            span.textContent = b.dataset.k === "closed" ? LL("Ещё раз — открыть", "Tap again — open") : LL("Ещё раз — перекрыть", "Tap again — shut off");
+            clearTimeout(this._armT);
+            this._armT = setTimeout(() => {
+              this._armed = null;
+              b.classList.remove("arm");
+              span.textContent = was;
+            }, 4000);
+            return;
+          }
+          this._armed = null;
+          clearTimeout(this._armT);
+          haptic(this);
+          b.classList.remove("arm");
+          b.classList.add("go");
+          const d = id.split(".")[0];
+          const open = b.dataset.k === "closed";
+          if (d === "valve") sendAck(this, b, "valve", open ? "open_valve" : "close_valve", { entity_id: id });
+          else sendAck(this, b, d === "switch" ? "switch" : "homeassistant", open ? "turn_on" : "turn_off", { entity_id: id });
+        }),
+      );
+    }
+    getGridOptions() {
+      return { columns: 12, rows: "auto" };
+    }
+  }
+
   // --- hauflo-camera: the picture, refreshed; a tap opens the live view ---------------------------
   class Camera extends EHCard {
     watched() {
@@ -4183,6 +4353,14 @@ ${locks.length || opens.length ? `<div class="lst">${locks
     water_heater: { icon: "hauflo:boiler", word: (s) => (s.state === "off" ? "выкл" : `${fmt(num(s.attributes.temperature))}°`), tap: null, on: (s) => s.state !== "off" },
     siren: { icon: "hauflo:bell", word: (s) => (s.state === "on" ? "звучит" : "выключена"), tap: ["siren", "toggle"], tone: (s) => (s.state === "on" ? "alarm" : "") },
     switch: { icon: "hauflo:power", word: (s) => (s.state === "on" ? "вкл" : "выкл"), tap: ["switch", "toggle"] },
+    // More domains of other integrations (MU): none of them needs a model — the state in words, a tap where the domain has one.
+    remote: { icon: "mdi:remote", word: (s) => (s.state === "on" ? "вкл" : "выкл"), tap: ["remote", "toggle"] },
+    update: { icon: "mdi:package-up", word: (s) => (s.state === "on" ? "есть обновление" : "актуально"), tap: null, on: (s) => s.state === "on", tone: (s) => (s.state === "on" ? "warn" : "") },
+    lawn_mower: { icon: "mdi:robot-mower", word: (s) => ({ mowing: "косит", docked: "на базе", returning: "едет на базу", paused: "пауза", error: "ошибка" })[s.state] || s.state, tap: (s) => ["lawn_mower", s.state === "mowing" ? "dock" : "start_mowing"], on: (s) => s.state === "mowing", tone: (s) => (s.state === "error" ? "alarm" : "") },
+    select: { icon: "mdi:format-list-bulleted", word: (s) => s.state, tap: null, on: () => false },
+    input_select: { icon: "mdi:format-list-bulleted", word: (s) => s.state, tap: null, on: () => false },
+    text: { icon: "mdi:form-textbox", word: (s) => s.state, tap: null, on: () => false },
+    device_tracker: { icon: "hauflo:user", word: (s) => (s.state === "home" ? "дома" : s.state === "not_home" ? "не дома" : s.state), tap: null, on: (s) => s.state === "home" },
     input_boolean: { icon: "hauflo:switch", word: (s) => (s.state === "on" ? "вкл" : "выкл"), tap: ["input_boolean", "toggle"] },
     button: { icon: "mdi:gesture-tap-button", word: (s, name = "") => (/звон|bell/i.test(name) ? "позвонить" : /калит|ворот|двер|замок|gate|door/i.test(name) ? "открыть" : "нажать"), tap: ["button", "press"], on: () => false, action: true },
     binary_sensor: { icon: "hauflo:info", word: (s) => (OPENING.includes(s.attributes.device_class) ? (s.state === "on" ? "открыто" : "закрыто") : s.state === "on" ? "сработал" : "в норме"), tap: null, tone: (s) => (s.state === "on" && ["moisture", "smoke", "gas", "problem", "safety", "carbon_monoxide"].includes(s.attributes.device_class) ? "alarm" : ""), on: (s) => s.state === "on" && !["moisture", "smoke", "gas", "problem", "safety", "carbon_monoxide"].includes(s.attributes.device_class) },
@@ -4525,6 +4703,7 @@ ${locks.length || opens.length ? `<div class="lst">${locks
     ["hauflo-camera", Camera, "Hauflo · Камера", "Картинка с камеры, тап — трансляция"],
     ["hauflo-acs", Acs, "Hauflo · Кондиционеры", "Все кондиционеры дома: какие работают, температура, выключить все"],
     ["hauflo-area", Area, "Hauflo · Комната HA", "Всё, что Home Assistant отнёс к комнате, — в стиле Hauflo"],
+    ["hauflo-leaks", Leaks, "Hauflo · Защита от протечек", "Датчики протечки и кран любой интеграции: всё в порядке или где протечка"],
     ["hauflo-devices", Devices, "Hauflo · Устройства", "Вентиляторы, клапаны, замки, пылесосы, бойлеры…"],
   ];
   // --- a dashboard with a fixed light or dark Atelier theme: HA paints only the view, the header follows here
@@ -4696,6 +4875,23 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
           skip: { manual: "пропущено: меняли вручную", offline: "пропущено: нет связи", gone: "пропущено: устройства нет", error: "не получилось" },
           sys: { on: "Имитация включена", off: "Имитация выключена", auto_off: "Выключилась сама — дата прошла" },
         },
+        g: {
+          title: "Гостевой доступ",
+          sub: "Ссылка или QR для гостя — без входа и регистрации: свет, шторы и климат выбранных комнат на время. Замки, ворота, охрана, камеры и настройки гостю недоступны.",
+          invite: "Пригласить гостя", who: "Для кого", whoPh: "Например, Иван", rooms: "Комнаты", roomsHint: "Гость увидит только свет, шторы и климат Hauflo в этих комнатах.",
+          howLong: "На сколько", hours: { 3: "3 часа", 24: "Сутки", 72: "3 дня", 168: "Неделя" }, create: "Создать ссылку", cancel: "Отмена",
+          ready: "Ссылка готова", once: "Показывается один раз — отправьте её гостю сейчас. Потерялась — закройте и создайте новую.",
+          copy: "Скопировать", copied: "Скопировано", share: "Поделиться", done: "Готово",
+          active: "Действуют", ended: "Закончились", none: "Сейчас гостевых ссылок нет.", guest: "Гость",
+          until: (d) => `до ${d}`, devices: (n, m) => `открыта на ${n} из ${m} устройств`, close: "Закрыть", closeAll: "Закрыть все ссылки",
+          revoked: "закрыта", expired: "истекла",
+          noRooms: "Нет комнат со светом, шторами или климатом Hauflo — гостю нечего дать.",
+          cant: "Пригласить гостя может человек этого дома, которому можно управлять домом (не «только просмотр»).",
+          log: "Журнал гостей", all: "Показать все", less: "Свернуть",
+          sys: { issued: "создана ссылка", revoked: "ссылка закрыта", revoked_all: "все ссылки закрыты", opened: "ссылку открыли на новом устройстве", device_refused: "отказ: ссылку открыли на лишнем устройстве" },
+          act: { on: "включить", off: "выключить", open: "открыть", close: "закрыть", stop: "стоп", position: "положение", temperature: "температура" },
+          failed: "не получилось",
+        },
       },
       en: {
         title: "Automations", close: "Close",
@@ -4811,6 +5007,23 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
           skip: { manual: "skipped: changed by hand", offline: "skipped: offline", gone: "skipped: device gone", error: "didn't work" },
           sys: { on: "Simulation on", off: "Simulation off", auto_off: "Switched itself off — the date passed" },
         },
+        g: {
+          title: "Guest access",
+          sub: "A link or QR code for a guest — no account needed: lights, blinds and climate of the chosen rooms, for a while. Locks, gates, the alarm, cameras and settings are never open to a guest.",
+          invite: "Invite a guest", who: "For whom", whoPh: "E.g. Ivan", rooms: "Rooms", roomsHint: "The guest sees only Hauflo lights, blinds and climate in these rooms.",
+          howLong: "For how long", hours: { 3: "3 hours", 24: "A day", 72: "3 days", 168: "A week" }, create: "Create link", cancel: "Cancel",
+          ready: "The link is ready", once: "Shown once — send it to your guest now. Lost it? Close it and make a new one.",
+          copy: "Copy", copied: "Copied", share: "Share", done: "Done",
+          active: "Active", ended: "Ended", none: "No guest links right now.", guest: "Guest",
+          until: (d) => `until ${d}`, devices: (n, m) => `opened on ${n} of ${m} devices`, close: "Close", closeAll: "Close all links",
+          revoked: "closed", expired: "expired",
+          noRooms: "No rooms with Hauflo lights, blinds or climate — nothing to give a guest.",
+          cant: "A guest can be invited by a person of this home who may control it (not «view only»).",
+          log: "Guests' log", all: "Show all", less: "Show less",
+          sys: { issued: "link created", revoked: "link closed", revoked_all: "all links closed", opened: "link opened on a new device", device_refused: "refused: opened on one device too many" },
+          act: { on: "on", off: "off", open: "open", close: "close", stop: "stop", position: "position", temperature: "temperature" },
+          failed: "didn't work",
+        },
       },
     };
     const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
@@ -4912,6 +5125,13 @@ details.man{margin:12px 0 0}details.man summary{font:500 14px Onest,sans-serif;c
 .opt{font:500 13px Onest,sans-serif;min-height:40px;padding:0 14px;border-radius:12px;border:0;cursor:pointer;color:inherit;background:transparent;box-shadow:inset 0 0 0 1px var(--eh-hair,var(--divider-color,rgba(127,127,127,.35)))}
 .opt[aria-pressed="true"]{background:var(--eh-ink,var(--primary-color));color:var(--card-background-color,#fff);box-shadow:none}
 .tl.pl li{grid-template-columns:auto 1fr}.tl.pl .rel{font-size:14px;font-weight:500}.tl.pl ha-icon{--mdc-icon-size:16px;vertical-align:-2px;color:var(--eh-ink2,var(--secondary-text-color))}
+.guest .hd{gap:12px}.guest .pic{width:40px;height:40px;border-radius:20px;display:grid;place-items:center;background:var(--eh-track,rgba(127,127,127,.12));flex:none}
+.gnew{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start;margin:4px 0 14px;padding:14px;border-radius:18px;background:color-mix(in srgb,var(--eh-amber,#E8901F) 10%,transparent)}
+.gnew .qr{width:184px;max-width:100%;flex:none;border-radius:12px;overflow:hidden;background:#fff}.gnew .qr svg{display:block;width:100%;height:auto}
+.gnl{flex:1;min-width:200px;display:flex;flex-direction:column;gap:6px}.gnl b{font:600 15px Onest,sans-serif}.gnl input{width:100%;font-size:13px;height:40px}.gnl .row{display:flex;flex-wrap:wrap;gap:8px}
+.gls{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:6px}.gls li{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:14px;background:var(--eh-track,rgba(127,127,127,.08))}
+.gls li.dis{opacity:.6}.gtx{flex:1;min-width:0;display:flex;flex-direction:column}.gtx b{font:600 14px/1.3 Onest,sans-serif;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.gls .btn.sm{align-self:center}
+.guest .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.guest .fld+.row{margin-top:16px}.guest input[data-glabel]{width:100%}
 ha-icon{--mdc-icon-size:20px}`;
 
     class Automations extends HTMLElement {
@@ -4983,7 +5203,97 @@ ha-icon{--mdc-icon-size:20px}`;
           this.noAgent = agentErr(e, this._hass) || "net";
         }
         await this.loadPres();
+        await this.loadGuest();
         this.draw();
+      }
+      // --- «Гостевой доступ» (guest.py, docs/guest-access.md) -----------------------------------------------------------
+      async loadGuest() {
+        try {
+          this.gst = await this._hass.callApi("GET", "hauflo/guest?rooms=1");
+        } catch (e) {
+          this.gst = null; // an agent before 0.16.10: no section
+        }
+      }
+      async guestDo(body) {
+        this.gBusy = true;
+        this.gMsg = "";
+        this.draw();
+        try {
+          const r = await this._hass.callApi("POST", "hauflo/guest", body);
+          if (body.op === "issue") {
+            this.gNew = r;
+            this.gForm = false;
+            this.gCopied = false;
+            await this.loadGuest();
+          } else this.gst = { ...this.gst, ...r };
+        } catch (e) {
+          const m = e?.body?.message || e?.message || "";
+          this.gMsg = m ? this.w.err + m : this.w.errNet;
+        }
+        this.gBusy = false;
+        this.draw();
+      }
+      qrSvg(rows) {
+        const n = rows.length;
+        let d = "";
+        rows.forEach((row, y) => {
+          for (let x = 0; x < n; x++) if (row[x] === "1") d += `M${x + 4} ${y + 4}h1v1h-1z`;
+        });
+        // Always dark on white with a quiet zone: a phone camera reads it in the dark theme too.
+        return `<svg viewBox="0 0 ${n + 8} ${n + 8}" role="img" aria-label="QR" shape-rendering="crispEdges"><rect width="${n + 8}" height="${n + 8}" fill="#fff"/><path d="${d}" fill="#1F1E1C"/></svg>`;
+      }
+      guestHtml() {
+        const gs = this.gst;
+        if (!gs) return "";
+        const g = this.w.g;
+        const date = (iso) => this.fmtParts(Date.parse(iso), { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" });
+        const roomNames = (x) => (x.rooms || []).map((r) => r.name).join(", ");
+        const active = (gs.grants || []).filter((x) => x.status === "active");
+        const ended = (gs.grants || []).filter((x) => x.status !== "active").slice(0, 3);
+        const rooms = gs.rooms || [];
+        const sel = this.gSel || new Set();
+        const hours = this.gHours || 24;
+        const dis = this.gBusy ? "disabled" : "";
+        let fresh = "";
+        if (this.gNew) {
+          const share = typeof navigator !== "undefined" && navigator.share ? `<button class="btn sm" data-gshare>${esc(g.share)}</button>` : "";
+          fresh = `<div class="gnew"><div class="qr">${this.qrSvg(this.gNew.qr || [])}</div><div class="gnl"><b>${esc(g.ready)}</b><p class="hint">${esc(g.once)}</p><input readonly data-glink value="${esc(this.gNew.link)}" aria-label="${esc(g.ready)}"><div class="row"><button class="btn sm pri" data-gcopy>${esc(this.gCopied ? g.copied : g.copy)}</button>${share}<button class="btn sm" data-gdone>${esc(g.done)}</button></div></div></div>`;
+        }
+        let form = "";
+        if (!gs.can_issue) form = `<p class="hint">${esc(g.cant)}</p>`;
+        else if (!rooms.length) form = `<p class="hint">${esc(g.noRooms)}</p>`;
+        else if (this.gForm)
+          form = `<div class="fld"><div class="caps">${esc(g.who)}</div><input data-glabel maxlength="40" placeholder="${esc(g.whoPh)}" value="${esc(this.gLabel || "")}" aria-label="${esc(g.who)}"></div>
+<div class="fld"><div class="caps">${esc(g.rooms)}</div><div class="chips">${rooms.map((r) => `<button aria-pressed="${sel.has(r.id)}" data-groom="${esc(r.id)}"><span data-own>${esc(r.name)}</span></button>`).join("")}</div><p class="hint">${esc(g.roomsHint)}</p></div>
+<div class="fld"><div class="caps">${esc(g.howLong)}</div><div class="seg">${[3, 24, 72, 168].map((h) => `<button aria-pressed="${hours === h}" data-ghours="${h}">${esc(g.hours[h])}</button>`).join("")}</div></div>
+<div class="row"><button class="btn pri" data-gissue ${sel.size && !this.gBusy ? "" : "disabled"}>${esc(g.create)}</button><button class="btn" data-gcancel>${esc(g.cancel)}</button></div>`;
+        else if (!this.gNew) form = `<button class="btn sm pri" data-ginvite ${dis}>+ ${esc(g.invite)}</button>`;
+        const grantRow = (x, live) =>
+          `<li class="${live ? "" : "dis"}"><div class="gtx"><b>${esc(x.label || g.guest)}</b><span class="muted">${esc([roomNames(x), live ? g.until(date(x.expires)) : g[x.status] || x.status, live ? g.devices(x.devices, x.max_devices) : ""].filter(Boolean).join(" · "))}</span></div>${live ? `<button class="btn sm" data-grevoke="${esc(x.id)}" ${dis}>${esc(g.close)}</button>` : ""}</li>`;
+        const list = active.length
+          ? `<div class="fld"><div class="caps">${esc(g.active)}</div><ul class="gls">${active.map((x) => grantRow(x, true)).join("")}</ul>${active.length > 1 ? `<button class="lnk" data-grevall ${dis}>${esc(g.closeAll)}</button>` : ""}</div>`
+          : `<p class="muted">${esc(g.none)}</p>`;
+        const endedHtml = ended.length ? `<div class="fld"><div class="caps">${esc(g.ended)}</div><ul class="gls">${ended.map((x) => grantRow(x, false)).join("")}</ul></div>` : "";
+        const when = (iso) => {
+          const t = Date.parse(iso);
+          return this.key(t) === this.key(Date.now()) ? this.hm(t) : `${this.dayWord(t)} ${this.hm(t)}`;
+        };
+        const line = (x) => {
+          const who = x.label || g.guest;
+          if (x.sys) return `<b>${esc(who)}</b>: ${esc(g.sys[x.sys] || x.sys)}${x.by ? ` — ${esc(x.by)}` : ""}`;
+          const v = x.value === null || x.value === undefined ? "" : x.do === "temperature" ? ` ${String(x.value).replace(".", this.lang === "ru" ? "," : ".")}°` : ` ${x.value} %`;
+          return `<b>${esc(who)}</b>: ${esc(x.name || x.entity_id)} — ${esc((g.act[x.do] || x.do) + v)}${x.ok === false ? ` — ${esc(g.failed)}` : ""}`;
+        };
+        const log = (gs.log || []).filter((x) => x.sys !== "revoked_all" || x.n);
+        const logHtml = log.length
+          ? `<div class="fld"><div class="caps">${esc(g.log)}</div><ul class="tl pl">${log
+              .slice(0, this.gAll ? 50 : 5)
+              .map((x) => `<li class="${x.ok === false ? "dis" : ""}"><span class="rel">${esc(when(x.t))}</span><span class="txt">${line(x)}</span></li>`)
+              .join("")}</ul>${log.length > 5 ? `<button class="lnk" data-gall>${esc(this.gAll ? g.less : g.all)}</button>` : ""}</div>`
+          : "";
+        return `<section class="box guest" aria-label="${esc(g.title)}"><div class="hd"><span class="pic"><ha-icon icon="mdi:account-key-outline"></ha-icon></span><h2>${esc(g.title)}</h2></div>
+<p class="sub">${esc(g.sub)}</p>${this.gMsg ? `<p class="msg bad" role="status">${esc(this.gMsg)}</p>` : ""}
+${fresh}${form}${list}${endedHtml}${logHtml}</section>`;
       }
       // --- «Нет дома — имитация присутствия» (presence.py) --------------------------------------------------------------
       async loadPres() {
@@ -5333,6 +5643,7 @@ ${this.tz && this.tz !== VIEWER_TZ ? `<p class="hint">${esc(w.tzNote(this.isAdmi
 ${this.tzAsk ? this.tzHtml() : ""}
 ${tl ? `<ul class="tl">${tl}</ul>` : `<p class="muted">${esc(w.nothing)}</p>`}</section>
 ${this.presHtml()}
+${this.guestHtml()}
 ${sugg.length ? `<section class="box"><div class="caps">${esc(w.sugg)}</div><div class="sg">${sugg.map((s) => `<div class="card"><b>${esc(s.title)}</b><span class="muted">${esc(s.sub)}</span><button class="btn sm pri" data-sugg="${esc(s.key)}">+ ${esc(w.addOne)}</button></div>`).join("")}</div></section>` : ""}
 <section class="box"><div class="hd"><h2>${esc(w.mine)}</h2><button class="btn sm pri" data-new>+ ${esc(w.add)}</button></div>
 ${this.msg ? `<p class="msg ${this.bad ? "bad" : this.warn ? "warn" : ""}" role="status">${esc(this.msg)}</p>` : ""}
@@ -5551,6 +5862,54 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
         on("[data-sw]", (el) => this.toggle(el.dataset.sw, el.getAttribute("aria-checked") !== "true"));
         on("[data-sugg]", (el) => this.addSuggestion(el.dataset.sugg));
         on("[data-psw]", (el) => this.setPres({ enabled: el.getAttribute("aria-checked") !== "true" }));
+        // «Гостевой доступ»: the form keeps what's typed across redraws.
+        const gl = sr.querySelector("[data-glabel]");
+        gl?.addEventListener("input", () => (this.gLabel = gl.value));
+        on("[data-ginvite]", () => {
+          this.gForm = true;
+          this.gSel = new Set((this.gst?.rooms || []).length === 1 ? [this.gst.rooms[0].id] : []);
+          this.gHours = 24;
+          this.gLabel = "";
+          this.gMsg = "";
+          this.draw();
+        });
+        on("[data-gcancel]", () => {
+          this.gForm = false;
+          this.draw();
+        });
+        on("[data-groom]", (el) => {
+          const s = (this.gSel ||= new Set());
+          s.has(el.dataset.groom) ? s.delete(el.dataset.groom) : s.add(el.dataset.groom);
+          this.draw();
+        });
+        on("[data-ghours]", (el) => {
+          this.gHours = Number(el.dataset.ghours);
+          this.draw();
+        });
+        on("[data-gissue]", () => this.guestDo({ op: "issue", label: (this.gLabel || "").trim(), rooms: [...(this.gSel || [])], hours: this.gHours || 24 }));
+        on("[data-grevoke]", (el) => this.guestDo({ op: "revoke", id: el.dataset.grevoke }));
+        on("[data-grevall]", () => this.guestDo({ op: "revoke_all" }));
+        on("[data-gall]", () => {
+          this.gAll = !this.gAll;
+          this.draw();
+        });
+        on("[data-gdone]", () => {
+          this.gNew = null;
+          this.draw();
+        });
+        on("[data-gcopy]", async () => {
+          const link = this.gNew?.link || "";
+          try {
+            await navigator.clipboard.writeText(link);
+          } catch (e) {
+            const inp = sr.querySelector("[data-glink]");
+            inp?.select();
+            document.execCommand?.("copy");
+          }
+          this.gCopied = true;
+          this.draw();
+        });
+        on("[data-gshare]", () => navigator.share?.({ title: this.w.g.title, url: this.gNew?.link }).catch(() => undefined));
         on("[data-pk]", (el) => this.setPres({ [el.dataset.pk]: el.getAttribute("aria-pressed") !== "true" }));
         on("[data-pmode]", (el) => this.pres?.mode !== el.dataset.pmode && this.setPres({ mode: el.dataset.pmode }));
         on("[data-puclear]", () => this.pres?.until && this.setPres({ until: null }));
@@ -6566,16 +6925,19 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
   // --- hauflo-entity: any one entity of any integration as a Hauflo tile (owner 28.10: «как у Mushroom — на все
   // возможные типы»). Icon / picture, name, state; tap does what the domain does (switch, run, lock…) or the action set
   // in the editor; hold — the entity's dialog. hauflo-title: a section heading in the same type.
-  Object.assign(EN, { "не дома": "away", "выполнить": "run", "нажать": "press", "позвонить": "call", "открыть": "open", "идёт": "playing", "на паузе": "paused", "включено": "on" });
+  Object.assign(EN, { "включён": "on", "едет на базу": "returning to dock", "косит": "mowing", "есть обновление": "update available", "актуально": "up to date", "пауза": "paused", "не дома": "away", "выполнить": "run", "нажать": "press", "позвонить": "call", "открыть": "open", "идёт": "playing", "на паузе": "paused", "включено": "on" });
   // The graph's own title («За 24 ч») before the fragments make it «За 24 h» (seen on the demo HA, 28.10).
   EN_RX.unshift([/^За (\d+) ч$/, "Last $1 h"]);
+  Object.assign(EN, { "без протечек": "no leaks", "датчик: нет связи": "sensor: no signal" });
+  EN_RX.unshift([/^Протечка: (.+?)( и ещё (\d+))?$/, (m, a, b, n) => `Leak: ${a}${n ? ` and ${n} more` : ""}`]);
   const TONE = { amber: ["var(--amber)", "var(--amberGlow)"], ice: ["var(--ice)", "var(--iceGlow)"], mint: ["var(--mint)", "color-mix(in srgb,var(--mint) 50%,transparent)"], alert: ["var(--alert)", "var(--alertGlow)"] };
   const ONE = {
     light: { icon: (s) => (s.state === "on" ? "hauflo:bulb-on" : "hauflo:bulb"), tone: "amber", word: (s) => (s.state === "on" ? (num(s.attributes.brightness) !== undefined ? `${Math.round((num(s.attributes.brightness) / 255) * 100)} %` : "вкл") : "выкл"), level: (s) => (s.state === "on" ? (num(s.attributes.brightness) ?? 255) / 255 : 0), tap: ["light", "toggle"] },
     cover: { icon: () => "hauflo:blind", tone: "ice", word: (s) => (num(s.attributes.current_position) !== undefined && !["opening", "closing"].includes(s.state) ? (s.attributes.current_position ? `${s.attributes.current_position} %` : "закрыта") : ({ open: "открыта", closed: "закрыта", opening: "открывается…", closing: "закрывается…" })[s.state] || s.state), level: (s) => (num(s.attributes.current_position) ?? (s.state === "open" ? 100 : 0)) / 100, on: (s) => s.state !== "closed", tap: ["cover", "toggle"] },
     // The big number is what is now, what it does is the word, the setpoint small (owner 28.10, Д16).
     climate: { icon: () => "hauflo:thermo", tone: "ice", word: (s) => { const k = climateNow(null, s); const cur = num(s.attributes.current_temperature); const t = num(s.attributes.temperature); const g = t !== undefined ? fmt(t, t % 1 ? 1 : 0) : ""; return k === "off" ? "выкл" : `${cur !== undefined ? `${fmt(cur, 1)}° · ` : ""}${k === "heat" ? `греет${g ? ` до ${g}°` : ""}` : k === "cool" ? `охлаждает${g ? ` до ${g}°` : ""}` : k === "idle" ? `ждёт${g ? ` · цель ${g}°` : ""}` : k === "dry" || k === "fan" ? NOW_WORD[k] : `${modeSmall(s.state) || HVAC[s.state] || s.state}${g ? ` · цель ${g}°` : ""}`}`; }, on: (s) => acting(climateNow(null, s)), tap: null },
-    media_player: { icon: () => "hauflo:speaker", tone: "amber", word: (s) => (s.state === "playing" ? s.attributes.media_title || "идёт" : s.state === "paused" ? "на паузе" : s.state === "off" ? "выкл" : s.state), on: (s) => s.state === "playing", tap: (s) => ["media_player", s.state === "off" ? "turn_on" : "media_play_pause"] },
+    media_player: { icon: () => "hauflo:speaker", tone: "amber", word: (s) => (s.state === "playing" ? s.attributes.media_title || "идёт" : s.state === "paused" ? "на паузе" : s.state === "off" ? "выкл" : s.state === "on" ? "включён" : s.state === "idle" || s.state === "standby" ? "ждёт" : s.state === "buffering" ? "загрузка…" : s.state), on: (s) => s.state === "playing", tap: (s) => ["media_player", s.state === "off" ? "turn_on" : "media_play_pause"] },
+    weather: { icon: (s) => WEATHER[s.state]?.[1] || "hauflo:sun", tone: "ice", word: (s) => `${num(s.attributes.temperature) !== undefined ? `${fmt(num(s.attributes.temperature), 0)}° · ` : ""}${WEATHER[s.state]?.[0] || s.state}`, on: () => false, tap: null },
     scene: { icon: () => "hauflo:scene", tone: "amber", word: () => "выполнить", on: () => false, tap: ["scene", "turn_on"] },
     script: { icon: () => "hauflo:scene", tone: "amber", word: (s) => (s.state === "on" ? "выполняется…" : "выполнить"), tap: ["script", "turn_on"] },
     automation: { icon: () => "hauflo:clock", tone: "mint", word: (s) => (s.state === "on" ? "вкл" : "выкл"), tap: ["automation", "toggle"] },
@@ -6943,6 +7305,7 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
   ];
   STUB["hauflo-entity"] = (h) => ({ entity: ids(h, "light", 1)[0] || ids(h, "switch", 1)[0] || Object.keys(h?.states || {})[0] });
   STUB["hauflo-title"] = (h) => ({ title: langOf(h) === "ru" ? "Гостиная" : "Living room" });
+  STUB["hauflo-leaks"] = (h) => ({ sensors: ids(h, "binary_sensor", 4, (s) => s.attributes.device_class === "moisture"), valves: ids(h, "valve", 2) });
   STUB["hauflo-area"] = (h) => ({ area: Object.keys(h?.areas || {})[0] });
 
   // --- HA's card picker (owner 28.10: «как сделать любой элемент в нашем стиле с любой интеграцией»): every card is in
@@ -6971,6 +7334,7 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
     "hauflo-camera": [["Hauflo · Камера", "Любая камера: кадр, тап — трансляция"], ["Hauflo · Camera", "Any camera: snapshot, tap for live view"]],
     "hauflo-acs": [["Hauflo · Кондиционеры", "Все кондиционеры: какие работают, температура, выключить все"], ["Hauflo · Air conditioners", "All ACs: which run, temperature, all off"]],
     "hauflo-area": [["Hauflo · Комната HA", "Всё, что Home Assistant отнёс к комнате (любые интеграции), — в стиле Hauflo"], ["Hauflo · HA area", "Everything Home Assistant puts in an area (any integration), in the Hauflo style"]],
+    "hauflo-leaks": [["Hauflo · Защита от протечек", "Датчики протечки и кран любой интеграции: всё в порядке или где протечка; кран — только кнопкой"], ["Hauflo · Leak protection", "Leak sensors and a valve of any integration: all is well, or where the leak is; the valve only by a button"]],
     "hauflo-devices": [["Hauflo · Устройства", "Вентиляторы, клапаны, замки, пылесосы, бойлеры, розетки…"], ["Hauflo · Devices", "Fans, valves, locks, vacuums, boilers, plugs…"]],
   };
   const dc = (...classes) => (s) => classes.includes(s.attributes.device_class);
@@ -7023,25 +7387,26 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
     "hauflo-room": [G(TXT("name"), ICON()), E("lights", ["light", "switch"], true), E("climate", "climate"), E("covers", "cover", true), E("alarms", "binary_sensor", true), G(TXT("path"), TXT("picture"))],
     "hauflo-scenes": [G(TXT("title"), SEL("kind", [["light", "Свет", "Lights"], ["cover", "Шторы", "Blinds"]])), E("scenes", ["scene", "script"], true)],
     "hauflo-climate": [E("entity", "climate"), G(TXT("label"), BOOL("chart")), G(BOOL("compact"), E("humidity", "sensor")), G(E("heat_setpoint", "number"), E("cool_setpoint", "number"))],
-    "hauflo-sliders": [E("entities", ["light", "cover", "fan", "media_player"], true)],
+    "hauflo-sliders": [E("entities", ["light", "cover", "fan", "media_player", "switch", "input_boolean"], true)],
     "hauflo-alert": [E("alarms", "binary_sensor", true), BOOL("hide_ok")],
     "hauflo-lights": [TXT("title"), E("entities", ["light", "switch"], true)],
     "hauflo-covers": [TXT("title"), E("entities", "cover", true)],
     "hauflo-weather": [E("entity", "weather"), TXT("name"), G(NUM("days", 1, 7), SEL("forecast", [["daily", "По дням", "Daily"], ["hourly", "По часам", "Hourly"]]))],
     "hauflo-air": [TXT("name"), E("entity", "air_quality"), G(E("pm25", "sensor"), E("pm10", "sensor")), G(E("co2", "sensor"), E("voc", "sensor")), G(E("humidity", "sensor"), E("temperature", "sensor"))],
     "hauflo-media": [E("entity", "media_player"), TXT("name")],
-    "hauflo-graph": [G(TXT("title"), NUM("hours", 1, 168)), E("entities", "sensor", true)],
+    "hauflo-graph": [G(TXT("title"), NUM("hours", 1, 168)), E("entities", ["sensor", "number", "input_number"], true)],
     "hauflo-auto": [TXT("title"), E("entities", ["automation", "script"], true)],
     "hauflo-status": [TXT("title"), E("entities", ["binary_sensor", "sensor", "switch", "input_boolean"], true)],
     "hauflo-security": [TXT("name"), E("entity", "alarm_control_panel"), E("locks", "lock", true), E("openings", "binary_sensor", true)],
     "hauflo-camera": [E("entity", "camera"), G(TXT("name"), NUM("refresh", 2, 600))],
     "hauflo-acs": [G(TXT("title"), SEL("kind", [["ac", "Кондиционеры", "Air conditioners"], ["floor_heating", "Тёплые полы", "Floor heating"]])), E("entities", "climate", true)],
     "hauflo-devices": [TXT("title"), E("entities", null, true)],
+    "hauflo-leaks": [TXT("title"), { name: "area", selector: { area: {} } }, E("sensors", "binary_sensor", true), E("valves", ["valve", "switch"], true)],
     "hauflo-area": [{ name: "area", selector: { area: {} } }, TXT("title")],
   };
   const LABEL = {
-    ru: { area: "Комната в Home Assistant", label: "Подпись", name: "Название", title: "Заголовок", subtitle: "Подзаголовок", icon: "Иконка", icon_type: "Что слева", color: "Цвет, когда включено", layout: "Расположение", show_level: "Полоска уровня (яркость, положение)", controls: "Управление под плиткой (яркость, шторы, ±, плеер…)", primary_info: "Первая строка", secondary_info: "Вторая строка", tap_action: "Нажатие", hold_action: "Удержание", double_tap_action: "Двойное нажатие", path: "Страница по тапу (путь)", picture: "Фото комнаты (URL)", temperature: "Температура (термостаты, датчики)", humidity: "Влажность", lights: "Свет", alarms: "Аварийные датчики", devices: "Устройства (нет связи)", weather: "Погода", climate: "Термостат", covers: "Шторы", kind: "Вид", scenes: "Сценарии", entity: "Объект", entities: "Объекты", days: "Дней прогноза", forecast: "Прогноз", pm25: "PM2.5", pm10: "PM10", co2: "CO₂", voc: "Летучие в-ва", hours: "Часов", locks: "Замки", openings: "Двери, окна, движение", refresh: "Обновлять кадр, с", chart: "График за сутки", hide_ok: "Прятать, когда всё в норме", compact: "Компактно (строкой)", heat_setpoint: "Уставка нагрева (number)", cool_setpoint: "Уставка охлаждения (number)", scene_layout: "Где сценарии" },
-    en: { area: "Home Assistant area", label: "Label", name: "Name", title: "Title", subtitle: "Subtitle", icon: "Icon", icon_type: "On the left", color: "Colour when on", layout: "Layout", show_level: "Level bar (brightness, position)", controls: "Controls under the tile (brightness, blinds, ±, player…)", primary_info: "First line", secondary_info: "Second line", tap_action: "Tap", hold_action: "Hold", double_tap_action: "Double tap", path: "Page on tap (path)", picture: "Room photo (URL)", temperature: "Temperature (thermostats, sensors)", humidity: "Humidity", lights: "Lights", alarms: "Alarm sensors", devices: "Devices (offline check)", weather: "Weather", climate: "Thermostat", covers: "Blinds", kind: "Kind", scenes: "Scenes", entity: "Entity", entities: "Entities", days: "Forecast days", forecast: "Forecast", pm25: "PM2.5", pm10: "PM10", co2: "CO₂", voc: "VOC", hours: "Hours", locks: "Locks", openings: "Doors, windows, motion", refresh: "Snapshot refresh, s", chart: "24 h chart", hide_ok: "Hide when all is OK", compact: "Compact (one row)", heat_setpoint: "Heating setpoint (number)", cool_setpoint: "Cooling setpoint (number)", scene_layout: "Where scenes go" },
+    ru: { sensors: "Датчики протечки", valves: "Кран (клапан)", area: "Комната в Home Assistant", label: "Подпись", name: "Название", title: "Заголовок", subtitle: "Подзаголовок", icon: "Иконка", icon_type: "Что слева", color: "Цвет, когда включено", layout: "Расположение", show_level: "Полоска уровня (яркость, положение)", controls: "Управление под плиткой (яркость, шторы, ±, плеер…)", primary_info: "Первая строка", secondary_info: "Вторая строка", tap_action: "Нажатие", hold_action: "Удержание", double_tap_action: "Двойное нажатие", path: "Страница по тапу (путь)", picture: "Фото комнаты (URL)", temperature: "Температура (термостаты, датчики)", humidity: "Влажность", lights: "Свет", alarms: "Аварийные датчики", devices: "Устройства (нет связи)", weather: "Погода", climate: "Термостат", covers: "Шторы", kind: "Вид", scenes: "Сценарии", entity: "Объект", entities: "Объекты", days: "Дней прогноза", forecast: "Прогноз", pm25: "PM2.5", pm10: "PM10", co2: "CO₂", voc: "Летучие в-ва", hours: "Часов", locks: "Замки", openings: "Двери, окна, движение", refresh: "Обновлять кадр, с", chart: "График за сутки", hide_ok: "Прятать, когда всё в норме", compact: "Компактно (строкой)", heat_setpoint: "Уставка нагрева (number)", cool_setpoint: "Уставка охлаждения (number)", scene_layout: "Где сценарии" },
+    en: { sensors: "Leak sensors", valves: "Valve", area: "Home Assistant area", label: "Label", name: "Name", title: "Title", subtitle: "Subtitle", icon: "Icon", icon_type: "On the left", color: "Colour when on", layout: "Layout", show_level: "Level bar (brightness, position)", controls: "Controls under the tile (brightness, blinds, ±, player…)", primary_info: "First line", secondary_info: "Second line", tap_action: "Tap", hold_action: "Hold", double_tap_action: "Double tap", path: "Page on tap (path)", picture: "Room photo (URL)", temperature: "Temperature (thermostats, sensors)", humidity: "Humidity", lights: "Lights", alarms: "Alarm sensors", devices: "Devices (offline check)", weather: "Weather", climate: "Thermostat", covers: "Blinds", kind: "Kind", scenes: "Scenes", entity: "Entity", entities: "Entities", days: "Forecast days", forecast: "Forecast", pm25: "PM2.5", pm10: "PM10", co2: "CO₂", voc: "VOC", hours: "Hours", locks: "Locks", openings: "Doors, windows, motion", refresh: "Snapshot refresh, s", chart: "24 h chart", hide_ok: "Hide when all is OK", compact: "Compact (one row)", heat_setpoint: "Heating setpoint (number)", cool_setpoint: "Cooling setpoint (number)", scene_layout: "Where scenes go" },
   };
   const idOf = (x) => (typeof x === "string" ? x : x?.entity);
   const flat = (schema) => schema.flatMap((s) => (s.type === "grid" ? flat(s.schema) : [s]));

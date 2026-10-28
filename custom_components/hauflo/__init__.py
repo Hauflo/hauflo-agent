@@ -33,7 +33,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
 from homeassistant.helpers.storage import Store
 
-from . import automations, backup, comfort, dashmerge, keep, notify, presence, scenes, season, sidebar, theme, titles, voice
+from . import automations, backup, comfort, dashmerge, guest, keep, notify, presence, scenes, season, sidebar, theme, titles, voice
 from . import order as block_order
 from .const import CONF_REFRESH_TOKEN_ID, CONF_SECRET, CONF_SERVER, CONF_USER_ID, DATA_NOTIFY_VIEWS, DATA_UNLINKED, DOMAIN, MONITOR_LABEL, MONITOR_LABEL_EN, MONITOR_LABELS, OWNED_STORE, STATUS_EVERY, VERSION, CONF_RANGES, DATA_PENDING_RANGES, CONF_ALLOW_CHANGES, LOCKED_CODE
 
@@ -1250,6 +1250,7 @@ class Agent:
         self.automations: Any = None  # the dashboard's «Автоматизации» (automations.py), made on first use
         self.presence: presence.Presence | None = None  # «Нет дома — имитация присутствия» (presence.py)
         self.comfort = comfort.ComfortEngine(hass)  # «Комфортный пол» and the house mode (comfort.py)
+        self.guest: guest.GuestAccess | None = None  # «Гостевой доступ» (guest.py), set up with the entry
         self.owned: set[str] = set()
         self.owned_entries: set[str] = set()  # config entries (HomeKit bridges, groups) made through the tunnel
         self._flow_memo: dict[str, list[str]] = {}  # HomeKit options: the domains of a flow's first step
@@ -1441,6 +1442,22 @@ class Agent:
             await self._close_channel(int(f["ch"]), tell=False)
         elif t == "http":
             self._spawn(self._http(f))
+        elif t == "guest":
+            self._spawn(self._guest(f))
+
+    async def _guest(self, f: dict[str, Any]) -> None:
+        """A guest's request relayed by Hauflo (guest.py, docs/guest-access.md): answered by the guest module alone —
+        never HA's own WebSocket / REST, never the tunnel's allowlists; the token, the room and the action are checked
+        there."""
+        status, body = 503, {"code": "not_ready"}
+        if (g := self.guest) is not None:
+            try:
+                await g.async_load()
+                status, body = await g.handle(f.get("body"))
+            except Exception:  # noqa: BLE001 — the guest gets «не получилось», never a stack
+                _LOGGER.exception("Hauflo guest: request failed")
+                status, body = 500, {"code": "failed"}
+        await self.send({"t": "guest_res", "id": f.get("id"), "status": status, "body": json.dumps(body)})
 
     # --- the tunnel to this HA ----------------------------------------------------------------
 
@@ -1770,6 +1787,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
         await agent.presence.async_start()
     except Exception as err:  # noqa: BLE001 — never stops the agent
         degrade("presence simulation", err)
+    # «Гостевой доступ»: links to this region's server; the grants and the log stay in HA (guest.py).
+    agent.guest = guest.GuestAccess(
+        hass,
+        lambda eid: _hauflo_entity(hass, eid, agent.owned, agent.owned_entries),
+        lambda: f"{agent.server.rstrip('/')}/g/{guest.route_of(agent.secret)}",
+    )
+    try:
+        await agent.guest.async_load()
+    except Exception as err:  # noqa: BLE001 — never stops the agent (loaded again on the first request)
+        degrade("guest access", err)
     engine = notify.NotifyEngine(hass)
     # Set here too: the link may say «welcome» before the engine exists (re-added integration — monitoring
     # stayed empty until the minute status, integrator run 14).
@@ -1794,6 +1821,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
         hass.http.register_view(automations.AutomationsView(lambda: _automations(hass)))
         hass.http.register_view(scenes.ScenesView(lambda: _scenes(hass)))
         hass.http.register_view(presence.PresenceView(lambda: _presence(hass)))
+        hass.http.register_view(guest.GuestView(lambda: _guest(hass)))
 
     async def _stop(_event: Event) -> None:
         if agent.presence is not None:
@@ -1895,6 +1923,12 @@ def _scenes(hass: HomeAssistant) -> scenes.FamilyScenes | None:
 def _presence(hass: HomeAssistant) -> presence.Presence | None:
     for entry in hass.config_entries.async_loaded_entries(DOMAIN):
         return entry.runtime_data.presence
+    return None
+
+
+def _guest(hass: HomeAssistant) -> guest.GuestAccess | None:
+    for entry in hass.config_entries.async_loaded_entries(DOMAIN):
+        return entry.runtime_data.guest
     return None
 
 
