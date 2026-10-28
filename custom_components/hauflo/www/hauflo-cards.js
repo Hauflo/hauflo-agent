@@ -915,7 +915,9 @@ ${secs.map((s, si) => `${s.label ? `<p class="vl">${esc(s.label)}</p>` : ""}<ol 
   // --- the family's own room scenes (owner 28.10: «сцены, как и сцены света, должны создаваться и редактироваться мной и
   // клиентом»; agent scenes.py, 0.16.0+): a block with `scene_room` gets «+ Сцена» → a name → «Запомнить как сейчас»;
   // a long press on a scene Hauflo made (the integrator's or the family's) → rename / remember again / delete (hide).
-  const FAM = { hidden: null, state: "", cards: new Set() };
+  // `api`: this HA's agent answers /api/hauflo/scenes (true) or not (false — an HA not restarted since the update,
+  // or the cards without their agent); null until asked. «+ Сцена» shows only with it.
+  const FAM = { hidden: null, state: "", cards: new Set(), api: null };
   const famRerender = () => {
     for (const c of FAM.cards) {
       c._sig = "";
@@ -926,8 +928,14 @@ ${secs.map((s, si) => `${s.label ? `<p class="vl">${esc(s.label)}</p>` : ""}<ol 
     if (FAM.state || !h?.callApi) return;
     FAM.state = "loading";
     h.callApi("GET", "hauflo/scenes")
-      .then((r) => (FAM.hidden = Array.isArray(r?.hidden) ? r.hidden : []))
-      .catch(() => (FAM.hidden = []))
+      .then((r) => {
+        FAM.hidden = Array.isArray(r?.hidden) ? r.hidden : [];
+        FAM.api = true;
+      })
+      .catch(() => {
+        FAM.hidden = [];
+        FAM.api = false;
+      })
       .finally(() => {
         FAM.state = "done";
         famRerender();
@@ -954,15 +962,70 @@ ${secs.map((s, si) => `${s.label ? `<p class="vl">${esc(s.label)}</p>` : ""}<ol 
       .filter((s) => String(s.attributes.id).startsWith(prefix))
       .map((s) => ({ entity: s.entity_id }));
   };
+  // --- the room key without a redeploy (owner 28.10: «где плюс на шторах?» — the dashboard was built before the agent
+  // could save scenes, so its config had no `scene_room`): these cards come with the agent, so they know it can; the
+  // key is the same one the cloud writes (`short(room.id)`), read from the room's own Hauflo scenes — `hauflo_<room>_…`
+  // of the integrator's, `hauflo_fam_<room>_…` of the family's — on this block, else in the same HA area.
+  const ROOM_OF_SCENE = /^(?:hauflo|easyha)_(?:fam_)?([a-z0-9]{1,12})_/;
+  const roomOfSceneId = (s) => ROOM_OF_SCENE.exec(String(s?.attributes?.id || ""))?.[1];
+  const areaOf = (hass, id) => {
+    const e = hass?.entities?.[id];
+    return e?.area_id || (e?.device_id && hass?.devices?.[e.device_id]?.area_id) || null;
+  };
+  const AREA_ROOM = new WeakMap();
+  /** HA area → the room key of the Hauflo scenes in it (once per states object). */
+  const areaRooms = (hass) => {
+    const states = hass?.states;
+    if (!states) return new Map();
+    if (!AREA_ROOM.has(states)) {
+      const m = new Map();
+      for (const s of Object.values(states)) {
+        if (!s.entity_id.startsWith("scene.")) continue;
+        const room = roomOfSceneId(s);
+        const area = room && areaOf(hass, s.entity_id);
+        if (area && !m.has(area)) m.set(area, room);
+      }
+      AREA_ROOM.set(states, m);
+    }
+    return AREA_ROOM.get(states);
+  };
+  const entIds = (list) => (list || []).map((e) => (typeof e === "string" ? e : e?.entity)).filter(Boolean);
+  /** The room key of a scene row: the config's, else its scenes', else its lights' / blinds' area's. */
+  const derivedRoom = (hass, configured, scenes, entities) => {
+    if (configured) return configured;
+    if (!hass) return undefined;
+    for (const x of scenes || []) {
+      const r = roomOfSceneId(st(hass, x.entity));
+      if (r) return r;
+    }
+    const rooms = areaRooms(hass);
+    for (const id of [...entIds(entities), ...(scenes || []).flatMap((x) => st(hass, x.entity)?.attributes?.entity_id || [])]) {
+      const area = areaOf(hass, id);
+      if (area && rooms.has(area)) return rooms.get(area);
+    }
+    return undefined;
+  };
+  /** A block's (`kind`) or a top card row's room key. */
+  const rowRoom = (card, kind) => {
+    const c = card._config || {};
+    if (Array.isArray(c.rows)) {
+      const r = c.rows.find((x) => x.kind === kind);
+      return r ? derivedRoom(card._hass, r.scene_room, r.scenes, r.capture) : undefined;
+    }
+    return derivedRoom(card._hass, c.scene_room, c.scenes, [...(c.entities || []), ...(c.capture || [])]);
+  };
   /** The family scenes a card with `scene_room` shows — watched, so one saved on another phone shows here too. */
   const famWatched = (card) => {
     const c = card._config || {};
-    const rooms = [c.scene_room, ...(c.rows || []).map((r) => r.scene_room)].filter(Boolean);
+    // Only the cards that show a scene row: the room's top card and the light / blinds blocks.
+    const rooms = Array.isArray(c.rows) ? c.rows.filter((r) => r.kind !== "mixed").map((r) => rowRoom(card, r.kind)) : typeof card.sceneRow === "function" ? [rowRoom(card, card.kind === "cover" ? "cover" : "light")] : [];
+    if (!rooms.some(Boolean)) return [];
+    const keys = rooms.filter(Boolean);
     if (!rooms.length || !card._hass) return [];
     FAM.cards.add(card);
     loadFam(card._hass);
     return allFamily(card._hass)
-      .filter((s) => rooms.some((r) => String(s.attributes.id).startsWith(`hauflo_fam_${r}_`)))
+      .filter((s) => keys.some((r) => String(s.attributes.id).startsWith(`hauflo_fam_${r}_`)))
       .map((s) => s.entity_id);
   };
   /** Scene buttons of one kind (light amber, blinds neutral, both mint) — the room's top card and the blocks share them.
@@ -979,15 +1042,27 @@ ${secs.map((s, si) => `${s.label ? `<p class="vl">${esc(s.label)}</p>` : ""}<ol 
         const editable = /^hauflo_/.test(String(s.attributes.id || ""));
         return `<button data-scene="${esc(x.entity)}" ${editable && room ? 'data-edit="1"' : ""} title="${esc(label)}"><ha-icon icon="${esc(x.icon || s.attributes.icon || (kind === "cover" ? "hauflo:blind" : "hauflo:scene"))}"></ha-icon><span>${esc(label)}</span></button>`;
       })
-      .join("")}${room && kind !== "mixed" ? `<button class="add" data-scene-add="${kind === "cover" ? "cover" : "light"}" aria-label="Новая сцена" title="Новая сцена"><ha-icon icon="mdi:plus"></ha-icon><span>Сцена</span></button>` : ""}</div>`;
+      .join("")}${room && kind !== "mixed" && FAM.api === true ? `<button class="add" data-scene-add="${kind === "cover" ? "cover" : "light"}" aria-label="Новая сцена" title="Новая сцена"><ha-icon icon="mdi:plus"></ha-icon><span>Сцена</span></button>` : ""}</div>`;
   };
   /** What «Запомнить как сейчас» takes: the block's own lights / blinds (one by one — never a group, it would move twice). */
   const captureList = (card, kind) => {
     const c = card._config || {};
     const ids = [...(c.entities || []), ...(c.capture || []), ...((c.rows || []).find((r) => r.kind === kind)?.capture || [])].map((e) => (typeof e === "string" ? e : e?.entity)).filter(Boolean);
-    return [...new Set(ids.filter((id) => id.startsWith(kind === "cover" ? "cover." : "light.")))];
+    const want = kind === "cover" ? "cover." : "light.";
+    const own = [...new Set(ids.filter((id) => id.startsWith(want)))];
+    if (own.length) return own;
+    // A top card row without `capture` (a dashboard built before): what its scenes hold, else the room's area —
+    // one by one, never a group (it has `entity_id`).
+    const h = card._hass;
+    const row = (c.rows || []).find((r) => r.kind === kind);
+    const held = (row?.scenes || c.scenes || []).flatMap((x) => st(h, x.entity)?.attributes?.entity_id || []).filter((id) => id.startsWith(want));
+    const areas = new Set(held.map((id) => areaOf(h, id)).filter(Boolean));
+    const room = roomOf(card, kind);
+    if (!areas.size && room) for (const s of allFamily(h).concat(Object.values(h?.states || {}).filter((x) => x.entity_id.startsWith("scene.") && roomOfSceneId(x) === room))) areas.add(areaOf(h, s.entity_id));
+    const inArea = Object.keys(h?.entities || {}).filter((id) => id.startsWith(want) && areas.has(areaOf(h, id)) && !h.entities[id].hidden && !Array.isArray(st(h, id)?.attributes?.entity_id));
+    return [...new Set([...held, ...inArea])].filter((id) => !Array.isArray(st(h, id)?.attributes?.entity_id));
   };
-  const roomOf = (card, kind) => card._config?.scene_room || (card._config?.rows || []).find((r) => r.kind === kind)?.scene_room;
+  const roomOf = (card, kind) => rowRoom(card, kind);
   // A function: SHEET_CSS (the climate sheet's) is defined further down.
   const sceneSheetCss = () => `${SHEET_CSS}
 *{box-sizing:border-box}.sh{padding:18px 18px calc(18px + env(safe-area-inset-bottom));gap:12px}.t{font:500 17px Onest,sans-serif;color:var(--primary-text-color)}
@@ -1442,10 +1517,11 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b" data-rename>П
     /** The scenes of this block (light / blinds) when they're shown in it — the integrator's choice or the client's. */
     sceneRow() {
       const c = this._config;
-      if (!c.scenes?.length && !c.scene_room) return "";
+      const room = rowRoom(this, this.kind === "cover" ? "cover" : "light");
+      if (!c.scenes?.length && !room) return "";
       const where = viewPrefs(this).scenes || c.scene_layout || "blocks";
       if (where !== "blocks") return "";
-      return `<div class="srow"><span class="caps">${blockTitle(this, this.kind === "cover" ? "Сценарии штор" : "Сценарии света", this.kind === "cover" ? "cover_scenes" : "light_scenes")}</span>${sceneChips(this._hass, c.scenes || [], this.kind === "cover" ? "cover" : "light", c.scene_room, this)}</div>`;
+      return `<div class="srow"><span class="caps">${blockTitle(this, this.kind === "cover" ? "Сценарии штор" : "Сценарии света", this.kind === "cover" ? "cover_scenes" : "light_scenes")}</span>${sceneChips(this._hass, c.scenes || [], this.kind === "cover" ? "cover" : "light", room, this)}</div>`;
     }
   }
 
@@ -1720,7 +1796,7 @@ ${(c.alarms || []).length && ok ? `<div><span class="caps">Датчики</span>
         this.hideCard(!rows.length);
         if (!rows.length) return "";
         return `<div class="glass m rows"><div class="hd"><span class="ic"><ha-icon icon="hauflo:scene"></ha-icon></span><span class="caps">${blockTitle(this, "Сценарии")}</span></div>
-${rows.map((r) => `<div class="rw"><span class="caps sub">${esc(r.title || (r.kind === "cover" ? "Шторы" : "Свет"))}</span>${sceneChips(this._hass, r.scenes, r.kind === "cover" ? "cover" : r.kind === "mixed" ? "mixed" : "light", r.scene_room, this)}</div>`).join("")}</div>`;
+${rows.map((r) => `<div class="rw"><span class="caps sub">${esc(r.title || (r.kind === "cover" ? "Шторы" : "Свет"))}</span>${sceneChips(this._hass, r.scenes, r.kind === "cover" ? "cover" : r.kind === "mixed" ? "mixed" : "light", r.kind === "mixed" ? undefined : rowRoom(this, r.kind), this)}</div>`).join("")}</div>`;
       }
       const list = (c.scenes || []).map((x) => ({ ...x, st: st(this._hass, x.entity) })).filter((x) => x.st);
       const kind = c.kind === "cover" ? "cover" : c.kind === "mixed" ? "mixed" : "light";
