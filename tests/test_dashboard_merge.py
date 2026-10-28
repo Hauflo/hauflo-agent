@@ -135,6 +135,25 @@ def test_edited_hauflo_card_is_a_conflict_kept_by_default_or_taken():
     assert merged == new
 
 
+def test_automations_tab_moved_into_service_keeps_the_family_cards_on_it():
+    """Д17 (owner 28.10): «Автоматизации» is no tab of its own any more but a section of «Сервис». The old tab goes with
+    Hauflo's card; whatever the family put on it stays (in a view of its own), and nothing of the family's is lost."""
+    auto = {"type": "custom:hauflo-automations", "grid_options": {"columns": "full"}}
+    status = lambda: section("v/service/s:status", card("v/service/s:status/c:a", "sensor.a"))
+    old = {"views": [view("v/service", "service", "Сервис", status()), view("v/automations", "automations", "Автоматизации", {"type": "grid", ID: "v/automations/s:automations", "cards": [{**auto, ID: "v/automations/s:automations/automations:"}]})]}
+    new = {"views": [view("v/service", "service", "Сервис", status(), {"type": "grid", ID: "v/service/s:automations", "cards": [{**auto, ID: "v/service/s:automations/automations:"}]})]}
+    cur = copy.deepcopy(old)
+    cur["views"][1]["sections"][0]["cards"].append({"type": "markdown", "content": "семейное правило"})
+    merged, plan = plan_and_merge(new, cur, copy.deepcopy(old))
+    assert plan["lost"] == 0
+    assert "семейное правило" in json.dumps(merged, ensure_ascii=False)
+    assert json.dumps(merged).count("hauflo-automations") == 1
+    assert [v["path"] for v in merged["views"] if "hauflo-automations" in json.dumps(v)] == ["service"]
+    # nothing of the family's there: the old tab just goes
+    clean, plan = plan_and_merge(new, copy.deepcopy(old), copy.deepcopy(old))
+    assert plan["lost"] == 0 and [v["path"] for v in clean["views"]] == ["service"]
+
+
 def test_removed_hauflo_card_stays_removed_unless_restored():
     base = hauflo()
     cur = copy.deepcopy(base)

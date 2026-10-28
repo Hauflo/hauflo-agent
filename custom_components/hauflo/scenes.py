@@ -14,12 +14,22 @@ scene may hold: Hauflo's own lights and blinds only (owns() leaves out locks, th
 
 scenes.yaml: like automations.yaml, written only while it is plain (what HA's own scene editor writes), with a copy
 scenes.yaml.hauflo-bak-<time> before each write (the last 3), one read-modify-write at a time.
+
+KNX scenes (Д19, owner 28.10: «сцены KNX тоже должны пересохраняться»): a long press on a KNX scene Hauflo made →
+«Переименовать» (a name on the panel only, kept here — HA, voice and the switches keep theirs) and «Запомнить как
+сейчас» = KNX scene learn: one telegram, DPT 18.001 with the learn bit, 0x80 | (number − 1), to that scene's address.
+The browser names the scene entity only; the address and the number come from the KNX integration's own store via
+the agent (`KnxScenes.target`: Hauflo's own KNX scene, its address allowed by the owner, only scenes listen there) —
+no address or value from outside ever reaches the bus here. Refused while the owner switched «Allow Hauflo to change
+this home's setup» off; one per scene per few seconds, a few per minute for the house. No delete: a KNX scene lives in
+the actuators.
 """
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from dataclasses import dataclass
 import logging
 import re
 import secrets
@@ -32,6 +42,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
+
+from .const import LOCKED_CODE
 
 _LOGGER = logging.getLogger(__name__)
 STORE_KEY = "hauflo.scenes"
@@ -47,10 +59,34 @@ _FAMILY = re.compile(r"hauflo_fam_([a-z0-9]{1,12})_([lc])_[a-z0-9]{6,16}")
 _HAUFLO = re.compile(r"(?:hauflo|easyha)_(?!fam_)[a-z0-9]{1,12}_(?:cv_)?[a-z0-9]{1,16}")
 _CONTROL = re.compile("[\x00-\x1f\x7f-\x9f  ]+")
 _FILE_LOCK = asyncio.Lock()
+# KNX scene learn: one per scene per LEARN_EVERY seconds, LEARN_PER_MINUTE for the whole house.
+LEARN_EVERY = 5.0
+LEARN_PER_MINUTE = 6
+MAX_NAMES = 200
+_clock = time.monotonic  # the tests move it
 
 
 class Invalid(ValueError):
     pass
+
+
+class Locked(RuntimeError):
+    RU = "Хозяин дома выключил «Разрешить Hauflo менять настройки этого дома» (Hauflo → Настроить) — сцену KNX сейчас не запомнить."
+    EN = "The home owner switched off «Allow Hauflo to change this home's setup» (Hauflo → Configure) — the KNX scene can't be saved now."
+
+
+class TooSoon(RuntimeError):
+    RU = "Только что отправлено. Подождите несколько секунд."
+    EN = "Just sent. Wait a few seconds."
+
+
+@dataclass
+class KnxScenes:
+    """What the agent knows of Hauflo's own KNX scenes (__init__.py: from the KNX store, the owner's ranges, the lock)."""
+
+    numbers: Callable[[], dict[str, int]]  # entity id → scene number, Hauflo's own KNX scenes
+    target: Callable[[str], tuple[str, int]]  # entity id → (address, number); PermissionError if it may not be sent
+    locked: Callable[[], bool]
 
 
 class NotPlain(RuntimeError):
@@ -87,10 +123,13 @@ def _plain(text: str) -> list[Any]:
 
 
 class FamilyScenes:
-    def __init__(self, hass: HomeAssistant, owns: Callable[[str], bool]) -> None:
+    def __init__(self, hass: HomeAssistant, owns: Callable[[str], bool], knx: KnxScenes | None = None) -> None:
         self.hass = hass
         self.owns = owns
+        self.knx = knx
         self.store = Store(hass, 1, STORE_KEY)
+        self._learned: dict[str, float] = {}
+        self._learn_times: list[float] = []
 
     # --- what a scene may hold ----------------------------------------------------------------------------------------
     def _capturable(self, eid: Any, kind: str) -> bool:
@@ -201,7 +240,56 @@ class FamilyScenes:
     # --- what the dashboard asks --------------------------------------------------------------------------------------
     async def answer(self) -> dict[str, Any]:
         data = await self._data()
-        return {"hidden": [x for x in data.get("hidden", []) if isinstance(x, str)], "max_name": MAX_NAME}
+        out: dict[str, Any] = {"hidden": [x for x in data.get("hidden", []) if isinstance(x, str)], "max_name": MAX_NAME}
+        if self.knx is not None:
+            # The cards: which scenes are KNX ones that can be learnt (and their numbers — «в сцене N»), the family's names.
+            numbers = self.knx.numbers()
+            out["knx"] = numbers
+            names = data.get("names") if isinstance(data.get("names"), dict) else {}
+            out["names"] = {k: v for k, v in names.items() if k in numbers and isinstance(v, str)}
+        return out
+
+    # --- KNX scenes ---------------------------------------------------------------------------------------------------
+    def _knx_scene(self, entity_id: Any) -> str:
+        if self.knx is None:
+            raise PermissionError("KNX scenes: not available")
+        if not isinstance(entity_id, str) or entity_id not in self.knx.numbers():
+            raise PermissionError("not a KNX scene of Hauflo's")
+        return entity_id
+
+    async def name(self, entity_id: Any, name: Any) -> dict[str, Any]:
+        """A KNX scene's name on the panel (the family's, for the whole house); empty — the integrator's again."""
+        eid = self._knx_scene(entity_id)
+        title = "" if isinstance(name, str) and not name.strip() else clean_name(name)
+        data = await self._data()
+        old = data.get("names") if isinstance(data.get("names"), dict) else {}
+        names = {k: v for k, v in old.items() if isinstance(k, str) and isinstance(v, str) and k != eid}
+        if title:
+            names[eid] = title
+        await self.store.async_save({**data, "names": dict(list(names.items())[-MAX_NAMES:])})
+        return {"entity_id": eid, "name": title}
+
+    async def learn(self, entity_id: Any, user: str | None) -> dict[str, Any]:
+        """«Запомнить как сейчас» on a KNX scene: the actuators on its address store what they do now as that scene
+        (if their ETS parameters allow it — nothing on the bus says whether they did)."""
+        if self.knx is None:
+            raise PermissionError("KNX scenes: not available")
+        if self.knx.locked():
+            raise Locked
+        address, number = self.knx.target(entity_id)  # PermissionError: not this scene / not allowed
+        if isinstance(number, bool) or not isinstance(number, int) or not 1 <= number <= 64:
+            raise PermissionError("scene number")
+        # No await between the check and the stamps: two presses at once can't both pass.
+        now = _clock()
+        self._learn_times = [t for t in self._learn_times if now - t < 60]
+        if now - self._learned.get(entity_id, -1e9) < LEARN_EVERY or len(self._learn_times) >= LEARN_PER_MINUTE:
+            raise TooSoon
+        self._learned[entity_id] = now
+        self._learn_times.append(now)
+        payload = 0x80 | (number - 1)  # DPT 18.001: bit 7 = learn, bits 0–5 = scene number − 1
+        await self.hass.services.async_call("knx", "send", {"address": address, "payload": [payload]}, blocking=True)
+        _LOGGER.info("Hauflo: KNX scene %s (%s, №%s) learnt by %s", entity_id, address, number, user or "?")
+        return {"sent": True, "entity_id": entity_id, "scene_number": number}
 
     async def add(self, room: Any, kind: Any, name: Any, entities: Any, user: str | None) -> dict[str, Any]:
         if not isinstance(room, str) or not _ROOM.fullmatch(room) or kind not in ("l", "c"):
@@ -335,11 +423,20 @@ class ScenesView(HomeAssistantView):
                 return self.json(await engine.delete(body.get("entity_id")))
             if op == "unhide":
                 return self.json(await engine.unhide(body.get("entity_id")))
+            if op == "knx_name":
+                return self.json(await engine.name(body.get("entity_id"), body.get("name")))
+            if op == "knx_learn":
+                # The scene entity only: anything else in the body (an address, a payload) is never read.
+                return self.json(await engine.learn(body.get("entity_id"), user.name if user else None))
         except Invalid as err:
             return self.json_message(str(err), 400)
         except NotPlain as err:
             _LOGGER.warning("Hauflo scenes: scenes.yaml left as it is (%s)", err)
             return self.json({"message": NotPlain.RU if ru else NotPlain.EN, "code": "not_plain"}, 409)
+        except Locked:
+            return self.json({"message": Locked.RU if ru else Locked.EN, "code": LOCKED_CODE}, 423)
+        except TooSoon:
+            return self.json({"message": TooSoon.RU if ru else TooSoon.EN, "code": "too_soon"}, 429)
         except PermissionError as err:
             return self.json_message(str(err), 403)
         except KeyError:
@@ -350,4 +447,4 @@ class ScenesView(HomeAssistantView):
         except Exception as err:  # noqa: BLE001 — HA refused the file / reload: said, not a 500 page
             _LOGGER.warning("Hauflo scenes: %s failed: %s", op, err)
             return self.json_message(f"Home Assistant: {err}", 500)
-        return self.json_message("op: add, rename, recapture, delete or unhide", 400)
+        return self.json_message("op: add, rename, recapture, delete, unhide, knx_name or knx_learn", 400)

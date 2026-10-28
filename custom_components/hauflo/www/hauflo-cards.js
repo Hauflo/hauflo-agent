@@ -40,6 +40,7 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
 .scn button span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.scn button ha-icon{color:var(--sacc);flex:0 0 auto;--mdc-icon-size:17px}
 .scn button.go{background:color-mix(in srgb,var(--sacc) 26%,transparent)}.scn.light{--sacc:var(--amber)}.scn.cover{--sacc:var(--ink2)}.scn.mixed{--sacc:var(--mint)}
 .scn button.add{box-shadow:inset 0 0 0 1px var(--hair);background:transparent;color:var(--ink2);padding:0 14px 0 10px}.scn button.add ha-icon{color:var(--ink2)}
+.scn button{position:relative}.scn button .src{position:absolute;top:3px;right:6px;font:600 8px/1 Onest,sans-serif;font-style:normal;letter-spacing:.04em;color:var(--ink2);opacity:.75;pointer-events:none}
 .srow{margin-top:14px}.srow>.caps{display:block;margin-bottom:8px}
 :host button.sent{background:color-mix(in srgb,var(--amber) 16%,transparent);box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--amber) 55%,transparent)}`;
 
@@ -220,7 +221,11 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
     "Включите свет как нужно — сцена запомнит, что горит и как ярко.": "Set the lights the way you want — the scene remembers what is on and how bright.",
     "Запомнить как сейчас": "Save as it is now", "Отмена": "Cancel", "Введите название": "Enter a name", "Переименовать": "Rename", "Сохранить": "Save", "Удалить сцену": "Delete scene", "Убрать с панели": "Remove from the dashboard",
     "Сцену настроил интегратор. Её можно переименовать и перезаписать; убрать — только с этой панели.": "Your installer set up this scene. You can rename it and save it again; removing only takes it off this dashboard.",
-    "греет": "heating", "держит": "holding", "поддерживает": "keeping", "Сейчас не греют": "Not heating now", "сейчас": "now", "Пол": "Floor", "В комнате": "Room",
+    "Сцена сохранится в Home Assistant: на панели, в голосе и автоматизациях. На настенных выключателях KNX её не будет.": "The scene is saved in Home Assistant: on the dashboard, in voice and in automations. It won't be on the KNX wall switches.",
+    "Сцена KNX — та же, что на настенных выключателях.": "A KNX scene — the same one as on the wall switches.", "Запомнить как сейчас?": "Save as it is now?", "Запомнить": "Save", "Отправлено": "Sent", "Готово": "Done",
+    "Сработает, только если в ETS у актуаторов разрешено сохранение сцен. Если сцена не изменилась — спросите интегратора.": "This works only if scene saving is allowed in the actuators' ETS parameters. If the scene didn't change, ask your installer.",
+    "Название на панели. Пусто — снова название от интегратора.": "The name on this dashboard. Empty — your installer's name again.",
+    "пол сейчас": "floor now", "пол": "floor", "Все ждут": "All idle", "Греет": "Heating", "Греет · клапаны открыты": "Heating · valves open", "греет": "heating", "держит": "holding", "поддерживает": "keeping", "Сейчас не греют": "Not heating now", "сейчас": "now", "Пол": "Floor", "В комнате": "Room",
     "Состояние": "Status", "Управление": "Controls", "Настройки": "Settings", "охлаждает": "cooling", "осушает": "drying", "вентилирует": "ventilating", "Электро": "Electric", "Тепловой насос": "Heat pump", "Мощность": "Performance",
   };
   // Phrases with numbers / declensions (whole text node).
@@ -232,6 +237,18 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
     [/^(\d+) из (\d+) открыто$/, "$1 of $2 open"],
     [/^(\d+) из (\d+) работают$/, "$1 of $2 running"],
     [/^(\d+) из (\d+) греют$/, "$1 of $2 heating"],
+    [/^[Цц]ель (-?[\d,.–]+°)$/, (m, v) => `${m[0] === "Ц" ? "Target" : "target"} ${v}`],
+    [/^→ (-?[\d,.]+°)$/, "→ $1"],
+    [/^Текущее состояние (света|штор|света и штор) комнаты запомнится в сцене (\d+)\. Сцена изменится и на настенных выключателях\.$/, (m, w, n) => `The room's ${{ света: "lights", штор: "blinds", "света и штор": "lights and blinds" }[w]} as they are now will be stored in scene ${n}. The scene changes on the wall switches too.`],
+    [/^Греют: (\d+)$/, "Heating: $1"],
+    [/^Охлаждают: (\d+)$/, "Cooling: $1"],
+    [/^Работают: (\d+)$/, "Running: $1"],
+    [/^Включено: (\d+) из (\d+)$/, "On: $1 of $2"],
+    [/^Греет до (.+)$/, "Heating to $1"],
+    [/^Охлаждает до (.+)$/, "Cooling to $1"],
+    [/^Держит (-?[\d,.]+°)$/, "Holding $1"],
+    [/^Клапан (\d+): открыт$/, "Valve $1: open"],
+    [/^Клапан (\d+): закрыт$/, "Valve $1: closed"],
     [/^(\d+) из (\d+) без данных$/, "$1 of $2 no data"],
     [/^(\d+) из (\d+)/, "$1 of $2"],
     [/^(\d+) авари[яийе]+$/, (m, a) => `${a} alarm${a === "1" ? "" : "s"}`],
@@ -253,7 +270,7 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
   const B = "(^|[^А-Яа-яЁё])"; // a Cyrillic word boundary (\\b doesn't know Cyrillic)
   const EN_FRAG = [
     [/^Позвонить · /, "Call · "], [new RegExp(`${B}ещё аварий:`, "g"), "$1more alarms:"], [new RegExp(`${B}и ещё (\\d+)`, "g"), "$1and $2 more"], [new RegExp(`${B}за сутки`, "g"), "$124 h"],
-    [new RegExp(`${B}В комнате `, "g"), "$1Now "], [new RegExp(`${B}пол (?=\\d)`, "g"), "$1floor "], [new RegExp(`${B}Сейчас `, "g"), "$1Now "], [new RegExp(`${B}влажность `, "g"), "$1humidity "],
+    [new RegExp(`${B}В комнате `, "g"), "$1Now "], [new RegExp(`${B}пол (?=\\d)`, "g"), "$1floor "], [new RegExp(`${B}Сейчас `, "g"), "$1Now "], [new RegExp(`${B}сейчас (?=\\d)`, "g"), "$1now "], [new RegExp(`${B}греет(?=$|[^А-Яа-яЁё])`, "g"), "$1heating"], [new RegExp(`${B}ждёт(?=$|[^А-Яа-яЁё])`, "g"), "$1idle"], [new RegExp(`${B}влажность `, "g"), "$1humidity "],
     [new RegExp(`${B}уставка ещё не пришла`, "g"), "$1no setpoint yet"], [/^поддерживает (?=-?\d)/, "keeping "],
     [new RegExp(`${B}нагрев(?=$|[^А-Яа-яЁё])`, "g"), "$1heating"], [new RegExp(`${B}Охлаждение до `, "g"), "$1Cooling to "], [new RegExp(`${B}Нагрев до `, "g"), "$1Heating to "],
     [new RegExp(`${B}Сдвиньте — `, "g"), "$1Slide — "], [new RegExp(`${B}сегодня в `, "g"), "$1today at "], [new RegExp(`${B}запускался `, "g"), "$1ran "],
@@ -421,6 +438,77 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
   };
   const haptic = (el, type = "light") => el.dispatchEvent(new CustomEvent("haptic", { detail: type, bubbles: true, composed: true }));
   const moreInfo = (el, entityId) => el.dispatchEvent(new CustomEvent("hass-more-info", { detail: { entityId }, bubbles: true, composed: true }));
+
+  // --- touch discipline (owner 28.10, iPhone: «бесят случайные нажатия, когда листаешь страницу комнаты») -----------
+  // 1. A finger that scrolls the page never changes anything: cards are touch-action:pan-y, a vertical gesture is a scroll.
+  // 2. A tap acts only when clean: finger moved < 8 px, < 600 ms, no pointercancel (iOS sends it when it takes the gesture
+  //    for a scroll), the page didn't scroll meanwhile and wasn't scrolling just before (momentum, 250 ms). One tracker for
+  //    all cards: `GST.ok` for pointerup handlers, and the same verdict swallows the click of a dirty gesture on our cards.
+  // 3. A value by drag: a tall tile needs a press-and-hold first (350 ms, haptic + «grab»), a horizontal bar starts only on
+  //    a sideways swipe (hdrag below); a mouse keeps its direct drag.
+  const GST = { type: "mouse", t: 0, up: 0, x: 0, y: 0, el: null, top: 0, bad: false, late: false, ok: true };
+  let lastScroll = 0;
+  {
+    const mark = () => (lastScroll = Date.now());
+    window.addEventListener("scroll", mark, { capture: true, passive: true });
+    window.addEventListener("wheel", mark, { capture: true, passive: true });
+    const topOf = (n) => (n && n.getBoundingClientRect ? n.getBoundingClientRect().top : 0);
+    window.addEventListener("pointerdown", (ev) => {
+      const el = ev.composedPath()[0];
+      Object.assign(GST, { type: ev.pointerType || "mouse", t: Date.now(), up: 0, x: ev.clientX, y: ev.clientY, el, top: topOf(el), bad: false, late: Date.now() - lastScroll < 250, ok: true });
+    }, { capture: true, passive: true });
+    window.addEventListener("pointermove", (ev) => {
+      if (Math.hypot(ev.clientX - GST.x, ev.clientY - GST.y) >= 8) GST.bad = true;
+    }, { capture: true, passive: true });
+    window.addEventListener("pointercancel", () => ((GST.bad = true), (GST.up = Date.now()), (GST.ok = false), mark()), { capture: true, passive: true });
+    window.addEventListener("pointerup", () => {
+      GST.up = Date.now();
+      if (GST.bad) mark(); // a swipe ended: the page may glide on
+      const moved = GST.el?.isConnected && Math.abs(topOf(GST.el) - GST.top) > 8; // the tile itself slid under the finger = a scroll
+      GST.ok = GST.type === "mouse" ? true : !GST.bad && !GST.late && GST.up - GST.t < 600 && lastScroll < GST.t && !moved;
+    }, { capture: true, passive: true });
+    const ours = (ev) => ev.composedPath().some((n) => typeof n.localName === "string" && (n.localName.startsWith("hauflo-") || (typeof n.className === "string" && /\bhauflo-/.test(n.className))));
+    window.addEventListener("click", (ev) => {
+      if (!ev.isTrusted || !ev.detail || GST.type === "mouse" || GST.ok || Date.now() - GST.up > 1000 || !ours(ev)) return;
+      ev.stopPropagation();
+      ev.preventDefault();
+    }, { capture: true });
+  }
+  /** A sideways control (bar, slider, swipe handle). Touch / pen: it starts only when |dx| > 10 px and |dx| > 1.5·|dy|, else the
+   * page scrolls (give the element touch-action:pan-y); a bare tap sets nothing — `tap(ev, clean)` runs instead. Mouse: from the
+   * press, as before. cb: down(ev) (false = ignore), start(ev), move(ev), end(ev, committed) (committed = let go, not cancelled). */
+  const hdrag = (el, cb) => {
+    let p = null;
+    const begin = (ev) => {
+      p.go = true;
+      try {
+        el.setPointerCapture(p.id);
+      } catch {}
+      cb.start?.(ev);
+      cb.move?.(ev);
+    };
+    el.addEventListener("pointerdown", (ev) => {
+      if (ev.pointerType === "mouse" && ev.button !== 0) return;
+      p = { id: ev.pointerId, x: ev.clientX, y: ev.clientY, go: false, touch: ev.pointerType !== "mouse" };
+      if (cb.down?.(ev) === false) return void (p = null);
+      if (!p.touch) begin(ev);
+    });
+    el.addEventListener("pointermove", (ev) => {
+      if (!p) return;
+      if (p.go) return cb.move?.(ev);
+      const dx = Math.abs(ev.clientX - p.x);
+      if (dx > 10 && dx > 1.5 * Math.abs(ev.clientY - p.y)) begin(ev);
+    });
+    const fin = (ev) => {
+      if (!p) return;
+      const q = p;
+      p = null;
+      if (q.go) cb.end?.(ev, ev.type === "pointerup");
+      else cb.tap?.(ev, ev.type === "pointerup" && GST.ok);
+    };
+    el.addEventListener("pointerup", fin);
+    el.addEventListener("pointercancel", fin);
+  };
 
   // --- the client's own view (owner 28.10: «менять карточку как мне, так и клиенту»): scenes in their blocks or on top,
   // climate and floor heating large or a line. The integrator's choice is each card's config (the default); the person's
@@ -726,7 +814,7 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
       const id = itemId(x);
       const s = st(h, id);
       if (!s) return null;
-      return { id, name: (x && typeof x === "object" && x.name) || (typeof card.label === "function" ? card.label(id) : nameOf(s, id)), icon: (x && typeof x === "object" && x.icon) || "" }; // the card's own icon only: a device's raw one looked out of place
+      return { id, name: FAM.names?.[id] || (x && typeof x === "object" && x.name) || (typeof card.label === "function" ? card.label(id) : nameOf(s, id)), icon: (x && typeof x === "object" && x.icon) || "" }; // the card's own icon only: a device's raw one looked out of place
     };
     const secs = [];
     const add = (label, arr) => {
@@ -749,7 +837,8 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
     add("", c.sensors);
     add(c.type === "custom:hauflo-alert" ? "" : w.alarms, c.alarms);
     // Scenes with the family's own ones of the room (agent scenes.py) after the integrator's, as the block draws them.
-    const withFamily = (arr, room, kind) => orderSort(ORDER.data?.[orderKey(card)], [...(arr || []), ...(room ? familyScenes(h, room, kind).filter((x) => !(arr || []).some((y) => itemId(y) === x.entity)) : [])]);
+    // KNX → the integrator's HA → the family's (Д19), as sceneChips.
+    const withFamily = (arr, room, kind) => orderSort(ORDER.data?.[orderKey(card)], bySource(h, [...(arr || []), ...(room ? familyScenes(h, room, kind).filter((x) => !(arr || []).some((y) => itemId(y) === x.entity)) : [])]));
     if (Array.isArray(c.rows)) for (const r of c.rows) add(r?.title || (r?.kind === "cover" ? w.names.covers : w.names.lights), withFamily(r?.scenes, r?.scene_room, r?.kind === "cover" ? "cover" : "light"));
     add(secs.length ? w.scenes : "", withFamily(c.scenes, c.scene_room, card.kind === "cover" || c.kind === "cover" ? "cover" : "light"));
     if (secs.length === 1) secs[0].label = "";
@@ -917,7 +1006,9 @@ ${secs.map((s, si) => `${s.label ? `<p class="vl">${esc(s.label)}</p>` : ""}<ol 
   // a long press on a scene Hauflo made (the integrator's or the family's) → rename / remember again / delete (hide).
   // `api`: this HA's agent answers /api/hauflo/scenes (true) or not (false — an HA not restarted since the update,
   // or the cards without their agent); null until asked. «+ Сцена» shows only with it.
-  const FAM = { hidden: null, state: "", cards: new Set(), api: null };
+  // `knx`: Hauflo's own KNX scenes the agent can learn (entity → scene number; agent ≥ 0.16.5), `names`: the family's
+  // names of KNX scenes on the panel.
+  const FAM = { hidden: null, state: "", cards: new Set(), api: null, knx: {}, names: {} };
   const famRerender = () => {
     for (const c of FAM.cards) {
       c._sig = "";
@@ -930,6 +1021,8 @@ ${secs.map((s, si) => `${s.label ? `<p class="vl">${esc(s.label)}</p>` : ""}<ol 
     h.callApi("GET", "hauflo/scenes")
       .then((r) => {
         FAM.hidden = Array.isArray(r?.hidden) ? r.hidden : [];
+        FAM.knx = r?.knx && typeof r.knx === "object" ? r.knx : {};
+        FAM.names = r?.names && typeof r.names === "object" ? r.names : {};
         FAM.api = true;
       })
       .catch(() => {
@@ -962,6 +1055,21 @@ ${secs.map((s, si) => `${s.label ? `<p class="vl">${esc(s.label)}</p>` : ""}<ol 
       .filter((s) => String(s.attributes.id).startsWith(prefix))
       .map((s) => ({ entity: s.entity_id }));
   };
+  // --- KNX and HA scenes on one panel (Д19, owner 28.10): KNX ones (from the wall switches) first, then the integrator's
+  // HA ones, then the family's; the family sees no marks, an HA admin a small «KNX» / «HA» in the corner.
+  const sceneSource = (hass, id) => {
+    if (hass?.entities?.[id]?.platform === "knx") return "knx";
+    return /^hauflo_fam_/.test(String(st(hass, id)?.attributes?.id || "")) ? "fam" : "ha";
+  };
+  const SOURCE_RANK = { knx: 0, ha: 1, fam: 2 };
+  /** A block's scenes in their base order (stable within a source) — the client's «Порядок» goes over it. */
+  const bySource = (hass, arr, idOf = itemId) =>
+    (arr || [])
+      .map((x, i) => [x, SOURCE_RANK[sceneSource(hass, idOf(x))] * 1e4 + i])
+      .sort((a, b) => a[1] - b[1])
+      .map(([x]) => x);
+  /** The scene's name on the panel: the family's own for a KNX scene (agent scenes.py `names`), else the card's / HA's. */
+  const sceneLabel = (hass, x) => FAM.names?.[x.entity] || x.name || nameOf(st(hass, x.entity), x.entity);
   // --- the room key without a redeploy (owner 28.10: «где плюс на шторах?» — the dashboard was built before the agent
   // could save scenes, so its config had no `scene_room`): these cards come with the agent, so they know it can; the
   // key is the same one the cloud writes (`short(room.id)`), read from the room's own Hauflo scenes — `hauflo_<room>_…`
@@ -1033,14 +1141,23 @@ ${secs.map((s, si) => `${s.label ? `<p class="vl">${esc(s.label)}</p>` : ""}<ol 
   const sceneChips = (hass, list, kind, room, card) => {
     const own = room && hass ? familyScenes(hass, room, kind) : [];
     const hidden = new Set(FAM.hidden || []);
-    // The family's own scenes in the block's order too (`card` — the block: «Порядок»).
-    const all = orderSort(card && ORDER.data?.[orderKey(card)], [...(list || []), ...own.filter((x) => !(list || []).some((y) => y.entity === x.entity))], (x) => x.entity).filter((x) => st(hass, x.entity) && !hidden.has(x.entity));
+    // KNX scenes can be learnt / renamed wherever they are (no room needed): the agent says which (FAM.knx).
+    if (card && hass && (list || []).some((x) => sceneSource(hass, x.entity) === "knx")) {
+      FAM.cards.add(card);
+      loadFam(hass);
+    }
+    const admin = hass?.user?.is_admin === true;
+    // KNX → the integrator's HA → the family's, then the block's order («Порядок», `card` — the block) over it.
+    const base = bySource(hass, [...(list || []), ...own.filter((x) => !(list || []).some((y) => y.entity === x.entity))], (x) => x.entity);
+    const all = orderSort(card && ORDER.data?.[orderKey(card)], base, (x) => x.entity).filter((x) => st(hass, x.entity) && !hidden.has(x.entity));
     return `<div class="scn ${kind}">${all
       .map((x) => {
         const s = st(hass, x.entity);
-        const label = x.name || nameOf(s, x.entity);
-        const editable = /^hauflo_/.test(String(s.attributes.id || ""));
-        return `<button data-scene="${esc(x.entity)}" ${editable && room ? 'data-edit="1"' : ""} title="${esc(label)}"><ha-icon icon="${esc(x.icon || s.attributes.icon || (kind === "cover" ? "hauflo:blind" : "hauflo:scene"))}"></ha-icon><span>${esc(label)}</span></button>`;
+        const src = sceneSource(hass, x.entity);
+        const label = sceneLabel(hass, x);
+        const editable = src === "knx" ? FAM.api === true && FAM.knx?.[x.entity] !== undefined : /^hauflo_/.test(String(s.attributes.id || "")) && !!room;
+        const tag = admin ? `<i class="src" aria-hidden="true">${src === "knx" ? "KNX" : "HA"}</i>` : "";
+        return `<button data-scene="${esc(x.entity)}" ${editable ? `data-edit="${src === "knx" ? "knx" : "1"}"` : ""} title="${esc(label)}"><ha-icon icon="${esc(x.icon || s.attributes.icon || (kind === "cover" ? "hauflo:blind" : "hauflo:scene"))}"></ha-icon><span${FAM.names?.[x.entity] ? " data-own" : ""}>${esc(label)}</span>${tag}</button>`;
       })
       .join("")}${room && kind !== "mixed" && FAM.api === true ? `<button class="add" data-scene-add="${kind === "cover" ? "cover" : "light"}" aria-label="Новая сцена" title="Новая сцена"><ha-icon icon="mdi:plus"></ha-icon><span>Сцена</span></button>` : ""}</div>`;
   };
@@ -1111,6 +1228,7 @@ input{height:48px;border-radius:14px;border:1px solid var(--divider-color);paddi
       const form = (err = "", value = "") => {
         draw(`<div class="t">${kind === "cover" ? "Новая сцена штор" : "Новая сцена света"}</div>
 <div class="n">${kind === "cover" ? "Поставьте шторы как нужно — сцена запомнит их положение." : "Включите свет как нужно — сцена запомнит, что горит и как ярко."}</div>
+<div class="n">Сцена сохранится в Home Assistant: на панели, в голосе и автоматизациях. На настенных выключателях KNX её не будет.</div>
 <input maxlength="40" placeholder="${kind === "cover" ? "Например, Утро" : "Например, Кино"}" aria-label="Название" value="${esc(value)}">
 ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-save>Запомнить как сейчас</button><button class="b" data-x>Отмена</button>`);
         const input = sr.querySelector("input");
@@ -1181,10 +1299,77 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b" data-rename>П
       menu();
     });
   };
+  /** A long press on a KNX scene (Д19): «Запомнить как сейчас» = KNX scene learn through the agent (it finds the
+   * address and the number itself; the card names the scene only), «Переименовать» = its name on this panel. No delete:
+   * the scene lives in the actuators and on the wall switches. */
+  const openKnxScene = (card, entity, kind) => {
+    const s = st(card._hass, entity);
+    if (!s) return;
+    const number = FAM.knx?.[entity];
+    const label = () => FAM.names?.[entity] || nameOf(s, entity);
+    const what = kind === "cover" ? "штор" : kind === "mixed" ? "света и штор" : "света";
+    sceneSheet(card, ({ sr, draw, close }) => {
+      const menu = (err = "") => {
+        draw(`<div class="t" data-own>${esc(label())}</div>
+<div class="n">Сцена KNX — та же, что на настенных выключателях.</div>
+${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-again>Запомнить как сейчас</button>
+<button class="b" data-rename>Переименовать</button><button class="b" data-x>Отмена</button>`);
+        sr.querySelector("[data-x]").addEventListener("click", close);
+        sr.querySelector("[data-rename]").addEventListener("click", () => rename());
+        sr.querySelector("[data-again]").addEventListener("click", () => ask());
+      };
+      // Asked first: the switches' scene changes too.
+      const ask = (err = "") => {
+        draw(`<div class="t">Запомнить как сейчас?</div>
+<div class="n">Текущее состояние ${what} комнаты запомнится в сцене ${esc(String(number ?? ""))}. Сцена изменится и на настенных выключателях.</div>
+${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Запомнить</button><button class="b" data-x>Отмена</button>`);
+        sr.querySelector("[data-x]").addEventListener("click", close);
+        const yes = sr.querySelector("[data-yes]");
+        yes.addEventListener("click", async () => {
+          yes.disabled = true;
+          const r = await famCall(card, { op: "knx_learn", entity_id: entity });
+          if (r.error) return ask(r.error);
+          haptic(card, "success");
+          sent();
+        });
+      };
+      // Nothing on the bus says whether the actuators stored it: what to do if nothing changed.
+      const sent = () => {
+        draw(`<div class="t">Отправлено</div>
+<div class="n">Сработает, только если в ETS у актуаторов разрешено сохранение сцен. Если сцена не изменилась — спросите интегратора.</div>
+<button class="b go" data-x>Готово</button>`);
+        sr.querySelector("[data-x]").addEventListener("click", close);
+      };
+      const rename = (err = "") => {
+        draw(`<div class="t">Переименовать</div><input maxlength="40" aria-label="Название" value="${esc(label())}">
+<div class="n">Название на панели. Пусто — снова название от интегратора.</div>${err ? `<div class="e">${esc(err)}</div>` : ""}
+<button class="b go" data-save>Сохранить</button><button class="b" data-x>Отмена</button>`);
+        const input = sr.querySelector("input");
+        input.focus();
+        input.select();
+        sr.querySelector("[data-x]").addEventListener("click", close);
+        const save = async () => {
+          const name = input.value.trim();
+          const r = await famCall(card, { op: "knx_name", entity_id: entity, name });
+          if (r.error) return rename(r.error);
+          FAM.names = { ...FAM.names };
+          if (name) FAM.names[entity] = name;
+          else delete FAM.names[entity];
+          close();
+          famDone(card);
+        };
+        sr.querySelector("[data-save]").addEventListener("click", save);
+        input.addEventListener("keydown", (e) => e.key === "Enter" && save());
+      };
+      menu();
+    });
+  };
   const bindScenes = (card) => {
     const root = card.shadowRoot;
     root.querySelectorAll("button[data-scene]").forEach((b) => {
-      const kind = b.closest(".scn")?.classList.contains("cover") ? "cover" : "light";
+      const scn = b.closest(".scn")?.classList;
+      const kind = scn?.contains("cover") ? "cover" : "light";
+      const open = () => (b.dataset.edit === "knx" ? openKnxScene(card, b.dataset.scene, scn?.contains("mixed") ? "mixed" : kind) : openEditScene(card, b.dataset.scene, kind));
       let timer = null;
       let held = false;
       if (b.dataset.edit) {
@@ -1193,14 +1378,14 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b" data-rename>П
           timer = setTimeout(() => {
             held = true;
             haptic(card, "medium");
-            openEditScene(card, b.dataset.scene, kind);
+            open();
           }, 550);
         });
         for (const ev of ["pointerup", "pointerleave", "pointercancel"]) b.addEventListener(ev, () => clearTimeout(timer));
         b.addEventListener("contextmenu", (ev) => {
           ev.preventDefault();
           clearTimeout(timer);
-          if (!held) openEditScene(card, b.dataset.scene, kind);
+          if (!held) open();
           held = true;
         });
       }
@@ -1231,6 +1416,43 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b" data-rename>П
   /** climate.turn_off is there: the TURN_OFF feature (128) or «off» among its modes. */
   const canTurnOff = (s) => ((Number(s.attributes.supported_features) || 0) & 128) !== 0 || (s.attributes.hvac_modes || []).includes("off");
   const HVAC = { heat: "Нагрев", cool: "Холод", auto: "Авто", heat_cool: "Диапазон", off: "Выкл", fan_only: "Вент.", dry: "Осушение" };
+  // «режим: нагрев» — the MODE is small print; what the thermostat DOES is another word (owner 28.10, Д16).
+  const modeSmall = (state) => (HVAC[state] && state !== "off" ? `режим: ${HVAC[state].toLowerCase()}` : "");
+  for (const w of Object.values(HVAC)) if (EN[w]) EN[`режим: ${w.toLowerCase()}`] = `mode: ${EN[w].toLowerCase()}`;
+  /** The activity sources of a climate / floor zone the project has (card config `activity`: entity ids of the heat /
+   * cool command status sensors and of the valve status sensors); older configs have none. */
+  const actIds = (a) => [...(a?.heat || []), ...(a?.cool || []), ...(a?.valves || [])];
+  const srcOn = (h, ids) => (ids || []).some((id) => st(h, id)?.state === "on");
+  const srcKnown = (h, ids) => (ids || []).some((id) => ["on", "off"].includes(st(h, id)?.state));
+  /** What a thermostat DOES now, not its mode (owner 28.10, Д13/Д16): "heat" | "cool" | "dry" | "fan" | "idle" | "off" |
+   * "mode" (nothing says what it does: the mode is all there is) | null (no link). A source of the zone that is on (valve
+   * open, heat command on — OR) is a fact; else HA's hvac_action, «heating» only when it fits (not warmer than the goal). */
+  const climateNow = (h, s, act) => {
+    if (!s || ["unavailable", "unknown"].includes(s.state)) return null;
+    if (s.state === "off") return "off";
+    const a = s.attributes || {};
+    if (srcOn(h, act?.heat) || srcOn(h, act?.valves)) return "heat";
+    if (srcOn(h, act?.cool)) return "cool";
+    const cur = num(a.current_temperature);
+    const goal = (k) => num(a.temperature) ?? num(k === "heat" ? a.target_temp_low : a.target_temp_high);
+    const fits = (k) => cur === undefined || goal(k) === undefined || (k === "heat" ? cur < goal(k) + 0.5 : cur > goal(k) - 0.5);
+    const ha = a.hvac_action;
+    if (ha === "heating") return fits("heat") ? "heat" : "idle";
+    if (ha === "cooling") return fits("cool") ? "cool" : "idle";
+    if (ha === "drying") return "dry";
+    if (ha === "fan") return "fan";
+    if (ha === "idle" || ha === "off") return "idle";
+    return srcKnown(h, actIds(act)) ? "idle" : "mode";
+  };
+  const NOW_WORD = { heat: "греет", cool: "охлаждает", dry: "осушает", fan: "вентилирует", idle: "ждёт", off: "выкл" };
+  const acting = (k) => k === "heat" || k === "cool" || k === "dry" || k === "fan";
+  /** One icon per valve of the zone, open lit (Д13). */
+  const valveIcons = (h, ids) => {
+    const list = (ids || []).filter((id) => st(h, id));
+    if (!list.length) return "";
+    return `<span class="vlv">${list.slice(0, 12).map((id, i) => { const on = st(h, id).state === "on"; return `<span class="vl${on ? " on" : ""}" title="Клапан ${i + 1}: ${on ? "открыт" : "закрыт"}"><ha-icon icon="hauflo:valve"></ha-icon></span>`; }).join("")}</span>`;
+  };
+  const VALVE_CSS = `.vlv{display:inline-flex;gap:4px;margin-top:6px;vertical-align:middle}.vl{width:26px;height:26px;border-radius:9px;display:grid;place-items:center;box-shadow:inset 0 0 0 1px var(--hair);color:var(--ink3)}.vl ha-icon{--mdc-icon-size:16px}.vl.on{background:color-mix(in srgb,var(--amber) 20%,transparent);box-shadow:none;color:var(--amber)}`;
   // Units in Russian; a value outside what's physically plausible is «—», not «33424 гПа» (designer review 25.10).
   const UNIT = { "km/h": "км/ч", "m/s": "м/с", hPa: "гПа", mbar: "мбар", mmHg: "мм рт. ст.", "µg/m³": "мкг/м³", ppm: "ppm", ppb: "ppb" };
   const ru = (u) => UNIT[u] || u || "";
@@ -1394,8 +1616,18 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b" data-rename>П
     const hours = Math.round(span / 3600000);
     const period = span >= 22 * 3600000 ? "За сутки" : hours >= 1 ? `За ${hours} ч` : "";
     const digits = step < 1 ? 1 : 0;
-    return shell(`<div class="tlg"><span><i class="ln"></i>${esc(label)}</span>${sp.length ? `<span><i class="ds"></i>цель</span>` : ""}<span class="per">${period}</span></div>
-<div class="tpl" style="height:${H}px"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">${ticksY.map((v) => `<line class="gr" x1="0" x2="${W}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" vector-effect="non-scaling-stroke"/>`).join("")}<path class="ar" d="${area}"/>${sp.length ? `<path class="sp" d="${spLine}" vector-effect="non-scaling-stroke"/>` : ""}<path class="cu" d="${line}" vector-effect="non-scaling-stroke"/></svg>${ticksY.map((v) => `<span class="ty" style="top:${((y(v) / H) * 100).toFixed(1)}%">${fmt(v, digits)}°</span>`).join("")}</div>
+    // The lines are named at their right end («23,9°» on the solid one, «цель 25°» on the dashed one) — a legend of dashes
+    // read like placeholders (owner 28.10).
+    const lastC = pts[pts.length - 1][1];
+    const lastS = sp.length ? sp[sp.length - 1][1] : undefined;
+    const curAbove = lastS === undefined || y(lastC) <= y(lastS);
+    const yc = y(lastC);
+    const ys = lastS === undefined ? 0 : y(lastS);
+    const topC = curAbove ? Math.max(yc, 14) : Math.min(yc, H - 14);
+    const topS = curAbove ? Math.min(ys, H - 14) : Math.max(ys, 14);
+    const ends = `<span class="el cl" style="top:${topC.toFixed(1)}px;transform:translateY(${curAbove ? "-110%" : "10%"})">${fmt(lastC, 1)}°</span>${lastS === undefined ? "" : `<span class="el sl" style="top:${topS.toFixed(1)}px;transform:translateY(${curAbove ? "10%" : "-110%"})">цель ${fmt(lastS, lastS % 1 ? 1 : 0)}°</span>`}`;
+    return shell(`<div class="tlg"><span>${esc(label)}</span><span class="per">${period}</span></div>
+<div class="tpl" style="height:${H}px"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">${ticksY.map((v) => `<line class="gr" x1="0" x2="${W}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" vector-effect="non-scaling-stroke"/>`).join("")}<path class="ar" d="${area}"/>${sp.length ? `<path class="sp" d="${spLine}" vector-effect="non-scaling-stroke"/>` : ""}<path class="cu" d="${line}" vector-effect="non-scaling-stroke"/></svg>${ends}${ticksY.map((v) => `<span class="ty" style="top:${((y(v) / H) * 100).toFixed(1)}%">${fmt(v, digits)}°</span>`).join("")}</div>
 <div class="tx">${ticksX.map((t) => `<span style="left:${(((t - t0) / span) * 100).toFixed(1)}%">${hm(t)}</span>`).join("")}<span class="now">сейчас</span></div>`);
   };
   const TCHART_CSS = `.tch{position:relative;margin-top:14px;--tc:var(--ink2)}.tch.heat{--tc:var(--amber)}.tch.cool{--tc:var(--ice)}
@@ -1403,6 +1635,7 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b" data-rename>П
 .tlg i{display:inline-block;width:14px;border-top:2px solid var(--tc);vertical-align:middle;margin:-2px 6px 0 0}.tlg .ds{border-top:2px dashed var(--ink2);opacity:.8}.tlg span:first-child{color:var(--ink2)}
 .tpl{position:relative;margin-right:34px}.tpl svg{display:block;width:100%;height:100%;overflow:visible}
 .tpl .gr{stroke:var(--hair);stroke-width:1}.tpl .cu{fill:none;stroke:var(--tc);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}.tpl .ar{fill:var(--tc);opacity:.10;stroke:none}
+.tpl .el{position:absolute;right:2px;font:500 11px Onest,sans-serif;white-space:nowrap;font-variant-numeric:tabular-nums;pointer-events:none}.tpl .el.cl{color:var(--tc)}.tpl .el.sl{color:var(--ink2)}
 .tpl .sp{fill:none;stroke:var(--ink2);stroke-width:1.25;stroke-dasharray:5 4;opacity:.8}
 .ty{position:absolute;left:calc(100% + 6px);transform:translateY(-50%);font:400 11px Onest,sans-serif;color:var(--ink3);white-space:nowrap;font-variant-numeric:tabular-nums}
 .tx{position:relative;height:16px;margin:6px 34px 0 0;font:400 11px Onest,sans-serif;color:var(--ink3);font-variant-numeric:tabular-nums}.tx span{position:absolute;top:0;transform:translateX(-50%);white-space:nowrap}.tx .now{left:auto;right:-34px;transform:none}
@@ -1639,7 +1872,7 @@ ${(c.alarms || []).length && ok ? `<div><span class="caps">Датчики</span>
   class Room extends EHCard {
     watched() {
       const c = this._config;
-      return [...(c.lights || []), c.climate, ...(c.alarms || []), ...(c.covers || []), ...(c.temps || []).map((x) => x.entity)].filter(Boolean);
+      return [...(c.lights || []), c.climate, ...(c.alarms || []), ...(c.covers || []), ...(c.temps || []).map((x) => x.entity), ...actIds(c.activity)].filter(Boolean);
     }
     css() {
       return `.r{height:172px;padding:16px;display:flex;flex-direction:column;justify-content:space-between;cursor:pointer;user-select:none;-webkit-user-select:none}
@@ -1677,8 +1910,10 @@ ${(c.alarms || []).length && ok ? `<div><span class="caps">Датчики</span>
       const clim = st(h, c.climate);
       const target = clim ? num(clim.attributes.temperature) : undefined;
       // Nothing from the bus yet (no room temperature): no «Нагрев» from the default mode (integrator run 25.10).
-      const action = clim && num(clim.attributes.current_temperature) !== undefined ? clim.attributes.hvac_action : undefined;
-      const cooling = clim && action !== undefined && (action === "cooling" || (clim.state === "cool" && action !== "idle" && action !== "off"));
+      // What it DOES, not its mode («Нагрев» over a room warmer than the goal — owner 28.10, Д16); the zone's heat / cool /
+      // valve sources of the project (`activity`) count too (Д13).
+      const now = clim && num(clim.attributes.current_temperature) !== undefined ? climateNow(h, clim, c.activity) : undefined;
+      const cooling = now === "cool";
       // A room in alarm: the red frame and the sign say it; a floor tile names where (persona review 25.10: said once).
       // Priority by colour (ISA-101): only a critical one is red, the rest amber — as on the alert card.
       if (alarm) return { kind: openList.some((a) => a.critical !== false && !a.ackedBy) ? "alarm" : "alarm warn", text: c.rooms?.[alarm.entity_id] ? `${c.rooms[alarm.entity_id]}${alarmsOn.length > 1 ? ` и ещё ${alarmsOn.length - 1}` : ""}` : alarmsOn.length > 1 ? `${alarmsOn.length} ${pluralAlarms(alarmsOn.length)}` : "" };
@@ -1688,8 +1923,9 @@ ${(c.alarms || []).length && ok ? `<div><span class="caps">Датчики</span>
         const dim = on.map((s) => (num(s.attributes.brightness) !== undefined ? brightnessPct(s) : undefined)).filter((x) => x !== undefined);
         return { kind: "lit", text: dim.length ? `Свет · ${Math.round(avg(dim))} %` : "Свет включён" };
       }
-      if (cooling) return { kind: "cold", text: `Охлаждение${target !== undefined ? ` до ${fmt(target)}°` : ""}` };
-      if (clim && action === "heating") return { kind: "", text: `Нагрев${target !== undefined ? ` до ${fmt(target)}°` : ""}` };
+      if (cooling) return { kind: "cold", text: `Охлаждает${target !== undefined ? ` до ${fmt(target)}°` : ""}` };
+      // Warmer than the goal while a valve is open (the integrator's KNX logic heats the room): «Греет · клапаны открыты», not «до 24°».
+      if (now === "heat") { const rc = num(clim.attributes.current_temperature); return { kind: "", text: target !== undefined && !(rc >= target) ? `Греет до ${fmt(target)}°` : c.activity?.valves?.length ? "Греет · клапаны открыты" : "Греет" }; }
       const lights = (c.lights || []).map((id) => st(h, id));
       const watched = [...lights, ...(c.climate ? [clim] : [])];
       if (watched.length && watched.every(nd)) return { kind: "", text: "Нет данных" };
@@ -1735,8 +1971,10 @@ ${(c.alarms || []).length && ok ? `<div><span class="caps">Датчики</span>
         this._busy = false;
         this._update();
       }, 300);
-      el.addEventListener("pointerdown", () => {
+      let at = null;
+      el.addEventListener("pointerdown", (ev) => {
         held = false;
+        at = [ev.clientX, ev.clientY];
         this._busy = true;
         timer = setTimeout(() => {
           held = true;
@@ -1751,11 +1989,15 @@ ${(c.alarms || []).length && ok ? `<div><span class="caps">Датчики</span>
         clearTimeout(timer);
         if (this._busy) release();
       };
+      // A finger that moves is scrolling the page: no hold, no opening.
+      el.addEventListener("pointermove", (ev) => at && Math.hypot(ev.clientX - at[0], ev.clientY - at[1]) > 8 && (clearTimeout(timer), (at = null)));
       el.addEventListener("pointerleave", cancel);
       el.addEventListener("pointercancel", cancel);
       el.addEventListener("pointerup", () => {
         cancel();
-        if (!held && this._config.path) {
+        const still = at !== null;
+        at = null;
+        if (!held && still && GST.ok && this._config.path) {
           haptic(this);
           navigate(this._config.path);
         }
@@ -1876,7 +2118,7 @@ ${rows.map((r) => `<div class="rw"><span class="caps sub">${esc(r.title || (r.ki
   // --- hauflo-climate: the setpoint as the one big number ----------------------------------------
   class Climate extends EHCard {
     watched() {
-      return [this._config.entity, this._config.cool_setpoint, this._config.heat_setpoint, ...(this._config.extra || []), ...readingsOf(this._config).map((r) => r.entity), ...(this._config.zones || []).map((z) => z.entity)].filter(Boolean);
+      return [this._config.entity, this._config.cool_setpoint, this._config.heat_setpoint, ...(this._config.extra || []), ...readingsOf(this._config).map((r) => r.entity), ...(this._config.zones || []).map((z) => z.entity), ...actIds(this._config.activity), ...(this._config.zones || []).flatMap((z) => actIds(z.activity))].filter(Boolean);
     }
     set hass(hass) {
       this._hass = hass;
@@ -1892,8 +2134,47 @@ ${rows.map((r) => `<div class="rw"><span class="caps sub">${esc(r.title || (r.ki
       const pref = c.size_class ? viewPrefs(this)[c.size_class === "floor" ? "floor" : "climate"] : undefined;
       return pref ? pref === "compact" : !!c.compact;
     }
-    /** The setpoint ± and the scale move: the one chosen of two (heating / cooling), else the climate's own. */
+    /** The person is changing the setpoint: its number is the big one for ~3 s after the last touch, then the current
+     * temperature again (owner 28.10). */
+    touch(eid) {
+      this._touchAt = Date.now();
+      this._touchId = eid || this._config.entity;
+      clearTimeout(this._touchT);
+      this._touchT = setTimeout(() => {
+        this._touchAt = 0;
+        this._sig = "";
+        this._update();
+      }, 3100);
+    }
+    touching(eid) {
+      return !!this._touchAt && this._touchId === eid && Date.now() - this._touchAt < 3000;
+    }
+    /** A line's number: what is now, big; the setpoint small beside it («цель 24°»); while changed — the setpoint (owner 28.10). */
+    cct(cur, target, step, eid) {
+      const d = (v) => fmt(v, step < 1 && v % 1 ? 1 : 0);
+      if (target !== undefined && this.touching(eid)) return `<div class="cct thin"><span class="cv">${d(target)}</span><small>°</small><span class="tgc">цель</span></div>`;
+      return `<div class="cct thin">${cur === undefined ? "—" : `${fmt(cur, 1)}<small>°</small>`}<span class="tgc">${target === undefined ? "" : `цель ${d(target)}°`}</span></div>`;
+    }
+    /** A setpoint changed by ± / the scale: shown at once, sent once ~0.6 s after the last touch (tester 28.10: 5 quick taps
+     * were 5 bus commands, all from the same stale value). The pending value is what the next tap adds to. */
     setSetpoint(kind, v, eid) {
+      const key = `${eid || this._config.entity}|${kind || ""}`;
+      this._spq = this._spq || {};
+      this._spT = this._spT || {};
+      this._spq[key] = { v, at: Date.now() };
+      clearTimeout(this._spT[key]);
+      this._spT[key] = setTimeout(() => {
+        delete this._spT[key];
+        Promise.resolve(this.sendSetpoint(kind, v, eid)).catch(() => {});
+      }, 600);
+    }
+    /** The value being set (not sent / not heard back yet, ≤10 s), else what the thermostat says. */
+    pendSp(eid, kind, fallback) {
+      const q = this._spq?.[`${eid || this._config.entity}|${kind || ""}`];
+      return q && Date.now() - q.at < 10000 ? q.v : fallback;
+    }
+    /** The setpoint ± and the scale move: the one chosen of two (heating / cooling), else the climate's own. */
+    sendSetpoint(kind, v, eid) {
       const id = eid || this._config.entity;
       const p = eid ? null : setpointPair(this, st(this._hass, id));
       if (!p) return call(this._hass, "climate", "set_temperature", { entity_id: id, temperature: v });
@@ -1941,7 +2222,7 @@ ${rows.map((r) => `<div class="rw"><span class="caps sub">${esc(r.title || (r.ki
       return tchart(this._histId === id ? this._hist : undefined, { cur, sp: num(a.temperature) }, { H, label, tone });
     }
     css() {
-      return `${TCHART_CSS}.c{padding:20px 22px}.row{display:flex;justify-content:space-between;align-items:flex-end}
+      return `${TCHART_CSS}${VALVE_CSS}.ttgt{display:none}.edit .ttgt{display:block}.edit .tcur{display:none}.sub .act{margin-right:6px}.c{padding:20px 22px}.row{display:flex;justify-content:space-between;align-items:flex-end}
 .t{font-size:76px;line-height:.9}.t sup{font:300 20px Onest,sans-serif;vertical-align:top;position:relative;top:8px;color:var(--ink2);margin-left:2px}
 .sub{font:400 13px Onest,sans-serif;color:var(--ink2);margin-top:8px}.st{display:flex;flex-direction:column;gap:8px}
 .none{font:300 20px/1.2 Onest,sans-serif;color:var(--ink2);margin:6px 0}
@@ -1997,7 +2278,7 @@ ${rows.map((r) => `<div class="rw"><span class="caps sub">${esc(r.title || (r.ki
       const pair = setpointPair(this, s);
       const sel = this.selOf(pair, s);
       const act = pair ? activeMode(s) : null;
-      const target = pair ? pair[sel] : num(a.temperature);
+      const target = this.pendSp(null, sel, pair ? pair[sel] : num(a.temperature));
       const lo = undefined;
       const hi = undefined;
       const range = false;
@@ -2006,12 +2287,15 @@ ${rows.map((r) => `<div class="rw"><span class="caps sub">${esc(r.title || (r.ki
       const step = Math.max(num(a.target_temp_step) || 0.5, 0.5);
       const min = num(a.min_temp) ?? 5;
       const max = num(a.max_temp) ?? 35;
-      const action = a.hvac_action;
+      const dgf = (v) => (step < 1 && v !== undefined && v % 1 ? 1 : 0);
       const known = target !== undefined || cur !== undefined;
-      const mood = !known ? "" : pair && !act ? (sel === "cool" ? "cool" : "heat") : action === "cooling" || s.state === "cool" ? "cool" : action === "heating" || s.state === "heat" ? "heat" : "";
-      // «Нагревает» when it's warmer than the goal isn't believable (persona review 25.10): said only when it fits.
-      const fits = (act) => cur === undefined || target === undefined || (act === "heating" ? cur < target + 0.5 : act === "cooling" ? cur > target - 0.5 : true);
-      const doing = !known ? "" : action === "heating" && fits("heating") ? "Нагревает" : action === "cooling" && fits("cooling") ? "Охлаждает" : action === "drying" ? "Осушает" : action === "fan" ? "Вентилирует" : action === "idle" ? "Держит" : s.state === "off" ? "Выключен" : "";
+      // What it DOES now (owner 28.10, Д13/Д16): the glow and the chip follow the action, never the mode. «Греет» when it is
+      // warmer than the goal isn't believable (persona review 25.10) — hvac_action is trusted only when it fits (climateNow);
+      // a valve / heat command of the zone that is on is a fact.
+      const now = !known ? null : climateNow(this._hass, s, this._config.activity);
+      const mood = now === "heat" ? "heat" : now === "cool" ? "cool" : "";
+      const goalOf = now === "heat" && pair?.heat !== undefined ? pair.heat : now === "cool" && pair?.cool !== undefined ? pair.cool : target;
+      const doing = !known ? "" : now === "heat" ? (goalOf !== undefined && !(cur >= goalOf) ? `Греет до ${fmt(goalOf, dgf(goalOf))}°` : this._config.activity?.valves?.length ? "Греет · клапаны открыты" : "Греет") : now === "cool" ? `Охлаждает${goalOf !== undefined ? ` до ${fmt(goalOf, dgf(goalOf))}°` : ""}` : now === "dry" ? "Осушает" : now === "fan" ? "Вентилирует" : now === "idle" ? `Держит${goalOf !== undefined ? ` ${fmt(goalOf, dgf(goalOf))}°` : ""}` : now === "off" ? "Выкл" : "";
       const n = 31;
       const at = (v) => Math.round(((v - min) / (max - min || 1)) * (n - 1));
       const pos = target === undefined ? -1 : at(target);
@@ -2042,10 +2326,17 @@ ${rows.map((r) => `<div class="rw"><span class="caps sub">${esc(r.title || (r.ki
       const fl = season === "Зима" && Array.isArray(a.floor_targets) ? a.floor_targets.map(num).filter((v) => v !== undefined) : [];
       const floorNow = fl.length ? ` · пол ${Math.min(...fl) === Math.max(...fl) ? fmt(fl[0]) : `${fmt(Math.min(...fl))}–${fmt(Math.max(...fl))}`}°` : "";
       const chart = this.chart(this._config.entity, this._config.floor ? "Пол" : "В комнате", mood, 96);
-      return `<div class="glass c ${mood}"><div class="glow"></div><div style="position:relative">
-<div class="top"><span class="caps">${esc(this._config.label || "Климат")}${season ? ` · ${season}` : ""}</span>${doing ? `<span class="act"><i></i>${doing}</span>` : ""}</div>
-<div class="row"><div>${range ? `<div class="t thin"><span class="v">${fmt(lo)}–${fmt(hi)}</span><sup>°C</sup></div>` : target === undefined ? `<div class="t thin"><span class="v">—</span></div><div class="nos">${["unavailable", "unknown"].includes(s.state) ? "нет связи с термостатом" : "уставка ещё не пришла от системы"}</div>` : `<div class="t thin"><span class="v">${fmt(target, digits)}</span><sup>°C</sup><span class="goal">${pair ? (sel === "heat" ? "цель · обогрев" : "цель · охлаждение") : "цель"}</span></div>`}
-<div class="sub">${cur === undefined ? (this._config.floor ? "нет данных" : "нет данных из комнаты") : `${this._config.floor ? "Сейчас" : "В комнате"} ${fmt(cur, 1)}°`}${floorNow}${hum !== undefined ? ` · влажность ${fmt(hum)} %` : ""}</div>${readings.length ? this.readingsRow(readings) : ""}${pairRow}</div>
+      const edit = this.touching(this._config.entity);
+      const noTarget = target === undefined ? `<div class="nos">${["unavailable", "unknown"].includes(s.state) ? "нет связи с термостатом" : "уставка ещё не пришла от системы"}</div>` : "";
+      // The BIG number is what is now (room air; the floor's own for floor heating); the setpoint is small — and big for ~3 s
+      // while the person changes it (owner 28.10).
+      const bigCur = `<div class="t thin tcur"><span class="v">${cur === undefined ? "—" : fmt(cur, 1)}</span>${cur === undefined ? "" : "<sup>°C</sup>"}</div>`;
+      const bigTgt = target === undefined ? "" : `<div class="t thin ttgt"><span class="v">${fmt(target, digits)}</span><sup>°C</sup><span class="goal">${pair ? (sel === "heat" ? "цель · обогрев" : "цель · охлаждение") : "цель"}</span></div>`;
+      const small = [cur === undefined ? (this._config.floor ? "нет данных" : "нет данных из комнаты") : "", doing ? "" : target !== undefined ? `Цель ${fmt(target, digits)}°` : ""].filter(Boolean).join(" · ");
+      return `<div class="glass c ${mood}${edit ? " edit" : ""}"><div class="glow"></div><div style="position:relative">
+<div class="top"><span class="caps">${esc(this._config.label || "Климат")}${season ? ` · ${season}` : ""}</span></div>
+<div class="row"><div>${bigCur}${bigTgt}${noTarget}
+<div class="sub">${doing ? `<span class="act"><i></i>${doing}</span>` : ""}${small ? `${doing ? " " : ""}${small}` : ""}${floorNow}${hum !== undefined ? ` · влажность ${fmt(hum)} %` : ""}</div>${readings.length ? this.readingsRow(readings) : ""}${valveIcons(this._hass, this._config.activity?.valves)}${pairRow}</div>
 ${target === undefined ? "" : `<div class="st"><button data-d="${step}" aria-label="Теплее">+</button><button data-d="${-step}" aria-label="Холоднее">−</button></div>`}</div>
 ${chart}
 <div class="scale" data-min="${min}" data-max="${max}" data-step="${step}"${pair ? ` data-pair="1"` : ""}><div class="ticks">${ticks}</div><div class="ends"><span>${fmt(min)}°</span><span>проведите, чтобы изменить</span><span>${fmt(max)}°</span></div></div>
@@ -2058,19 +2349,20 @@ ${fans.length > 1 || swing ? `<div class="modes fan"><span class="fl"><ha-icon i
       const rows = this._config.zones.map((z, i) => {
         const s = st(this._hass, z.entity);
         const a = s?.attributes || {};
-        const target = num(a.temperature);
+        const target = this.pendSp(z.entity, null, num(a.temperature));
         const cur = num(a.current_temperature);
         const step = Math.max(num(a.target_temp_step) || 0.5, 0.5);
-        const heating = a.hvac_action === "heating" && (cur === undefined || target === undefined || cur < target + 0.5);
-        return `<div class="zr ${heating ? "heat" : ""}${i === zi ? " sel" : ""}"><div class="ccn" data-z="${i}"><span class="zn">${esc(z.name || nameOf(s, z.entity))}</span><span class="sub">${!s || ["unavailable", "unknown"].includes(s.state) ? "нет связи" : cur === undefined ? "нет данных" : `Сейчас ${fmt(cur, 1)}°`}${heating ? " · нагрев" : ""}${s && !["unavailable", "unknown"].includes(s.state) && target === undefined ? " · уставка ещё не пришла" : ""}</span></div>
-<div class="cct thin">${target === undefined ? "—" : `${fmt(target, step < 1 && target % 1 ? 1 : 0)}<small>°</small><span class="tgc">цель</span>`}</div>
+        const nowZ = climateNow(this._hass, s, z.activity);
+        const heating = nowZ === "heat";
+        return `<div class="zr ${heating ? "heat" : ""}${i === zi ? " sel" : ""}"><div class="ccn" data-z="${i}"><span class="zn">${esc(z.name || nameOf(s, z.entity))}</span><span class="sub">${!s || ["unavailable", "unknown"].includes(s.state) ? "нет связи" : cur === undefined ? "нет данных" : NOW_WORD[nowZ] || "пол сейчас"}${s &&!["unavailable", "unknown"].includes(s.state) && target === undefined ? " · уставка ещё не пришла" : ""}</span>${valveIcons(this._hass, z.activity?.valves)}</div>
+${this.cct(cur, target, step, z.entity)}
 <div class="st row2"><button data-e="${esc(z.entity)}" data-d="${-step}" aria-label="Холоднее"${target === undefined ? " disabled" : ""}>−</button><button data-e="${esc(z.entity)}" data-d="${step}" aria-label="Теплее"${target === undefined ? " disabled" : ""}>+</button></div></div>`;
       });
-      const any = this._config.zones.some((z) => st(this._hass, z.entity)?.attributes?.hvac_action === "heating");
+      const any = this._config.zones.some((z) => climateNow(this._hass, st(this._hass, z.entity), z.activity) === "heat");
       // One chart for the zone tapped (the first at the start): a chart per line would be a wall of lines.
       const z = this._config.zones[zi];
       const zs = st(this._hass, z.entity);
-      const chart = this.chart(z.entity, `Пол · ${z.name || nameOf(zs, z.entity)}`, zs?.attributes?.hvac_action === "heating" ? "heat" : "", 64);
+      const chart = this.chart(z.entity, `Пол · ${z.name || nameOf(zs, z.entity)}`, climateNow(this._hass, zs, z.activity) === "heat" ? "heat" : "", 64);
       return `<div class="glass cc zs ${any ? "heat" : ""}"><div class="glow"></div><div style="position:relative"><div class="caps">${esc(this._config.label || "Тёплый пол")}</div>${rows.join("")}${chart}</div></div>`;
     }
     /** The other readings the card shows (a floor's sensors), each with its value. */
@@ -2087,16 +2379,17 @@ ${fans.length > 1 || swing ? `<div class="modes fan"><span class="fl"><ha-icon i
       const a = s.attributes;
       const pair = setpointPair(this, s);
       const sel = this.selOf(pair, s);
-      const target = pair ? pair[sel] : num(a.temperature);
+      const target = this.pendSp(null, sel, pair ? pair[sel] : num(a.temperature));
       const cur = num(a.current_temperature);
       const step = Math.max(num(a.target_temp_step) || 0.5, 0.5);
-      const heating = a.hvac_action === "heating" && (num(a.current_temperature) === undefined || num(a.temperature) === undefined || num(a.current_temperature) < num(a.temperature) + 0.5);
+      const nowC = climateNow(this._hass, s, this._config.activity);
+      const heating = nowC === "heat";
       // A floor with several sensors: each one's reading, by its name (owner 2026-10-25, 27.10).
       const sensors = this.readings();
       // The line is always there (no data says so): a card that grows and shrinks with the state moves the page.
       return `<div class="glass cc ${heating ? "heat" : ""}"><div class="glow"></div><div class="ccrow">
-<div class="ccn" data-open="1" role="button" tabindex="0"><span class="caps">${esc(this._config.label || nameOf(s, this._config.entity))}</span><span class="sub">${cur === undefined ? "нет данных" : `Сейчас ${fmt(cur, 1)}°`}${heating ? " · нагрев" : ""}${target === undefined && !["unavailable", "unknown"].includes(s.state) ? " · уставка ещё не пришла" : ""}</span>${pair ? `<span class="pair2">${["heat", "cool"].filter((k) => pair[k] !== undefined).map((k) => `${k === "heat" ? "обогрев до" : "охлаждение от"} ${fmt(pair[k])}°`).join(" · ")}</span>` : ""}${sensors.length > 1 ? this.readingsRow(sensors) : ""}</div>
-<div class="cct thin">${target === undefined ? "—" : `${fmt(target, step < 1 && target % 1 ? 1 : 0)}<small>°</small><span class="tgc">цель</span>`}</div>
+<div class="ccn" data-open="1" role="button" tabindex="0"><span class="caps">${esc(this._config.label || nameOf(s, this._config.entity))}</span><span class="sub">${cur === undefined ? "нет данных" : NOW_WORD[nowC] || (this._config.floor ? "пол сейчас" : "сейчас")}${target === undefined && !["unavailable", "unknown"].includes(s.state) ? " · уставка ещё не пришла" : ""}</span>${valveIcons(this._hass, this._config.activity?.valves)}${pair ? `<span class="pair2">${["heat", "cool"].filter((k) => pair[k] !== undefined).map((k) => `${k === "heat" ? "обогрев до" : "охлаждение от"} ${fmt(pair[k])}°`).join(" · ")}</span>` : ""}${sensors.length > 1 ? this.readingsRow(sensors) : ""}</div>
+${this.cct(cur, target, step, this._config.entity)}
 <div class="st row2"><button data-d="${-step}" aria-label="Холоднее"${target === undefined ? " disabled" : ""}>−</button><button data-d="${step}" aria-label="Теплее"${target === undefined ? " disabled" : ""}>+</button></div></div>${this.chart(this._config.entity, this._config.floor ? "Пол" : "Температура", heating ? "heat" : "", 56)}</div>`;
     }
     bind() {
@@ -2110,18 +2403,21 @@ ${fans.length > 1 || swing ? `<div class="modes fan"><span class="fl"><ha-icon i
           const pair = b.dataset.e ? null : setpointPair(this, s);
           const sel = this.selOf(pair, s);
           // No setpoint heard yet: nothing is sent (the buttons are off, the card says why — review round 2).
-          const base = pair ? pair[sel] : num(a.temperature);
+          const base = this.pendSp(b.dataset.e, b.dataset.e ? null : sel, pair ? pair[sel] : num(a.temperature));
           if (base === undefined) return;
           const v = Math.min(num(a.max_temp) ?? 35, Math.max(num(a.min_temp) ?? 5, base + Number(b.dataset.d)));
           haptic(this);
+          this.touch(b.dataset.e);
           this.setSetpoint(sel, v, b.dataset.e);
+          this._sig = "";
+          this._update();
         }),
       );
       // A swipe along the scale sets the temperature (owner 2026-10-25: tapping ± only is tiresome).
       const sc = this.shadowRoot.querySelector(".scale");
       if (sc) {
         const box = this.shadowRoot.querySelector(".c");
-        const v = this.shadowRoot.querySelector(".t .v");
+        const v = this.shadowRoot.querySelector(".ttgt .v");
         const mn = Number(sc.dataset.min);
         const mx = Number(sc.dataset.max);
         const stp = Number(sc.dataset.step);
@@ -2153,12 +2449,13 @@ ${fans.length > 1 || swing ? `<div class="modes fan"><span class="fl"><ha-icon i
           if (x0 === null) return;
           if (!sliding) {
             const dx = Math.abs(ev.clientX - x0);
-            if (dx < 8 || dx < Math.abs(ev.clientY - y0) * 1.5) return;
+            if (dx <= 10 || dx < Math.abs(ev.clientY - y0) * 1.5) return;
             sliding = true;
             this._busy = true;
             sc.setPointerCapture(ev.pointerId);
           }
-          box.classList.add("dragging");
+          box.classList.add("dragging", "edit");
+          this.touch();
           const nv = valAt(ev);
           if (nv !== val) {
             val = nv;
@@ -2230,7 +2527,8 @@ ${fans.length > 1 || swing ? `<div class="modes fan"><span class="fl"><ha-icon i
     }
     css() {
       return `.wrap{display:grid;grid-template-columns:repeat(var(--cols),1fr);gap:12px}
-.v{height:216px;padding:14px;display:flex;flex-direction:column;justify-content:space-between;touch-action:none;user-select:none;-webkit-user-select:none;cursor:pointer}
+.v{height:216px;padding:14px;display:flex;flex-direction:column;justify-content:space-between;touch-action:pan-y;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;cursor:pointer}
+.v.grab{transform:scale(1.03);box-shadow:0 0 0 2px color-mix(in srgb,var(--ink) 60%,transparent),0 14px 40px rgba(0,0,0,.28)}
 .v>*{position:relative}.lvl{position:absolute !important;left:0;right:0;bottom:0;transition:height .25s}
 .light .lvl{background:linear-gradient(0deg,color-mix(in srgb,var(--amber) 85%,transparent),color-mix(in srgb,var(--amber) 50%,transparent));box-shadow:0 -10px 40px var(--amberGlow)}
 .cover .lvl{background:linear-gradient(0deg,color-mix(in srgb,var(--ice) 70%,transparent),color-mix(in srgb,var(--ice) 35%,transparent));box-shadow:0 -10px 40px var(--iceGlow)}
@@ -2296,31 +2594,105 @@ ${m.dom === "cover" && !m.dimmable ? `<div class="ud3">${coverButtons(coverDir({
             sendAck(this, b, "cover", b.dataset.c, { entity_id: id });
           }),
         );
+        // A vertical drag on a phone is the page scroll (owner 28.10): touch / pen sets a value only after a press-and-hold
+        // (350 ms, finger still, haptic + «grab»), then the drag moves it relative to where the hold began; a tap toggles /
+        // starts a blind. A mouse keeps the direct drag. Cancelled / scrolled gestures send nothing.
+        let touch = false;
+        let grabbed = false;
+        let timer = 0;
+        let x0 = 0;
+        let pid = 0;
+        let base = 0;
+        const model = () => this.model(this.items().find((x) => x.entity === id) || { entity: id });
+        const settle = () => {
+          this._busy = true;
+          setTimeout(() => {
+            this._busy = false;
+            this._sig = "";
+            this._update();
+          }, 400);
+        };
+        const show = (v) => {
+          pct = v;
+          lvl.style.height = `${pct}%`;
+          p.textContent = String(pct);
+        };
         el.addEventListener("pointerdown", (ev) => {
           if (ev.target.closest("button")) return;
+          if (ev.pointerType === "mouse" && ev.button !== 0) return;
           start = ev.clientY;
+          x0 = ev.clientX;
+          pid = ev.pointerId;
           moved = false;
-          el.setPointerCapture(ev.pointerId);
+          grabbed = false;
+          touch = ev.pointerType !== "mouse";
+          clearTimeout(timer);
+          if (!touch) return el.setPointerCapture(pid);
+          timer = setTimeout(() => {
+            const m = model();
+            if (start === null || !m.dimmable) return;
+            grabbed = true;
+            this._busy = true;
+            base = m.pct;
+            pct = m.pct;
+            haptic(this, "medium");
+            el.classList.add("grab");
+            try {
+              el.setPointerCapture(pid);
+            } catch {}
+          }, 350);
         });
+        // The page may not scroll once the tile is grabbed (touch-action was decided at touchstart).
+        el.addEventListener("touchmove", (ev) => grabbed && ev.cancelable && ev.preventDefault(), { passive: false });
         el.addEventListener("pointermove", (ev) => {
           if (start === null) return;
-          const m = this.model(this.items().find((x) => x.entity === id) || { entity: id });
+          if (touch) {
+            if (!grabbed) {
+              if (Math.hypot(ev.clientX - x0, ev.clientY - start) > 8) {
+                clearTimeout(timer);
+                start = null; // a scroll: this gesture does nothing
+              }
+              return;
+            }
+            moved = true;
+            el.classList.add("dragging");
+            show(Math.round(Math.min(100, Math.max(0, base + ((start - ev.clientY) / el.getBoundingClientRect().height) * 100))));
+            el.classList.toggle("off", pct === 0 && model().dom === "light");
+            return;
+          }
+          const m = model();
           if (!m.dimmable) return;
           if (!moved && Math.abs(ev.clientY - start) < 6) return;
           moved = true;
           this._busy = true;
           el.classList.add("dragging");
-          pct = at(ev);
-          lvl.style.height = `${pct}%`;
-          p.textContent = String(pct);
+          show(at(ev));
           el.classList.toggle("off", pct === 0 && m.dom === "light");
         });
-        const end = () => {
-          if (start === null) return;
+        const end = (ev) => {
+          clearTimeout(timer);
+          el.classList.remove("dragging", "grab");
+          if (start === null) {
+            if (grabbed) settle();
+            grabbed = false;
+            return;
+          }
           start = null;
-          el.classList.remove("dragging");
-          const m = this.model(this.items().find((x) => x.entity === id) || { entity: id });
+          const up = ev.type === "pointerup";
+          const m = model();
+          if (!up) {
+            // iOS took the gesture for a scroll: nothing is sent
+            if (grabbed || moved) settle();
+            grabbed = false;
+            return;
+          }
+          if (touch && !grabbed && !GST.ok) return;
           haptic(this);
+          if (touch && grabbed && !moved) {
+            grabbed = false;
+            return settle();
+          }
+          grabbed = false;
           if (moved) {
             if (m.dom === "light") call(this._hass, "light", pct ? "turn_on" : "turn_off", pct ? { entity_id: id, brightness_pct: Math.max(1, pct) } : { entity_id: id });
             else if (m.dom === "cover") call(this._hass, "cover", "set_cover_position", { entity_id: id, position: pct });
@@ -2339,6 +2711,7 @@ ${m.dom === "cover" && !m.dimmable ? `<div class="ud3">${coverButtons(coverDir({
         el.addEventListener("pointercancel", end);
         el.addEventListener("contextmenu", (ev) => {
           ev.preventDefault();
+          if (touch && (grabbed || start !== null)) return; // a finger's long press is the grab, not the detail
           moreInfo(this, id);
         });
       });
@@ -2362,7 +2735,7 @@ ${m.dom === "cover" && !m.dimmable ? `<div class="ud3">${coverButtons(coverDir({
 .call ha-icon{--mdc-icon-size:20px;color:var(--alert)}.call .cl{flex:1;min-width:0;display:flex;flex-direction:column;padding:8px 0}.call .cl span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.call b{font:400 13px Onest,sans-serif;color:var(--ink2);white-space:nowrap}.call:active{transform:scale(.98)}
 h2{font:300 30px/1.1 Onest,sans-serif;letter-spacing:-.03em;margin:14px 0 0}
 .w{font:400 15px/1.5 Onest,sans-serif;color:var(--ink2);margin-top:12px}.todo{font:500 13px/1.45 Onest,sans-serif;color:var(--ink);margin-top:8px;padding:10px 12px;border-radius:14px;background:var(--track)}
-.sl{margin-top:22px;height:68px;border-radius:34px;position:relative;display:flex;align-items:center;justify-content:center;font:500 15px Onest,sans-serif;color:var(--ink2);box-shadow:var(--eh-edge,inset 0 0 0 1px var(--hair));background:var(--eh-glass,transparent);touch-action:none;user-select:none;-webkit-user-select:none;overflow:hidden}
+.sl{margin-top:22px;height:68px;border-radius:34px;position:relative;display:flex;align-items:center;justify-content:center;font:500 15px Onest,sans-serif;color:var(--ink2);box-shadow:var(--eh-edge,inset 0 0 0 1px var(--hair));background:var(--eh-glass,transparent);touch-action:pan-y;user-select:none;-webkit-user-select:none;overflow:hidden}
 .sl span{padding-left:56px}.k{position:absolute;left:5px;top:5px;width:58px;height:58px;border-radius:29px;background:var(--alert);display:grid;place-items:center;color:#fff;box-shadow:0 0 30px var(--alertGlow);cursor:grab}
 .k ha-icon{--mdc-icon-size:24px}.done{color:var(--ink)}
 .ok{display:flex;align-items:center;gap:10px;font:500 15px Onest,sans-serif;color:var(--ink2)}
@@ -2446,44 +2819,38 @@ ${act ? `<div class="sl"><div class="k"><ha-icon icon="${esc(c.action.icon || "h
       const sl = this.shadowRoot.querySelector(".sl");
       if (!sl) return;
       const k = sl.querySelector(".k");
-      let x0 = null;
+      let x0 = 0;
       let dx = 0;
-      k.addEventListener("pointerdown", (ev) => {
-        x0 = ev.clientX;
-        this._busy = true;
-        k.setPointerCapture(ev.pointerId);
+      const max = () => sl.clientWidth - k.clientWidth - 10;
+      // A sideways swipe only: a page scroll that starts on the handle scrolls, a tap on it does nothing.
+      hdrag(k, {
+        down: (ev) => void (x0 = ev.clientX),
+        start: () => (this._busy = true),
+        move: (ev) => {
+          dx = Math.min(max(), Math.max(0, ev.clientX - x0));
+          k.style.transform = `translateX(${dx}px)`;
+        },
+        end: (ev, ok) => {
+          const a = this._config.action;
+          if (ok && dx >= max() * 0.85 && a) {
+            haptic(this, "success");
+            // Only shutting something off — never a service of the config's choosing (security expert 25.10).
+            if (!["switch.turn_off", "valve.close_valve"].includes(a.service)) return void (this._busy = false);
+            const [domain, service] = a.service.split(".");
+            call(this._hass, domain, service, { entity_id: a.entity_id });
+            sl.querySelector("span").textContent = "Выполнено";
+            sl.querySelector("span").classList.add("done");
+          } else {
+            k.style.transition = "transform .25s";
+            k.style.transform = "translateX(0)";
+            setTimeout(() => (k.style.transition = ""), 260);
+          }
+          dx = 0;
+          setTimeout(() => {
+            this._busy = false;
+          }, 300);
+        },
       });
-      k.addEventListener("pointermove", (ev) => {
-        if (x0 === null) return;
-        const max = sl.clientWidth - k.clientWidth - 10;
-        dx = Math.min(max, Math.max(0, ev.clientX - x0));
-        k.style.transform = `translateX(${dx}px)`;
-      });
-      const end = () => {
-        if (x0 === null) return;
-        x0 = null;
-        const max = sl.clientWidth - k.clientWidth - 10;
-        const a = this._config.action;
-        if (dx >= max * 0.85 && a) {
-          haptic(this, "success");
-          // Only shutting something off — never a service of the config's choosing (security expert 25.10).
-          if (!["switch.turn_off", "valve.close_valve"].includes(a.service)) return;
-          const [domain, service] = a.service.split(".");
-          call(this._hass, domain, service, { entity_id: a.entity_id });
-          sl.querySelector("span").textContent = "Выполнено";
-          sl.querySelector("span").classList.add("done");
-        } else {
-          k.style.transition = "transform .25s";
-          k.style.transform = "translateX(0)";
-          setTimeout(() => (k.style.transition = ""), 260);
-        }
-        dx = 0;
-        setTimeout(() => {
-          this._busy = false;
-        }, 300);
-      };
-      k.addEventListener("pointerup", end);
-      k.addEventListener("pointercancel", end);
     }
     getGridOptions() {
       return { columns: 12, rows: "auto" };
@@ -2579,7 +2946,7 @@ ${act ? `<div class="sl"><div class="k"><ha-icon icon="${esc(c.action.icon || "h
 .mst button{height:44px;min-width:44px;padding:0 16px;border-radius:22px;font:500 13px Onest,sans-serif;color:var(--ink);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--ink) 22%,transparent)}
 .mst button.on{background:color-mix(in srgb,var(--amber) 16%,transparent);color:var(--amber);box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--amber) 70%,transparent)}
 .mst button:active,.pill:active{transform:scale(.97)}
-.bar{margin-top:14px;height:40px;border-radius:14px;background:var(--track);position:relative;overflow:hidden;touch-action:none;cursor:ew-resize}
+.bar{margin-top:14px;height:40px;border-radius:14px;background:var(--track);position:relative;overflow:hidden;touch-action:pan-y;cursor:ew-resize}
 .bar i{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(90deg,color-mix(in srgb,var(--amber) 55%,transparent),color-mix(in srgb,var(--amber) 85%,transparent));box-shadow:10px 0 30px var(--amberGlow)}
 .cover .bar i{background:linear-gradient(90deg,color-mix(in srgb,var(--ice) 35%,transparent),color-mix(in srgb,var(--ice) 65%,transparent));box-shadow:10px 0 30px var(--iceGlow)}
 .mst button.ico{width:44px;height:44px;padding:0;border-radius:22px;display:grid;place-items:center;color:var(--ink)}.mst button.ico ha-icon{--mdc-icon-size:21px}.cover .mst{height:auto}
@@ -2783,48 +3150,47 @@ ${hidden ? `<button class="more" data-more="1">${coversFolded ? `По одной
           sendAck(this, b, "cover", b.dataset.c, { entity_id: b.closest(".pill").dataset.e });
         }),
       );
-      // Sideways drag on a pill (or the master bar) sets the level; a tap toggles.
+      // Sideways swipe on a pill (or the master bar) sets the level; a clean tap toggles; a page scroll does neither.
       const drag = (el, apply, tap) => {
-        let x0 = null;
-        let moved = false;
         let pct = 0;
         const f = el.querySelector(".f, i");
         const lv = el.querySelector(".lv, span");
-        el.addEventListener("pointerdown", (ev) => {
-          if (ev.target.closest("button")) return;
-          x0 = ev.clientX;
-          moved = false;
-          this._busy = true;
-        });
-        el.addEventListener("pointermove", (ev) => {
-          if (x0 === null) return;
-          if (!moved && Math.abs(ev.clientX - x0) < 8) return;
-          if (!moved) {
-            moved = true;
-            this._busy = true;
-            el.setPointerCapture(ev.pointerId);
-            el.classList.add("dragging");
-          }
-          const r = el.getBoundingClientRect();
-          pct = Math.round(Math.min(100, Math.max(0, ((ev.clientX - r.left) / r.width) * 100)));
-          f.style.width = `${pct}%`;
-          if (lv) lv.textContent = tr(el.dataset.bar ? `${isCover ? "Все" : "Яркость"} · ${pct} %` : `${pct} %`);
-        });
-        const end = () => {
-          if (x0 === null) return;
-          x0 = null;
-          el.classList.remove("dragging");
-          haptic(this);
-          if (moved) apply(pct);
-          else tap && tap();
+        const settle = () =>
           setTimeout(() => {
             this._busy = false;
             this._sig = "";
             this._update();
           }, 450);
-        };
-        el.addEventListener("pointerup", end);
-        el.addEventListener("pointercancel", end);
+        hdrag(el, {
+          down: (ev) => {
+            if (ev.target.closest("button")) return false;
+          },
+          start: () => {
+            this._busy = true;
+            el.classList.add("dragging");
+          },
+          move: (ev) => {
+            const r = el.getBoundingClientRect();
+            pct = Math.round(Math.min(100, Math.max(0, ((ev.clientX - r.left) / r.width) * 100)));
+            f.style.width = `${pct}%`;
+            if (lv) lv.textContent = tr(el.dataset.bar ? `${isCover ? "Все" : "Яркость"} · ${pct} %` : `${pct} %`);
+          },
+          end: (ev, ok) => {
+            el.classList.remove("dragging");
+            if (ok) {
+              haptic(this);
+              apply(pct);
+            }
+            settle();
+          },
+          tap: (ev, clean) => {
+            if (!clean || !tap) return;
+            this._busy = true;
+            haptic(this);
+            tap();
+            settle();
+          },
+        });
       };
       root.querySelectorAll(".pill").forEach((el) => {
         const id = el.dataset.e;
@@ -3022,7 +3388,7 @@ ${v.pm25 === undefined ? "" : `<div class="sc">${[0, 1, 2, 3].map((k) => `<b cla
 .ctl{display:flex;align-items:center;justify-content:center;gap:14px;margin-top:14px;position:relative}
 .ctl button{width:46px;height:46px;border-radius:23px;display:grid;place-items:center;color:var(--ink)}.ctl button ha-icon{--mdc-icon-size:26px}
 .ctl button.pp{width:58px;height:58px;border-radius:29px;background:var(--ink);color:var(--eh-glass-solid,#fff)}.ctl button.pp ha-icon{--mdc-icon-size:30px;color:var(--primary-background-color,#fff)}
-.vol{margin-top:12px;height:44px;border-radius:12px;background:var(--track);position:relative;overflow:hidden;touch-action:none;cursor:ew-resize}
+.vol{margin-top:12px;height:44px;border-radius:12px;background:var(--track);position:relative;overflow:hidden;touch-action:pan-y;cursor:ew-resize}
 .vol i{position:absolute;left:0;top:0;bottom:0;background:color-mix(in srgb,var(--ink) 18%,transparent)}.vol span{position:absolute;left:14px;top:13px;font:500 12px Onest,sans-serif;display:flex;gap:6px;align-items:center}.vol ha-icon{--mdc-icon-size:15px}
 .off{display:flex;align-items:center;justify-content:space-between;position:relative}.pw{width:46px;height:46px;border-radius:23px;display:grid;place-items:center;box-shadow:inset 0 0 0 1px var(--hair)}`;
     }
@@ -3052,7 +3418,6 @@ ${vol === undefined ? "" : `<div class="vol"><i style="width:${Math.round(vol * 
       );
       const vol = this.shadowRoot.querySelector(".vol");
       if (!vol) return;
-      let on = false;
       const set = (ev, send) => {
         const r = vol.getBoundingClientRect();
         const v = Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width));
@@ -3060,25 +3425,19 @@ ${vol === undefined ? "" : `<div class="vol"><i style="width:${Math.round(vol * 
         vol.querySelector("span").lastChild.textContent = `${Math.round(v * 100)} %`;
         if (send) call(this._hass, "media_player", "volume_set", { entity_id: id, volume_level: Math.round(v * 100) / 100 });
       };
-      vol.addEventListener("pointerdown", (ev) => {
-        on = true;
-        this._busy = true;
-        vol.setPointerCapture(ev.pointerId);
-        set(ev);
+      // A sideways swipe sets the volume; a tap or a vertical swipe (the page scrolls) does not.
+      hdrag(vol, {
+        start: () => (this._busy = true),
+        move: (ev) => set(ev),
+        end: (ev, ok) => {
+          if (ok) set(ev, true);
+          setTimeout(() => {
+            this._busy = false;
+            this._sig = "";
+            this._update();
+          }, 400);
+        },
       });
-      vol.addEventListener("pointermove", (ev) => on && set(ev));
-      const end = (ev) => {
-        if (!on) return;
-        on = false;
-        set(ev, true);
-        setTimeout(() => {
-          this._busy = false;
-          this._sig = "";
-          this._update();
-        }, 400);
-      };
-      vol.addEventListener("pointerup", end);
-      vol.addEventListener("pointercancel", end);
     }
     getGridOptions() {
       return { columns: 12, rows: "auto" };
@@ -3217,7 +3576,12 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
       if (d === "binary_sensor" && dc === "battery") return s.state === "on" ? ["батарея садится", "warn"] : ["батарея в норме", "ok"];
       if (d === "sensor" && dc === "battery" && num(s.state) !== undefined) return [`батарея ${fmt(num(s.state))} %`, num(s.state) < 20 ? "warn" : "ok"];
       if (["sensor", "number", "input_number"].includes(d)) return [`${fmt(num(s.state), num(s.state) % 1 ? 1 : 0)} ${unitOf(s)}`.trim(), "val"];
-      if (d === "climate") return [s.state === "off" ? "выключен" : `${HVAC[s.state] || s.state}${num(s.attributes.current_temperature) !== undefined ? ` · ${fmt(s.attributes.current_temperature, 1)}°` : ""}`, s.state === "off" ? "stop" : "run"];
+      if (d === "climate") {
+        // What it does («греет · 23,4°»), not its mode (owner 28.10, Д16); the mode only when nothing says what it does.
+        const k = climateNow(null, s);
+        const cur = num(s.attributes.current_temperature) !== undefined ? ` · ${fmt(s.attributes.current_temperature, 1)}°` : "";
+        return [k === "off" ? "выключен" : k === "mode" ? `${modeSmall(s.state) || HVAC[s.state] || s.state}${cur}` : `${NOW_WORD[k] || s.state}${cur}`, k === "off" ? "stop" : acting(k) ? "run" : "val"];
+      }
       if (d === "water_heater") return [`${s.state === "off" ? "выключен" : "работает"}${num(s.attributes.current_temperature) !== undefined ? ` · ${fmt(s.attributes.current_temperature)}°` : ""}`, s.state === "off" ? "stop" : "run"];
       if (d === "valve") return [s.state === "open" ? "открыт" : s.state === "closed" ? "закрыт" : s.state, s.state === "open" ? "run" : "stop"];
       return isOn(s) ? ["работает", "run"] : ["остановлен", "stop"];
@@ -3422,19 +3786,19 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
       const target = num(a.temperature);
       const cur = num(a.current_temperature);
       const step = Math.max(num(a.target_temp_step) || (wh ? 1 : 0.5), 0.5);
-      const action = a.hvac_action || (wh ? undefined : undefined);
-      const heating = action === "heating" || (wh && !off && cur !== undefined && target !== undefined && cur < target - 1);
-      const mode = nd(s) ? (s.state === "unavailable" ? "нет связи" : "нет данных") : off ? "выключен" : wh ? (WH_MODE[a.operation_mode] ?? a.operation_mode ?? s.state) : HVAC[s.state] || s.state;
+      // What it DOES (greater than the mode, owner 28.10): hvac_action when it fits the temperatures; the mode small.
+      const nowC = wh ? null : climateNow(this._hass, s, null);
+      const action = wh ? a.hvac_action : { heat: "heating", cool: "cooling", idle: "idle", dry: "drying", fan: "fan" }[nowC];
+      const heating = nowC === "heat" || (wh && !off && cur !== undefined && target !== undefined && cur < target - 1);
+      const mode = nd(s) ? (s.state === "unavailable" ? "нет связи" : "нет данных") : off ? "выключен" : wh ? (WH_MODE[a.operation_mode] ?? a.operation_mode ?? s.state) : modeSmall(s.state) || HVAC[s.state] || s.state;
       // Each part its own text (each is put into English on its own).
-      const sub = [cur === undefined ? "" : `Сейчас ${fmt(cur, 1)}°`, action && !off ? { heating: "греет", cooling: "охлаждает", idle: "ждёт", drying: "осушает", fan: "вентилирует", off: "" }[action] ?? "" : "", mode]
+      const sub = [action && !off ? { heating: "греет", cooling: "охлаждает", idle: "ждёт", drying: "осушает", fan: "вентилирует", off: "" }[action] ?? "" : "", mode]
         .filter(Boolean)
         .map((x) => `<span>${esc(x)}</span>`)
         .join(" · ");
-      const big = range
-        ? `${fmt(num(a.target_temp_low))}–${fmt(num(a.target_temp_high))}<small>°</small>`
-        : target === undefined
-          ? "—"
-          : `${fmt(target, step < 1 && target % 1 ? 1 : 0)}<small>°</small>`;
+      // The big number is what is now; the setpoint is the small «цель 21°» (owner 28.10).
+      const tgtTxt = range ? `${fmt(num(a.target_temp_low))}–${fmt(num(a.target_temp_high))}°` : target === undefined ? "" : `${fmt(target, step < 1 && target % 1 ? 1 : 0)}°`;
+      const big = cur === undefined ? "—" : `${fmt(cur, 1)}<small>°</small>`;
       const can = !nd(s) && !range && target !== undefined;
       const modes = wh ? a.operation_list || [] : a.hvac_modes || [];
       const modeKey = wh ? a.operation_mode : s.state;
@@ -3443,7 +3807,7 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
           ? `<div class="modes">${modes.slice(0, 6).map((m) => `<button class="${m === modeKey ? "on" : ""}" data-mode="${esc(m)}" data-e="${esc(id)}">${esc(wh ? (WH_MODE[m] ?? m) : (HVAC[m] ?? m))}</button>`).join("")}</div>`
           : "";
       return `<div class="cl${heating ? " heat" : ""}${off ? " off" : ""}"><div class="ccn" data-info="${esc(id)}" role="button" tabindex="0"><span class="zn">${esc(this.label(id))}</span><span class="cs">${sub}</span></div>
-<div class="cct thin">${big}<span class="tgc">цель</span></div>
+<div class="cct thin">${big}<span class="tgc">${tgtTxt ? `цель ${tgtTxt}` : ""}</span></div>
 <div class="pm"><button data-e="${esc(id)}" data-d="${-step}" aria-label="Холоднее"${can ? "" : " disabled"}>−</button><button data-e="${esc(id)}" data-d="${step}" aria-label="Теплее"${can ? "" : " disabled"}>+</button></div></div>${chips}`;
     }
     /** A reading: its name and its value, large (a temperature, a pressure, a modulation…). */
@@ -3765,7 +4129,7 @@ ${locks.length || opens.length ? `<div class="lst">${locks
       this._failed = null;
     }
     watched() {
-      return (this._config.entities || []).map((e) => (typeof e === "string" ? e : e.entity));
+      return (this._config.entities || []).flatMap((e) => (typeof e === "string" ? [e] : [e.entity, ...actIds(e.activity)]));
     }
     disconnectedCallback() {
       this.closeEdit();
@@ -3775,8 +4139,8 @@ ${locks.length || opens.length ? `<div class="lst">${locks
 .off{min-height:40px;padding:0 14px;border-radius:20px;font:500 13px Onest,sans-serif;color:var(--ink2);box-shadow:inset 0 0 0 1px var(--hair)}
 .rows{margin-top:10px;display:flex;flex-direction:column}.r{display:flex;align-items:center;gap:12px;min-height:52px;border-top:1px solid var(--hair);cursor:pointer}.r:first-child,.fl+.r{border-top:0}
 .r ha-icon{--mdc-icon-size:20px;color:var(--ink3)}.r.on ha-icon{color:var(--ice)}.r.on.warm ha-icon{color:var(--amber)}.r .nm{flex:1;min-width:0;font:500 14px Onest,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.r .w{font:400 13px Onest,sans-serif;color:var(--ink2);white-space:nowrap}.r .t{font:300 22px Onest,sans-serif;min-width:52px;text-align:right}.r.un{opacity:.5}
-.r button.t{min-height:44px;padding:0 6px;margin-right:-6px;border-radius:14px;color:var(--ink);font-variant-numeric:tabular-nums}.r button.t.hint::after{content:"±";font:500 11px Onest,sans-serif;color:var(--ink3);margin-left:3px;vertical-align:super}.r button.t:hover{background:var(--track)}.r .t.pend{color:var(--ice)}.fh .r .t.pend{color:var(--amber)}
+.r .w{font:400 13px Onest,sans-serif;color:var(--ink2);white-space:nowrap}.r .t{display:flex;flex-direction:column;align-items:flex-end;justify-content:center;font:300 22px Onest,sans-serif;min-width:52px;text-align:right}.r .t b{font:300 22px/1.05 Onest,sans-serif}.r .t small{font:400 12px/1.2 Onest,sans-serif;color:var(--ink2);white-space:nowrap}.r.un{opacity:.5}.r .nm small .hot{color:var(--amber)}.r.chill .nm small .hot{color:var(--ice)}
+.r button.t{min-height:44px;padding:0 6px;margin-right:-6px;border-radius:14px;color:var(--ink);font-variant-numeric:tabular-nums}.r button.t{position:relative}.r button.t.hint::after{content:"±";position:absolute;top:3px;right:-1px;font:500 11px Onest,sans-serif;color:var(--ink3)}.r button.t:hover{background:var(--track)}.r .t.pend{color:var(--ice)}.fh .r .t.pend{color:var(--amber)}
 .r .ed{display:flex;align-items:center;gap:2px;margin-right:-6px}.r .ed button{width:44px;height:44px;border-radius:22px;background:var(--track);color:var(--ink);font:400 22px/1 Onest,sans-serif;display:grid;place-items:center}
 .r .ed b{font:300 22px Onest,sans-serif;min-width:58px;text-align:center;color:var(--ink)}.fh .r .ed b,.r.warm .ed b{color:var(--amber)}.r.chill .ed b{color:var(--ice)}.r .ed button:disabled{opacity:.35;cursor:default}
 .r .nm small{display:block;font:400 12px Onest,sans-serif;color:var(--ink2);margin-top:1px;overflow:hidden;text-overflow:ellipsis}.r .nm small.err{color:var(--alert)}.fh .r.on ha-icon{color:var(--amber)}.fl{font:500 11px/1.2 Onest,sans-serif;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);padding:14px 0 6px;border-top:1px solid var(--hair)}.fl:first-child{border-top:0;padding-top:4px}`;
@@ -3811,14 +4175,12 @@ ${locks.length || opens.length ? `<div class="lst">${locks
       // «нет связи с термостатом» in the rooms).
       const known = (s) => !["unavailable", "unknown"].includes(s.state) && (num(s.attributes.temperature) !== undefined || num(s.attributes.target_temp_low) !== undefined);
       // A floor heats when its actuator says so — and it's colder than the goal (as the climate card says it).
-      const heats = (s) => {
-        const a = s.attributes;
-        const cur = num(a.current_temperature);
-        const t = num(a.temperature);
-        return known(s) && s.state !== "off" && a.hvac_action === "heating" && (cur === undefined || t === undefined || cur < t + 0.5);
-      };
-      const on = items.filter((e) => known(e.s) && e.s.state !== "off" && (!fh || heats(e.s)));
-      const offable = fh ? [] : on.filter((e) => canTurnOff(e.s));
+      // What each thermostat DOES, not its mode (owner 28.10, Д13/Д16): the zone's valves / heat command (card config
+      // `activity`) or HA's hvac_action; the mode only when nothing says what it does.
+      const nowOf = (e) => (known(e.s) ? climateNow(this._hass, e.s, e.activity) : null);
+      const heats = (e) => nowOf(e) === "heat";
+      const onMode = items.filter((e) => known(e.s) && e.s.state !== "off");
+      const offable = fh ? [] : onMode.filter((e) => canTurnOff(e.s));
       // Sub-headers by the building's floor when the rows say it and there's more than one.
       const floors = [...new Set(items.map((e) => e.floor).filter(Boolean))];
       // A value sent is shown at once and until the thermostat says it (or 10 s — then its own again).
@@ -3844,31 +4206,49 @@ ${locks.length || opens.length ? `<div class="lst">${locks
         const target = pend ? pend.v : sp?.v;
         // The mode on every row — «Нагрев» next to «Нагревает» in one list read as two different things (integrator run 17).
         // «держит · 25,0°» read as nothing (final review 28.10): «поддерживает 25,0°».
-        const word = !known(e.s) ? (["unavailable", "unknown"].includes(e.s.state) ? "нет связи" : "нет уставки") : e.s.state === "off" ? "Выкл" : fh ? (heats(e.s) ? "греет" : "поддерживает") : HVAC[e.s.state] || e.s.state;
+        // Now: what it DOES («греет / охлаждает / ждёт»), the mode is small print («режим: нагрев») — not the other way round.
+        const nw = nowOf(e);
+        const word = !known(e.s) ? (["unavailable", "unknown"].includes(e.s.state) ? "нет связи" : "нет уставки") : NOW_WORD[nw] || "";
+        const modeTxt = !fh && known(e.s) ? modeSmall(e.s.state) : "";
         const head = floors.length > 1 && e.floor && e.floor !== last ? `<div class="fl">${esc(e.floor)}</div>` : "";
         last = e.floor;
-        const lit = fh ? heats(e.s) : known(e.s) && e.s.state !== "off";
+        const lit = acting(nw);
         const editing = this._ed?.id === e.entity;
-        const state = `${word}${cur !== undefined ? `${word === "поддерживает" ? " " : " · "}${fmt(cur, 1)}°` : ""}`;
-        // A heating row is warm — no blue AC icon over «Нагрев» (final review 28.10).
-        const warm = !fh && known(e.s) && e.s.state !== "off" && activeMode(e.s) === "heat";
-        const chill = !fh && known(e.s) && e.s.state !== "off" && activeMode(e.s) === "cool";
+        const state = [word, modeTxt].filter(Boolean).join(" · ");
+        // Warm / lit only while it acts (owner 28.10, Д16): a thermostat in «нагрев» that waits is grey.
+        const warm = nw === "heat";
+        const chill = nw === "cool";
         const failed = this._failed?.id === e.entity && now - this._failed.at < 6000;
         const name = e.zone && String(e.name || "").endsWith(` · ${e.zone}`) ? e.name.slice(0, -e.zone.length - 3) : e.name || nameOf(e.s, e.entity);
         // Under the name: the zone; while the stepper is open — the state (no room for both on a phone); a failed send.
-        const sub = failed ? `<small class="err">не отправлено — нет связи с домом</small>` : editing ? `<small>${esc(state)}</small>` : e.zone && String(e.name || "").endsWith(` · ${e.zone}`) ? `<small>${esc(e.zone)}</small>` : "";
+        const zoneTxt = e.zone && String(e.name || "").endsWith(` · ${e.zone}`) ? e.zone : "";
+        // Under the name: the zone, what it does (lit while it acts), the mode small; while the stepper is open — «цель» first.
+        const curTxt = cur === undefined ? "—" : `${fmt(cur, 1)}°`;
+        const parts = [editing ? '<span>цель</span>' : "", zoneTxt && !editing ? `<span>${esc(zoneTxt)}</span>` : "", fh && known(e.s) && cur !== undefined ? "<span>пол</span>" : "", word ? `<span class="${lit ? "hot" : ""}">${esc(word)}</span>` : "", modeTxt ? `<span>${esc(modeTxt)}</span>` : ""].filter(Boolean);
+        const sub = failed ? `<small class="err">не отправлено — нет связи с домом</small>` : parts.length ? `<small>${parts.join(" · ")}</small>` : "";
         const digits = (v) => fmt(v, sp && sp.step < 1 && v % 1 ? 1 : Number.isInteger(v) ? 0 : 1);
         // The setpoint: a tap on it opens − 26° + for this row only; the rest of the row opens the room / the dialog.
         const tail = editing
           ? `<div class="ed" data-ed="1"><button data-sd="-1" aria-label="Холоднее"${this._ed.v - sp.step < sp.min - 0.001 ? " disabled" : ""}>−</button><b aria-live="polite">${digits(this._ed.v)}°</b><button data-sd="1" aria-label="Теплее"${this._ed.v + sp.step > sp.max + 0.001 ? " disabled" : ""}>+</button></div>`
           : target === undefined || e.s.state === "off" || !sp
-            ? `<div class="t">—</div>`
-            : `<button class="t${pend ? " pend" : ""}${hint ? " hint" : ""}" data-t="${esc(e.entity)}" aria-label="Изменить уставку">${digits(target)}°</button>`;
-        return `${head}<div class="r ${lit ? "on" : ""} ${known(e.s) ? "" : "un"}${warm ? " warm" : chill ? " chill" : ""}" data-i="${esc(e.entity)}"${e.path ? ` data-p="${esc(e.path)}"` : ""}><ha-icon icon="hauflo:${fh ? "floor-heat" : warm ? "radiator" : "ac"}"></ha-icon><div class="nm">${esc(name)}${sub}</div>${editing ? "" : `<div class="w">${esc(state)}</div>`}${tail}</div>`;
+            ? `<div class="t"><b>${curTxt}</b></div>`
+            : `<button class="t${pend ? " pend" : ""}${hint ? " hint" : ""}" data-t="${esc(e.entity)}" aria-label="Изменить уставку"><b>${curTxt}</b><small>→ ${digits(target)}°</small></button>`;
+        return `${head}<div class="r ${lit ? "on" : ""} ${known(e.s) ? "" : "un"}${warm ? " warm" : chill ? " chill" : ""}" data-i="${esc(e.entity)}"${e.path ? ` data-p="${esc(e.path)}"` : ""}><ha-icon icon="hauflo:${fh ? "floor-heat" : !fh && activeMode(e.s) === "heat" ? "radiator" : "ac"}"></ha-icon><div class="nm">${esc(name)}${sub}</div>${tail}</div>`;
       });
-      const sum = fh
-        ? on.length ? `${on.length} из ${items.length} греют` : items.some((e) => known(e.s)) ? "Сейчас не греют" : "Нет связи"
-        : on.length ? `${on.length} из ${items.length} работают` : items.some((e) => known(e.s)) ? "Все выключены" : "Нет связи";
+      // The header says what is going on, not how many have a mode on (Д16): «Греют: 2 · Охлаждают: 1» / «Все ждут» /
+      // «Все выключены»; «Включено: N из M» only when nothing says what they do.
+      const kinds = items.map(nowOf);
+      const cnt = (k) => kinds.filter((x) => x === k).length;
+      const parts = [cnt("heat") ? `Греют: ${cnt("heat")}` : "", cnt("cool") ? `Охлаждают: ${cnt("cool")}` : "", cnt("dry") + cnt("fan") ? `Работают: ${cnt("dry") + cnt("fan")}` : ""].filter(Boolean);
+      const sum = parts.length
+        ? parts.join(" · ")
+        : !items.some((e) => known(e.s))
+          ? "Нет связи"
+          : kinds.includes("mode")
+            ? `Включено: ${onMode.length} из ${items.length}`
+            : kinds.includes("idle")
+              ? "Все ждут"
+              : "Все выключены";
       return `<div class="glass k${fh ? " fh" : ""}"><div class="hd"><div><span class="caps">${blockTitle(this, this.defaultTitle(fh, items))}</span><div class="sum">${sum}</div></div>${offable.length ? `<button class="off" data-off="1">Выкл. все</button>` : ""}</div><div class="rows">${rows.join("")}</div></div>`;
     }
     redraw() {
@@ -4014,16 +4394,22 @@ ${locks.length || opens.length ? `<div class="lst">${locks
         const id = el.dataset.e;
         let t;
         let held = false;
-        el.addEventListener("pointerdown", () => {
+        let at = null;
+        el.addEventListener("pointerdown", (ev) => {
           held = false;
+          at = [ev.clientX, ev.clientY];
           t = setTimeout(() => {
             held = true;
             moreInfo(this, id);
           }, 500);
         });
+        el.addEventListener("pointermove", (ev) => at && Math.hypot(ev.clientX - at[0], ev.clientY - at[1]) > 8 && (clearTimeout(t), (at = null)));
+        el.addEventListener("pointercancel", () => (clearTimeout(t), (at = null)));
         el.addEventListener("pointerup", () => {
           clearTimeout(t);
-          if (held) return;
+          const still = at !== null;
+          at = null;
+          if (held || !still || !GST.ok) return;
           const s = st(this._hass, id);
           const d = DEV[id.split(".")[0]];
           const tap = d && (typeof d.tap === "function" ? d.tap(s) : d.tap);
@@ -6037,7 +6423,8 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
   const ONE = {
     light: { icon: (s) => (s.state === "on" ? "hauflo:bulb-on" : "hauflo:bulb"), tone: "amber", word: (s) => (s.state === "on" ? (num(s.attributes.brightness) !== undefined ? `${Math.round((num(s.attributes.brightness) / 255) * 100)} %` : "вкл") : "выкл"), level: (s) => (s.state === "on" ? (num(s.attributes.brightness) ?? 255) / 255 : 0), tap: ["light", "toggle"] },
     cover: { icon: () => "hauflo:blind", tone: "ice", word: (s) => (num(s.attributes.current_position) !== undefined && !["opening", "closing"].includes(s.state) ? (s.attributes.current_position ? `${s.attributes.current_position} %` : "закрыта") : ({ open: "открыта", closed: "закрыта", opening: "открывается…", closing: "закрывается…" })[s.state] || s.state), level: (s) => (num(s.attributes.current_position) ?? (s.state === "open" ? 100 : 0)) / 100, on: (s) => s.state !== "closed", tap: ["cover", "toggle"] },
-    climate: { icon: () => "hauflo:thermo", tone: "ice", word: (s) => `${HVAC[s.state] || s.state}${num(s.attributes.temperature) !== undefined && s.state !== "off" ? ` · ${fmt(num(s.attributes.temperature), 1)}°` : ""}`, on: (s) => s.state !== "off", tap: null },
+    // The big number is what is now, what it does is the word, the setpoint small (owner 28.10, Д16).
+    climate: { icon: () => "hauflo:thermo", tone: "ice", word: (s) => { const k = climateNow(null, s); const cur = num(s.attributes.current_temperature); const t = num(s.attributes.temperature); const g = t !== undefined ? fmt(t, t % 1 ? 1 : 0) : ""; return k === "off" ? "выкл" : `${cur !== undefined ? `${fmt(cur, 1)}° · ` : ""}${k === "heat" ? `греет${g ? ` до ${g}°` : ""}` : k === "cool" ? `охлаждает${g ? ` до ${g}°` : ""}` : k === "idle" ? `ждёт${g ? ` · цель ${g}°` : ""}` : k === "dry" || k === "fan" ? NOW_WORD[k] : `${modeSmall(s.state) || HVAC[s.state] || s.state}${g ? ` · цель ${g}°` : ""}`}`; }, on: (s) => acting(climateNow(null, s)), tap: null },
     media_player: { icon: () => "hauflo:speaker", tone: "amber", word: (s) => (s.state === "playing" ? s.attributes.media_title || "идёт" : s.state === "paused" ? "на паузе" : s.state === "off" ? "выкл" : s.state), on: (s) => s.state === "playing", tap: (s) => ["media_player", s.state === "off" ? "turn_on" : "media_play_pause"] },
     scene: { icon: () => "hauflo:scene", tone: "amber", word: () => "выполнить", on: () => false, tap: ["scene", "turn_on"] },
     script: { icon: () => "hauflo:scene", tone: "amber", word: (s) => (s.state === "on" ? "выполняется…" : "выполнить"), tap: ["script", "turn_on"] },
@@ -6207,39 +6594,40 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
       const f = el.dataset.f;
       lab.textContent = f === "color_temp_kelvin" ? `${v} K` : f === "hs_color" ? `${v}°` : `${v} %`;
     };
-    el.addEventListener("pointerdown", (ev) => {
-      ev.stopPropagation();
-      active = true;
-      card._busy = true;
-      el.setPointerCapture(ev.pointerId);
-      val = at(ev);
-      show(val);
+    // Sideways swipe only (a tap or a page scroll sets nothing); sent when let go.
+    hdrag(el, {
+      down: (ev) => void ev.stopPropagation(),
+      start: (ev) => {
+        active = true;
+        card._busy = true;
+        val = at(ev);
+        show(val);
+      },
+      move: (ev) => {
+        const v = at(ev);
+        if (v !== val) {
+          val = v;
+          show(v);
+          haptic(card, "selection");
+        }
+      },
+      end: (ev, ok) => {
+        ev.stopPropagation();
+        if (!active) return;
+        active = false;
+        if (ok) {
+          const [d, svc] = el.dataset.svc.split(".");
+          const f = el.dataset.f;
+          const data = { entity_id: entity, [f]: f === "volume_level" ? val / 100 : f === "hs_color" ? [val, 100] : val };
+          call(card._hass, d, svc, data);
+        }
+        setTimeout(() => {
+          card._busy = false;
+          card._sig = "";
+          card._update();
+        }, 600);
+      },
     });
-    el.addEventListener("pointermove", (ev) => {
-      if (!active) return;
-      const v = at(ev);
-      if (v !== val) {
-        val = v;
-        show(v);
-        haptic(card, "selection");
-      }
-    });
-    const end = (ev) => {
-      ev.stopPropagation();
-      if (!active) return;
-      active = false;
-      const [d, svc] = el.dataset.svc.split(".");
-      const f = el.dataset.f;
-      const data = { entity_id: entity, [f]: f === "volume_level" ? val / 100 : f === "hs_color" ? [val, 100] : val };
-      call(card._hass, d, svc, data);
-      setTimeout(() => {
-        card._busy = false;
-        card._sig = "";
-        card._update();
-      }, 600);
-    };
-    el.addEventListener("pointerup", end);
-    el.addEventListener("pointercancel", end);
   };
   const CTL_CSS = `.e.hasctl{flex-wrap:wrap;row-gap:12px}.ctl{flex-basis:100%;display:flex;flex-direction:column;gap:8px;position:relative;z-index:1;cursor:default}
 .ctl .row{display:flex;align-items:center;gap:8px;min-width:0}.ctl .row.btns{justify-content:flex-start;flex-wrap:wrap}.ctl .row.chips{flex-wrap:wrap;gap:6px}
@@ -6345,16 +6733,22 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
       let held = false;
       let lastTap = 0;
       let single;
-      el.addEventListener("pointerdown", () => {
+      let at = null;
+      el.addEventListener("pointerdown", (ev) => {
         held = false;
+        at = [ev.clientX, ev.clientY];
         timer = setTimeout(() => {
           held = true;
           runAction(this, c.hold_action || { action: "more-info" }, id);
         }, 500);
       });
+      el.addEventListener("pointermove", (ev) => at && Math.hypot(ev.clientX - at[0], ev.clientY - at[1]) > 8 && (clearTimeout(timer), (at = null)));
+      el.addEventListener("pointercancel", () => (clearTimeout(timer), (at = null)));
       el.addEventListener("pointerup", () => {
         clearTimeout(timer);
-        if (held) return;
+        const still = at !== null;
+        at = null;
+        if (held || !still || !GST.ok) return;
         // A double tap only waits when one is set — otherwise a tap is instant.
         if (!c.double_tap_action) return tap();
         if (Date.now() - lastTap < 250) {
