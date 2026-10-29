@@ -277,3 +277,47 @@ async def test_same_named_rooms_get_their_own_climates(hass: HomeAssistant, hass
     got = await _post(hass_client, {"rooms": [{"id": "a", "name": "Спальня", "floors": [FLOOR]}, {"id": "b", "name": "Спальня", "floors": [FLOOR_B]}]})
     await hass.async_block_till_done()
     assert got["entities"] == {"a": "climate.hauflo_comfort_spalnia", "b": "climate.hauflo_comfort_spalnia_2"}
+
+
+async def test_entities_have_names_by_translation_and_the_hauflo_device(hass: HomeAssistant, hass_client, entry) -> None:
+    """HA core review 29.10: has_entity_name + translation_key (room placeholder) + the service device; HouseMode's
+    unique_id scoped to the config entry."""
+    from homeassistant.helpers import device_registry as dr
+
+    await _post(hass_client, {"rooms": [ROOM]})
+    await hass.async_block_till_done()
+    reg = er.async_get(hass)
+    climate, select = reg.async_get(COMFORT), reg.async_get(MODE)
+    device = dr.async_get(hass).async_get(climate.device_id)
+    assert device is not None and device.name == "Hauflo" and (DOMAIN, entry.entry_id) in device.identifiers
+    link = reg.async_get(reg.async_get_entity_id("binary_sensor", DOMAIN, f"{entry.entry_id}_link"))
+    assert link.device_id == device.id  # one service device for all the agent's entities
+    assert climate.device_id == device.id and select.device_id == device.id
+    assert climate.translation_key == "comfort" and climate.has_entity_name
+    assert select.unique_id == f"{entry.entry_id}_house_mode"
+    assert hass.states.get(COMFORT).attributes["friendly_name"] == "Hauflo Comfort · Комната 2"
+    assert hass.states.get(MODE).attributes["friendly_name"] == "Hauflo House mode"
+    assert "icon" not in hass.states.get(COMFORT).attributes  # from icons.json, not the state
+    # The room renamed in Hauflo: the name follows, the entity_id stays.
+    await _post(hass_client, {"rooms": [{**ROOM, "name": "Гостиная"}]})
+    await hass.async_block_till_done()
+    assert hass.states.get(COMFORT).attributes["friendly_name"] == "Hauflo Comfort · Гостиная"
+
+
+async def test_old_house_mode_unique_id_keeps_its_entity_id(hass: HomeAssistant, hass_storage) -> None:
+    """Before 0.16.17 the house mode's unique_id was a bare «house_mode»: migrated in the registry, so an existing
+    install keeps its entity_id (even one renamed by hand) — dashboards and automations on it keep working."""
+    entry = MockConfigEntry(domain=DOMAIN, title="Hauflo — test", data={CONF_SERVER: "https://app.hauflo.ru", CONF_SECRET: "s"})
+    entry.add_to_hass(hass)
+    reg = er.async_get(hass)
+    old = reg.async_get_or_create("select", DOMAIN, "house_mode", config_entry=entry, suggested_object_id="rezhim_doma")
+    assert old.entity_id == "select.rezhim_doma"
+    reg.async_get_or_create("climate", "knx", "u-floor", suggested_object_id=FLOOR.split(".")[1])
+    hass_storage["hauflo.comfort"] = {"version": 1, "minor_version": 1, "key": "hauflo.comfort", "data": {"config": {"rooms": [ROOM]}, "mode": "summer"}}
+    with patch("custom_components.hauflo.Agent.run", lambda self: _none()):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    assert reg.async_get_entity_id("select", DOMAIN, f"{entry.entry_id}_house_mode") == "select.rezhim_doma"
+    assert reg.async_get_entity_id("select", DOMAIN, "house_mode") is None
+    assert hass.states.get("select.rezhim_doma").state == "summer"
+    assert hass.states.get(MODE) is None  # no second house mode

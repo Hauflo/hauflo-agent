@@ -40,9 +40,10 @@ from typing import Any
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
+from .house import refuse
+from .storage import HaufloStore
 from .const import LOCKED_CODE
 
 _LOGGER = logging.getLogger(__name__)
@@ -140,7 +141,7 @@ class FamilyScenes:
         self.hass = hass
         self.owns = owns
         self.knx = knx
-        self.store = Store(hass, 1, STORE_KEY)
+        self.store = HaufloStore(hass, STORE_KEY)
         self._learned: dict[str, float] = {}
         self._learn_times: list[float] = []
 
@@ -427,6 +428,10 @@ class ScenesView(HomeAssistantView):
         user = request["hass_user"]
         ru = str(engine.hass.config.language or "").startswith("ru")
         op = body.get("op")
+        # Every op here changes the house's scenes (create, rename, re-learn on the KNX actuators, delete): not a restricted
+        # (child) profile (house.py, family review round 3). Running a scene is HA's own scene.turn_on — open to everyone.
+        if op in ("add", "rename", "recapture", "delete", "unhide", "knx_name", "knx_learn") and (no := await refuse(request)) is not None:
+            return no
         try:
             if op == "add":
                 return self.json(await engine.add(body.get("room"), body.get("kind"), body.get("name"), body.get("entities"), user.name if user else None))

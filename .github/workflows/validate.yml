@@ -30,8 +30,10 @@ jobs:
           python-version: ${{ matrix.py }}
       # A real Home Assistant (pytest-homeassistant-custom-component): config flow, setup/unload, the «Связь»
       # entity, diagnostics — and the tunnel allowlist (what Hauflo may do in a client's HA).
-      - run: pip install "pytest-homeassistant-custom-component${{ matrix.phcc && format('=={0}', matrix.phcc) || '' }}"
-      - run: python3 -m pytest -q
+      - run: pip install "pytest-homeassistant-custom-component${{ matrix.phcc && format('=={0}', matrix.phcc) || '' }}" pytest-cov
+      # Coverage per module, reported (no gate yet: quality scale Silver «test-coverage» wants 95 %). No HA beta in the
+      # matrix: pytest-homeassistant-custom-component is released for stable HA only.
+      - run: python3 -m pytest -q --cov=custom_components.hauflo --cov-report=term
   hacs:
     # The HACS action validates public repositories only.
     if: ${{ !github.event.repository.private }}
@@ -40,6 +42,8 @@ jobs:
       - uses: hacs/action@main
         with:
           category: integration
-          # Brand images ship in custom_components/hauflo/brand (HA 2026.3+).
-          # No license file = all rights reserved until the owner picks one (repository public since 26.10 for HACS).
-          ignore: description topics license
+          # Brand images ship in custom_components/hauflo/brand (HA 2026.3+). The repository's description and topics
+          # are set on GitHub, so those checks run.
+          # `license` stays ignored: OWNER DECISION — which license the agent ships under (LICENSE is «source
+          # available», not an OSI licence, and HACS' check wants a recognised one).
+          ignore: license

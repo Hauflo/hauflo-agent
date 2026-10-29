@@ -30,9 +30,9 @@ from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import Event, HomeAssistant, State, callback
 from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er, label_registry as lr
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
-from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util, slugify
 
+from .storage import HaufloStore
 from .const import LOCKED_CODE, MONITOR_LABELS
 
 _LOGGER = logging.getLogger(__name__)
@@ -118,7 +118,7 @@ def labelled(hass: HomeAssistant | None, eid: str) -> bool:
         return False
 
 
-def _source_ok(hass: HomeAssistant | None, eid: str, owns: Callable[[str], bool] | None = None) -> bool:
+def _source_ok(hass: HomeAssistant | None, eid: str, owns: Callable[[str], bool] | None = None, picked: frozenset[str] = frozenset()) -> bool:
     """An alarm watches a sensor of the house — never a person, a tracker or a phone's own sensors (panel round 6: a
     rule on «person.…» told the server when the family left) — and only one of Hauflo's own or one the integrator
     marked «Hauflo мониторинг» in HA (security review 28.10: the cloud put the family's motion sensor on a critical
@@ -128,7 +128,9 @@ def _source_ok(hass: HomeAssistant | None, eid: str, owns: Callable[[str], bool]
     entry = er.async_get(hass).async_get(eid) if hass is not None else None
     if entry is not None and entry.platform == "mobile_app":
         return False
-    return bool(owns is not None and owns(eid)) or labelled(hass, eid)
+    # «Picked»: the integrator chose it in Hauflo from the entities this agent reported (any integration — Zigbee, MQTT,
+    # Z-Wave…); the cloud checked it against that list. Never a phone's, never a person's (filtered above).
+    return bool(owns is not None and owns(eid)) or labelled(hass, eid) or eid in picked
 
 
 def _device_class(hass: HomeAssistant | None, eid: str) -> str | None:
@@ -290,7 +292,8 @@ def _clean_rules(raw: Any, hass: HomeAssistant | None = None, owns: Callable[[st
             continue
         rec = r.get("recipients") or {}
         action = r.get("action") if isinstance(r.get("action"), dict) else None
-        sources = [str(s) for s in r["sources"] if _source_ok(hass, str(s), owns)]
+        picked = frozenset(p for p in r["picked"] if isinstance(p, str)) if isinstance(r.get("picked"), list) else frozenset()
+        sources = [str(s) for s in r["sources"] if _source_ok(hass, str(s), owns, picked)]
         # Loud only for safety sources or classless ones (security review 28.10: a motion sensor rang through silent
         # mode every minute); repeats no more often than every REPEAT_MIN minutes.
         # Owner 28.10: a rule marked critical never goes quiet unseen — the reason is kept in «downgrade» and shown.
@@ -305,6 +308,7 @@ def _clean_rules(raw: Any, hass: HomeAssistant | None = None, owns: Callable[[st
                 "kind": str(r.get("kind") or "custom"),
                 "title": str(r.get("title") or "Авария")[:80],
                 "sources": sources,
+                **({"picked": [s for s in sources if s in picked]} if any(s in picked for s in sources) else {}),
                 "alarm_states": [str(s) for s in (r.get("alarm_states") or ["on"])],
                 "recipients": {
                     "all": bool(rec.get("all")),
@@ -353,9 +357,9 @@ class LockedChange(PermissionError):
 class NotifyEngine:
     def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass
-        self.store: Store[dict[str, Any]] = Store(hass, 1, STORE_KEY)
+        self.store: HaufloStore = HaufloStore(hass, STORE_KEY)
         # Open alarms survive an HA restart: an alarm already told isn't told again on start.
-        self.active_store: Store[dict[str, Any]] = Store(hass, 1, ACTIVE_KEY)
+        self.active_store: HaufloStore = HaufloStore(hass, ACTIVE_KEY)
         self.config: dict[str, Any] = {"rules": [], "groups": []}
         self._unsub_state = None
         self._unsub_action = None
@@ -784,6 +788,15 @@ class NotifyEngine:
         self._save()
         self._changed()
 
+    def _hhmm(self, iso: str | None) -> str:
+        """«01:46» UTC said as the house's clock: HA's configured time zone (integrator review 29.10, defect 9: the
+        alarm card said «с 03:46», the push «01:46»). Stored times stay ISO with their offset."""
+        at = dt_util.parse_datetime(iso or "") or dt_util.utcnow()
+        if at.tzinfo is None:
+            at = at.replace(tzinfo=dt_util.UTC)
+        tz = dt_util.get_time_zone(str(self.hass.config.time_zone or "")) or dt_util.get_default_time_zone()
+        return at.astimezone(tz).strftime("%H:%M")
+
     async def _send_alarm(self, rule: dict[str, Any], state: State, key: str) -> None:
         inc = self.active.get(key)
         if not inc or inc.get("acked_by"):
@@ -794,7 +807,7 @@ class NotifyEngine:
         where = self._where(state)
         name = state.attributes.get("friendly_name") or state.entity_id
         title = f"🚨 {rule['title']}" + (f" — {where}" if where else "")
-        at = dt_util.as_local(dt_util.parse_datetime(inc["since"]) or dt_util.utcnow()).strftime("%H:%M")
+        at = self._hhmm(inc["since"])
         message = f"{name}: авария в {at}." if inc["count"] == 1 else f"{name}: авария с {at}, никто не подтвердил. Повтор {inc['count']}."
         actions = [{"action": f"{ACK}|{key}", "title": "Принято"}]
         if rule.get("action"):
@@ -847,8 +860,8 @@ class NotifyEngine:
         # Since the earliest of them (a single one folded in started before the summary).
         starts = sorted(self.active[k]["since"] for k in members)
         first = min(starts[0], group["since"])
-        at = dt_util.as_local(dt_util.parse_datetime(first) or dt_util.utcnow()).strftime("%H:%M")
-        latest = dt_util.as_local(dt_util.parse_datetime(starts[-1]) or dt_util.utcnow()).strftime("%H:%M")
+        at = self._hhmm(first)
+        latest = self._hhmm(starts[-1])
         # Started at different times: both said («С 12:20 (последняя в 12:40)»), not only the first.
         if latest != at:
             at = f"{at} (последняя в {latest})"
@@ -1164,6 +1177,8 @@ class NotifyEngine:
             state = self.hass.states.get(entity_id)
             out.append(
                 {
+                    # The accept key («rule|entity»): Hauflo's monitoring accepts one alarm with it (D8).
+                    "key": key,
                     "entityId": entity_id,
                     "title": rule["title"] if rule else "Авария",
                     "name": (state.attributes.get("friendly_name") if state else None) or entity_id,
@@ -1321,9 +1336,30 @@ class AlarmsView(HomeAssistantView):
             body = await request.json()
         except ValueError:
             return self.json_message("invalid JSON", 400)
+        user = request["hass_user"]
+        who = (user.name if user else None) or "кто-то"
+        # Through Hauflo's tunnel the caller is the agent's own system user: the person who pressed «Принять» in Hauflo's
+        # monitoring is named by Hauflo (service review r2 D8) — never trusted from any other user.
+        if user is not None and user.system_generated and user.name == "Hauflo agent" and isinstance(body, dict) and isinstance(body.get("by"), str):
+            by = "".join(ch for ch in body["by"] if ch.isprintable()).strip()[:80]
+            if by:
+                who = f"{by} (Hauflo)"
+        # «Принять все» (family review round 2: 19 faults took 19 taps): every open alarm nobody accepted yet, and those
+        # back to normal waiting for a look. Open to every person of the house, as one «Принято» is (safety).
+        if engine is not None and isinstance(body, dict) and body.get("ack_all") is True:
+            keys = [k for k, inc in engine.active.items() if not inc.get("acked_by")] + [k for k in engine.unacked_rtn if k not in engine.active]
+            done = [k for k in keys if await engine.async_ack(k, who)]
+            return self.json({"ok": True, "acked": len(done)})
+        # «Принять все неисправности» (family review round 3): exactly the alarms the card listed — the equipment faults; a
+        # leak, smoke or gas shown beside them keeps its own «Принято».
+        if engine is not None and isinstance(body, dict) and "ack_keys" in body:
+            keys = body["ack_keys"]
+            if not isinstance(keys, list) or len(keys) > 200 or not all(isinstance(k, str) and "|" in k and len(k) <= 300 for k in keys):
+                return self.json_message("ack_keys: a list of alarm keys", 400)
+            done = [k for k in dict.fromkeys(keys) if await engine.async_ack(k, who)]
+            return self.json({"ok": True, "acked": len(done)})
         key = body.get("ack") if isinstance(body, dict) else None
         if engine is None or not isinstance(key, str) or "|" not in key or len(key) > 300:
             return self.json_message("ack: a key expected", 400)
-        user = request["hass_user"]
-        ok = await engine.async_ack(key, (user.name if user else None) or "кто-то")
+        ok = await engine.async_ack(key, who)
         return self.json({"ok": ok}, 200 if ok else 404)

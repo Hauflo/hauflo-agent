@@ -9,11 +9,12 @@ Nothing listens on the network here; the secret only identifies this agent to Ha
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 import contextlib
 import ipaddress
 import json
 import logging
+import random
 import re
 import time
 from urllib.parse import urlparse
@@ -31,11 +32,12 @@ from homeassistant.helpers import device_registry as dr, entity_registry as er, 
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
-from homeassistant.helpers.storage import Store
 
-from . import automations, backup, comfort, dashmerge, guest, keep, notify, presence, scenes, season, sidebar, theme, titles, voice
+from . import automations, backup, comfort, dashmerge, guest, house, issues, keep, notify, ownership, presence, ranges, scenes, season, service, sidebar, theme, titles, voice
 from . import order as block_order
-from .const import CONF_REFRESH_TOKEN_ID, CONF_SECRET, CONF_SERVER, CONF_USER_ID, DATA_NOTIFY_VIEWS, DATA_UNLINKED, DOMAIN, MONITOR_LABEL, MONITOR_LABEL_EN, MONITOR_LABELS, OWNED_STORE, STATUS_EVERY, VERSION, CONF_RANGES, DATA_PENDING_RANGES, CONF_ALLOW_CHANGES, LOCKED_CODE
+from .issues import DEGRADED, degrade  # noqa: F401 — DEGRADED: diagnostics read it here
+from .storage import HaufloStore
+from .const import DATA_CARDS_LOCAL, CONF_REFRESH_TOKEN_ID, CONF_SECRET, CONF_SERVER, CONF_USER_ID, DATA_NOTIFY_VIEWS, DATA_UNLINKED, DOMAIN, MONITOR_LABEL, MONITOR_LABEL_EN, MONITOR_LABELS, OWNED_STORE, STATUS_EVERY, VERSION, CONF_RANGES, CONF_ALLOW_CHANGES, LOCKED_CODE
 
 _LOGGER = logging.getLogger(__name__)
 PROBLEM_ON = {"problem", "safety", "smoke", "gas", "moisture", "battery", "heat", "cold", "carbon_monoxide", "tamper", "vibration"}
@@ -65,7 +67,7 @@ async def _local_token(hass: HomeAssistant, entry: ConfigEntry):
 _WS_EXACT = {
     "get_states", "get_config", "ping", "unsubscribe_events", "persistent_notification/subscribe", "cloud/status", "frontend/get_themes", "manifest/get", "get_panels",
     "config_entries/get",
-    "config/area_registry/list", "config/area_registry/create", "config/area_registry/update",
+    "config/area_registry/list", "config/area_registry/create", "config/area_registry/update", "config/area_registry/delete",
     "config/floor_registry/list", "config/floor_registry/create", "config/floor_registry/update",
     "config/label_registry/list", "config/label_registry/create", "config/label_registry/delete",
     "config/device_registry/list", "config/device_registry/update", "config/device_registry/remove", "config/device_registry/remove_config_entry",
@@ -105,7 +107,8 @@ def _http_changes(method: str, path: str) -> bool:
 # The owner closed the house in HA (options: «Allow Hauflo to change this home's setup» off): every write is refused,
 # fail closed — over the websocket all but reads (_ws_changes), over REST all but GET. Only the alarm delivery stays:
 # its rules and a test push configure who is told, not the house (owner 28.10: monitoring and alarms keep working).
-_LOCKED_HTTP_OK = {("/api/hauflo/notify", "POST"), ("/api/hauflo/notify/test", "POST")}
+# Accepting an alarm («Принято» from Hauflo's monitoring, service review r2 D8) doesn't change the house either.
+_LOCKED_HTTP_OK = {("/api/hauflo/notify", "POST"), ("/api/hauflo/notify/test", "POST"), ("/api/hauflo/ownership", "POST"), ("/api/hauflo/alarms", "POST")}
 
 
 def _ws_locked(msg: dict[str, Any]) -> bool:
@@ -119,7 +122,15 @@ _FLOW_DOMAINS = {"knx", "group", "homekit", "yandex_smart_home"}
 _HAUFLO_VIEWS = {
     ("/api/hauflo/backup", "GET"), ("/api/hauflo/backup", "POST"), ("/api/hauflo/notify", "GET"), ("/api/hauflo/notify", "POST"),
     ("/api/hauflo/notify/test", "POST"), ("/api/hauflo/alarms", "GET"), ("/api/hauflo/sidebar", "POST"),
+    # «Принято» from Hauflo's «Мониторинг» by the service company's person on duty (service review r2 D8): the same
+    # accept as the push button / the dashboard's, said with that person's name.
+    ("/api/hauflo/alarms", "POST"),
     ("/api/hauflo/owned", "GET"), ("/api/hauflo/ranges", "GET"),
+    # What the next deploy would change, shown in HA («Создано в этом доме», ownership.py): info only. GET: the hand
+    # edits (renamed / disabled entity ids) for the service passport in the handover pack (service review r2 D5).
+    ("/api/hauflo/ownership", "POST"), ("/api/hauflo/ownership", "GET"),
+    # Only an ASK: what the project writes goes to the owner's «Allow / Decline» in Repairs (ranges.py), never granted.
+    ("/api/hauflo/ranges", "POST"),
     # «Комфортный пол»: the integrator's settings (comfort.py checks them itself).
     ("/api/hauflo/comfort", "GET"), ("/api/hauflo/comfort", "POST"),
 }
@@ -226,7 +237,39 @@ _PRIVATE_STATE = {"person", "device_tracker", "zone", "sun", "weather", "camera"
 _PRIVATE_PLATFORMS = {"mobile_app", "sun"}
 _STATE_TIMES = ("context", "last_changed", "last_updated", "last_reported")
 # Reads whose answer the agent edits before it leaves the house.
-_SCRUBBED = ("get_states", "get_config", "cloud/status", "config/device_registry/list", "knx/group_monitor_info", "get_panels")
+_SCRUBBED = (
+    "get_states", "get_config", "cloud/status", "config/device_registry/list", "knx/group_monitor_info", "get_panels",
+    "config/entity_registry/list", "config/entity_registry/get", "config/entity_registry/get_entries",
+)
+# The phones' entities never leave at all (HA reviewer r2: entity_registry/list carried «sensor.ivans_iphone_battery»
+# and its name while the README said phone names are removed): their ids are the phones' names. Hauflo needs none of
+# them — alarms reach phones through the agent's notify engine, in the house.
+_PHONE_PLATFORMS = {"mobile_app"}
+
+
+def _phone_ids(hass: HomeAssistant | None) -> set[str]:
+    if hass is None:
+        return set()
+    with contextlib.suppress(Exception):
+        return {e.entity_id for e in er.async_get(hass).entities.values() if e.platform in _PHONE_PLATFORMS}
+    return set()
+
+
+def _scrub_entities(result: Any, hass: HomeAssistant | None) -> Any:
+    """config/entity_registry/list, /get, /get_entries without the phones' entities (as the device list without their
+    names)."""
+    phones = _phone_ids(hass)
+
+    def phone(e: Any) -> bool:
+        return isinstance(e, dict) and (e.get("platform") in _PHONE_PLATFORMS or e.get("entity_id") in phones)
+
+    if isinstance(result, list):
+        return [e for e in result if not phone(e)]
+    if isinstance(result, dict) and "entity_id" in result:
+        return None if phone(result) else result
+    if isinstance(result, dict):  # get_entries: entity_id → entry (or null)
+        return {k: v for k, v in result.items() if k not in phones and not phone(v)}
+    return result
 
 
 def _scrub_panels(panels: Any) -> Any:
@@ -247,6 +290,8 @@ def _scrub_states(states: Any, hass: HomeAssistant | None = None, visible: Calla
     if hass is not None:
         with contextlib.suppress(Exception):
             phones = {e.entity_id for e in er.async_get(hass).entities.values() if e.platform in _PRIVATE_PLATFORMS}
+    gone = _phone_ids(hass)
+    states[:] = [st for st in states if not (isinstance(st, dict) and st.get("entity_id") in gone)]
     for st in states:
         if not isinstance(st, dict):
             continue
@@ -390,14 +435,52 @@ def _knx_listens(value: Any) -> set[str]:
     return out
 
 
+# The KNX integration's runtime object is HA's private API (HA core + SRE review 29.10): read in one place — by
+# KNX_MODULE_KEY, else the plain «knx» key of older HA — and a changed shape degrades the feature, never the agent.
+_KNX_KEY = []  # type: list[Any] — KNX_MODULE_KEY once resolved, or «knx» when HA has none to import
+
+
+def knx_data(hass: HomeAssistant | None) -> Any | None:
+    """The running KNX integration (KNXModule), None without KNX."""
+    data = getattr(hass, "data", None)
+    if data is None:
+        return None
+    if not _KNX_KEY:
+        try:
+            from homeassistant.components.knx.const import KNX_MODULE_KEY  # noqa: PLC0415
+
+            _KNX_KEY.append(KNX_MODULE_KEY)
+        except Exception:  # noqa: BLE001 — no xknx installed / an older HA: the plain key
+            _KNX_KEY.append("knx")
+    try:
+        return data.get(_KNX_KEY[0]) or data.get("knx")
+    except Exception as err:  # noqa: BLE001
+        degrade("knx integration data", err)
+        return None
+
+
+def _knx_store(hass: HomeAssistant | None) -> dict[str, Any] | None:
+    """The KNX UI entity store ({platform: {unique id: config}}); None without KNX or when its shape changed."""
+    knx = knx_data(hass)
+    if knx is None:
+        return None
+    try:
+        store = knx.config_store.data["entities"]
+        if not isinstance(store, dict):
+            raise TypeError(f"entities is {type(store).__name__}")
+        return store
+    except Exception as err:  # noqa: BLE001
+        degrade("knx entity store", err)
+        return None
+
+
 def _foreign_knx_writes(hass: HomeAssistant | None, owned: set[str] | None, skip: str | None = None) -> set[str] | None:
     """The addresses the integrator's own KNX UI entities send to or listen on — Hauflo's never send there (panel
     round 6: a Siri-exposed «Kitchen light» rewired to the gate relay's address; integrator run 23: to its passive
     7/7/5, which the same actuator obeys). None when it can't be known."""
-    try:
-        store = hass.data["knx"].config_store.data["entities"]  # type: ignore[union-attr]
-    except Exception:  # noqa: BLE001 — no KNX yet: nothing of the integrator's
-        return set() if hass is not None and "knx" not in getattr(hass, "data", {}) else None
+    store = _knx_store(hass)
+    if store is None:  # no KNX yet: nothing of the integrator's; KNX there but unreadable: not known
+        return set() if hass is not None and knx_data(hass) is None else None
     out: set[str] = set()
     for configs in store.values():
         for uid, config in configs.items():
@@ -405,7 +488,7 @@ def _foreign_knx_writes(hass: HomeAssistant | None, owned: set[str] | None, skip
                 out |= _knx_listens(config.get("knx") if isinstance(config, dict) else None)
     # Every running KNX entity by its addresses, the integrator's YAML ones too (integrator run 23b: a «Калитка» in
     # configuration.yaml isn't in the UI store — a Hauflo switch rewired to its 7/6/1 opened it).
-    for ga, ids in (getattr(hass.data["knx"], "group_address_entities", None) or {}).items():  # type: ignore[union-attr]
+    for ga, ids in (getattr(knx_data(hass), "group_address_entities", None) or {}).items():
         if any(getattr(i, "unique_id", None) != skip and (owned is None or getattr(i, "unique_id", None) not in owned) for i in ids):
             raw = getattr(ga, "raw", None)
             key = str(raw) if isinstance(raw, int) else _ga_key(str(ga))
@@ -420,7 +503,7 @@ def _foreign_knx_writes(hass: HomeAssistant | None, owned: set[str] | None, skip
             for uid, config in configs.items():
                 if owned is not None and uid in owned:
                     mine |= _knx_listens(config.get("knx") if isinstance(config, dict) else None)
-        for device in list(hass.data["knx"].xknx.devices):  # type: ignore[union-attr]
+        for device in list(knx_data(hass).xknx.devices):  # type: ignore[union-attr]
             for ga in device.group_addresses():
                 raw = getattr(ga, "raw", None)
                 key = str(raw) if isinstance(raw, int) else _ga_key(str(ga))
@@ -435,11 +518,10 @@ def _foreign_knx_writes(hass: HomeAssistant | None, owned: set[str] | None, skip
 def _foreign_holders(hass: HomeAssistant | None, owned: set[str] | None, skip: str | None = None) -> dict[str, list[tuple[str | None, int | None]]] | None:
     """Per address, who else listens there: (platform, scene number if known). An address only xknx knows (an
     exposure, the time server) gets a holder of no platform — never shared."""
-    try:
-        store = hass.data["knx"].config_store.data["entities"]  # type: ignore[union-attr]
-        gae = getattr(hass.data["knx"], "group_address_entities", None) or {}  # type: ignore[union-attr]
-    except Exception:  # noqa: BLE001
+    store = _knx_store(hass)
+    if store is None:
         return None
+    gae = getattr(knx_data(hass), "group_address_entities", None) or {}
     out: dict[str, list[tuple[str | None, int | None]]] = {}
     mine: set[str] = set()
     for platform, configs in store.items():
@@ -461,7 +543,7 @@ def _foreign_holders(hass: HomeAssistant | None, owned: set[str] | None, skip: s
             if key:
                 out.setdefault(key, []).append((getattr(i, "platform", None), None))
     with contextlib.suppress(Exception):
-        for device in list(hass.data["knx"].xknx.devices):  # type: ignore[union-attr]
+        for device in list(knx_data(hass).xknx.devices):  # type: ignore[union-attr]
             for ga in device.group_addresses():
                 raw = getattr(ga, "raw", None)
                 key = str(raw) if isinstance(raw, int) else _ga_key(str(ga))
@@ -479,9 +561,8 @@ def _knx_scenes_owned(hass: HomeAssistant | None, owned: set[str] | None) -> dic
     integrator made by hand, a YAML one, one with an unreadable address or number: not here."""
     if hass is None or not owned:
         return {}
-    try:
-        configs = hass.data["knx"].config_store.data["entities"].get("scene") or {}  # type: ignore[union-attr]
-    except Exception:  # noqa: BLE001 — no KNX: none
+    configs = (_knx_store(hass) or {}).get("scene") or {}
+    if not configs or not isinstance(configs, dict):  # no KNX, no scenes: none
         return {}
     reg = er.async_get(hass)
     out: dict[str, tuple[str, str, int]] = {}
@@ -549,15 +630,29 @@ def _knx_config_ok(hass: HomeAssistant | None, msg: dict[str, Any], owned: set[s
     clash = writes & foreign
     if not clash:
         return True
-    # A KNX scene on a room's scene address the integrator's scenes use too: one address, other numbers — how KNX
-    # scenes work, not a write to his device (KNX expert 25.10: the plan said «create», the agent refused). Only when
-    # every other holder is a scene with another number and no exposure / time server sends there.
+    # By the one classifier the deploy plan uses too (K4): a KNX scene on a room's scene address only the integrator's
+    # scenes of other numbers use is how KNX scenes work (KNX expert 25.10: the plan said «create», the agent refused);
+    # anything else there — his entity, an exposure, the time server — is a write to his side: refused.
     knx = data.get("knx") if isinstance(data, dict) else None
     number = knx.get("scene_number") if isinstance(knx, dict) else None
-    if msg.get("platform") != "scene" or not isinstance(number, int):
-        return False
     holders = _foreign_holders(hass, owned, uid)
-    return holders is not None and all(ga in holders and holders[ga] and all(p == "scene" and n != number for p, n in holders[ga]) for ga in clash)
+    if holders is None:
+        return False
+    return all(_overlap_kind(msg.get("platform"), number, True, True, holders.get(ga) or [(None, None)]) != "foreign_write" for ga in clash)
+
+
+def _overlap_kind(platform: Any, number: Any, write: bool, main: bool, holders: list) -> str | None:
+    """How an address Hauflo's entity uses and others use too is classified — the same as the deploy plan's
+    (backend/src/ha/overlap.ts); the contract cases are agent/tests/fixtures/overlap-cases.json. holders: (platform, scene
+    number) of everyone else there, platform None for what only the bus side knows (an exposure, the time server)."""
+    if not holders:
+        return None
+    no = number if isinstance(number, int) and not isinstance(number, bool) else None
+    if write:
+        return "scene_shared" if platform == "scene" and no is not None and all(p == "scene" and n != no for p, n in holders) else "foreign_write"
+    if main and any(p == platform and (platform != "scene" or n == no) for p, n in holders):
+        return "duplicate"
+    return "shared_listen"
 
 
 def _device_entities_owned(hass: HomeAssistant | None, device_id: Any, owned: set[str] | None) -> bool:
@@ -582,6 +677,17 @@ def _area_floor_empty(hass: HomeAssistant | None, area_id: Any) -> bool:
     except Exception:  # noqa: BLE001 — not knowable: not allowed
         return False
     return area is not None and not area.floor_id
+
+
+def _empty_area(hass: HomeAssistant | None, area_id: Any) -> bool:
+    """No entity and no device in it — a room deleted there takes nothing with it."""
+    if hass is None or not isinstance(area_id, str):
+        return False
+    from homeassistant.helpers import area_registry as ar  # noqa: PLC0415
+
+    if ar.async_get(hass).async_get_area(area_id) is None:
+        return False
+    return not er.async_entries_for_area(er.async_get(hass), area_id) and not dr.async_entries_for_area(dr.async_get(hass), area_id)
 
 
 def _unused_label(hass: HomeAssistant | None, label_id: Any) -> bool:
@@ -610,6 +716,41 @@ def _forbidden(value: Any) -> bool:
 _BENCH_NET = ipaddress.ip_network("198.18.0.0/15")
 # KNX Secure (keys, passwords) stays the integrator's, set in HA by hand — never through the tunnel.
 _KNX_SECURE_KEYS = ("user_id", "user_password", "device_authentication", "backbone_key", "sync_latency_tolerance", "knxkeys", "secure_")
+
+
+# What of HA's KNX connection settings leaves for the service passport — nothing else (never user_password,
+# device_authentication, backbone_key, knxkeys_*: _KNX_SECURE_KEYS).
+_KNX_CONN_KEYS = {"connection_type": "type", "host": "host", "port": "port", "local_ip": "localIp", "route_back": "routeBack", "multicast_group": "multicastGroup", "multicast_port": "multicastPort", "individual_address": "individualAddress", "tunnel_endpoint_ia": "tunnelEndpoint"}
+
+
+def knx_conn(data: Any) -> dict[str, Any] | None:
+    """HA's KNX config entry data → the passport's connection facts (an allowlist; secure only as a yes/no)."""
+    if not isinstance(data, dict):
+        return None
+    out: dict[str, Any] = {}
+    for key, name in _KNX_CONN_KEYS.items():
+        v = data.get(key)
+        if isinstance(v, bool) or (isinstance(v, int) and 0 <= v <= 65535):
+            out[name] = v
+        elif isinstance(v, str) and v:
+            out[name] = v[:64]
+    ctype = str(data.get("connection_type") or "")
+    out["secure"] = ctype.endswith("_secure") or bool(data.get("knxkeys_filename"))
+    return out
+
+
+def ha_url(raw: Any) -> str | None:
+    """An URL without its login, query or fragment («https://user:pw@x/a?b» → «https://x/a»)."""
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        u = urlparse(raw)
+        port = f":{u.port}" if u.port else ""
+    except ValueError:
+        return None
+    if u.scheme not in ("http", "https") or not u.hostname:
+        return None
+    return f"{u.scheme}://{u.hostname}{port}{u.path.rstrip('/')}"[:200]
 
 
 def _lan_host(value: Any) -> bool:
@@ -769,9 +910,8 @@ _NAV_RE = re.compile(r"^/(hauflo-[a-z0-9_-]+(/[a-z0-9_-]*)?|config/scene/edit/ha
 
 def _owned_knx_writes(hass: HomeAssistant | None, owned: set[str] | None) -> set[str]:
     """The addresses Hauflo's own KNX entities send to (a KNX scene's, stored by «hold» on its tile)."""
-    try:
-        store = hass.data["knx"].config_store.data["entities"]  # type: ignore[union-attr]
-    except Exception:  # noqa: BLE001
+    store = _knx_store(hass)
+    if store is None:
         return set()
     out: set[str] = set()
     for configs in store.values():
@@ -1016,6 +1156,10 @@ def _ws_allowed(msg: dict[str, Any], hass: HomeAssistant | None = None, owned: s
         return _owned_knx(hass, msg.get("entity_id"), owned) and (t == "knx/delete_entity" or _knx_config_ok(hass, msg, owned))
     if t == "knx/create_entity":
         return _knx_config_ok(hass, msg, owned)
+    if t == "config/area_registry/delete":
+        # Only a room Hauflo made (for this or an earlier project here) with nothing left in it — the plan's «лишние
+        # комнаты», ticked by the integrator (service review 29.10: «Kitchen», «Room 201» beside the real rooms).
+        return set(msg) <= {"id", "type", "area_id"} and _owns(owned_entries, "area", msg.get("area_id")) and _empty_area(hass, msg.get("area_id"))
     if t == "config/label_registry/delete":
         # Only a label Hauflo made and nothing carries (its category labels of the other language).
         return _owns(owned_entries, "label", msg.get("label_id")) and _unused_label(hass, msg.get("label_id"))
@@ -1219,17 +1363,20 @@ def _http_allowed(hass: HomeAssistant, method: str, path: str, body: Any, owned_
     return False
 
 
-# HA internals the agent leans on (theme store, Lovelace resources, the frontend user store, xknx's connection
-# manager): when one of them changes shape in an HA release, the feature is skipped, never the agent — and
-# diagnostics name it (HA core re-review 25.10).
-DEGRADED: set[str] = set()
+# Reconnects after a Hauflo restart or an outage (HA core + SRE review 29.10): every agent knocking at the same second
+# is a storm — each wait is spread ±50 %, and after the server said «reconnect» (a planned restart) the first knock
+# comes 1–30 s later at random.
+RECONNECT_HINT_WAIT = (1.0, 30.0)
+LINK_LOST_ISSUE_AFTER = 6 * 3600  # the link down this long: said in HA's Repairs
+# A frame this big (a dashboard, a plan) is parsed off the event loop: json.loads of megabytes blocks HA's loop.
+BIG_FRAME = 256 * 1024
 
 
-@callback
-def degrade(feature: str, err: BaseException) -> None:
-    if feature not in DEGRADED:
-        DEGRADED.add(feature)
-        _LOGGER.warning("Hauflo: %s unavailable on this Home Assistant (%s) — skipped", feature, err)
+def _next_wait(delay: float, hinted: bool, uniform: Callable[[float, float], float] = random.uniform) -> float:
+    """Seconds before the next knock at Hauflo."""
+    if hinted:
+        return uniform(*RECONNECT_HINT_WAIT)
+    return delay * uniform(0.5, 1.5)
 
 
 class Agent:
@@ -1251,22 +1398,26 @@ class Agent:
         self.presence: presence.Presence | None = None  # «Нет дома — имитация присутствия» (presence.py)
         self.comfort = comfort.ComfortEngine(hass)  # «Комфортный пол» and the house mode (comfort.py)
         self.guest: guest.GuestAccess | None = None  # «Гостевой доступ» (guest.py), set up with the entry
+        self.ownership: ownership.Ownership | None = None  # the «Hauflo» label and «Создано в этом доме» (ownership.py)
         self.owned: set[str] = set()
         self.owned_entries: set[str] = set()  # config entries (HomeKit bridges, groups) made through the tunnel
         self._flow_memo: dict[str, list[str]] = {}  # HomeKit options: the domains of a flow's first step
-        self._owned_store: Store = Store(hass, 1, OWNED_STORE)
+        self._owned_store: HaufloStore = HaufloStore(hass, OWNED_STORE)
         # The last dashboard Hauflo saved, per dashboard: the integrator's own cards are merged in against it (dashmerge.py).
         self.dashboards = dashmerge.DashboardMerge(hass)
-        self._pending: dict[tuple[int, Any], tuple[str, str | None]] = {}
+        self._pending: dict[tuple[int, Any], tuple[str, Any]] = {}
         self._note_subs: set[tuple[int, Any]] = set()  # persistent_notification subscriptions: their events are scrubbed
         self._unsub_signals = None
         self._status_soon: Callable[[], None] | None = None
         # True after Hauflo's «welcome», until the link drops — the «Связь с Hauflo» entity shows it.
         self.linked = False
+        self._lost_timer: Callable[[], None] | None = None  # «link lost for 6 h» → Repairs
         # A link to the KNX interface isn't a live bus (routing «connects» with nothing on the wire —
         # integrator run 24.10): the last telegram that came FROM the bus says it.
         self._knx_heard: float | None = None
         self._knx_since = time.monotonic()
+        # Names of the house's HA administrators (the service passport, service review r2 D5) — read in the status loop.
+        self._admins: list[str] = []
         self._unsub_knx = None
         try:
             from homeassistant.components.knx.const import SIGNAL_KNX_TELEGRAM  # noqa: PLC0415
@@ -1312,7 +1463,9 @@ class Agent:
         await self._ensure_label()
         delay = 5
         url = self.server.replace("https://", "wss://").replace("http://", "ws://") + "/api/agent/ws"
+        self._watch_link(False)
         while not self.stopped:
+            hinted = False
             try:
                 async with self.session.ws_connect(url, heartbeat=30, max_msg_size=16 * 1024 * 1024) as ws:
                     self.ws = ws
@@ -1321,17 +1474,22 @@ class Agent:
                         if msg.type != aiohttp.WSMsgType.TEXT:
                             continue
                         try:
-                            frame = json.loads(msg.data)
+                            frame = await self._parse(msg.data)
                         except ValueError:
                             _LOGGER.warning("Hauflo: unreadable frame dropped")
                             continue
                         if not isinstance(frame, dict):
+                            continue
+                        if frame.get("t") == "reconnect":
+                            hinted = True  # Hauflo restarts: it closes next, the knock back comes spread out
                             continue
                         if frame.get("t") == "welcome":
                             self._set_linked(True)
                             delay = 5
                             self.hass.data.pop(DATA_UNLINKED, None)
                             persistent_notification.async_dismiss(self.hass, "hauflo_unlinked")
+                            issues.clear_issue(self.hass, issues.UNLINKED)
+                            issues.sync_version(self.hass, VERSION, frame.get("minVersion"), frame.get("latest"))
                             self._spawn(self._status_loop(ws))
                             # Alarms opened / closed or the rules arrived → status now, not in a minute
                             # (integrator run 25.10: monitoring green for a minute after a re-add).
@@ -1347,11 +1505,14 @@ class Agent:
                         # integration again with a new code updates this entry (integrator run 25.10: stuck at
                         # «второй не нужен»).
                         self.hass.data[DATA_UNLINKED] = True
+                        issues.raise_issue(self.hass, issues.UNLINKED)
                         # HA's own «re-configure» card (HA core review 25.10): a new code updates this entry.
                         self.entry.async_start_reauth(self.hass)
                         delay = 600
                         await asyncio.sleep(delay)
                         continue
+                    # 1012 «service restart», 1001 «going away»: Hauflo restarting — no hint frame needed.
+                    hinted = hinted or ws.close_code in (1001, 1012)
             except (aiohttp.ClientError, TimeoutError, OSError) as err:
                 _LOGGER.debug("Hauflo link down: %s", err)
             finally:
@@ -1360,8 +1521,31 @@ class Agent:
                 for ch in list(self.channels):
                     await self._close_channel(ch, tell=False)
             if not self.stopped:
-                await asyncio.sleep(delay)
+                await asyncio.sleep(_next_wait(delay, hinted))
                 delay = min(delay * 2, 60)
+
+    async def _parse(self, data: str) -> Any:
+        """A frame from Hauflo; a big one off the event loop (raises ValueError when unreadable)."""
+        if len(data) > BIG_FRAME:
+            return await self.hass.async_add_executor_job(json.loads, data)
+        return json.loads(data)
+
+    @callback
+    def _watch_link(self, on: bool) -> None:
+        """Back — the Repairs issue goes; lost — it comes after 6 hours without Hauflo."""
+        if on:
+            if self._lost_timer:
+                self._lost_timer()
+                self._lost_timer = None
+            issues.clear_issue(self.hass, issues.LINK_LOST)
+        elif self._lost_timer is None and not self.stopped:
+            self._lost_timer = async_call_later(self.hass, LINK_LOST_ISSUE_AFTER, self._link_lost)
+
+    @callback
+    def _link_lost(self, _now: Any) -> None:
+        self._lost_timer = None
+        if not self.linked and not self.stopped and not self.hass.data.get(DATA_UNLINKED):
+            issues.raise_issue(self.hass, issues.LINK_LOST, server=str(urlparse(self.server).hostname), hours=str(LINK_LOST_ISSUE_AFTER // 3600))
 
     async def async_load(self) -> None:
         data = await self._owned_store.async_load()
@@ -1384,6 +1568,12 @@ class Agent:
         if isinstance(entry_id, str) and _entry_domain(self.hass, entry_id) in ("homekit", "group", "knx"):
             self.owned_entries.add(entry_id)
             self._owned_store.async_delay_save(self._owned_data, 0)  # at once: a crash right after a create mustn't lose it (HA expert 25.10)
+            self._owned_changed()
+
+    def _owned_changed(self) -> None:
+        """What Hauflo owns moved: the «Hauflo» label follows (after the deploy's burst of changes)."""
+        if (own := self.ownership) is not None:
+            own.schedule()
 
     def _owned_data(self) -> dict[str, Any]:
         return {"unique_ids": sorted(self.owned), "entries": sorted(self.owned_entries)}
@@ -1409,7 +1599,8 @@ class Agent:
                 r["result"] = (
                     _scrub_states(res, self.hass, self._state_visible) if kind == "get_states" else _scrub_config(res) if kind == "get_config"
                     else _scrub_cloud(res) if kind == "cloud/status" else _scrub_devices(res, self.hass) if kind == "config/device_registry/list"
-                    else _scrub_panels(res) if kind == "get_panels" else _scrub_monitor(res)
+                    else _scrub_panels(res) if kind == "get_panels"
+                    else _scrub_entities(res, self.hass) if kind.startswith("config/entity_registry/") else _scrub_monitor(res)
                 )
                 scrubbed = True
                 continue
@@ -1419,6 +1610,12 @@ class Agent:
                 if r.get("success") and isinstance(res, dict) and isinstance(res.get(f"{k}_id"), str):
                     self.owned_entries.add(f"{k}:{res[f'{k}_id']}")
                     changed = True
+                continue
+            if kind == "config/entity_registry/update":
+                reg_entry = res.get("entity_entry") if r.get("success") and isinstance(res, dict) else None
+                if isinstance(reg_entry, dict) and (own := self.ownership) is not None:
+                    old_id, named = ref
+                    own.remember_name(reg_entry.get("entity_id"), reg_entry.get("name"), old_id, named)
                 continue
             if not r.get("success") or (kind != "knx/delete_entity" and not (isinstance(res, dict) and res.get("success"))):
                 continue
@@ -1430,6 +1627,7 @@ class Agent:
                 changed = True
         if changed:
             self._owned_store.async_delay_save(self._owned_data, 0)  # at once: a crash right after a create mustn't lose it (HA expert 25.10)
+            self._owned_changed()
         return json.dumps(msg) if scrubbed else data
 
     async def _on_frame(self, f: dict[str, Any]) -> None:
@@ -1444,6 +1642,9 @@ class Agent:
             self._spawn(self._http(f))
         elif t == "guest":
             self._spawn(self._guest(f))
+        elif t == "service":
+            # Who services this home and its access history — kept for the owner to read in HA (service.py).
+            await service.async_save(self.hass, f.get("info"))
 
     async def _guest(self, f: dict[str, Any]) -> None:
         """A guest's request relayed by Hauflo (guest.py, docs/guest-access.md): answered by the guest module alone —
@@ -1510,8 +1711,7 @@ class Agent:
         allowed = {str(r) for r in self.entry.options.get(CONF_RANGES) or []}
         if CONF_RANGES not in self.entry.options:
             try:
-                store = self.hass.data["knx"].config_store.data["entities"]
-                for configs in store.values():
+                for configs in (_knx_store(self.hass) or {}).values():
                     for uid, config in configs.items():
                         if uid in self.owned:
                             allowed |= {r for r in (_ga_range(k) for k in _knx_writes(config.get("knx") if isinstance(config, dict) else None)) if r}
@@ -1528,17 +1728,8 @@ class Agent:
         # What's outside is asked for address by address — never a whole group around it.
         return {t for k in writes if (t := _ga_text(k)) and not _range_allows(allowed, k)}
 
-    def _ask_ranges(self, ranges: set[str]) -> None:
-        pending = self.hass.data.setdefault(DATA_PENDING_RANGES, set())
-        pending |= ranges
-        ru = str(self.hass.config.language or "").startswith("ru")
-        persistent_notification.async_create(
-            self.hass,
-            (f"Hauflo просит отправлять команды в групповые адреса {', '.join(sorted(pending))}. Если это ваш проект — разрешите: Настройки → Устройства и службы → Hauflo → Настроить. Ворота, замки и чужие группы не разрешайте."
-             if ru else f"Hauflo asks to send commands to group addresses {', '.join(sorted(pending))}. If it's your project, allow them: Settings → Devices & services → Hauflo → Configure. Don't allow gates, locks or others' groups."),
-            "Hauflo",
-            "hauflo_ranges",
-        )
+    def _ask_ranges(self, items: set[str]) -> None:
+        ranges.ask(self.hass, items)
 
     def _dashboard_ok(self, config: Any) -> bool:
         return _lovelace_ok(self.hass, config, self.owned, self.owned_entries)
@@ -1593,6 +1784,9 @@ class Agent:
         if (t := msg.get("type")) in ("knx/create_entity", "knx/update_entity", "knx/delete_entity"):
             ref = self._knx_uid(msg.get("entity_id")) if t == "knx/delete_entity" else msg.get("entity_id")
             self._pending[(ch, msg.get("id"))] = (t, ref)
+        if msg.get("type") == "config/entity_registry/update":
+            # The name Hauflo sets (its groups) isn't a hand rename in «Made in this home» (ownership.py).
+            self._pending[(ch, msg.get("id"))] = ("config/entity_registry/update", (msg.get("entity_id"), "name" in msg))
         await local.send_str(data)
 
     async def _close_channel(self, ch: int, tell: bool) -> None:
@@ -1643,7 +1837,7 @@ class Agent:
         reg = lr.async_get(self.hass)
         if not any(label.name.casefold() in MONITOR_LABELS for label in reg.async_list_labels()):
             ru = str(self.hass.config.language or "").startswith("ru")
-            reg.async_create(MONITOR_LABEL if ru else MONITOR_LABEL_EN, icon="mdi:bell-alert", color="red", description="Hauflo: следить и присылать аварии в Telegram" if ru else "Hauflo: watch it and send alarms to Telegram")
+            reg.async_create(MONITOR_LABEL if ru else MONITOR_LABEL_EN, icon="mdi:bell-alert", color="red", description=ownership.MONITOR_TEXT["ru" if ru else "en"])
 
     def _monitored_ids(self) -> list[str]:
         label = next((l for l in lr.async_get(self.hass).async_list_labels() if l.name.casefold() in MONITOR_LABELS), None)
@@ -1657,16 +1851,32 @@ class Agent:
         connected = None
         if loaded:
             try:
-                from homeassistant.components.knx.const import KNX_MODULE_KEY  # noqa: PLC0415
-
-                connected = self.hass.data[KNX_MODULE_KEY].xknx.connection_manager.connected.is_set()
+                connected = knx_data(self.hass).xknx.connection_manager.connected.is_set()  # type: ignore[union-attr]
             except Exception as err:  # noqa: BLE001
                 degrade("knx connection state", err)
         # Minutes the bus has been silent (since the agent started when nothing came yet).
         silent = int((time.monotonic() - (self._knx_heard or self._knx_since)) // 60)
         return {"loaded": loaded, "connected": connected, "state": entries[0].state.value if entries else "missing", "silentMin": silent, "heard": self._knx_heard is not None}
 
+    def _knx_conn(self) -> dict[str, Any] | None:
+        """How HA talks to the bus, for the service passport (service review r2 D5): the connection type, the gateway's
+        address and the tunnel / routing details — an allowlist; KNX Secure keys, passwords and the keyring never leave."""
+        entries = self.hass.config_entries.async_entries("knx")
+        if not entries:
+            return None
+        return knx_conn(entries[0].data)
+
+    def _ha_url(self) -> str | None:
+        """The house's Home Assistant address as configured (external, else internal), without a login or a query."""
+        return ha_url(self.hass.config.external_url or self.hass.config.internal_url)
+
+    async def _refresh_admins(self) -> None:
+        with contextlib.suppress(Exception):
+            users = await self.hass.auth.async_get_users()
+            self._admins = sorted({str(u.name)[:80] for u in users if u.is_admin and u.is_active and not u.system_generated and u.name})[:20]
+
     def status(self) -> dict[str, Any]:
+        issues.sync_degraded(self.hass)  # a feature HA's internals took away since the last minute: in Repairs
         reg = er.async_get(self.hass)
         knx_ids = [e.entity_id for e in reg.entities.values() if e.platform == "knx" and not e.disabled_by]
         unavailable = [i for i in knx_ids if (s := self.hass.states.get(i)) is not None and s.state == "unavailable"]
@@ -1693,6 +1903,14 @@ class Agent:
             "alarmsReady": bool(engine and engine.config["rules"]),
             # The owner closed the house for changes in HA: Hauflo stops a deploy before it starts.
             "locked": self.locked,
+            # The alarms' times are ISO with their offset (UTC); this is the house's clock to say them in — mails
+            # then say what the push and the alarm card say (integrator review 29.10, defect 9).
+            "timeZone": str(self.hass.config.time_zone or ""),
+            # For the service passport in Hauflo's handover pack (service review r2 D5): how KNX is connected, the HA
+            # address and who administers it (names only) — never keys, passwords or tokens.
+            "knxConn": self._knx_conn(),
+            "haUrl": self._ha_url(),
+            "haAdmins": list(self._admins),
         }
 
     @callback
@@ -1702,6 +1920,7 @@ class Agent:
             # Once when it goes and once when it's back (HA quality scale: log-when-unavailable).
             _LOGGER.info("Hauflo: link to %s %s", urlparse(self.server).hostname, "restored" if on else "lost — reconnecting")
             async_dispatcher_send(self.hass, f"{DOMAIN}_link")
+            self._watch_link(on)
 
     @callback
     def status_now(self) -> None:
@@ -1711,6 +1930,7 @@ class Agent:
 
     async def _status_loop(self, ws: aiohttp.ClientWebSocketResponse) -> None:
         while self.ws is ws and not ws.closed:
+            await self._refresh_admins()
             await self.send({"t": "status", "status": self.status()})
             self._watch_signals()
             await asyncio.sleep(STATUS_EVERY)
@@ -1747,39 +1967,57 @@ class Agent:
         if self._status_soon:
             self._status_soon()
             self._status_soon = None
+        if self._lost_timer:
+            self._lost_timer()
+            self._lost_timer = None
         if self.ws:
             await self.ws.close()
         for task in list(self.tasks):
             task.cancel()
 
 
-PLATFORMS = ["binary_sensor", "climate", "select"]
+PLATFORMS = ["binary_sensor", "climate", "select", "sensor"]
 
 
 type HaufloConfigEntry = ConfigEntry[Agent]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bool:
+    # «Кто может менять настройки дома» (house.py): first — round 2's allow-list becomes round 3's restricted profiles.
+    try:
+        await house.async_init(hass)
+    except Exception as err:  # noqa: BLE001 — never stops the agent
+        degrade("house settings", err)
     agent = Agent(hass, entry)
     await agent.async_load()
     entry.runtime_data = agent
     # The floor follows the room even without Hauflo online: settings from HA's storage, before the entities exist.
     owns = lambda eid: _own_entity(hass, eid, agent.owned_entries) and (_platform(hass, eid) != "knx" or _owned_knx(hass, eid, agent.owned))  # noqa: E731
     agent.comfort.owns = owns
+    agent.comfort.entry_id = entry.entry_id
+    comfort.async_migrate_unique_ids(hass, entry.entry_id)
     await agent.comfort.async_load()
+    # The «Hauflo» label on what Hauflo made, and «Создано в этом доме» (ownership.py) — before the sensor is added.
+    agent.ownership = ownership.Ownership(hass, lambda: agent.owned, lambda: agent.owned_entries, lambda: agent.locked)
+    try:
+        await agent.ownership.async_start()
+    except Exception as err:  # noqa: BLE001 — never stops the agent
+        degrade("hauflo label", err)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     agent.comfort.async_start()
-    entry.async_create_background_task(hass, agent.run(), "hauflo agent link")
+    # The cards: served by the agent, or — a house made independent — from /config/www/hauflo, refreshed to this
+    # version; fallback copies an earlier removal left are taken off (keep.py). Before the theme adds its scripts, and
+    # both before the link starts: a deploy right after it must find the cards served (integrator review r2, D2).
+    try:
+        hass.data[DATA_CARDS_LOCAL] = await keep.async_on_start(hass, VERSION)
+    except Exception as err:  # noqa: BLE001 — never stops the agent
+        degrade("lovelace resources", err)
     for feature, setup in (("voice sentences", voice.async_setup), ("theme", theme.async_setup), ("menu for new people", sidebar.async_setup)):
         try:
             await setup(hass)
         except Exception as err:  # noqa: BLE001 — a changed HA internal never stops the agent
             degrade(feature, err)
-    # The agent serves the cards again: the fallback copies (left by an earlier removal) go.
-    try:
-        await keep.async_release(hass)
-    except Exception as err:  # noqa: BLE001 — never stops the agent
-        degrade("lovelace resources", err)
+    entry.async_create_background_task(hass, agent.run(), "hauflo agent link")
     # Push alarms to the residents' phones (notify.py); its API is registered once per HA run.
     # «Нет дома — имитация присутствия»: on / until survive a restart (presence.py).
     agent.presence = presence.Presence(hass, lambda eid: _hauflo_entity(hass, eid, agent.owned, agent.owned_entries))
@@ -1812,6 +2050,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
         hass.http.register_view(backup.BackupView())
         hass.http.register_view(notify.AlarmsView(lambda: _engine(hass)))
         hass.http.register_view(OwnedView())
+        hass.http.register_view(ownership.OwnershipView(_ownership))
         hass.http.register_view(RangesView())
         hass.http.register_view(comfort.ComfortView(lambda: _comfort(hass)))
         hass.http.register_view(sidebar.SidebarView())
@@ -1821,7 +2060,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
         hass.http.register_view(automations.AutomationsView(lambda: _automations(hass)))
         hass.http.register_view(scenes.ScenesView(lambda: _scenes(hass)))
         hass.http.register_view(presence.PresenceView(lambda: _presence(hass)))
-        hass.http.register_view(guest.GuestView(lambda: _guest(hass)))
+        hass.http.register_view(guest.GuestView(lambda: _guest(hass), lambda: _engine(hass)))
+        hass.http.register_view(house.HouseView())
 
     async def _stop(_event: Event) -> None:
         if agent.presence is not None:
@@ -1829,13 +2069,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
         await agent.stop()
 
     entry.async_on_unload(hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _stop))
-    # Options saved (the lock, the addresses): they're read live — no reload; Hauflo hears the lock at once.
-    entry.async_on_unload(entry.add_update_listener(_options_changed))
+    # The entry changed: options (the lock, the addresses) are read live — no reload, Hauflo hears the lock at once;
+    # a new link (reauth / reconfigure: another secret or server) reloads here — HA's way since 2026.12, the flow only
+    # updates the entry (HA reviewer r2: async_update_reload_and_abort with an update listener breaks in 2026.12).
+    entry.async_on_unload(entry.add_update_listener(_entry_changed))
+    issues.sync_degraded(hass)
     return True
 
 
-async def _options_changed(hass: HomeAssistant, entry: HaufloConfigEntry) -> None:
+def relinked(agent: Agent, data: Mapping[str, Any]) -> bool:
+    """The entry's link differs from the one the running agent uses: a reload takes the new one."""
+    return data.get(CONF_SECRET) != agent.secret or data.get(CONF_SERVER) != agent.server
+
+
+async def _entry_changed(hass: HomeAssistant, entry: HaufloConfigEntry) -> None:
+    if relinked(entry.runtime_data, entry.data):
+        hass.config_entries.async_schedule_reload(entry.entry_id)
+        return
     entry.runtime_data.status_now()
+    if (own := entry.runtime_data.ownership) is not None:
+        own.schedule(1)  # the house opened again: the label catches up
 
 
 class OwnedView(HomeAssistantView):
@@ -1852,12 +2105,15 @@ class OwnedView(HomeAssistantView):
         hass = request.app[KEY_HASS]
         owned: set[str] = set()
         entries: set[str] = set()
+        areas: set[str] = set()
         for entry in hass.config_entries.async_loaded_entries(DOMAIN):
             owned |= entry.runtime_data.owned
             # The groups and bridges it set up (config entries) — a lost deploy record takes them back, not a second
-            # set (round 6, B11). Areas, floors and labels («kind:id») stay inside.
+            # set (round 6, B11). Floors and labels («kind:id») stay inside.
             entries |= {e for e in entry.runtime_data.owned_entries if ":" not in e}
-        return self.json({"unique_ids": sorted(owned), "entries": sorted(entries)})
+            # Rooms it made: a plan offers to remove the empty ones no project here uses (service review 29.10).
+            areas |= {e.split(":", 1)[1] for e in entry.runtime_data.owned_entries if e.startswith("area:")}
+        return self.json({"unique_ids": sorted(owned), "entries": sorted(entries), "areas": sorted(areas)})
 
 
 class RangesView(HomeAssistantView):
@@ -1875,7 +2131,33 @@ class RangesView(HomeAssistantView):
         allowed: set[str] = set()
         for entry in hass.config_entries.async_loaded_entries(DOMAIN):
             allowed |= entry.runtime_data.allowed_ranges()
-        return self.json({"allowed": sorted(allowed), "pending": sorted(hass.data.get(DATA_PENDING_RANGES, set()))})
+        return self.json({"allowed": sorted(allowed), **ranges.state(hass)})
+
+    async def post(self, request):
+        """The plan asks for what the project writes ({"addresses": [...], "project": "…"}): what isn't allowed waits
+        for the owner's one click in Repairs. Grants nothing (integrator review 29.10, defect 4)."""
+        if not request["hass_user"].is_admin:
+            return self.json_message("admin only", 403)
+        hass = request.app[KEY_HASS]
+        try:
+            body = await request.json()
+        except ValueError:
+            return self.json_message("bad body", 400)
+        wanted = body.get("addresses") if isinstance(body, dict) else None
+        if not isinstance(wanted, list) or len(wanted) > ranges.MAX_ITEMS or not all(isinstance(x, str) for x in wanted):
+            return self.json_message("bad addresses", 400)
+        loaded = hass.config_entries.async_loaded_entries(DOMAIN)
+        if not loaded:
+            return self.json_message("not linked", 409)
+        allowed = loaded[0].runtime_data.allowed_ranges()
+        project = str(body.get("project") or "") or (loaded[0].title or "").removeprefix("Hauflo — ")
+        return self.json({"allowed": sorted(allowed), **ranges.request(hass, allowed, wanted, project)})
+
+
+def _ownership(hass: HomeAssistant) -> ownership.Ownership | None:
+    for entry in hass.config_entries.async_loaded_entries(DOMAIN):
+        return entry.runtime_data.ownership
+    return None
 
 
 def _engine(hass: HomeAssistant) -> notify.NotifyEngine | None:
@@ -1954,6 +2236,13 @@ async def async_unload_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> b
             except Exception:  # noqa: BLE001 — never blocks the unload
                 _LOGGER.warning("Hauflo presence: lights not switched off on unload", exc_info=True)
     await entry.runtime_data.stop()
+    # Guest access stops with the entry: its unsaved log written, no grant served by an unloaded agent.
+    if (guests := entry.runtime_data.guest) is not None:
+        entry.runtime_data.guest = None
+        await guests.async_stop()
+    if (own := entry.runtime_data.ownership) is not None:
+        own.async_stop()
+        await own.async_flush()
     voice.async_unload(hass)
     sidebar.async_unload(hass)
     theme.async_unload(hass)
@@ -1967,6 +2256,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Removed in HA: its system user and voice sentences go too, and Hauflo is told (the site is no
     longer paired — no «agent gone» alarm)."""
     await voice.async_remove(hass)
+    issues.clear_all(hass)  # nothing left to repair for an agent that is gone
     # What Hauflo made stays known as its own: the agent added again finds its entities, rooms and groups (HA expert
     # 25.10: re-adding lost every ownership and the next deploy made «_2» duplicates).
     # The client's dashboard keeps its cards without the agent (copies + Lovelace resources).
@@ -1978,6 +2268,18 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         await notify.NotifyEngine(hass).async_remove()
     with contextlib.suppress(Exception):
         await comfort.ComfortEngine(hass).async_remove()
+    # The guest log names the house's people and when guests came (personal data, HA core review 29.10): it goes with
+    # the agent, and so do the links — nobody serves them any more. The dashboards stay (deliberate, keep.py).
+    try:
+        await HaufloStore(hass, guest.STORE_KEY).async_remove()
+    except Exception:  # noqa: BLE001
+        _LOGGER.exception("Hauflo: guest access log not removed")
+    # Who serviced the home: Hauflo's to say, gone with the agent.
+    with contextlib.suppress(Exception):
+        await service.async_remove(hass)
+    # The last plan Hauflo told («Создано в этом доме»): stale without the agent. The «Hauflo» label stays (README).
+    with contextlib.suppress(Exception):
+        await HaufloStore(hass, ownership.STORE_KEY).async_remove()
     # HA's own menu back for everyone: the panels «Убрать лишнее из меню» hid (HA expert 28.10).
     try:
         await sidebar.async_remove(hass)

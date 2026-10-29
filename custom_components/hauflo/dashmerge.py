@@ -38,9 +38,9 @@ from collections.abc import Callable
 from typing import Any
 
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
+from .storage import HaufloStore
 _LOGGER = logging.getLogger(__name__)
 
 ID = "hauflo_id"
@@ -637,8 +637,8 @@ class DashboardMerge:
 
     def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass
-        self.store: Store = Store(hass, 1, STORE_KEY)
-        self.meta_store: Store = Store(hass, 1, META_KEY)
+        self.store: HaufloStore = HaufloStore(hass, STORE_KEY)
+        self.meta_store: HaufloStore = HaufloStore(hass, META_KEY)
         self.bases: dict[str, dict[str, Any]] = {}
         # url → the copies of it the agent made itself, oldest first: only these are ever pruned.
         self.copies: dict[str, list[str]] = {}

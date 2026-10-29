@@ -76,8 +76,12 @@ def test_keys() -> None:
         assert parse_key(bad) is None, bad
 
 
-async def test_any_person_orders_a_block_for_the_house(hass: HomeAssistant, hass_client, hass_read_only_access_token, entry) -> None:
+async def test_any_person_orders_a_block_for_the_house(hass: HomeAssistant, hass_client, hass_read_only_user, hass_read_only_access_token, entry) -> None:
     client = await hass_client(hass_read_only_access_token)  # the family isn't an admin
+    # Not a restricted (child) profile («Кто может менять настройки дома», family review rounds 2–3).
+    await (await hass_client()).post("/api/hauflo/house", json={"restricted": [hass_read_only_user.id]})
+    assert (await client.post("/api/hauflo/order", json={"key": KEY, "items": ["light.a"]})).status == 403
+    await (await hass_client()).post("/api/hauflo/house", json={"restricted": []})
     assert (await (await client.get("/api/hauflo/order")).json())["order"] == {}
     res = await client.post("/api/hauflo/order", json={"key": KEY, "items": ["light.c", "light.all", "light.a", "scene.evening"]})
     assert res.status == 200

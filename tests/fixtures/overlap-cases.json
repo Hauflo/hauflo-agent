@@ -1,0 +1,20 @@
+{
+  "_comment": "K4 contract: how an address a Hauflo entity uses and others use too is classified — backend/src/ha/overlap.ts (overlapKind) and the agent's _overlap_kind answer these the same. holders: [platform | null (an exposure / the time server / a device without an entity), KNX scene number | null].",
+  "cases": [
+    { "name": "write, nobody else there", "platform": "light", "scene_number": null, "write": true, "main": true, "holders": [], "expect": null },
+    { "name": "write where the integrator's switch listens", "platform": "light", "scene_number": null, "write": true, "main": true, "holders": [["switch", null]], "expect": "foreign_write" },
+    { "name": "write where the integrator's light listens (writes beat a twin)", "platform": "light", "scene_number": null, "write": true, "main": true, "holders": [["light", null]], "expect": "foreign_write" },
+    { "name": "write where HA's exposure / time server sends", "platform": "switch", "scene_number": null, "write": true, "main": true, "holders": [[null, null]], "expect": "foreign_write" },
+    { "name": "a scene beside the integrator's scenes of other numbers", "platform": "scene", "scene_number": 2, "write": true, "main": true, "holders": [["scene", 1], ["scene", 3]], "expect": "scene_shared" },
+    { "name": "a scene with a number the integrator's scene has", "platform": "scene", "scene_number": 1, "write": true, "main": true, "holders": [["scene", 1]], "expect": "foreign_write" },
+    { "name": "a scene where a switch listens too", "platform": "scene", "scene_number": 2, "write": true, "main": true, "holders": [["scene", 1], ["switch", null]], "expect": "foreign_write" },
+    { "name": "a scene beside a YAML scene of unknown number", "platform": "scene", "scene_number": 2, "write": true, "main": true, "holders": [["scene", null]], "expect": "scene_shared" },
+    { "name": "a scene without a number", "platform": "scene", "scene_number": null, "write": true, "main": true, "holders": [["scene", 1]], "expect": "foreign_write" },
+    { "name": "a scene where an exposure sends too", "platform": "scene", "scene_number": 2, "write": true, "main": true, "holders": [["scene", 1], [null, null]], "expect": "foreign_write" },
+    { "name": "a sensor on the integrator's sensor's address", "platform": "binary_sensor", "scene_number": null, "write": false, "main": true, "holders": [["binary_sensor", null]], "expect": "duplicate" },
+    { "name": "a light's feedback the integrator's light listens to too (not its main address)", "platform": "light", "scene_number": null, "write": false, "main": false, "holders": [["light", null]], "expect": "shared_listen" },
+    { "name": "a sensor where another kind listens", "platform": "binary_sensor", "scene_number": null, "write": false, "main": true, "holders": [["switch", null]], "expect": "shared_listen" },
+    { "name": "listening where an exposure sends", "platform": "sensor", "scene_number": null, "write": false, "main": true, "holders": [[null, null]], "expect": "shared_listen" },
+    { "name": "listening, nobody else there", "platform": "sensor", "scene_number": null, "write": false, "main": true, "holders": [], "expect": null }
+  ]
+}

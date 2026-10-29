@@ -15,6 +15,8 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
+from .const import DOMAIN
+
 _LOGGER = logging.getLogger(__name__)
 
 # The last backup asked for: {"state": "running"|"done"|"failed", "name", "at", "error"?}
@@ -55,7 +57,9 @@ async def _create(hass: HomeAssistant, name: str) -> None:
         (a for a in getattr(manager, "backup_agents", {}) if a.endswith(".local")), None
     )
     if agent_id is None:
-        raise HomeAssistantError("no local backup location in this Home Assistant")
+        raise HomeAssistantError(
+            "no local backup location in this Home Assistant", translation_domain=DOMAIN, translation_key="no_backup_location"
+        )
     await manager.async_create_backup(
         agent_ids=[agent_id],
         include_addons=None,

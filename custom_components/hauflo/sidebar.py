@@ -1,7 +1,8 @@
 """The client's sidebar without HA's own extras (owner 2026-10-25): Map, Energy, Logbook, History, Calendar, Media,
-To-do hidden for every person in this HA — what a client opens is their house. Per user, in HA's own frontend
-storage (each can show a panel again in their profile). The choice is kept by the agent: a person added later gets
-it too (integrator run 16: a client created after the deploy saw Map/Energy/…).
+To-do hidden for the family — every person in this HA except its administrators (HA reviewer r2: an admin's menu was
+stripped to «Home» — the integrator and the owner who runs the house keep HA's full menu). Per user, in HA's own
+frontend storage (each can show a panel again in their profile). The choice is kept by the agent: a person added
+later gets it too (integrator run 16: a client created after the deploy saw Map/Energy/…).
 
 API for Hauflo (through the agent's tunnel, admin): POST /api/hauflo/sidebar {"hide": [...], "show": [...]}.
 """
@@ -12,8 +13,8 @@ from typing import Any
 
 from homeassistant.components.http import KEY_HASS, HomeAssistantView
 from homeassistant.core import Event, HomeAssistant, callback
-from homeassistant.helpers.storage import Store
 
+from .storage import HaufloStore
 from .const import DATA_SIDEBAR_LISTENER
 
 STORE_KEY = "hauflo.sidebar"
@@ -27,7 +28,7 @@ async def async_apply(hass: HomeAssistant, hide: list[str], show: list[str]) -> 
 
     hide = [p for p in hide if isinstance(p, str)]
     show = [p for p in show if isinstance(p, str)]
-    users = [u for u in await hass.auth.async_get_users() if not u.system_generated and u.is_active]
+    users = [u for u in await hass.auth.async_get_users() if not u.system_generated and u.is_active and not u.is_admin]
     for user in users:
         store = await async_user_store(hass, user.id)
         sidebar = dict(store.data.get("sidebar") or {})
@@ -36,11 +37,37 @@ async def async_apply(hass: HomeAssistant, hide: list[str], show: list[str]) -> 
         sidebar["hiddenPanels"] = hidden
         await store.async_set_item("sidebar", sidebar)
     # Remember what's hidden for people added later.
-    saved = Store(hass, 1, STORE_KEY)
+    saved = HaufloStore(hass, STORE_KEY)
     kept = [p for p in ((await saved.async_load()) or {}).get("hide", []) if p not in show]
     kept += [p for p in hide if p not in kept]
-    await saved.async_save({"hide": kept})
+    await saved.async_save({**((await saved.async_load()) or {}), "hide": kept})
     return {"users": len(users), "hidden": hide, "shown": show}
+
+
+async def async_admins_back(hass: HomeAssistant) -> int:
+    """Once, after an agent that hid the extras for administrators too: theirs come back (what Hauflo recorded as
+    hidden by it). Returns how many administrators got them back."""
+    from homeassistant.components.frontend.storage import async_user_store  # noqa: PLC0415
+
+    saved = HaufloStore(hass, STORE_KEY)
+    data = (await saved.async_load()) or {}
+    if not data or data.get("admins_kept"):
+        return 0
+    ours = {p for p in data.get("hide", []) if p in MENU_EXTRAS}
+    back = 0
+    for user in await hass.auth.async_get_users():
+        if user.system_generated or not user.is_admin or not ours:
+            continue
+        store = await async_user_store(hass, user.id)
+        sidebar = dict(store.data.get("sidebar") or {})
+        was = list(sidebar.get("hiddenPanels") or [])
+        now = [p for p in was if p not in ours]
+        if now != was:
+            sidebar["hiddenPanels"] = now
+            await store.async_set_item("sidebar", sidebar)
+            back += 1
+    await saved.async_save({**data, "admins_kept": True})
+    return back
 
 
 async def async_setup(hass: HomeAssistant) -> None:
@@ -48,9 +75,9 @@ async def async_setup(hass: HomeAssistant) -> None:
     from homeassistant.components.frontend.storage import async_user_store  # noqa: PLC0415
 
     async def _added(event: Event) -> None:
-        hide = ((await Store(hass, 1, STORE_KEY).async_load()) or {}).get("hide", [])
+        hide = ((await HaufloStore(hass, STORE_KEY).async_load()) or {}).get("hide", [])
         user = await hass.auth.async_get_user(event.data.get("user_id", ""))
-        if not hide or user is None or user.system_generated:
+        if not hide or user is None or user.system_generated or user.is_admin:
             return
         store = await async_user_store(hass, user.id)
         sidebar = dict(store.data.get("sidebar") or {})
@@ -59,6 +86,7 @@ async def async_setup(hass: HomeAssistant) -> None:
 
     if not hass.data.get(DATA_SIDEBAR_LISTENER):
         hass.data[DATA_SIDEBAR_LISTENER] = hass.bus.async_listen("user_added", _added)
+    await async_admins_back(hass)
 
 
 def async_unload(hass: HomeAssistant) -> None:
@@ -75,7 +103,7 @@ async def async_remove(hass: HomeAssistant) -> int:
     is forgotten — a person added later gets HA's full menu (HA expert 28.10). Returns how many people got them back."""
     from homeassistant.components.frontend.storage import async_user_store  # noqa: PLC0415
 
-    saved = Store(hass, 1, STORE_KEY)
+    saved = HaufloStore(hass, STORE_KEY)
     hidden_by_us = {p for p in ((await saved.async_load()) or {}).get("hide", []) if p in MENU_EXTRAS}
     back = 0
     if hidden_by_us:

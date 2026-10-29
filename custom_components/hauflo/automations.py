@@ -41,9 +41,10 @@ from typing import Any
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er
-from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
+from .house import refuse
+from .storage import HaufloStore
 _LOGGER = logging.getLogger(__name__)
 STORE_KEY = "hauflo.automations"
 PREFIX = "hauflo_auto_"
@@ -132,11 +133,31 @@ def _offset_text(minutes: int) -> str:
     return f"{sign}{m // 60:02d}:{m % 60:02d}:00"
 
 
+async def async_add_new(hass: HomeAssistant, configs: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
+    """Adds the automations whose ids automations.yaml doesn't have yet — one write, with the same backup copy and
+    plain-file check as Hauflo's own rules; never replaces or removes one (one already there may have been edited by a
+    person). Each is validated by HA first. Returns (added ids, ids already there); NotPlain when the file isn't plain."""
+    from homeassistant.components.automation.config import async_validate_config_item  # noqa: PLC0415
+
+    for cfg in configs:
+        await async_validate_config_item(hass, cfg["id"], cfg)
+    helper = Automations(hass, lambda _eid: False)
+    async with _FILE_LOCK:
+        data, before = await helper._read_file()
+        have = {a.get("id") for a in data if isinstance(a, dict)}
+        new = [c for c in configs if c["id"] not in have]
+        if new:
+            await helper._write_file([*data, *new], before)
+    if new:
+        await hass.services.async_call("automation", "reload", {}, blocking=True)
+    return [c["id"] for c in new], [c["id"] for c in configs if c["id"] in have]
+
+
 class Automations:
     def __init__(self, hass: HomeAssistant, owns: Callable[[str], bool]) -> None:
         self.hass = hass
         self.owns = owns
-        self.store = Store(hass, 1, STORE_KEY)
+        self.store = HaufloStore(hass, STORE_KEY)
         self.lock = asyncio.Lock()
 
     # --- what may be picked ------------------------------------------------------------------------------------------
@@ -703,6 +724,10 @@ class AutomationsView(HomeAssistantView):
             # HA's home location moves zone.home (presence, every sun rule): an administrator's (security review 28.10).
             msg = "Место дома задаёт администратор Home Assistant." if ru else "The home's location is set by the Home Assistant administrator."
             return self.json({"message": msg, "code": "admin_only"}, 403)
+        # Creating, changing, switching off or deleting a house automation: not a restricted (child) profile (house.py,
+        # family review round 3: a 9-year-old saved «Выключать весь свет в 01:00»). «Запустить» is pressing a button.
+        if op in ("save", "enable", "delete") and (no := await refuse(request)) is not None:
+            return no
         try:
             if op == "save":
                 saved = await engine.save(body.get("rule"), user.name if user else None, body.get("force") is True)

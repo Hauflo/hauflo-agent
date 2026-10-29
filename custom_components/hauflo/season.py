@@ -21,8 +21,9 @@ from typing import Any
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers.storage import Store
 
+from .house import refuse
+from .storage import HaufloStore
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -48,8 +49,10 @@ def acs(hass: HomeAssistant) -> list[Any]:
 
 def heat_cool_address(hass: HomeAssistant, entity_id: str) -> str | None:
     """The heat/cool switchover address of a KNX UI climate (HA's KNX config store)."""
+    from . import knx_data  # noqa: PLC0415 — the one reader of HA's KNX internals
+
     try:
-        cfg = hass.data["knx"].config_store.get_entity_config(entity_id)  # type: ignore[union-attr]
+        cfg = knx_data(hass).config_store.get_entity_config(entity_id)  # type: ignore[union-attr]
         ga = ((cfg.get("data") or {}).get("knx") or {}).get("ga_heat_cool") or {}
         w = ga.get("write")
         return w if isinstance(w, str) and w else None
@@ -61,7 +64,7 @@ class Season:
     def __init__(self, hass: HomeAssistant, comfort_of: Callable[[], Any]) -> None:
         self.hass = hass
         self.comfort_of = comfort_of
-        self.store = Store(hass, 1, STORE_KEY)
+        self.store = HaufloStore(hass, STORE_KEY)
 
     async def answer(self) -> dict[str, Any]:
         saved = (await self.store.async_load()) or {}
@@ -139,6 +142,8 @@ class SeasonView(HomeAssistantView):
         mode = body.get("mode") if isinstance(body, dict) else None
         if mode not in (HEAT, COOL):
             return self.json_message("mode: heat or cool", 400)
+        if (no := await refuse(request)) is not None:
+            return no  # «Кто может менять настройки дома» (house.py): admins and the people an admin allowed
         # A person's own action, as HA's own buttons are (the agent's KNX allowlist is for Hauflo's tunnel, which
         # can't reach this view).
         user = request["hass_user"]

@@ -5,13 +5,21 @@
         "title": "Connect to Hauflo",
         "description": "The pairing code is in Hauflo: your project → «Connect the home» → «Get a code». It works once, for 30 minutes. Enter only the code — the server is picked from it.",
         "data": {
-          "code": "Pairing code"
+          "code": "Pairing code",
+          "confirm_takeover": "Yes, move this Home Assistant to this project (it leaves the other Hauflo account)"
+        },
+        "data_description": {
+          "code": "The code from Hauflo: your project → «Connect the home» → «Get a code» (9 characters, an «RU-» or «EU-» region in front is fine). Spaces and dashes don't matter. It works once, for 30 minutes.",
+          "confirm_takeover": "Tick only if this Home Assistant really moves to this project: the other Hauflo account's house loses its connection."
         },
         "sections": {
           "advanced": {
             "name": "Advanced",
             "data": {
               "server": "Hauflo server (leave as is — the code picks the server)"
+            },
+            "data_description": {
+              "server": "Only for your own Hauflo server. Leave it as is: the code's region picks Hauflo's server."
             }
           }
         }
@@ -20,13 +28,21 @@
         "title": "Link the Hauflo agent again",
         "description": "Hauflo no longer knows this Home Assistant: the agent was unlinked or the project deleted. Get a new code in Hauflo (your project → «Connect the home» → «Get a code»). This entry is updated, no need to remove it.",
         "data": {
-          "code": "Pairing code"
+          "code": "Pairing code",
+          "confirm_takeover": "Yes, move this Home Assistant to this project (it leaves the other Hauflo account)"
+        },
+        "data_description": {
+          "code": "The code from Hauflo: your project → «Connect the home» → «Get a code» (9 characters, an «RU-» or «EU-» region in front is fine). Spaces and dashes don't matter. It works once, for 30 minutes.",
+          "confirm_takeover": "Tick only if this Home Assistant really moves to this project: the other Hauflo account's house loses its connection."
         },
         "sections": {
           "advanced": {
             "name": "Advanced",
             "data": {
               "server": "Hauflo server (leave as is — the code picks the server)"
+            },
+            "data_description": {
+              "server": "Only for your own Hauflo server. Leave it as is: the code's region picks Hauflo's server."
             }
           }
         }
@@ -35,13 +51,21 @@
         "title": "Link to another Hauflo project",
         "description": "Get a new code in Hauflo (your project → «Connect the home» → «Get a code»). This entry is updated; the agent's Home Assistant user stays.",
         "data": {
-          "code": "Pairing code"
+          "code": "Pairing code",
+          "confirm_takeover": "Yes, move this Home Assistant to this project (it leaves the other Hauflo account)"
+        },
+        "data_description": {
+          "code": "The code from Hauflo: your project → «Connect the home» → «Get a code» (9 characters, an «RU-» or «EU-» region in front is fine). Spaces and dashes don't matter. It works once, for 30 minutes.",
+          "confirm_takeover": "Tick only if this Home Assistant really moves to this project: the other Hauflo account's house loses its connection."
         },
         "sections": {
           "advanced": {
             "name": "Advanced",
             "data": {
               "server": "Hauflo server (leave as is — the code picks the server)"
+            },
+            "data_description": {
+              "server": "Only for your own Hauflo server. Leave it as is: the code's region picks Hauflo's server."
             }
           }
         }
@@ -51,25 +75,54 @@
         "description": "Hauflo will send commands only to these KNX group addresses of project «{project}» — the ones its entities write: {ranges}. Remove any Hauflo must not control (a gate, a lock), then continue. You can change this later in the integration's options.",
         "data": {
           "ranges": "Allowed addresses (1/1/5, a span 1/1/1-21 or a whole group 1/1; comma-separated or one per line)"
+        },
+        "data_description": {
+          "ranges": "Hauflo sends KNX commands only to these group addresses. Remove any it must not control (a gate, a lock). You can change this later in the integration's options."
+        }
+      },
+      "transfer": {
+        "title": "Hand this home's service over?",
+        "description": "Hand the service of this home over to «{company}»?\n\nThe company gets a copy of the home's project (rooms, devices, alarms, documents); the previous company loses access. The previous company's people stop getting this home's alarms; «{company}» becomes the contact on the alarm cards.\n\nChoose «Yes» only if you own this home and agreed this with «{company}».",
+        "menu_options": {
+          "transfer_yes": "Yes, hand the service over to this company",
+          "transfer_no": "No, change nothing"
+        }
+      },
+      "relink_ranges": {
+        "title": "Group addresses of the new project",
+        "description": "Hauflo will send commands only to these KNX group addresses of project «{project}» — the ones its entities write: {ranges}. The previous allowed list is replaced; these go: {removed}. Remove any Hauflo must not control (a gate, a lock), then continue.",
+        "data": {
+          "ranges": "Allowed addresses (1/1/5, a span 1/1/1-21 or a whole group 1/1; comma-separated or one per line)"
+        },
+        "data_description": {
+          "ranges": "Replaces the previous allowed list. Remove any address Hauflo must not control (a gate, a lock)."
         }
       }
     },
     "error": {
       "invalid_code": "The code is wrong or expired. A code works once, for 30 minutes — get a new one in Hauflo.",
       "cannot_connect": "Can't reach Hauflo. Check that this Home Assistant has internet access, then enter the code again.",
-      "https_required": "Hauflo's address must be https:// (http only for a local server)."
+      "https_required": "Hauflo's address must be https:// (http only for a local server).",
+      "takeover_confirm": "This Home Assistant is linked to a house of ANOTHER Hauflo account. If you continue, it leaves that account and the old house loses its connection. If that is intended, tick the box «Yes, move…» and press Submit; otherwise close this window.",
+      "transfer_ask": "Your decision is needed: hand this home's service over to another company?"
     },
     "abort": {
       "already_configured": "Hauflo is already connected in this Home Assistant.",
       "single_instance_allowed": "Only one Hauflo agent per Home Assistant: it is already set up.",
       "reauth_successful": "The Hauflo agent is linked again.",
-      "reconfigure_successful": "The Hauflo agent is linked with the new code."
+      "reconfigure_successful": "The Hauflo agent is linked with the new code.",
+      "transfer_declined": "Nothing changed: this Home Assistant stays linked to the previous company."
     }
   },
   "entity": {
     "binary_sensor": {
       "link": {
         "name": "Link"
+      }
+    },
+    "climate": {
+      "comfort": {
+        "name": "Comfort · {room}"
       }
     },
     "select": {
@@ -80,36 +133,94 @@
           "summer": "Summer"
         }
       }
+    },
+    "sensor": {
+      "ownership": {
+        "name": "Made in this home"
+      }
     }
   },
   "options": {
     "step": {
       "init": {
         "title": "Hauflo in this home",
-        "description": "Connected to project «{project}» on {server} — [open Hauflo]({url}).\n\nHauflo sends KNX commands only to the addresses below. Every address Hauflo asked for is allowed.",
-        "data": {
-          "allow_changes": "Allow Hauflo to change this home's setup",
-          "ranges": "Allowed addresses (1/1/5, a span 1/1/1-21 or a whole group 1/1; comma-separated or one per line)"
-        },
-        "data_description": {
-          "allow_changes": "Off: Hauflo changes nothing in Home Assistant — deploys, dashboards, rooms, KNX entities and backups started by Hauflo are refused. Monitoring, alarms and voice keep working.",
-          "ranges": "Remove any Hauflo must not control (a gate, a lock)."
-        }
-      },
-      "init_pending": {
-        "title": "Hauflo in this home",
-        "description": "Connected to project «{project}» on {server} — [open Hauflo]({url}).\n\nHauflo sends KNX commands only to the allowed addresses. Hauflo asked for these and waits for your permission: {pending}. They are NOT allowed until you tick them below. Check each one: it may be a gate or a lock. Unticked ones are declined when you save.",
+        "description": "Connected to project «{project}» on {server} — [open Hauflo]({url}).\n\n**Who services this home:** {service}\n\n**Access history:** {history}\n\nHauflo sends KNX commands only to the addresses below. Every address Hauflo asked for is allowed.",
         "data": {
           "allow_changes": "Allow Hauflo to change this home's setup",
           "ranges": "Allowed addresses (1/1/5, a span 1/1/1-21 or a whole group 1/1; comma-separated or one per line)",
-          "accept_pending": "Allow these requested addresses"
+          "independent": "Make the house independent of Hauflo"
         },
         "data_description": {
           "allow_changes": "Off: Hauflo changes nothing in Home Assistant — deploys, dashboards, rooms, KNX entities and backups started by Hauflo are refused. Monitoring, alarms and voice keep working.",
           "ranges": "Remove any Hauflo must not control (a gate, a lock).",
-          "accept_pending": "Tick only your own project's addresses. Check each one: it may be a gate or a lock."
+          "independent": "Next step explains it: the dashboard cards stay in /config/www/hauflo and the alarm rules become ordinary Home Assistant automations. Nothing is deleted."
+        }
+      },
+      "init_pending": {
+        "title": "Hauflo in this home",
+        "description": "Connected to project «{project}» on {server} — [open Hauflo]({url}).\n\n**Who services this home:** {service}\n\n**Access history:** {history}\n\nHauflo sends KNX commands only to the allowed addresses. Hauflo asked for these and waits for your permission: {pending}. They are NOT allowed until you tick them below. Check each one: it may be a gate or a lock. Unticked ones are declined when you save.",
+        "data": {
+          "allow_changes": "Allow Hauflo to change this home's setup",
+          "ranges": "Allowed addresses (1/1/5, a span 1/1/1-21 or a whole group 1/1; comma-separated or one per line)",
+          "accept_pending": "Allow these requested addresses",
+          "independent": "Make the house independent of Hauflo"
+        },
+        "data_description": {
+          "allow_changes": "Off: Hauflo changes nothing in Home Assistant — deploys, dashboards, rooms, KNX entities and backups started by Hauflo are refused. Monitoring, alarms and voice keep working.",
+          "ranges": "Remove any Hauflo must not control (a gate, a lock).",
+          "accept_pending": "Tick only your own project's addresses. Check each one: it may be a gate or a lock.",
+          "independent": "Next step explains it: the dashboard cards stay in /config/www/hauflo and the alarm rules become ordinary Home Assistant automations. Nothing is deleted."
+        }
+      },
+      "independent": {
+        "title": "Make the house independent",
+        "description": "What happens:\n- The Hauflo dashboard cards are copied to /config/www/hauflo and added as dashboard resources, so the family's dashboard works without the agent.\n- Every enabled Hauflo alarm rule becomes an ordinary automation in automations.yaml: the same sensors and alarm states, a push to the same Home Assistant app phones (critical where the rule is), a notification in HA and the rule's button. A backup copy of automations.yaml is made first. Automations made earlier this way are left as they are.\n- Nothing is deleted. Hauflo keeps working until you remove the integration; until then an alarm comes twice.\n\nWhat stops working once Hauflo is removed:\n- Cloud monitoring: «agent offline», «KNX bus silent», the monitoring page and the service company's view.\n- E-mail alarms and the alarm history in Hauflo; repeats until «Accept».\n- Deploys and updates from the project, guest links, «Away» presence simulation, the comfort floor, voice sentences, editing the family's automations and scenes on the dashboard (the ones already made keep running).\n\nSubmit to do it."
+      },
+      "independent_done": {
+        "title": "The house is independent",
+        "description": "{report}\n\nThe same text is in HA's notifications. Submit to close."
+      }
+    }
+  },
+  "issues": {
+    "link_lost": {
+      "title": "No link to Hauflo for {hours} hours",
+      "description": "This Home Assistant has not reached Hauflo ({server}) for {hours} hours. The house works as before, but monitoring, alarms to Telegram and deploys from Hauflo wait for the link. Check the internet connection of this Home Assistant; the agent reconnects by itself. This message goes away when the link is back."
+    },
+    "unlinked": {
+      "title": "Hauflo no longer knows this Home Assistant",
+      "description": "The project was unlinked or deleted in Hauflo, so the agent stopped connecting. To link it again, get a new code in Hauflo (project → «Connect the home» → «Get a code») and enter it in Settings → Devices & services → Hauflo → Re-configure. If you don't use Hauflo any more, delete the integration."
+    },
+    "ranges_pending": {
+      "title": "Hauflo asks to allow {count} KNX addresses (project «{project}»)",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Allow Hauflo to send to these KNX addresses?",
+            "description": "Project «{project}» writes to {count} group addresses that aren't allowed yet:\n\n**Added:** {ranges}\n\n**Removed from the allowed list** (no address of this project is there): {removed}\n\nAllow only addresses of your own project. Never allow gates, locks or groups of other systems. You can change the list later: Settings → Devices & services → Hauflo → Configure.",
+            "menu_options": {
+              "allow": "Allow",
+              "decline": "Decline"
+            }
+          }
+        },
+        "abort": {
+          "nothing_pending": "Hauflo isn't waiting for any address now."
         }
       }
+    },
+    "degraded": {
+      "title": "Some Hauflo features are off on this Home Assistant version",
+      "description": "Home Assistant changed an internal part these features use, so the agent skipped them: {features}. Everything else works. Update the Hauflo agent (HACS → Hauflo → Update); if it is already the latest, tell your integrator."
+    },
+    "outdated": {
+      "title": "The Hauflo agent needs an update",
+      "description": "This agent is version {version}; Hauflo needs at least {minimum} (latest: {latest}). Deploys and some features may fail until it is updated: HACS → Hauflo → Update, then restart Home Assistant."
+    }
+  },
+  "exceptions": {
+    "no_backup_location": {
+      "message": "This Home Assistant has no local backup location, so the agent can't make a backup before a change."
     }
   }
 }

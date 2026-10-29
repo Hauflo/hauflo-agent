@@ -119,3 +119,28 @@ async def test_suggestions_know_foreign_sensors(hass: HomeAssistant) -> None:
     by = {c["entity_id"]: c for c in eng.status()["candidates"]}
     assert by["binary_sensor.leak"]["own"] is True
     assert by["binary_sensor.boiler_state"]["own"] is False
+
+
+async def test_push_times_are_the_houses_clock(hass: HomeAssistant) -> None:
+    """Integrator review 29.10 (defect 9): the alarm card said «с 03:46», the push «01:46» (UTC). Pushes say HA's
+    configured time zone; the stored «since» stays ISO with its offset."""
+    pushed: list[str] = []
+
+    async def fine(call):
+        pushed.append(call.data["message"])
+
+    hass.services.async_register("notify", "mobile_app_tablet", fine)
+    await hass.config.async_update(time_zone="Asia/Dubai")
+    eng = _engine(hass)
+    assert eng._hhmm("2026-10-29T01:46:00+00:00") == "05:46"
+    assert eng._hhmm("2026-10-29T01:46:00") == "05:46"  # no offset: read as UTC, as the agent stores it
+    await hass.config.async_update(time_zone="Europe/Moscow")
+    assert eng._hhmm("2026-10-29T01:46:00+00:00") == "04:46"
+    # The alarm push itself.
+    hass.states.async_set("binary_sensor.leak", "on", {"device_class": "moisture", "friendly_name": "Протечка"})
+    rule = {"id": "r1", "title": "Протечка", "priority": "normal", "recipients": {"all": False, "people": [], "groups": [], "phones": ["mobile_app_tablet"]}}
+    eng.active["r1|binary_sensor.leak"] = {"since": "2026-10-29T01:46:00+00:00", "acked_by": None, "repeat": None, "count": 0, "group": False}
+    with patch.object(eng, "_schedule"), patch.object(eng, "_save"):
+        await eng._send_alarm(rule, hass.states.get("binary_sensor.leak"), "r1|binary_sensor.leak")
+    assert pushed and "04:46" in pushed[-1] and "01:46" not in pushed[-1]
+    assert dt_util.parse_datetime(eng.active["r1|binary_sensor.leak"]["since"]).utcoffset() is not None

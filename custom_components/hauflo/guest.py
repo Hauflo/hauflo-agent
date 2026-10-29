@@ -8,7 +8,8 @@ list or the log (`/api/hauflo/guest` is not in the tunnel's allowlist), or reach
 table of actions. Every request is checked again: the grant alive, the entity in its snapshot, still in its room,
 still a safe Hauflo light / cover / climate, the issuer still a person allowed to control it.
 
-GET/POST /api/hauflo/guest — a signed-in person of this HA (issuing: one who may control the entities; revoking: any).
+GET/POST /api/hauflo/guest — a signed-in person of this HA (issuing: one who may control the entities and isn't a
+restricted profile; revoking: any; «ask»: a restricted profile asks the admins for a link — family review round 3).
 """
 
 from __future__ import annotations
@@ -25,12 +26,13 @@ import secrets
 import time
 from typing import Any
 
-from homeassistant.components.http import HomeAssistantView
+from homeassistant.components.http import KEY_HASS, HomeAssistantView
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er
-from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
+from .house import may_edit, refuse
+from .storage import HaufloStore
 from . import qr
 
 _LOGGER = logging.getLogger(__name__)
@@ -114,7 +116,7 @@ class GuestAccess:
         self.hass = hass
         self.owns = owns  # Hauflo's own and safe (__init__._hauflo_entity: never a lock / alarm / valve / garage door)
         self.link_base = link_base  # «https://app.hauflo.ru/g/<route>»: the agent's own region server
-        self.store: Store = Store(hass, 1, STORE_KEY)
+        self.store: HaufloStore = HaufloStore(hass, STORE_KEY)
         self.grants: list[dict[str, Any]] = []
         self.log: list[dict[str, Any]] = []
         self.loaded = False
@@ -138,6 +140,14 @@ class GuestAccess:
                 self.grants = [g for g in data.get("grants", []) if isinstance(g, dict) and isinstance(g.get("id"), str)]
                 self.log = [x for x in data.get("log", []) if isinstance(x, dict)]
             self.loaded = True
+
+    async def async_stop(self) -> None:
+        """The entry unloaded: the log noted in the last second is written now, not by a timer of a gone agent."""
+        if self.loaded:
+            async with self.lock:
+                await self.store.async_save(self._data())
+        self.rates.clear()
+        self.refused.clear()
 
     def _data(self) -> dict[str, Any]:
         return {"grants": self.grants, "log": self.log}
@@ -451,6 +461,36 @@ def _may_control(user: Any, eid: str) -> bool:
         return False
 
 
+ASK_GAP = 600  # «Попросить администратора»: once in 10 minutes per person
+
+
+async def ask_admins(hass: HomeAssistant, user: Any, note: str, phones: list[dict[str, Any]]) -> dict[str, Any]:
+    """«Марина просит гостевую ссылку на вечер» to the admins: a notification in HA and a push to the admins' phones (the
+    HA app, found as the alarms find them). The guest link itself is still made by an admin — nothing is issued here."""
+    from homeassistant.components import persistent_notification  # noqa: PLC0415
+
+    ru = str(hass.config.language or "ru").lower().startswith("ru")
+    who = (user.name or "").strip() or ("Кто-то из семьи" if ru else "Someone in the family")
+    what = f"{who} просит гостевую ссылку" if ru else f"{who} asks for a guest link"
+    if note:
+        what += f" {note}" if ru else f" ({note})"
+    how = "Создать: Hauflo → ⚙ Настройки → Гостевой доступ." if ru else "To make one: Hauflo → ⚙ Settings → Guest access."
+    title = "Гостевой доступ" if ru else "Guest access"
+    persistent_notification.async_create(hass, f"{what}.\n\n{how}", title=title, notification_id=f"hauflo_guest_ask_{user.id}")
+    admins = {u.id for u in await hass.auth.async_get_users() if u.is_admin and u.is_active and not u.system_generated}
+    people = {s.entity_id for s in hass.states.async_all("person") if s.attributes.get("user_id") in admins}
+    sent = 0
+    for phone in phones:
+        if phone.get("person") not in people:
+            continue
+        try:
+            await hass.services.async_call("notify", phone["service"], {"title": title, "message": f"{what}. {how}", "data": {"tag": f"hauflo_guest_ask_{user.id}"}}, blocking=True)
+            sent += 1
+        except Exception as err:  # noqa: BLE001 — one phone that fails mustn't stop the others
+            _LOGGER.warning("Hauflo guest request to %s failed: %s", phone.get("service"), err)
+    return {"asked": True, "phones": sent}
+
+
 class GuestView(HomeAssistantView):
     """The family's side, signed in to HA. Not reachable through Hauflo's tunnel (not in __init__._HAUFLO_VIEWS)."""
 
@@ -458,8 +498,10 @@ class GuestView(HomeAssistantView):
     name = "api:hauflo:guest"
     requires_auth = True
 
-    def __init__(self, engine_of: Callable[[], GuestAccess | None]) -> None:
+    def __init__(self, engine_of: Callable[[], GuestAccess | None], alarms_of: Callable[[], Any] | None = None) -> None:
         self.engine_of = engine_of
+        self.alarms_of = alarms_of  # the alarm engine: its phones() are the admins' phones for «ask»
+        self.asked: dict[str, float] = {}
 
     async def get(self, request):
         engine = self.engine_of()
@@ -468,6 +510,9 @@ class GuestView(HomeAssistantView):
         await engine.async_load()
         user = request["hass_user"]
         out = engine.answer(user)
+        # Guest links are the house's settings too: a restricted (child) profile (house.py) doesn't issue — it asks.
+        out["can_issue"] = bool(out["can_issue"]) and await may_edit(request.app[KEY_HASS], user)
+        out["can_ask"] = not out["can_issue"] and user is not None and not user.system_generated
         if request.query.get("rooms"):
             out["rooms"] = engine.rooms(user) if out["can_issue"] else []
         return self.json(out)
@@ -483,8 +528,28 @@ class GuestView(HomeAssistantView):
             return self.json_message("invalid JSON", 400)
         if not isinstance(body, dict):
             return self.json_message("an object expected", 400)
-        user = request["hass_user"]
         op = body.get("op")
+        # A new link is the house's settings (house.py: admins and the people an admin allowed); closing one is the safe
+        # direction — any person of the house.
+        if op == "issue" and (no := await refuse(request)) is not None:
+            return no
+        user = request["hass_user"]
+        if op == "ask":
+            note = body.get("note", "")
+            if set(body) - {"op", "note"} or not isinstance(note, str) or len(note) > 60 or _UNSAFE_TEXT.search(note):
+                return self.json_message("ask: an optional short note", 400)
+            if user is None or user.system_generated:
+                return self.json_message("a person of the house only", 403)
+            last = self.asked.get(user.id, 0.0)
+            if time.monotonic() - last < ASK_GAP and last:
+                return self.json({"message": "already asked", "code": "too_soon", "wait": int(ASK_GAP - (time.monotonic() - last))}, 429)
+            self.asked[user.id] = time.monotonic()
+            alarms = self.alarms_of() if self.alarms_of else None
+            try:
+                phones = alarms.phones() if alarms is not None else []
+            except Exception:  # noqa: BLE001 — no phones: the HA notification alone
+                phones = []
+            return self.json(await ask_admins(request.app[KEY_HASS], user, " ".join(note.split()), phones))
         try:
             if op == "issue":
                 if set(body) - {"op", "label", "rooms", "hours", "max_devices"}:
@@ -500,4 +565,4 @@ class GuestView(HomeAssistantView):
             return self.json_message(str(err), 403)
         except Invalid as err:
             return self.json_message(str(err), 400)
-        return self.json_message("op: issue | revoke | revoke_all", 400)
+        return self.json_message("op: issue | revoke | revoke_all | ask", 400)

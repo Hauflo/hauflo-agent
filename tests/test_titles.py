@@ -25,9 +25,12 @@ async def entry(hass: HomeAssistant):
     yield entry
 
 
-async def test_any_person_renames_for_the_house(hass: HomeAssistant, hass_client, hass_read_only_access_token, entry) -> None:
-    # The client isn't an admin: allowed.
+async def test_any_person_renames_for_the_house(hass: HomeAssistant, hass_client, hass_read_only_user, hass_read_only_access_token, entry) -> None:
+    # The client isn't an admin: allowed unless an admin made him a restricted (child) profile (family review rounds 2–3).
     client = await hass_client(hass_read_only_access_token)
+    await (await hass_client()).post("/api/hauflo/house", json={"restricted": [hass_read_only_user.id]})
+    assert (await client.post("/api/hauflo/titles", json={"titles": {"climate": "x"}})).status == 403
+    await (await hass_client()).post("/api/hauflo/house", json={"restricted": []})
     got = await (await client.get("/api/hauflo/titles")).json()
     assert got["titles"] == {} and "climate" in got["kinds"] and got["max"] == 40
 

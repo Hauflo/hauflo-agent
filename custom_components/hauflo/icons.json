@@ -1,0 +1,23 @@
+{
+  "entity": {
+    "climate": {
+      "comfort": {
+        "default": "mdi:home-thermometer"
+      }
+    },
+    "sensor": {
+      "ownership": {
+        "default": "mdi:home-import-outline"
+      }
+    },
+    "select": {
+      "house_mode": {
+        "default": "mdi:sun-snowflake-variant",
+        "state": {
+          "winter": "mdi:snowflake",
+          "summer": "mdi:white-balance-sunny"
+        }
+      }
+    }
+  }
+}

@@ -1,83 +1,141 @@
-# Home Assistant integration quality scale — where the Hauflo agent stands (HA core review round 3).
+# Home Assistant integration quality scale — where the Hauflo agent stands (HA core review 29.10: every rule, marked
+# honestly; «todo» where it isn't there yet).
 rules:
   # Bronze
   action-setup:
     status: exempt
-    comment: The agent registers no service actions.
+    comment: The agent registers no service actions of its own.
   appropriate-polling:
     status: exempt
-    comment: No polling — one push link to Hauflo; the «Связь» entity is updated by dispatcher.
+    comment: No polling — one push link to Hauflo; the entities are updated by dispatcher and state events.
   brands: done
   common-modules: done
   config-flow-test-coverage: done
-  config-flow: done
-  dependency-transparency: done
+  config-flow:
+    status: done
+    comment: UI setup only. Every field of every step (user, reauth_confirm, reconfigure, ranges, relink_ranges, the folded «Advanced» server) has a data_description; the transfer step is a menu without fields.
+  dependency-transparency:
+    status: done
+    comment: No requirements (only Home Assistant's own aiohttp).
   docs-actions:
     status: exempt
     comment: No service actions.
+  docs-conditions:
+    status: exempt
+    comment: No device conditions.
   docs-high-level-description: done
   docs-installation-instructions: done
-  docs-removal-instructions: done
+  docs-removal-instructions:
+    status: done
+    comment: README «Removing» — what removal takes, what it leaves (and how to remove that by hand).
+  docs-triggers:
+    status: exempt
+    comment: No device triggers.
   entity-event-setup: done
   entity-unique-id: done
   has-entity-name: done
   runtime-data: done
-  test-before-configure: done
+  test-before-configure:
+    status: done
+    comment: The pairing code is checked with the Hauflo server in the config flow.
   test-before-setup:
     status: exempt
-    comment: The link to Hauflo reconnects by itself with backoff; HA works offline and «Связь» says so.
-  unique-config-entry: done
+    comment: The link to Hauflo reconnects by itself with backoff; the house and the agent's local parts work offline, and «Link» says so.
+  unique-config-entry:
+    status: done
+    comment: single_config_entry in the manifest.
   # Silver
   action-exceptions:
     status: exempt
-    comment: No service actions.
+    comment: >-
+      No service actions of its own. The climate / select entity actions only store a value Home Assistant already
+      validated; the floor thermostats are written later by the engine, never inside the action.
   config-entry-unloading: done
   docs-configuration-parameters:
-    status: exempt
-    comment: No options flow.
-  docs-installation-parameters: done
+    status: done
+    comment: README «Options» — «Allow Hauflo to change this home's setup» and the allowed KNX group addresses.
+  docs-installation-parameters:
+    status: done
+    comment: README «Install» — the pairing code, the optional server, the takeover checkbox, the KNX addresses.
   entity-unavailable:
     status: exempt
-    comment: «Связь» is the link's own state — on or off, never unavailable.
+    comment: >-
+      «Link» is the link's own state (on / off, never unavailable). «Comfort · room» and «House mode» hold the
+      family's settings in HA and keep working whatever a floor thermostat says (no current temperature then).
   integration-owner: done
   log-when-unavailable: done
   parallel-updates:
-    status: exempt
-    comment: One push-updated diagnostic entity.
+    status: done
+    comment: PARALLEL_UPDATES = 0 on every platform (push entities).
   reauthentication-flow: done
   test-coverage:
     status: todo
-    comment: config flow 100%; the tunnel and notify engine are covered in part (pytest-homeassistant, CI).
+    comment: Measured in CI per module (pytest-cov, no gate yet) — 85 % of lines overall, config flow 98 %; below 95 %: the tunnel (__init__ 69 %), the notify engine (77 %), voice (44 %).
   # Gold
+  devices:
+    status: done
+    comment: One service device «Hauflo» carries all the agent's entities.
   diagnostics: done
-  entity-category: done
-  entity-device-class: done
-  devices: done
-  entity-translations: done
-  reconfiguration-flow: done
-  repair-issues:
-    status: exempt
-    comment: An unlinked agent is HA's own re-authentication card.
   discovery:
     status: exempt
     comment: A cloud link paired by code — nothing to discover.
   discovery-update-info:
     status: exempt
     comment: No discovery.
-  docs-data-update: todo
-  docs-examples: todo
-  docs-known-limitations: todo
+  docs-data-update:
+    status: done
+    comment: README «How data updates».
+  docs-examples:
+    status: done
+    comment: README «Examples».
+  docs-known-limitations:
+    status: done
+    comment: README «Known limitations».
   docs-supported-devices:
     status: exempt
-    comment: One service device («Hauflo») for the link entity; it manages no hardware of its own.
-  docs-supported-functions: todo
-  docs-troubleshooting: todo
-  docs-use-cases: todo
+    comment: It manages no hardware of its own; KNX devices go through Home Assistant's KNX integration (its list of supported interfaces).
+  docs-supported-functions:
+    status: done
+    comment: README «Entities the integration creates» and the feature sections.
+  docs-troubleshooting:
+    status: done
+    comment: README troubleshooting questions (code, silent actuator, old HA, cards after an update).
+  docs-use-cases:
+    status: done
+    comment: README «For the family», «For you, the integrator».
   dynamic-devices:
     status: exempt
     comment: One service device.
-  exception-translations: todo
-  icon-translations: todo
+  entity-category: done
+  entity-device-class: done
+  entity-disabled-by-default:
+    status: exempt
+    comment: >-
+      No noisy or rarely used entities — «Link» is the agent's one health signal, «Comfort · room» and «House mode»
+      exist only when the integrator turned the comfort floor on.
+  entity-translations: done
+  exception-translations:
+    status: done
+    comment: >-
+      The one HomeAssistantError the agent raises (no local backup location) is translated; other errors are answers
+      of its own HTTP views, not raised to the HA UI.
+  icon-translations:
+    status: done
+    comment: icons.json for «Comfort» and «House mode»; «Link» takes its icon from its device class.
+  reconfiguration-flow: done
+  repair-issues:
+    status: done
+    comment: Repairs for a link lost for hours, an unlinked agent, KNX addresses waiting for the owner, features HA took away, an outdated agent.
   stale-devices:
     status: exempt
     comment: One service device.
+  # Platinum
+  async-dependency:
+    status: exempt
+    comment: No dependency library.
+  inject-websession:
+    status: done
+    comment: Home Assistant's own client session (async_get_clientsession).
+  strict-typing:
+    status: todo
+    comment: Typed, but not checked with mypy --strict yet.

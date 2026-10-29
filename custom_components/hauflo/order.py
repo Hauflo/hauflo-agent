@@ -20,8 +20,9 @@ from typing import Any
 
 from homeassistant.components.http import KEY_HASS, HomeAssistantView
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.storage import Store
 
+from .house import refuse
+from .storage import HaufloStore
 STORE_KEY = "hauflo.order"
 MAX_KEY = 300
 MAX_ITEMS = 300
@@ -160,8 +161,8 @@ async def clean_items(hass: HomeAssistant, key: Any, items: Any) -> list[str] | 
     return out
 
 
-def _store(hass: HomeAssistant) -> Store:
-    return Store(hass, 1, STORE_KEY)
+def _store(hass: HomeAssistant) -> HaufloStore:
+    return HaufloStore(hass, STORE_KEY)
 
 
 async def async_load(hass: HomeAssistant) -> dict[str, list[str]]:
@@ -187,6 +188,8 @@ class OrderView(HomeAssistantView):
             return self.json_message("invalid JSON", 400)
         if not isinstance(body, dict):
             return self.json_message("an object expected", 400)
+        if (no := await refuse(request)) is not None:
+            return no  # «Кто может менять настройки дома» (house.py): admins and the people an admin allowed
         hass = request.app[KEY_HASS]
         order = await async_load(hass)
         if body.get("clear") is True:

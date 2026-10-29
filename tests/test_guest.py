@@ -286,7 +286,13 @@ async def test_who_issues_and_revokes(hass: HomeAssistant, hass_client, entry, p
     family = await _client(hass, hass_client, person)
     ro = await _client(hass, hass_client, hass_read_only_user)
     admin = await _client(hass, hass_client, hass_admin_user)
-    # A read-only person can't hand control on; the list and the log are open to the family.
+    # «Кто может менять настройки дома» (family review rounds 2–3): a restricted (child) profile can't issue a link, it asks.
+    assert (await admin.post("/api/hauflo/house", json={"restricted": [person.id]})).status == 200
+    assert (await family.post(URL, json={"op": "issue", "label": "x", "rooms": [entry.living], "hours": 2})).status == 403
+    got = await (await family.get(URL, params={"rooms": "1"})).json()
+    assert got["can_issue"] is False and got["can_ask"] is True
+    assert (await admin.post("/api/hauflo/house", json={"restricted": []})).status == 200
+    # A read-only person can't hand control on even when allowed; the list and the log are open to the family.
     r = await ro.post(URL, json={"op": "issue", "label": "x", "rooms": [entry.living], "hours": 2})
     assert r.status == 403
     r = await ro.get(URL, params={"rooms": "1"})
@@ -383,3 +389,18 @@ async def test_active_cap(hass: HomeAssistant, entry, person) -> None:
         await _issue(engine, person, [entry.living])
     await engine.revoke(person, None)
     await _issue(engine, person, [entry.living])
+
+
+async def test_removal_takes_the_guest_log_and_keeps_the_dashboard(hass: HomeAssistant, entry, person, hass_storage) -> None:
+    """HA core review 29.10: the guest log (who invited whom, when guests came) is personal data — removing the
+    integration deletes it; the client's dashboard keeps its cards (deliberate)."""
+    agent = entry.runtime_data
+    await _issue(agent.guest, person, [entry.living])
+    await flush_store(agent.guest.store)
+    assert hass_storage[G.STORE_KEY]["data"]["log"]
+    with patch("custom_components.hauflo.keep.async_keep_dashboard", AsyncMock()) as kept:
+        await hass.config_entries.async_remove(entry.entry_id)
+        await hass.async_block_till_done()
+    assert G.STORE_KEY not in hass_storage
+    assert await G.HaufloStore(hass, G.STORE_KEY).async_load() is None
+    kept.assert_awaited_once()

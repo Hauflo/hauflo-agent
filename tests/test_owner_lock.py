@@ -18,7 +18,7 @@ from custom_components.hauflo.const import CONF_ALLOW_CHANGES, CONF_RANGES, CONF
 ALLOWLIST = {
     "get_states", "get_config", "ping", "unsubscribe_events", "persistent_notification/subscribe", "cloud/status", "frontend/get_themes", "manifest/get", "get_panels",
     "config_entries/get",
-    "config/area_registry/list", "config/area_registry/create", "config/area_registry/update",
+    "config/area_registry/list", "config/area_registry/create", "config/area_registry/update", "config/area_registry/delete",
     "config/floor_registry/list", "config/floor_registry/create", "config/floor_registry/update",
     "config/label_registry/list", "config/label_registry/create", "config/label_registry/delete",
     "config/device_registry/list", "config/device_registry/update", "config/device_registry/remove", "config/device_registry/remove_config_entry",
@@ -30,7 +30,7 @@ ALLOWLIST = {
 }
 # What changes the house — refused while locked. Listed by hand: moving one into «reads» must fail this test.
 WRITES = {
-    "config/area_registry/create", "config/area_registry/update", "config/floor_registry/create", "config/floor_registry/update",
+    "config/area_registry/create", "config/area_registry/update", "config/area_registry/delete", "config/floor_registry/create", "config/floor_registry/update",
     "config/label_registry/create", "config/label_registry/delete",
     "config/device_registry/update", "config/device_registry/remove", "config/device_registry/remove_config_entry", "config/entity_registry/update",
     "knx/create_entity", "knx/update_entity", "knx/delete_entity", "knx/create_device",
@@ -44,6 +44,7 @@ HTTP = [
     ("GET", "/api/hauflo/backup", False), ("POST", "/api/hauflo/backup", True),
     ("GET", "/api/hauflo/notify", False), ("POST", "/api/hauflo/notify", False), ("POST", "/api/hauflo/notify/test", False),
     ("GET", "/api/hauflo/alarms", False), ("POST", "/api/hauflo/sidebar", True), ("GET", "/api/hauflo/owned", False), ("GET", "/api/hauflo/ranges", False),
+    ("POST", "/api/hauflo/ownership", False), ("GET", "/api/hauflo/ownership", False), ("POST", "/api/hauflo/alarms", False),
     ("GET", "/api/hauflo/comfort", False), ("POST", "/api/hauflo/comfort", True),
     ("GET", "/api/homekit/pairingqr?e1-x", False),
     ("GET", "/api/config/scene/config/hauflo_r1", False), ("POST", "/api/config/scene/config/hauflo_r1", True), ("DELETE", "/api/config/scene/config/hauflo_r1", True),
@@ -234,10 +235,22 @@ async def test_the_lock_survives_a_restart(hass: HomeAssistant, entry) -> None:
 async def test_the_dialog(hass: HomeAssistant, entry) -> None:
     flow = await hass.config_entries.options.async_init(entry.entry_id)
     assert flow["type"] is FlowResultType.FORM and flow["step_id"] == "init"  # nothing pending: no «—»
-    assert [str(k) for k in flow["data_schema"].schema] == [CONF_ALLOW_CHANGES, CONF_RANGES]
+    assert [str(k) for k in flow["data_schema"].schema] == [CONF_ALLOW_CHANGES, CONF_RANGES, "independent"]
     defaults = {str(k): k.default() for k in flow["data_schema"].schema}
-    assert defaults == {CONF_ALLOW_CHANGES: True, CONF_RANGES: "1/1"}
-    assert flow["description_placeholders"] == {"pending": "", "project": "Вилла Юг", "server": "app.hauflo.ru", "url": "https://app.hauflo.ru"}
+    assert defaults == {CONF_ALLOW_CHANGES: True, CONF_RANGES: "1/1", "independent": False}
+    assert flow["description_placeholders"] == {
+        "pending": "",
+        "project": "Вилла Юг",
+        "server": "app.hauflo.ru",
+        "url": "https://app.hauflo.ru",
+        "service": "no data yet — Hauflo sends it on the next connection",
+        "history": "no transfers and no support access",
+    }
+    # Who services the home (service review 29.10, D): the frame Hauflo sends, shown read-only here.
+    await entry.runtime_data._on_frame({"t": "service", "info": {"company": "Сервис-Дом", "contact": {"phone": "+7 900 000-00-02"}, "history": [{"kind": "owner", "at": "2026-10-29T10:00:00Z", "from": "Volkov KNX", "to": "Сервис-Дом"}]}})
+    shown = (await hass.config_entries.options.async_init(entry.entry_id))["description_placeholders"]
+    assert shown["service"] == "«Сервис-Дом» — phone +7 900 000-00-02"
+    assert "29.10.2026 — the home moved from «Volkov KNX» to «Сервис-Дом» (approved by the owner in Home Assistant)" in shown["history"]
     # Commas and new lines both separate the addresses.
     flow = await hass.config_entries.options.async_configure(flow["flow_id"], {CONF_ALLOW_CHANGES: True, CONF_RANGES: "1/1\n2/2/5-9, 3/3/1\n\nx"})
     assert entry.options == {CONF_RANGES: ["1/1", "2/2/5-9", "3/3/1"], CONF_ALLOW_CHANGES: True}
@@ -260,7 +273,7 @@ async def test_pending_is_never_prefilled_security_2810(hass: HomeAssistant, ent
     flow = await hass.config_entries.options.async_init(entry.entry_id)
     assert flow["step_id"] == "init_pending"
     defaults = {str(k): k.default() for k in flow["data_schema"].schema}
-    assert defaults == {CONF_ALLOW_CHANGES: True, CONF_RANGES: "1/1", "accept_pending": []}
+    assert defaults == {CONF_ALLOW_CHANGES: True, CONF_RANGES: "1/1", "accept_pending": [], "independent": False}
     sel = [v for k, v in flow["data_schema"].schema.items() if str(k) == "accept_pending"][0]
     assert sel.config["multiple"] is True and [o["value"] if isinstance(o, dict) else o for o in sel.config["options"]] == ["1/2/3", "7/7/1"]
     # The reviewer's exact case: only the lock toggled, Submit with the defaults.
@@ -291,10 +304,12 @@ def test_both_languages_say_the_same_steps() -> None:
     texts = {n: json.loads((base / n).read_text()) for n in ("strings.json", "translations/en.json", "translations/ru.json")}
     for name, j in texts.items():
         steps = j["options"]["step"]
-        assert set(steps) == {"init", "init_pending"}, name
+        assert set(steps) == {"init", "init_pending", "independent", "independent_done"}, name
+        assert "{report}" in steps["independent_done"]["description"]
+        steps = {k: v for k, v in steps.items() if k.startswith("init")}
         for step in steps.values():
-            assert set(step["data"]) - {"accept_pending"} == {CONF_ALLOW_CHANGES, CONF_RANGES}
+            assert set(step["data"]) - {"accept_pending"} == {CONF_ALLOW_CHANGES, CONF_RANGES, "independent"}
             assert "{project}" in step["description"] and "{server}" in step["description"] and "{url}" in step["description"]
         assert "{pending}" in steps["init_pending"]["description"] and "{pending}" not in steps["init"]["description"]
-        assert set(steps["init_pending"]["data"]) == set(steps["init_pending"]["data_description"]) == {CONF_ALLOW_CHANGES, CONF_RANGES, "accept_pending"}
+        assert set(steps["init_pending"]["data"]) == set(steps["init_pending"]["data_description"]) == {CONF_ALLOW_CHANGES, CONF_RANGES, "accept_pending", "independent"}
         assert "—" not in steps["init"]["description"].split("\n\n", 1)[1]

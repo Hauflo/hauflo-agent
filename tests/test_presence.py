@@ -18,6 +18,7 @@ from pytest_homeassistant_custom_component.common import CLIENT_ID, MockConfigEn
 from custom_components.hauflo import _http_allowed
 from custom_components.hauflo import presence as P
 from custom_components.hauflo.const import CONF_SECRET, CONF_SERVER, DOMAIN
+from custom_components.hauflo.house import house
 
 pytestmark = pytest.mark.parametrize("expected_lingering_timers", [True])
 URL = "/api/hauflo/presence"
@@ -273,7 +274,8 @@ async def test_view_switch_plan_and_refusals(hass: HomeAssistant, hass_client, h
     engine = entry.runtime_data.presence
     engine.rng.random = lambda: 0.0  # tonight's draw fixed (it left every room out now and then — flaky since 28.10)
     refresh = await hass.auth.async_create_refresh_token(hass_read_only_user, CLIENT_ID)
-    client = await hass_client(hass.auth.async_create_access_token(refresh))  # the client isn't an admin
+    client = await hass_client(hass.auth.async_create_access_token(refresh))
+    (await house(hass).load())["editors"] = [hass_read_only_user.id]  # allowed by an admin (house.py)
     got = await (await client.get(URL)).json()
     assert got["enabled"] is False and got["mode"] == "learned" and got["devices"] == {"lights": 2, "covers": 1}
     with _hist(engine):
@@ -379,6 +381,7 @@ async def test_rooms_left_out(hass: HomeAssistant, hass_client, hass_read_only_u
     engine.rng.random = lambda: 0.0
     refresh = await hass.auth.async_create_refresh_token(hass_read_only_user, CLIENT_ID)
     client = await hass_client(hass.auth.async_create_access_token(refresh))
+    (await house(hass).load())["editors"] = [hass_read_only_user.id]  # allowed by an admin (house.py)
     got = await (await client.get(URL)).json()
     rooms = {r["name"]: r for r in got["rooms"]}
     assert set(rooms) == {"Гостиная", "Кухня"} and got["skip_rooms"] == []

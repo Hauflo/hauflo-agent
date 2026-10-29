@@ -64,9 +64,13 @@ def bus(hass: HomeAssistant):
     return made
 
 
-async def test_winter_one_tap(hass: HomeAssistant, hass_client, hass_read_only_access_token, entry, bus) -> None:
-    # The client isn't an admin: allowed.
+async def test_winter_one_tap(hass: HomeAssistant, hass_client, hass_read_only_user, hass_read_only_access_token, entry, bus) -> None:
+    # The client isn't an admin: allowed by default; not as a restricted (child) profile (family review rounds 2–3:
+    # a child switched every AC).
     client = await hass_client(hass_read_only_access_token)
+    await (await hass_client()).post("/api/hauflo/house", json={"restricted": [hass_read_only_user.id]})
+    assert (await client.post("/api/hauflo/season", json={"mode": "heat"})).status == 403 and bus == []
+    await (await hass_client()).post("/api/hauflo/house", json={"restricted": []})
     got = await (await client.get("/api/hauflo/season")).json()
     assert {a["entity_id"] for a in got["acs"]} == {ON, OFF_KNX, OFF_KNX_2, OFF_OTHER}  # no floor
     assert got["season"] == "cool"

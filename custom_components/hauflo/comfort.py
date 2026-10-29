@@ -26,11 +26,12 @@ from homeassistant.components.select import SelectEntity
 from homeassistant.const import ATTR_TEMPERATURE, STATE_UNAVAILABLE, STATE_UNKNOWN, UnitOfTemperature
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr, entity_registry as er
-from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event, async_track_time_interval
-from homeassistant.helpers.storage import Store
 from homeassistant.util import slugify
 
+from .device import device_info
+from .storage import HaufloStore
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -135,7 +136,7 @@ def clean_config(raw: Any, owns: Callable[[str], bool] | None = None) -> tuple[d
 class ComfortEngine:
     def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass
-        self.store: Store[dict[str, Any]] = Store(hass, 1, STORE_KEY)
+        self.store: HaufloStore = HaufloStore(hass, STORE_KEY)
         self.config: dict[str, Any] = clean_config(None)[0]
         self.mode = WINTER
         self.targets: dict[str, float] = {}
@@ -145,6 +146,7 @@ class ComfortEngine:
         self.add_selects: Callable[[list[Any]], None] | None = None
         self.entities: dict[str, ComfortClimate] = {}
         self.select: HouseMode | None = None
+        self.entry_id: str | None = None  # the config entry the entities belong to (their device, HouseMode's unique_id)
         self._started = time.monotonic()
         self._last_write: dict[str, float] = {}
         self._target_at: dict[str, float] = {}
@@ -445,20 +447,41 @@ def _seconds(s: int):
     return timedelta(seconds=s)
 
 
-def _ru(hass: HomeAssistant) -> bool:
-    return str(hass.config.language or "").lower().startswith("ru")
+OLD_HOUSE_MODE_ID = "house_mode"
+
+
+def house_mode_unique_id(entry_id: str | None) -> str:
+    return f"{entry_id}_house_mode" if entry_id else OLD_HOUSE_MODE_ID
+
+
+def _device(entry_id: str | None) -> DeviceInfo | None:
+    """The agent's one service device («Hauflo», the «Связь» entity's)."""
+    if not entry_id:
+        return None
+    return device_info(entry_id)
+
+
+@callback
+def async_migrate_unique_ids(hass: HomeAssistant, entry_id: str) -> None:
+    """«house_mode» (before 0.16.17) → «<entry_id>_house_mode»: the same registry entry, so the same entity_id —
+    an existing install's dashboards and automations keep working."""
+    reg = er.async_get(hass)
+    old = reg.async_get_entity_id("select", DOMAIN, OLD_HOUSE_MODE_ID)
+    if old is not None and reg.async_get_entity_id("select", DOMAIN, house_mode_unique_id(entry_id)) is None:
+        reg.async_update_entity(old, new_unique_id=house_mode_unique_id(entry_id))
 
 
 class ComfortClimate(ClimateEntity):
     """«Комфорт · <комната>»: the room's target; the floor loops follow it (docs/comfort-floor.md)."""
 
     _attr_should_poll = False
+    _attr_has_entity_name = True
+    _attr_translation_key = "comfort"
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_min_temp = ROOM_LO
     _attr_max_temp = ROOM_HI
     _attr_target_temperature_step = 0.5
     _attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE | ClimateEntityFeature.TURN_ON | ClimateEntityFeature.TURN_OFF
-    _attr_icon = "mdi:home-thermometer"
 
     def __init__(self, engine: ComfortEngine, room: dict[str, Any]) -> None:
         self.engine = engine
@@ -466,10 +489,9 @@ class ComfortClimate(ClimateEntity):
         self._attr_unique_id = f"comfort_{room['id']}"
         # By the room's name («climate.hauflo_comfort_komnata_2»); HA makes it unique, Hauflo is told the real one.
         self.entity_id = f"climate.{DOMAIN}_comfort_{slugify(room['name']) or slugify(room['id'])}"
-
-    @property
-    def name(self) -> str:
-        return f"{'Комфорт' if _ru(self.hass) else 'Comfort'} · {self.room['name']}" if self.hass else self.room["name"]
+        self._attr_device_info = _device(engine.entry_id)
+        # «Comfort · {room}» / «Комфорт · {room}» (translations).
+        self._attr_translation_placeholders = {"room": str(room["name"])}
 
     @property
     def hvac_modes(self) -> list[HVACMode]:
@@ -538,6 +560,12 @@ class ComfortClimate(ClimateEntity):
 
     @callback
     def refresh(self) -> None:
+        placeholders = {"room": str(self.room["name"])}
+        if placeholders != self._attr_translation_placeholders:
+            # A room renamed in Hauflo: the name follows. Entity.name is a cached property — dropped so it is worked
+            # out again with the new placeholder.
+            self._attr_translation_placeholders = placeholders
+            self.__dict__.pop("name", None)
         if self.hass is not None and self.entity_id and self.platform is not None:
             self.async_write_ha_state()
 
@@ -549,17 +577,14 @@ class HouseMode(SelectEntity):
     _attr_has_entity_name = True
     _attr_translation_key = "house_mode"
     _attr_options = MODES
-    _attr_icon = "mdi:sun-snowflake-variant"
 
     def __init__(self, engine: ComfortEngine) -> None:
         self.engine = engine
-        self._attr_unique_id = "house_mode"
+        # Scoped to the config entry (HA core review 29.10); the old bare «house_mode» is migrated in the registry at
+        # setup (async_migrate_unique_ids), so the entity_id never changes.
+        self._attr_unique_id = house_mode_unique_id(engine.entry_id)
         self.entity_id = f"select.{DOMAIN}_house_mode"
-
-    @property
-    def device_info(self) -> DeviceInfo | None:
-        entry = self.platform.config_entry if self.platform else None
-        return DeviceInfo(identifiers={(DOMAIN, entry.entry_id)}, name="Hauflo", manufacturer="Hauflo", entry_type=DeviceEntryType.SERVICE) if entry else None
+        self._attr_device_info = _device(engine.entry_id)
 
     @property
     def current_option(self) -> str:

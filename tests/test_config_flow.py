@@ -172,6 +172,34 @@ async def test_reconfigure_links_another_project(hass: HomeAssistant, aioclient_
     assert aioclient_mock.mock_calls[-1][2] == {"code": "RU-ABC-DEF-GHK", "previous": "old"}
 
 
+async def test_taking_over_another_accounts_house_needs_an_explicit_yes(hass: HomeAssistant, aioclient_mock) -> None:
+    entry = MockConfigEntry(domain=DOMAIN, title="Hauflo — A", data={CONF_SERVER: "https://app.hauflo.ru", CONF_SECRET: "old"})
+    entry.add_to_hass(hass)
+    aioclient_mock.post("https://app.hauflo.ru/api/agent/pair", status=409, json={"code": "pair_takeover"})
+    result = await entry.start_reconfigure_flow(hass)
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"code": "RU-ABC-DEF-GHK"})
+    # Nothing changed; the form comes back with the checkbox and the error that explains it.
+    assert result["type"] is FlowResultType.FORM and result["errors"] == {"base": "takeover_confirm"}
+    assert "confirm_takeover" in {str(k) for k in result["data_schema"].schema}
+    assert entry.data[CONF_SECRET] == "old"
+    assert "confirmTakeover" not in aioclient_mock.mock_calls[-1][2]
+    # Submitted without the tick: asked again.
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"code": "RU-ABC-DEF-GHK", "confirm_takeover": False})
+    assert result["errors"] == {"base": "takeover_confirm"}
+    # Ticked: the code is sent again with the confirmation.
+    aioclient_mock.clear_requests()
+    aioclient_mock.post("https://app.hauflo.ru/api/agent/pair", json={"secret": "new", "project": "B"})
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"code": "RU-ABC-DEF-GHK", "confirm_takeover": True})
+    assert result["reason"] == "reconfigure_successful"
+    assert entry.data[CONF_SECRET] == "new"
+    assert aioclient_mock.mock_calls[-1][2]["confirmTakeover"] is True
+
+
+async def test_a_plain_first_pairing_never_shows_the_takeover_box(hass: HomeAssistant, aioclient_mock) -> None:
+    result = await _start(hass)
+    assert "confirm_takeover" not in {str(k) for k in result["data_schema"].schema}
+
+
 async def test_reauth_with_a_wrong_code_stays_on_the_form(hass: HomeAssistant, aioclient_mock) -> None:
     entry = MockConfigEntry(domain=DOMAIN, data={CONF_SERVER: "https://app.hauflo.ru", CONF_SECRET: "old"})
     entry.add_to_hass(hass)
@@ -223,3 +251,88 @@ async def test_pairing_proposes_the_addresses_hauflo_writes(hass: HomeAssistant,
     assert result["description_placeholders"]["ranges"] == "0/0/1, 1/1/1-21"
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {"ranges": "1/1/1-21, 0/0/1, 2/2/7-7, 3/3/9-2, 1/1/300, 5/0"})
     assert result["options"] == {"ranges": ["0/0/1", "1/1/1-21", "2/2/7", "5/0"]}
+
+
+async def test_a_company_taking_the_home_over_is_approved_by_the_owner_in_plain_words(hass: HomeAssistant, aioclient_mock) -> None:
+    """Service review 29.10 (B): after «move it», the server asks — the owner sees the company and what it gets; only
+    «yes» sends confirmTransfer, with the old secret, to the same server."""
+    entry = MockConfigEntry(domain=DOMAIN, title="Hauflo — A", data={CONF_SERVER: "https://app.hauflo.ru", CONF_SECRET: "old"})
+    entry.add_to_hass(hass)
+    aioclient_mock.post("https://app.hauflo.ru/api/agent/pair", status=409, json={"code": "pair_takeover"})
+    result = await entry.start_reconfigure_flow(hass)
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"code": "RU-ABC-DEF-GHK"})
+    assert result["errors"] == {"base": "takeover_confirm"}
+    aioclient_mock.clear_requests()
+    aioclient_mock.post("https://app.hauflo.ru/api/agent/pair", status=409, json={"code": "pair_transfer", "company": "Сервис-Дом"})
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"code": "RU-ABC-DEF-GHK", "confirm_takeover": True})
+    assert result["type"] is FlowResultType.MENU and result["step_id"] == "transfer"
+    assert result["description_placeholders"] == {"company": "Сервис-Дом"}
+    assert list(result["menu_options"]) == ["transfer_yes", "transfer_no"]
+    assert "confirmTransfer" not in aioclient_mock.mock_calls[-1][2]
+    assert entry.data[CONF_SECRET] == "old"
+    aioclient_mock.clear_requests()
+    aioclient_mock.post("https://app.hauflo.ru/api/agent/pair", json={"secret": "new", "project": "Вилла", "addresses": ["1/1/1-9"]})
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"next_step_id": "transfer_yes"})
+    # takeover confirm → this question → the new project's addresses (deploy-flow 29.10), then linked.
+    assert result["type"] is FlowResultType.FORM and result["step_id"] == "relink_ranges"
+    assert entry.data[CONF_SECRET] == "old"
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"ranges": "1/1/1-9"})
+    assert result["reason"] == "reconfigure_successful"
+    assert entry.options["ranges"] == ["1/1/1-9"]
+    assert entry.data[CONF_SECRET] == "new" and entry.title == "Hauflo — Вилла"
+    assert aioclient_mock.mock_calls[-1][2] == {"code": "RU-ABC-DEF-GHK", "previous": "old", "confirmTakeover": True, "confirmTransfer": True}
+
+
+async def test_the_owner_says_no_and_nothing_changes(hass: HomeAssistant, aioclient_mock) -> None:
+    entry = MockConfigEntry(domain=DOMAIN, title="Hauflo — A", data={CONF_SERVER: "https://app.hauflo.ru", CONF_SECRET: "old"})
+    entry.add_to_hass(hass)
+    aioclient_mock.post("https://app.hauflo.ru/api/agent/pair", status=409, json={"code": "pair_transfer", "company": "X"})
+    result = await entry.start_reconfigure_flow(hass)
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"code": "RU-ABC-DEF-GHK"})
+    calls = len(aioclient_mock.mock_calls)
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"next_step_id": "transfer_no"})
+    assert result["type"] is FlowResultType.ABORT and result["reason"] == "transfer_declined"
+    assert len(aioclient_mock.mock_calls) == calls  # nothing sent
+    assert entry.data[CONF_SECRET] == "old" and entry.title == "Hauflo — A"
+
+
+async def test_a_yes_with_an_expired_code_goes_back_to_the_code(hass: HomeAssistant, aioclient_mock) -> None:
+    entry = MockConfigEntry(domain=DOMAIN, title="Hauflo — A", data={CONF_SERVER: "https://app.hauflo.ru", CONF_SECRET: "old"})
+    entry.add_to_hass(hass)
+    aioclient_mock.post("https://app.hauflo.ru/api/agent/pair", status=409, json={"code": "pair_transfer", "company": "X"})
+    result = await entry.start_reconfigure_flow(hass)
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"code": "RU-ABC-DEF-GHK"})
+    aioclient_mock.clear_requests()
+    aioclient_mock.post("https://app.hauflo.ru/api/agent/pair", status=404)
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"next_step_id": "transfer_yes"})
+    assert result["type"] is FlowResultType.FORM and result["step_id"] == "reconfigure" and result["errors"] == {"code": "invalid_code"}
+    assert entry.data[CONF_SECRET] == "old"
+
+
+async def test_reconfigure_asks_for_the_new_projects_addresses(hass: HomeAssistant, aioclient_mock) -> None:
+    """Integrator review 29.10 (defect 4): a takeover kept the previous project's ranges silently, the plan then said
+    «ошибка: 23». Now the new project's addresses are asked for, and what goes of the old list is said."""
+    entry = MockConfigEntry(domain=DOMAIN, title="Hauflo — A", data={CONF_SERVER: "https://app.hauflo.ru", CONF_SECRET: "old"}, options={"ranges": ["0/0/1", "7/7/1"], "allow_changes": True})
+    entry.add_to_hass(hass)
+    aioclient_mock.post("https://app.hauflo.ru/api/agent/pair", json={"secret": "new", "project": "B", "addresses": ["0/0/1-3", "1/0/0-255"]})
+    result = await entry.start_reconfigure_flow(hass)
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"code": "RU-ABC-DEF-GHK"})
+    assert result["type"] is FlowResultType.FORM and result["step_id"] == "relink_ranges"
+    assert result["description_placeholders"] == {"project": "B", "ranges": "0/0/1-3, 1/0/0-255", "removed": "7/7/1"}
+    # Nothing changes before the owner confirms.
+    assert entry.data[CONF_SECRET] == "old" and entry.options["ranges"] == ["0/0/1", "7/7/1"]
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"ranges": "0/0/1-3, 1/0/0-255"})
+    assert result["reason"] == "reconfigure_successful"
+    assert entry.data[CONF_SECRET] == "new" and entry.options == {"ranges": ["0/0/1-3", "1/0/0-255"], "allow_changes": True}
+
+
+async def test_reauth_to_a_project_also_asks_for_its_addresses(hass: HomeAssistant, aioclient_mock) -> None:
+    entry = MockConfigEntry(domain=DOMAIN, title="Hauflo — A", data={CONF_SERVER: "https://app.hauflo.ru", CONF_SECRET: "old"}, options={"ranges": ["7/7/1"]})
+    entry.add_to_hass(hass)
+    aioclient_mock.post("https://app.hauflo.ru/api/agent/pair", json={"secret": "new", "project": "B", "addresses": ["2/2/2"]})
+    result = await entry.start_reauth_flow(hass)
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"code": "RU-ABC-DEF-GHK"})
+    assert result["step_id"] == "relink_ranges"
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"ranges": "2/2/2, 7/7/1"})
+    # The owner may keep an old one on purpose — typed by hand, never kept silently.
+    assert result["reason"] == "reauth_successful" and entry.options["ranges"] == ["2/2/2", "7/7/1"]

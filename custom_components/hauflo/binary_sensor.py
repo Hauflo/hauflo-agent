@@ -9,13 +9,15 @@ from homeassistant.components.binary_sensor import BinarySensorDeviceClass, Bina
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .device import device_info
 from .const import CONF_SERVER, DOMAIN
 
 SIGNAL_LINK = f"{DOMAIN}_link"
+# One push-updated entity, never polled.
+PARALLEL_UPDATES = 0
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEntitiesCallback) -> None:
@@ -32,7 +34,7 @@ class HaufloLink(BinarySensorEntity):
     def __init__(self, entry: ConfigEntry) -> None:
         self._entry = entry
         self._attr_unique_id = f"{entry.entry_id}_link"
-        self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, entry.entry_id)}, name="Hauflo", manufacturer="Hauflo", entry_type=DeviceEntryType.SERVICE)
+        self._attr_device_info = device_info(entry.entry_id, entry)
 
     @property
     def extra_state_attributes(self) -> dict[str, str | None]:

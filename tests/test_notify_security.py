@@ -179,3 +179,24 @@ async def test_test_push_names_the_phone_os(hass: HomeAssistant, entry) -> None:
     hass.services.async_register("notify", "mobile_app_a", lambda call: None)
     out = await eng.async_test({"all": True, "priority": "critical"})
     assert out["results"][0]["os"] == "ios"
+
+
+ZIGBEE_LEAK = "binary_sensor.zigbee_leak_kitchen"  # another integration's, not marked in HA, picked in Hauflo
+
+
+async def test_picked_sensor_of_any_integration_is_watched_and_fires(hass: HomeAssistant, entry) -> None:
+    """Alarms on any integration: a Zigbee leak sensor the integrator picked from the agent's entities is a source;
+    not picked = dropped as before (the family's motion sensor)."""
+    er.async_get(hass).async_get_or_create("binary_sensor", "zha", "zb_leak", suggested_object_id="zigbee_leak_kitchen")
+    hass.states.async_set(ZIGBEE_LEAK, "off", {"device_class": "moisture"})
+    eng = entry.runtime_data.engine
+    cfg = await eng.async_set({"rules": [_rule(id="zb", sources=[ZIGBEE_LEAK], picked=[ZIGBEE_LEAK], repeat_min=0), _rule(id="np", sources=[ZIGBEE_LEAK, MOTION], picked=["binary_sensor.other"])], "groups": []})
+    by = {r["id"]: r for r in cfg["rules"]}
+    assert by["zb"]["sources"] == [ZIGBEE_LEAK] and by["zb"]["picked"] == [ZIGBEE_LEAK] and by["zb"]["priority"] == "critical"
+    assert by["np"]["sources"] == [] and "picked" not in by["np"]
+    assert ZIGBEE_LEAK in [c["entity_id"] for c in eng.status()["candidates"]]
+    hass.states.async_set(ZIGBEE_LEAK, "on", {"device_class": "moisture"})
+    await hass.async_block_till_done()
+    assert f"zb|{ZIGBEE_LEAK}" in eng.active
+    # While the owner keeps the house closed a newly picked source is a widening.
+    assert notify.narrowing(cfg, {"rules": [{**cfg["rules"][0], "sources": [], "picked": []}], "groups": []}) is not None

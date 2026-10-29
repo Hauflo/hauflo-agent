@@ -5,7 +5,7 @@ from collections.abc import Callable
 from homeassistant.util.hass_dict import HassKey
 
 DOMAIN = "hauflo"
-VERSION = "0.16.12"
+VERSION = "0.16.18"
 DEFAULT_SERVER = "https://app.hauflo.com"
 # A pairing code starts with its server's region: «RU-…» → the Russian instance (data of Russian clients stays in
 # Russia), «EU-…» and any other → the international one (owner 26.10).
@@ -15,6 +15,7 @@ FALLBACK_SERVER = "https://app.hauflo.ru"
 CONF_SERVER = "server"
 CONF_SECRET = "secret"
 CONF_CODE = "code"
+CONF_CONFIRM_TAKEOVER = "confirm_takeover"
 CONF_USER_ID = "user_id"
 CONF_REFRESH_TOKEN_ID = "refresh_token_id"
 MONITOR_LABEL = "Hauflo мониторинг"
@@ -33,6 +34,8 @@ DATA_THEME_LISTENER: HassKey[Callable[[], None]] = HassKey(f"{DOMAIN}_theme_list
 DATA_THEME_FIRING: HassKey[bool] = HassKey(f"{DOMAIN}_theme_firing")
 DATA_THEME_DEFAULTS: HassKey[dict[str, str | None]] = HassKey(f"{DOMAIN}_theme_defaults")
 DATA_WWW: HassKey[bool] = HassKey(f"{DOMAIN}_www_registered")
+# «Сделать дом независимым»: the cards come from /config/www/hauflo (Lovelace resources), the agent adds no copy of its own.
+DATA_CARDS_LOCAL: HassKey[bool] = HassKey(f"{DOMAIN}_cards_local")
 # The group addresses (main/middle) Hauflo may send to — confirmed in HA by the integrator.
 CONF_RANGES = "ranges"
 # Ones Hauflo asked for that aren't confirmed yet (shown in the options flow).
@@ -41,5 +44,7 @@ DATA_PENDING_RANGES = "hauflo_pending_ranges"
 # reads, monitoring and alarms keep working. Read live from the entry's options: no restart needed.
 CONF_ALLOW_CHANGES = "allow_changes"
 CONF_ACCEPT_PENDING = "accept_pending"
+# «Сделать дом независимым» (independent.py): a tick in the options that leads to its own confirm step.
+CONF_INDEPENDENT = "independent"
 # The tunnel's answer to a write while the owner keeps the house closed (Hauflo says where to switch it back).
 LOCKED_CODE = "locked_by_owner"

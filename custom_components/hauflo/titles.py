@@ -17,8 +17,9 @@ from typing import Any
 
 from homeassistant.components.http import KEY_HASS, HomeAssistantView
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.storage import Store
 
+from .house import refuse
+from .storage import HaufloStore
 STORE_KEY = "hauflo.titles"
 MAX_LEN = 40
 # The same kinds as the backend's BLOCK_KINDS (yaml/blockTitles.ts).
@@ -63,8 +64,8 @@ def clean(body: Any) -> dict[str, str] | None:
     return out
 
 
-def _store(hass: HomeAssistant) -> Store:
-    return Store(hass, 1, STORE_KEY)
+def _store(hass: HomeAssistant) -> HaufloStore:
+    return HaufloStore(hass, STORE_KEY)
 
 
 async def async_load(hass: HomeAssistant) -> dict[str, str]:
@@ -88,6 +89,8 @@ class TitlesView(HomeAssistantView):
         titles = clean(body.get("titles") if isinstance(body, dict) else None)
         if titles is None:
             return self.json_message("titles: a map of block kind → text expected", 400)
+        if (no := await refuse(request)) is not None:
+            return no  # «Кто может менять настройки дома» (house.py): admins and the people an admin allowed
         user = request["hass_user"]
         hass = request.app[KEY_HASS]
         await _store(hass).async_save({"titles": titles, "at": time.time(), "by": user.name if user else None})

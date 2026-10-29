@@ -46,9 +46,10 @@ from homeassistant.core import CALLBACK_TYPE, Context, CoreState, HomeAssistant,
 from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er
 from homeassistant.helpers.event import async_track_point_in_time, async_track_state_change_event, async_track_time_change
 from homeassistant.helpers.start import async_at_started
-from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
+from .house import refuse
+from .storage import HaufloStore
 _LOGGER = logging.getLogger(__name__)
 STORE_KEY = "hauflo.presence"
 LEARN_DAYS = 14
@@ -491,7 +492,7 @@ class Presence:
     def __init__(self, hass: HomeAssistant, owns: Callable[[str], bool]) -> None:
         self.hass = hass
         self.owns = owns
-        self.store = Store(hass, 1, STORE_KEY)
+        self.store = HaufloStore(hass, STORE_KEY)
         self.data: dict[str, Any] = {**DEFAULT, "log": [], "lit": [], "lit_at": {}, "ours": []}
         self.rng = random.Random()
         self.status = "off"
@@ -1137,6 +1138,8 @@ class PresenceView(HomeAssistantView):
             return self.json_message("op: set", 400)
         if set(body) - {"op", "enabled", "until", "lights", "covers", "mode", "skip_rooms"}:
             return self.json_message("only enabled, until, lights, covers, mode, skip_rooms", 400)
+        if (no := await refuse(request)) is not None:
+            return no  # «Кто может менять настройки дома» (house.py): admins and the people an admin allowed
         # A person's own switch, as HA's own buttons are; the tunnel can't reach this view (not in its allowlist).
         user = request["hass_user"]
         try:

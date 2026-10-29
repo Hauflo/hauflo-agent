@@ -13,16 +13,21 @@ from pathlib import Path
 
 from homeassistant.components.frontend import add_extra_js_url
 from homeassistant.components.http import StaticPathConfig
-from homeassistant.core import Event, HomeAssistant, callback
 
-from .const import DATA_THEME_DEFAULTS, DATA_THEME_LISTENER, DATA_THEME_FIRING, DATA_WWW
+from .const import VERSION
+from homeassistant.components import persistent_notification
+from homeassistant.core import CoreState, Event, HomeAssistant, callback
+
+from .const import DATA_CARDS_LOCAL, DATA_THEME_DEFAULTS, DATA_THEME_LISTENER, DATA_THEME_FIRING, DATA_WWW
 
 _LOGGER = logging.getLogger(__name__)
 THEME = "Hauflo Atelier"
 # Names before the rename (owner 25.10: nothing is live yet — no copies, the old ones are removed).
 OLD_THEMES = ("Hauflo Aura", "Hauflo Atelier", "Hauflo Atelier · светлая", "Hauflo Atelier · тёмная")
-ICONS_URL = "/hauflo_static/hauflo-icons.js"
-CARDS_URL = "/hauflo_static/hauflo-cards.js"
+# The agent's version in the URL: the HA app and browsers kept serving the old cards after an update (owner 29.10:
+# «4 из 4 работают», «Нагрев» from before 0.16.4 still on his phone) — a new version is a new URL, loaded fresh.
+ICONS_URL = f"/hauflo_static/hauflo-icons.js?v={VERSION}"
+CARDS_URL = f"/hauflo_static/hauflo-cards.js?v={VERSION}"
 
 _COMMON = {
     "ha-card-border-radius": "30px",
@@ -55,7 +60,7 @@ DARK = {
     "ha-card-box-shadow": "inset 0 1px 0 rgba(255,255,255,.10), inset 0 0 0 1px rgba(255,255,255,.05), 0 12px 24px rgba(0,0,0,.35), 0 40px 80px rgba(0,0,0,.45)",
     "primary-text-color": "#F4F2EE",
     "secondary-text-color": "rgba(244,242,238,.64)",
-    "disabled-text-color": "rgba(244,242,238,.46)",
+    "disabled-text-color": "rgba(244,242,238,.55)",
     "divider-color": "rgba(255,255,255,.08)",
     "app-header-background-color": "#08090A",
     "app-header-text-color": "#F4F2EE",
@@ -83,7 +88,11 @@ DARK = {
     "input-fill-color": "rgba(255,255,255,.06)",
     "eh-ink": "#F4F2EE",
     "eh-ink2": "rgba(244,242,238,.64)",
-    "eh-ink3": "rgba(244,242,238,.46)",
+    "eh-ink3": "rgba(244,242,238,.55)",
+    "eh-alert-text": "#FF5A5F",
+    "eh-amber-text": "#FFB25C",
+    "eh-mint-text": "#5CE0B4",
+    "eh-line-strong": "rgba(244,242,238,.40)",
     "eh-hair": "rgba(255,255,255,.08)",
     "eh-glass": "linear-gradient(180deg, rgba(255,255,255,.075), rgba(255,255,255,.03))",
     "eh-edge": "inset 0 1px 0 rgba(255,255,255,.10), inset 0 0 0 1px rgba(255,255,255,.05)",
@@ -109,7 +118,7 @@ LIGHT = {
     "ha-card-box-shadow": "inset 0 1px 0 #fff, inset 0 0 0 1px rgba(18,18,18,.04), 0 10px 20px rgba(40,30,20,.06), 0 30px 60px rgba(40,30,20,.08)",
     "primary-text-color": "#121212",
     "secondary-text-color": "rgba(18,18,18,.64)",
-    "disabled-text-color": "rgba(18,18,18,.46)",
+    "disabled-text-color": "rgba(18,18,18,.58)",
     "divider-color": "rgba(18,18,18,.08)",
     "app-header-background-color": "#EFECE6",
     "app-header-text-color": "#121212",
@@ -137,7 +146,11 @@ LIGHT = {
     "input-fill-color": "rgba(18,18,18,.05)",
     "eh-ink": "#121212",
     "eh-ink2": "rgba(18,18,18,.64)",
-    "eh-ink3": "rgba(18,18,18,.46)",
+    "eh-ink3": "rgba(18,18,18,.58)",
+    "eh-alert-text": "#B3261E",
+    "eh-amber-text": "#9A5B00",
+    "eh-mint-text": "#0B6B4D",
+    "eh-line-strong": "rgba(18,18,18,.42)",
     "eh-hair": "rgba(18,18,18,.08)",
     "eh-glass": "linear-gradient(180deg, rgba(255,255,255,.92), rgba(255,255,255,.72))",
     "eh-edge": "inset 0 1px 0 #fff, inset 0 0 0 1px rgba(18,18,18,.04)",
@@ -257,8 +270,34 @@ async def async_setup(hass: HomeAssistant) -> None:
     if not hass.data.get(DATA_WWW) and await hass.async_add_executor_job(www.is_dir):
         hass.data[DATA_WWW] = True
         await hass.http.async_register_static_paths([StaticPathConfig("/hauflo_static", str(www), False)])
-        add_extra_js_url(hass, ICONS_URL)
-        add_extra_js_url(hass, CARDS_URL)
+        # An independent house loads them from /config/www/hauflo (keep.py) — not twice.
+        if not hass.data.get(DATA_CARDS_LOCAL):
+            add_extra_js_url(hass, ICONS_URL)
+            add_extra_js_url(hass, CARDS_URL)
+            # Set up while HA runs (just paired): a tab that had already opened a dashboard loads neither the extra JS nor
+            # the resources again until a reload (integrator review r2, D2) — HA says so. Gone at the next HA start.
+            if hass.state is CoreState.running:
+                _say_reload(hass)
+
+
+RELOAD_NOTE = "hauflo_cards_reload"
+
+
+def _say_reload(hass: HomeAssistant) -> None:
+    ru = str(hass.config.language or "").startswith("ru")
+    try:
+        persistent_notification.async_create(
+            hass,
+            "Агент Hauflo подключён. В уже открытых вкладках Home Assistant обновите страницу, чтобы загрузились карточки "
+            "Hauflo — иначе панель Hauflo покажет «Ошибка конфигурации»."
+            if ru
+            else "The Hauflo agent is connected. Reload Home Assistant tabs that are already open so the Hauflo cards load — "
+            "otherwise the Hauflo dashboard shows «Configuration error».",
+            "Hauflo",
+            RELOAD_NOTE,
+        )
+    except Exception:  # noqa: BLE001 — a hint, never stops the agent
+        _LOGGER.debug("Hauflo: reload hint not shown", exc_info=True)
 
 
 @callback

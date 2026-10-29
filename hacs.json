@@ -1,5 +1,7 @@
 {
   "name": "Hauflo",
   "homeassistant": "2026.9.0",
+  "zip_release": true,
+  "filename": "hauflo.zip",
   "render_readme": true
 }

@@ -56,6 +56,37 @@ async def test_diagnostics_redact_the_secret(hass: HomeAssistant, hass_client, e
     assert diag["linked"] is False
 
 
+async def test_the_device_says_its_version_and_links_hauflo(hass: HomeAssistant, entry) -> None:
+    from homeassistant.helpers import device_registry as dr
+
+    from custom_components.hauflo.const import VERSION
+
+    device = next((d for d in dr.async_entries_for_config_entry(dr.async_get(hass), entry.entry_id) if (DOMAIN, entry.entry_id) in d.identifiers), None)
+    assert device is not None and device.sw_version == VERSION
+    assert device.configuration_url == "https://app.hauflo.ru" and device.entry_type is dr.DeviceEntryType.SERVICE
+
+
+async def test_diagnostics_carry_no_personal_data(hass: HomeAssistant, hass_client, entry) -> None:
+    """HA reviewer r2: the service contact's name and phone and the access history were in the diagnostics as is."""
+    from custom_components.hauflo import service
+
+    await service.async_save(hass, {
+        "company": "R2 Legal GmbH",
+        "contact": {"phone": "+49 151 2345 6789", "email": "anna@legal.example", "name": "Anna Schmidt"},
+        "since": "2026-10-29T02:47:08.921Z",
+        "history": [{"at": "2026-10-29T10:00:00Z", "kind": "owner", "from": "Volkov KNX", "to": "R2 Legal GmbH"}],
+    })
+    await entry.runtime_data.ownership.async_set_plan({"create": 2, "project": "Квартира Ивановых"})
+    hass.states.async_set("person.anna", "home", {"friendly_name": "Anna Schmidt"})
+    diag = await get_diagnostics_for_config_entry(hass, hass_client, entry)
+    text = json.dumps(diag, ensure_ascii=False)
+    for personal in ("Anna", "Schmidt", "+49 151", "anna@legal.example", "Volkov", "Ивановых", "top-secret"):
+        assert personal not in text, personal
+    # What support needs stays: the company, when, what kind of access, the plan's numbers.
+    assert diag["service"]["company"] == "R2 Legal GmbH" and diag["service"]["history"][0]["kind"] == "owner"
+    assert diag["ownership"]["next_deploy"]["create"] == 2
+
+
 async def test_unload_leaves_nothing_behind(hass: HomeAssistant, entry) -> None:
     assert hass.data.get("hauflo_sidebar_listener")
     agent = entry.runtime_data
@@ -345,6 +376,33 @@ async def test_privacy_round_5(hass: HomeAssistant, entry) -> None:
     agent.channels.pop(3)
 
 
+async def test_phones_entities_never_leave(hass: HomeAssistant, entry) -> None:
+    """HA reviewer r2: config/entity_registry/list carried the phones' entity ids and names (the device list didn't)."""
+    import json
+
+    reg = er.async_get(hass)
+    phone = reg.async_get_or_create("sensor", "mobile_app", "ivan-bat", suggested_object_id="ivans_iphone_battery_level", original_name="Ivan's iPhone Battery")
+    lamp = reg.async_get_or_create("light", "knx", "lamp-1", suggested_object_id="kitchen")
+    agent = entry.runtime_data
+    agent.channels[4] = _Local()
+
+    async def ask(mid: int, msg: dict, result) -> str:
+        await agent._channel_send(4, json.dumps({"id": mid, **msg}))
+        return agent._track(4, json.dumps({"id": mid, "type": "result", "success": True, "result": result}))
+
+    entries = [{"entity_id": phone.entity_id, "platform": "mobile_app", "name": None, "original_name": "Ivan's iPhone Battery"}, {"entity_id": lamp.entity_id, "platform": "knx", "name": None}]
+    out = await ask(1, {"type": "config/entity_registry/list"}, entries)
+    assert "ivan" not in out.lower() and lamp.entity_id in out
+    out = await ask(2, {"type": "config/entity_registry/get", "entity_id": phone.entity_id}, entries[0])
+    assert json.loads(out)["result"] is None
+    out = await ask(3, {"type": "config/entity_registry/get_entries", "entity_ids": [phone.entity_id, lamp.entity_id]}, {phone.entity_id: entries[0], lamp.entity_id: entries[1]})
+    assert "ivan" not in out.lower() and lamp.entity_id in out
+    states = [{"entity_id": phone.entity_id, "state": "80", "attributes": {"friendly_name": "Ivan's iPhone Battery"}}, {"entity_id": lamp.entity_id, "state": "on", "attributes": {}}]
+    out = await ask(4, {"type": "get_states"}, states)
+    assert "ivan" not in out.lower() and lamp.entity_id in out
+    agent.channels.pop(4)
+
+
 async def test_a_channel_number_in_use_is_refused(hass: HomeAssistant, entry) -> None:
     agent = entry.runtime_data
     sent = []
@@ -501,8 +559,40 @@ async def test_removed_agent_gives_the_menu_back(hass: HomeAssistant, hass_clien
     await hass.async_block_till_done()
     assert store.data["sidebar"] == {"hiddenPanels": ["my-panel"], "panelOrder": ["lovelace"]}
     admin = await async_user_store(hass, hass_admin_user.id)
-    assert not set(admin.data["sidebar"]["hiddenPanels"]) & {"map", "logbook"}
+    assert not set((admin.data.get("sidebar") or {}).get("hiddenPanels") or []) & {"map", "logbook"}
     assert await Store(hass, 1, sidebar.STORE_KEY).async_load() is None  # forgotten: a person added later gets HA's menu
+
+
+async def test_administrators_keep_the_full_menu(hass: HomeAssistant, hass_client, hass_admin_user, entry) -> None:
+    """HA reviewer r2: after a deploy with «Убрать лишнее из меню» the admin's sidebar was stripped to «Home»."""
+    from homeassistant.auth.const import GROUP_ID_ADMIN, GROUP_ID_USER
+    from homeassistant.components.frontend.storage import async_user_store
+
+    from custom_components.hauflo import sidebar
+
+    mama = await hass.auth.async_create_user("Мама", group_ids=[GROUP_ID_USER])
+    client = await hass_client()
+    res = await client.post("/api/hauflo/sidebar", json={"hide": ["map", "energy", "history"]})
+    assert res.status == 200
+    admin = await async_user_store(hass, hass_admin_user.id)
+    assert not (admin.data.get("sidebar") or {}).get("hiddenPanels")
+    assert set((await async_user_store(hass, mama.id)).data["sidebar"]["hiddenPanels"]) == {"map", "energy", "history"}
+    # People added later: the family gets the short menu, a new administrator HA's full one.
+    papa = await hass.auth.async_create_user("Папа", group_ids=[GROUP_ID_USER])
+    tech = await hass.auth.async_create_user("Инженер", group_ids=[GROUP_ID_ADMIN])
+    await hass.async_block_till_done()
+    assert set((await async_user_store(hass, papa.id)).data["sidebar"]["hiddenPanels"]) == {"map", "energy", "history"}
+    assert not ((await async_user_store(hass, tech.id)).data.get("sidebar") or {}).get("hiddenPanels")
+    # An earlier agent hid them for the admin too: given back once, on the agent's start.
+    await admin.async_set_item("sidebar", {"hiddenPanels": ["map", "energy", "my-panel"]})
+    assert await sidebar.async_admins_back(hass) == 1
+    assert admin.data["sidebar"]["hiddenPanels"] == ["my-panel"]
+    await admin.async_set_item("sidebar", {"hiddenPanels": ["map"]})  # the admin's own choice afterwards stays
+    assert await sidebar.async_admins_back(hass) == 0 and admin.data["sidebar"]["hiddenPanels"] == ["map"]
+    # Removed: the family's menu comes back.
+    await hass.config_entries.async_remove(entry.entry_id)
+    await hass.async_block_till_done()
+    assert not (await async_user_store(hass, mama.id)).data["sidebar"]["hiddenPanels"]
 
 
 async def test_an_alarm_sensor_without_data_is_said_and_its_return(hass: HomeAssistant) -> None:
@@ -572,6 +662,64 @@ async def test_an_alarm_is_accepted_from_the_dashboard(hass: HomeAssistant, hass
         listed = await (await client.get("/api/hauflo/alarms")).json()
         assert next(a for a in listed["_list"] if a["entity"] == "binary_sensor.leak")["ackedBy"]
         assert (await client.post("/api/hauflo/alarms", json={"ack": "r|binary_sensor.none"})).status == 404
+
+
+async def test_accept_all_from_the_dashboard(hass: HomeAssistant, hass_client, hass_read_only_access_token, entry) -> None:
+    """Family review round 2: 19 faults took 19 taps — «Принять все» accepts every open one at once, by any person."""
+    eng = entry.runtime_data.engine
+    eng.owns = lambda eid: True
+
+    async def fake_send(rule, title, message, **kw):
+        return []
+
+    ids = [f"binary_sensor.fault_{i}" for i in range(3)]
+    with patch.object(eng, "_send", fake_send):
+        for i in ids:
+            hass.states.async_set(i, "off", {"friendly_name": i, "device_class": "problem"})
+        await eng.async_set({"rules": [{"id": "f", "kind": "fault", "title": "Неисправность", "sources": ids, "priority": "normal"}], "groups": []})
+        for i in ids:
+            hass.states.async_set(i, "on", {"friendly_name": i, "device_class": "problem"})
+        await hass.async_block_till_done()
+        kid = await hass_client(hass_read_only_access_token)  # not an admin, not allowed to change settings: still may
+        first = next(a for a in (await (await kid.get("/api/hauflo/alarms")).json())["_list"] if a["entity"] == ids[0])
+        await kid.post("/api/hauflo/alarms", json={"ack": first["key"]})
+        res = await kid.post("/api/hauflo/alarms", json={"ack_all": True})
+        assert res.status == 200 and (await res.json())["acked"] == 2  # the one accepted already isn't counted again
+        listed = (await (await kid.get("/api/hauflo/alarms")).json())["_list"]
+        assert sorted(a["entity"] for a in listed if a["ackedBy"]) == sorted(ids)
+
+
+async def test_accept_the_faults_never_the_leak(hass: HomeAssistant, hass_client, hass_read_only_access_token, entry) -> None:
+    """Family review round 3: «Принять все неисправности» sends exactly the faults' keys — the open leak stays open."""
+    eng = entry.runtime_data.engine
+    eng.owns = lambda eid: True
+
+    async def fake_send(rule, title, message, **kw):
+        return []
+
+    ids = [f"binary_sensor.fault_{i}" for i in range(2)]
+    with patch.object(eng, "_send", fake_send):
+        for i in ids:
+            hass.states.async_set(i, "off", {"friendly_name": i, "device_class": "problem"})
+        hass.states.async_set("binary_sensor.leak", "off", {"friendly_name": "Протечка", "device_class": "moisture"})
+        await eng.async_set({"rules": [
+            {"id": "f", "kind": "fault", "title": "Неисправность", "sources": ids, "priority": "normal"},
+            {"id": "l", "kind": "leak", "title": "Протечка", "sources": ["binary_sensor.leak"], "priority": "critical"},
+        ], "groups": []})
+        for i in [*ids, "binary_sensor.leak"]:
+            hass.states.async_set(i, "on", {"friendly_name": i, "device_class": "moisture" if i.endswith("leak") else "problem"})
+        await hass.async_block_till_done()
+        kid = await hass_client(hass_read_only_access_token)
+        listed = (await (await kid.get("/api/hauflo/alarms")).json())["_list"]
+        keys = [a["key"] for a in listed if a["entity"] in ids]
+        assert len(keys) == 2
+        for bad in ("f|x", ["nokey"], ["f|x"] * 201, [5]):
+            assert (await kid.post("/api/hauflo/alarms", json={"ack_keys": bad})).status == 400, bad
+        res = await kid.post("/api/hauflo/alarms", json={"ack_keys": [*keys, keys[0]]})
+        assert res.status == 200 and (await res.json())["acked"] == 2
+        listed = (await (await kid.get("/api/hauflo/alarms")).json())["_list"]
+        assert sorted(a["entity"] for a in listed if a["ackedBy"]) == sorted(ids)
+        assert not next(a for a in listed if a["entity"] == "binary_sensor.leak")["ackedBy"]
 
 
 async def test_a_chattering_sensor_is_said_once_and_its_settled_alarm_after(hass: HomeAssistant) -> None:
