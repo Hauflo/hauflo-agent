@@ -883,7 +883,9 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
   }
   /** A sideways control (bar, slider, swipe handle). Touch / pen: it starts only when |dx| > 10 px and |dx| > 1.5·|dy|, else the
    * page scrolls (give the element touch-action:pan-y); a bare tap sets nothing — `tap(ev, clean)` runs instead. Mouse: from the
-   * press, as before. cb: down(ev) (false = ignore), start(ev), move(ev), end(ev, committed) (committed = let go, not cancelled). */
+   * press (where there is a `tap`, after 4 px of movement: a click is a tap). cb: down(ev) (false = ignore), start(ev), move(ev), end(ev, committed) (committed = let go, not cancelled).
+   * cb.slide === false: nothing to set by a swipe (a relay light, a blind without position) — no drag at all, only `tap`
+   * (owner 29.10: a swipe on an on/off light showed «64 %» and sent nothing). */
   const hdrag = (el, cb) => {
     let p = null;
     const begin = (ev) => {
@@ -898,20 +900,23 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
       if (ev.pointerType === "mouse" && ev.button !== 0) return;
       p = { id: ev.pointerId, x: ev.clientX, y: ev.clientY, go: false, touch: ev.pointerType !== "mouse" };
       if (cb.down?.(ev) === false) return void (p = null);
-      if (!p.touch) begin(ev);
+      if (!p.touch && cb.slide !== false && !cb.tap) begin(ev); // a mouse on a plain slider: from the press, as before
     });
     el.addEventListener("pointermove", (ev) => {
       if (!p) return;
       if (p.go) return cb.move?.(ev);
       const dx = Math.abs(ev.clientX - p.x);
-      if (dx > 10 && dx > 1.5 * Math.abs(ev.clientY - p.y)) begin(ev);
+      // Touch: a clear sideways swipe. Mouse: any drag of 4 px — a click stays a tap (0.16.19: a mouse press began the
+      // drag at once, so a click on a relay light showed «NN %» and never toggled, and a dimmer jumped to the click point).
+      if (cb.slide !== false && (p.touch ? dx > 10 && dx > 1.5 * Math.abs(ev.clientY - p.y) : Math.hypot(dx, ev.clientY - p.y) > 4)) begin(ev);
     });
     const fin = (ev) => {
       if (!p) return;
       const q = p;
       p = null;
       if (q.go) cb.end?.(ev, ev.type === "pointerup");
-      else cb.tap?.(ev, ev.type === "pointerup" && GST.ok);
+      // A mouse that moved is no click (GST.ok is always true for a mouse).
+      else cb.tap?.(ev, ev.type === "pointerup" && GST.ok && (q.touch || Math.hypot(ev.clientX - q.x, ev.clientY - q.y) < 8));
     };
     el.addEventListener("pointerup", fin);
     el.addEventListener("pointercancel", fin);
@@ -3088,13 +3093,12 @@ ${rows.map((r) => `<div class="rw"><span class="caps sub">${esc(r.title || (r.ki
       return tchart(data, { cur, sp: frost ? undefined : num(a.temperature) }, { H, label, tone });
     }
     css() {
-      return `${TCHART_CSS}${VALVE_CSS}${TONE_CSS}.sub .act{margin-right:6px}.c{padding:20px 22px}.nr{display:flex;align-items:center;gap:18px;flex-wrap:wrap}.st{flex:none}.act.k-idle i{background:var(--mint);box-shadow:0 0 8px var(--mint)}
+      return `${TCHART_CSS}${VALVE_CSS}${TONE_CSS}.sub .act{margin-right:6px}.c{padding:20px 22px}.nr{display:flex;justify-content:space-between;align-items:flex-end;gap:12px}.st{flex:none}.act.k-idle i{background:var(--mint);box-shadow:0 0 8px var(--mint)}
 .t{font-size:76px;line-height:.9}.t sup{font:300 20px Onest,sans-serif;vertical-align:top;position:relative;top:8px;color:var(--ink2);margin-left:2px}
 .sub{font:400 13px Onest,sans-serif;color:var(--ink2);margin-top:8px}.st{display:flex;flex-direction:column;gap:8px}
 .none{font:300 20px/1.2 Onest,sans-serif;color:var(--ink2);margin:6px 0}
 .st button{width:48px;height:48px;border-radius:24px;display:grid;place-items:center;box-shadow:var(--eh-edge,inset 0 0 0 1px var(--line));background:var(--eh-glass,transparent);font:300 26px Onest,sans-serif}
-.st:not(.row2){gap:12px}.st:not(.row2) button{width:60px;height:60px;border-radius:30px;font:300 34px/1 Onest,sans-serif}
-.toned .st button{background:color-mix(in srgb,var(--ac) 16%,transparent);box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--ac) 55%,transparent);color:var(--acT)}.toned.calm .st button{background:color-mix(in srgb,var(--ac) 10%,transparent);box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--ac) 38%,transparent)}
+
 .mh{font:500 11px Onest,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--ink2);margin-top:16px}.mh+.modes{margin-top:6px}
 .st button:active{transform:scale(.94)}.st button:disabled{opacity:.35;pointer-events:none}
 .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;min-height:22px}
@@ -4238,7 +4242,7 @@ ${hidden ? `<button class="more" data-more="1">${coversFolded ? `Каждая о
         }),
       );
       // Sideways swipe on a pill (or the master bar) sets the level; a clean tap toggles; a page scroll does neither.
-      const drag = (el, apply, tap) => {
+      const drag = (el, apply, tap, slide = true) => {
         let pct = 0;
         const f = el.querySelector(".f, i");
         const lv = el.querySelector(".lv, span");
@@ -4249,6 +4253,7 @@ ${hidden ? `<button class="more" data-more="1">${coversFolded ? `Каждая о
             this._update();
           }, 450);
         hdrag(el, {
+          slide,
           down: (ev) => {
             if (ev.target.closest("button")) return false;
           },
@@ -4270,13 +4275,16 @@ ${hidden ? `<button class="more" data-more="1">${coversFolded ? `Каждая о
             }
             settle();
           },
-          tap: (ev, clean) => {
-            if (!clean || !tap) return;
-            this._busy = true;
-            haptic(this);
-            tap();
-            settle();
-          },
+          // No tap action (the master bar): no `tap`, so a mouse drags it from the press, as before.
+          tap: tap
+            ? (ev, clean) => {
+                if (!clean) return;
+                this._busy = true;
+                haptic(this);
+                tap();
+                settle();
+              }
+            : undefined,
         });
       };
       root.querySelectorAll(".pill").forEach((el) => {
@@ -4297,6 +4305,7 @@ ${hidden ? `<button class="more" data-more="1">${coversFolded ? `Каждая о
             if (isCover) call(this._hass, "cover", s.state === "opening" || s.state === "closing" ? "stop_cover" : s.state === "closed" ? "open_cover" : "close_cover", { entity_id: id });
             else call(this._hass, id.startsWith("light.") ? "light" : "homeassistant", "toggle", { entity_id: id });
           },
+          settable,
         );
       });
       const bar = root.querySelector(".bar");
