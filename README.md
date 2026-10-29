@@ -8,6 +8,8 @@
 
 Free during the beta; needs a Hauflo account ([request access](https://app.hauflo.com/request-access)).
 
+**Try it without installing:** the [demo house](https://hauflo.com/demo/), the real cards on a made-up home, in your browser.
+
 [![HACS custom](https://img.shields.io/badge/HACS-custom-41BDF5)](https://github.com/Hauflo/hauflo-agent#install) [![Home Assistant 2026.9+](https://img.shields.io/badge/Home%20Assistant-2026.9%2B-18BCF2)](https://github.com/Hauflo/hauflo-agent#install) [![Release](https://img.shields.io/github/v/release/Hauflo/hauflo-agent)](https://github.com/Hauflo/hauflo-agent/releases)
 
 **Install:** HACS → ⋮ → **Custom repositories** → `https://github.com/Hauflo/hauflo-agent` (Integration). [Full steps](#install).
@@ -143,7 +145,7 @@ Hauflo can ask only for what is on the agent's fixed list, and the agent edits s
 - create and update its own dashboards and scenes, set its dashboard and theme as the default;
 - write its own rules (`hauflo_auto_*`) into `automations.yaml`, never touching other automations and never rewriting a hand-formatted file;
 - set the home's location and time zone in Home Assistant: only an administrator, from the family's **Automations** page;
-- hide Home Assistant's extra sidebar panels (Map, Energy, Logbook…) for the family (everyone but Home Assistant administrators — they keep the full menu), with the **Clean up the menu** option;
+- hide Home Assistant's extra sidebar panels (Map, Energy, Logbook…) for the family (everyone but Home Assistant administrators — they keep the full menu unless **Administrators too** is on), with the **Clean up the menu** option;
 - copy its card files to `/config/www/hauflo`;
 - set up the KNX connection to an interface in the house, light groups, voice exposure and the Apple Home bridge;
 - read states for monitoring and alarms;

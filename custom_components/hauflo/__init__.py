@@ -724,8 +724,9 @@ _KNX_CONN_KEYS = {"connection_type": "type", "host": "host", "port": "port", "lo
 
 
 def knx_conn(data: Any) -> dict[str, Any] | None:
-    """HA's KNX config entry data → the passport's connection facts (an allowlist; secure only as a yes/no)."""
-    if not isinstance(data, dict):
+    """HA's KNX config entry data → the passport's connection facts (an allowlist; secure only as a yes/no).
+    ConfigEntry.data is a read-only MappingProxyType, not a dict (coverage pass 29.10: the passport's KNX link was empty)."""
+    if not isinstance(data, Mapping):
         return None
     out: dict[str, Any] = {}
     for key, name in _KNX_CONN_KEYS.items():

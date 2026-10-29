@@ -92,9 +92,17 @@ class HaufloConfigFlow(ConfigFlow, domain=DOMAIN):
                         why = await res.json(content_type=None)
                     except ValueError:
                         why = None
-                    if isinstance(why, dict) and why.get("code") == "pair_transfer":
+                    code_ = why.get("code") if isinstance(why, dict) else None
+                    if code_ in ("pair_transfer", "pair_transfer_recorded"):
                         self._transfer_company = str(why.get("company") or "")[:120]
+                    if code_ == "pair_transfer":
                         return None, {"base": "transfer_ask"}
+                    # Hauflo 0.16.19+: a house goes to another company only by Hauflo support's decision on a request;
+                    # the owner's «yes» here is recorded on it as evidence, this HA keeps its link.
+                    if code_ == "pair_transfer_recorded":
+                        return None, {"base": "transfer_recorded"}
+                    if code_ == "pair_transfer_request":
+                        return None, {"base": "transfer_via_request"}
                     return None, {"base": "takeover_confirm"}
                 if res.status >= 400:
                     return None, {"base": "cannot_connect"}
@@ -140,7 +148,7 @@ class HaufloConfigFlow(ConfigFlow, domain=DOMAIN):
                 body_b, errors_b = await self._pair(FALLBACK_SERVER, code, prev_b, confirm)
                 if body_b is not None:
                     return body_b, FALLBACK_SERVER, {}
-                if errors_b.get(CONF_CODE) or errors_b.get("base") in ("takeover_confirm", "transfer_ask"):
+                if errors_b.get(CONF_CODE) or errors_b.get("base") in ("takeover_confirm", "transfer_ask", "transfer_recorded", "transfer_via_request"):
                     errors = errors_b
                     self._takeover = errors.get("base") == "takeover_confirm"
                     if errors.get("base") == "transfer_ask":
@@ -185,6 +193,8 @@ class HaufloConfigFlow(ConfigFlow, domain=DOMAIN):
             return await self._relinked(entry, body, server)
         if errors.get("base") == "transfer_ask":
             return await self.async_step_transfer()
+        if (done := self._transfer_end(errors)) is not None:
+            return done
         return self.async_show_form(step_id="reconfigure", data_schema=self._schema(server), errors=errors)
 
     async def _relinked(self, entry: ConfigEntry, body: dict[str, Any], server: str) -> ConfigFlowResult:
@@ -233,11 +243,20 @@ class HaufloConfigFlow(ConfigFlow, domain=DOMAIN):
             description_placeholders={"project": str(body.get("project", "")), "ranges": text or "—", "removed": ", ".join(removed) or "—"},
         )
 
+    def _transfer_end(self, errors: dict[str, str]) -> ConfigFlowResult | None:
+        """Hauflo answered a transfer code: the «yes» is recorded on the company's request, or the old way (an intake
+        project's code) is refused — either way nothing changes in this HA, the flow ends with what happens next."""
+        if errors.get("base") == "transfer_recorded":
+            return self.async_abort(reason="transfer_recorded", description_placeholders={"company": self._transfer_company or "—"})
+        if errors.get("base") == "transfer_via_request":
+            return self.async_abort(reason="transfer_via_request")
+        return None
+
     async def async_step_transfer(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        """The plain question to the house owner (Loxone / Control4 / Crestron: the end customer approves a dealer
-        change): this company gets a copy of the home's project, the previous company loses access. Only this «yes»,
-        sent with the old agent secret, lets Hauflo make the copy — the company holding the code alone can't. Order:
-        «move from another account» → this question → the new project's addresses (relink_ranges)."""
+        """The plain question to the house owner (Control4: the end customer confirms a dealer change): does it confirm
+        this company's request to take the home's service over? Since 0.16.19 the «yes», sent with the old agent secret,
+        is only evidence on the request — Hauflo support decides after telling the previous company; this HA keeps its
+        link until then (_transfer_end)."""
         return self.async_show_menu(step_id="transfer", menu_options=["transfer_yes", "transfer_no"], description_placeholders={"company": self._transfer_company or "—"})
 
     async def async_step_transfer_yes(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
@@ -249,6 +268,8 @@ class HaufloConfigFlow(ConfigFlow, domain=DOMAIN):
         body, errors = await self._pair(server, code, previous, confirm=True, transfer=True)
         if body is not None:
             return await self._relinked(entry, body, server)
+        if (done := self._transfer_end(errors)) is not None:
+            return done
         # The code expired meanwhile, or no connection: back to the code form, nothing changed.
         self._takeover = False
         return self.async_show_form(step_id="reauth_confirm" if reauth else "reconfigure", data_schema=self._schema(server), errors=errors or {"base": "cannot_connect"})
@@ -267,6 +288,8 @@ class HaufloConfigFlow(ConfigFlow, domain=DOMAIN):
             return await self._relinked(entry, body, server)
         if errors.get("base") == "transfer_ask":
             return await self.async_step_transfer()
+        if (done := self._transfer_end(errors)) is not None:
+            return done
         return self.async_show_form(step_id="reauth_confirm", data_schema=self._schema(server), errors=errors)
 
 

@@ -564,16 +564,18 @@ async def test_removed_agent_gives_the_menu_back(hass: HomeAssistant, hass_clien
 
 
 async def test_administrators_keep_the_full_menu(hass: HomeAssistant, hass_client, hass_admin_user, entry) -> None:
-    """HA reviewer r2: after a deploy with «Убрать лишнее из меню» the admin's sidebar was stripped to «Home»."""
+    """HA reviewer r2: after a deploy with «Убрать лишнее из меню» the admin's sidebar was stripped to «Home». A new
+    house: administrators are untouched unless «Также у администраторов» is on."""
     from homeassistant.auth.const import GROUP_ID_ADMIN, GROUP_ID_USER
     from homeassistant.components.frontend.storage import async_user_store
+    from homeassistant.helpers.storage import Store
 
     from custom_components.hauflo import sidebar
 
     mama = await hass.auth.async_create_user("Мама", group_ids=[GROUP_ID_USER])
     client = await hass_client()
     res = await client.post("/api/hauflo/sidebar", json={"hide": ["map", "energy", "history"]})
-    assert res.status == 200
+    assert res.status == 200 and (await res.json())["admins"] is False
     admin = await async_user_store(hass, hass_admin_user.id)
     assert not (admin.data.get("sidebar") or {}).get("hiddenPanels")
     assert set((await async_user_store(hass, mama.id)).data["sidebar"]["hiddenPanels"]) == {"map", "energy", "history"}
@@ -583,16 +585,84 @@ async def test_administrators_keep_the_full_menu(hass: HomeAssistant, hass_clien
     await hass.async_block_till_done()
     assert set((await async_user_store(hass, papa.id)).data["sidebar"]["hiddenPanels"]) == {"map", "energy", "history"}
     assert not ((await async_user_store(hass, tech.id)).data.get("sidebar") or {}).get("hiddenPanels")
-    # An earlier agent hid them for the admin too: given back once, on the agent's start.
-    await admin.async_set_item("sidebar", {"hiddenPanels": ["map", "energy", "my-panel"]})
-    assert await sidebar.async_admins_back(hass) == 1
-    assert admin.data["sidebar"]["hiddenPanels"] == ["my-panel"]
-    await admin.async_set_item("sidebar", {"hiddenPanels": ["map"]})  # the admin's own choice afterwards stays
-    assert await sidebar.async_admins_back(hass) == 0 and admin.data["sidebar"]["hiddenPanels"] == ["map"]
+    # The agent restarting changes nothing for them (no «once» step on a new house).
+    assert await sidebar.async_upgrade(hass) == 0
+    assert not (admin.data.get("sidebar") or {}).get("hiddenPanels")
+    assert (await Store(hass, 1, sidebar.STORE_KEY).async_load())["admins"] is False
+    assert (await client.post("/api/hauflo/sidebar", json={"hide": ["map"], "admins": "yes"})).status == 400
     # Removed: the family's menu comes back.
     await hass.config_entries.async_remove(entry.entry_id)
     await hass.async_block_till_done()
     assert not (await async_user_store(hass, mama.id)).data["sidebar"]["hiddenPanels"]
+
+
+async def test_administrators_too_when_the_option_is_on(hass: HomeAssistant, hass_client, hass_admin_user, entry) -> None:
+    """«Также у администраторов»: their menu is cleaned too, a new administrator gets it; switched off — what Hauflo hid
+    for them comes back, a panel they hid themselves stays."""
+    from homeassistant.auth.const import GROUP_ID_ADMIN
+    from homeassistant.components.frontend.storage import async_user_store
+
+    admin = await async_user_store(hass, hass_admin_user.id)
+    await admin.async_set_item("sidebar", {"hiddenPanels": ["hacs"], "panelOrder": ["lovelace"]})
+    client = await hass_client()
+    res = await client.post("/api/hauflo/sidebar", json={"hide": ["map", "energy"], "admins": True})
+    assert res.status == 200 and (await res.json())["admins"] is True
+    assert admin.data["sidebar"] == {"hiddenPanels": ["hacs", "map", "energy"], "panelOrder": ["lovelace"]}
+    tech = await hass.auth.async_create_user("Инженер", group_ids=[GROUP_ID_ADMIN])
+    await hass.async_block_till_done()
+    assert set((await async_user_store(hass, tech.id)).data["sidebar"]["hiddenPanels"]) == {"map", "energy"}
+    # A deploy that doesn't say (an older server): the house's choice stays.
+    assert (await (await client.post("/api/hauflo/sidebar", json={"hide": ["map", "energy"]})).json())["admins"] is True
+    assert admin.data["sidebar"]["hiddenPanels"] == ["hacs", "map", "energy"]
+    # Switched off: the administrators get Hauflo's panels back, their own «hacs» stays hidden.
+    res = await client.post("/api/hauflo/sidebar", json={"hide": ["map", "energy"], "admins": False})
+    assert (await res.json())["admins"] is False
+    assert admin.data["sidebar"]["hiddenPanels"] == ["hacs"]
+    assert not (await async_user_store(hass, tech.id)).data["sidebar"]["hiddenPanels"]
+
+
+async def test_upgrade_keeps_the_administrators_menu_cleaned(hass: HomeAssistant, hass_admin_user) -> None:
+    """Owner 29.10: agent 0.16.18 gave the administrators Map, Energy, … back once — in a house whose owner had it cleaned
+    on purpose. From a record before 0.16.18: stays hidden. From 0.16.18's («admins_kept»): hidden again — exactly what
+    Hauflo had recorded, nothing else; once."""
+    from homeassistant.auth.const import GROUP_ID_ADMIN, GROUP_ID_USER
+    from homeassistant.components.frontend.storage import async_user_store
+    from homeassistant.helpers.storage import Store
+
+    from custom_components.hauflo import sidebar
+
+    admin = await async_user_store(hass, hass_admin_user.id)
+    mama = await hass.auth.async_create_user("Мама", group_ids=[GROUP_ID_USER])
+    family = await async_user_store(hass, mama.id)
+    saved = Store(hass, 1, sidebar.STORE_KEY)
+
+    # 1. Up from 0.16.17 (no flag): the administrators' menu is as it was, the option is on.
+    await admin.async_set_item("sidebar", {"hiddenPanels": ["map", "energy", "hacs"]})
+    await saved.async_save({"hide": ["map", "energy"]})
+    assert await sidebar.async_upgrade(hass) == 0
+    assert admin.data["sidebar"]["hiddenPanels"] == ["map", "energy", "hacs"]
+    assert await saved.async_load() == {"hide": ["map", "energy"], "admins": True}
+    await sidebar.async_setup(hass)
+    tech = await hass.auth.async_create_user("Инженер", group_ids=[GROUP_ID_ADMIN])
+    await hass.async_block_till_done()
+    assert set((await async_user_store(hass, tech.id)).data["sidebar"]["hiddenPanels"]) == {"map", "energy"}
+
+    # 2. Up from 0.16.18, which took them back: hidden again, the admin's own panels untouched; the family as it was.
+    await admin.async_set_item("sidebar", {"hiddenPanels": ["file-editor"], "panelOrder": ["lovelace"]})
+    await family.async_set_item("sidebar", {"hiddenPanels": ["map", "energy", "logbook"]})
+    await saved.async_save({"hide": ["map", "energy", "logbook"], "admins_kept": True})
+    assert await sidebar.async_upgrade(hass) == 2  # both administrators
+    assert admin.data["sidebar"] == {"hiddenPanels": ["file-editor", "map", "energy", "logbook"], "panelOrder": ["lovelace"]}
+    assert family.data["sidebar"]["hiddenPanels"] == ["map", "energy", "logbook"]
+    assert await saved.async_load() == {"hide": ["map", "energy", "logbook"], "admins": True}
+    # Once: an administrator showing a panel again afterwards keeps it.
+    await admin.async_set_item("sidebar", {"hiddenPanels": ["file-editor"]})
+    assert await sidebar.async_upgrade(hass) == 0
+    assert admin.data["sidebar"]["hiddenPanels"] == ["file-editor"]
+    # A deploy after it with the option on (as the server sends for such a house) keeps them hidden.
+    await sidebar.async_apply(hass, ["map", "energy", "logbook"], [], True)
+    assert admin.data["sidebar"]["hiddenPanels"] == ["file-editor", "map", "energy", "logbook"]
+    sidebar.async_unload(hass)
 
 
 async def test_an_alarm_sensor_without_data_is_said_and_its_return(hass: HomeAssistant) -> None:

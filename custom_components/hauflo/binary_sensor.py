@@ -13,7 +13,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .device import device_info
-from .const import CONF_SERVER, DOMAIN
+from .const import CONF_SERVER, DOMAIN, VERSION
 
 SIGNAL_LINK = f"{DOMAIN}_link"
 # One push-updated entity, never polled.
@@ -38,8 +38,9 @@ class HaufloLink(BinarySensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, str | None]:
-        # Which server this house is linked to — seen in HA, not only in Hauflo (security re-review round 4).
-        return {"server": urlparse(self._entry.data.get(CONF_SERVER, "")).hostname}
+        # Which server this house is linked to — seen in HA, not only in Hauflo (security re-review round 4). The agent's
+        # version: the cards compare it with their own and reload a page left from before an update (hauflo-cards.js SELF).
+        return {"server": urlparse(self._entry.data.get(CONF_SERVER, "")).hostname, "version": VERSION}
 
     @property
     def is_on(self) -> bool:

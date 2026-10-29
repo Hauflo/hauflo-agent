@@ -81,10 +81,10 @@
         }
       },
       "transfer": {
-        "title": "Hand this home's service over?",
-        "description": "Hand the service of this home over to «{company}»?\n\nThe company gets a copy of the home's project (rooms, devices, alarms, documents); the previous company loses access. The previous company's people stop getting this home's alarms; «{company}» becomes the contact on the alarm cards.\n\nChoose «Yes» only if you own this home and agreed this with «{company}».",
+        "title": "Confirm the request to take over this home's service?",
+        "description": "«{company}» has asked Hauflo support to hand this home's service over to it.\n\nIf you own this home and asked for it, choose «Yes»: your confirmation is attached to the request. Nothing changes now: Hauflo support decides after telling the previous company (usually in 14 days). If the request is granted, «{company}» gets the home's setup in Hauflo and becomes the contact on the alarm cards; the previous company loses access.\n\nDidn't ask for it? Choose «No».",
         "menu_options": {
-          "transfer_yes": "Yes, hand the service over to this company",
+          "transfer_yes": "Yes, I confirm the request",
           "transfer_no": "No, change nothing"
         }
       },
@@ -111,7 +111,9 @@
       "single_instance_allowed": "Only one Hauflo agent per Home Assistant: it is already set up.",
       "reauth_successful": "The Hauflo agent is linked again.",
       "reconfigure_successful": "The Hauflo agent is linked with the new code.",
-      "transfer_declined": "Nothing changed: this Home Assistant stays linked to the previous company."
+      "transfer_declined": "Nothing changed: this Home Assistant stays linked to the previous company.",
+      "transfer_recorded": "Done: your confirmation is attached to the request of «{company}». Nothing changed in this Home Assistant; Hauflo support decides after telling the previous company, and you will see the new company here once it is decided.",
+      "transfer_via_request": "Nothing changed. A home's service now goes to another company only by Hauflo support's decision: the new company files «House transfer request» in the Hauflo app and gives you a code to confirm it here."
     }
   },
   "entity": {

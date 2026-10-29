@@ -6,6 +6,112 @@
   // Served by the agent (/hauflo_static) or, after it was removed, from /local/hauflo (keep.py).
   const BASE = new URL(".", import.meta.url).pathname.replace(/\/$/, "");
 
+  // --- self-update after an agent update (owner 29.10: the HA app kept the old cards until «Сбросить кэш фронтенда») --
+  // These cards' version is the `?v=` HA loaded them with (theme.py / keep.py put the agent's VERSION there — one place);
+  // the installed agent's is the `version` attribute of its «Связь с Hauflo» entity (every HA user has the states). HA's
+  // service worker serves pages and files stale-while-revalidate: a page from before the update loads the old cards. On a
+  // difference: Hauflo's files and HA's cached pages leave the caches (nothing else of HA's), the service worker is asked to
+  // update, the page reloads once per version (sessionStorage), and if that didn't help — a bar with a hard reload.
+  const SELF = {
+    v: new URL(import.meta.url).searchParams.get("v") || "",
+    id: null, seenAt: 0, timer: null, bar: null, done: "",
+    KEY: "hauflo_reloaded_for",
+    agent(hass) {
+      const st = hass?.states;
+      if (!st) return "";
+      if (this.id && st[this.id]?.attributes?.version) return String(st[this.id].attributes.version);
+      if (Date.now() - this.seenAt < 60000) return "";
+      this.seenAt = Date.now();
+      const reg = hass.entities || {};
+      this.id =
+        Object.keys(reg).find((e) => reg[e]?.platform === "hauflo" && e.startsWith("binary_sensor.") && st[e]?.attributes?.version) ||
+        Object.keys(st).find((e) => e.startsWith("binary_sensor.") && st[e].attributes?.server !== undefined && st[e].attributes?.version && st[e].attributes?.device_class === "connectivity") ||
+        null;
+      return this.id ? String(st[this.id].attributes.version) : "";
+    },
+    async purge() {
+      const ours = (u) => u.pathname.startsWith("/hauflo_static/") || u.pathname.startsWith("/local/hauflo/");
+      try {
+        for (const name of (await window.caches?.keys?.()) || []) {
+          const cache = await caches.open(name);
+          for (const req of await cache.keys()) {
+            const u = new URL(req.url);
+            if (u.origin !== location.origin) continue;
+            // A page (no file extension) cached by HA's service worker still names the old cards' address.
+            const page = !/\.[a-z0-9]+$/i.test(u.pathname) && !u.pathname.startsWith("/api/");
+            if (ours(u) || (page && /text\/html/.test((await cache.match(req))?.headers.get("content-type") || ""))) await cache.delete(req);
+          }
+        }
+      } catch (e) {}
+      try {
+        await (await navigator.serviceWorker?.getRegistration?.())?.update();
+      } catch (e) {}
+    },
+    store(get, val) {
+      try {
+        if (get) return sessionStorage.getItem(this.KEY);
+        sessionStorage.setItem(this.KEY, val);
+        return sessionStorage.getItem(this.KEY) === val;
+      } catch (e) {
+        return get ? null : false;
+      }
+    },
+    check(hass, lang) {
+      window.__haufloSelfUpdate = this; // the copy whose cards are on the page (tests)
+      if (!this.v || this.timer) return;
+      const want = this.agent(hass);
+      if (!want || want === this.v) return this.hide();
+      if (this.bar || this.done === want) return;
+      // Right after HA's start the entity can be there a moment before the new page is: a short wait, then once more.
+      this.timer = setTimeout(async () => {
+        this.timer = null;
+        const now = this.agent(hass);
+        if (!now || now === this.v) return;
+        this.done = now;
+        await this.purge();
+        // A reload only where it can be remembered (no storage — no loop: the bar instead).
+        if (this.store(true) !== now && this.store(false, now)) return location.reload();
+        this.show(lang, now);
+      }, 2500);
+    },
+    show(lang, want) {
+      if (this.bar) return;
+      const ru = String(lang || "ru").startsWith("ru");
+      const b = (this.bar = document.createElement("div"));
+      b.id = "hauflo-update-bar";
+      b.setAttribute("role", "status");
+      b.style.cssText =
+        "position:fixed;top:calc(8px + env(safe-area-inset-top,0px));left:50%;transform:translateX(-50%);z-index:9999;max-width:calc(100% - 32px);display:flex;align-items:center;gap:12px;padding:8px 8px 8px 16px;border-radius:16px;background:var(--card-background-color,#141517);color:var(--primary-text-color,#F4F2EE);box-shadow:0 10px 30px rgba(0,0,0,.35);font:500 13px/1.3 Onest,var(--ha-font-family-body,system-ui),sans-serif";
+      const t = document.createElement("span");
+      t.textContent = ru ? "Панель обновилась — нажмите, чтобы загрузить новую версию" : "The dashboard was updated — tap to load the new version";
+      const go = document.createElement("button");
+      go.textContent = ru ? "Обновить" : "Reload";
+      go.style.cssText = "flex:0 0 auto;min-height:36px;padding:0 14px;border:0;border-radius:12px;cursor:pointer;font:600 13px Onest,sans-serif;background:var(--primary-color,#5CE0B4);color:var(--text-primary-color,#08090A)";
+      go.onclick = async () => {
+        go.disabled = true;
+        await this.purge();
+        // A new address for the page: no cache (the app's or the service worker's) has it.
+        const u = new URL(location.href);
+        u.searchParams.set("hauflo_reload", String(Date.now()));
+        location.replace(u.href);
+      };
+      b.append(t, go);
+      document.body.appendChild(b);
+    },
+    hide() {
+      this.bar?.remove();
+      this.bar = null;
+    },
+  };
+  // The hard reload's mark leaves the address bar once the page is here.
+  try {
+    const u = new URL(location.href);
+    if (u.searchParams.has("hauflo_reload")) {
+      u.searchParams.delete("hauflo_reload");
+      history.replaceState(history.state, "", u.pathname + u.search + u.hash);
+    }
+  } catch (e) {}
+
   // --- fonts (Onest, OFL) -------------------------------------------------------------------------
   if (!document.getElementById("hauflo-fonts")) {
     const s = document.createElement("style");
@@ -1535,11 +1641,13 @@ button:focus-visible{outline:2px solid var(--eh-ice,#3C82F0);outline-offset:1px}
     // ≥2 KNX series in the row (`series` on the buttons, set by the generator): a subheader per series; the integrator's HA
     // scenes and the family's own go under «Мои сцены» (Д2+, owner 29.10). One series / none: as before, no subheader.
     if (all.some((x) => x.series)) {
-      const names = [...new Set(all.filter((x) => x.series).map((x) => x.series))];
+      // `series_head: false` — the room's own only series (0.16.19): no subheader, first.
+      const bare = (n) => all.some((x) => x.series === n && x.series_head === false);
+      const names = [...new Set(all.filter((x) => x.series).map((x) => x.series))].sort((a, b) => Number(!bare(a)) - Number(!bare(b)));
       const mine = all.filter((x) => !x.series);
-      const groups = names.map((n) => [n, all.filter((x) => x.series === n).map((x) => one(x)).join("")]);
+      const groups = names.map((n) => [bare(n) ? "" : n, all.filter((x) => x.series === n).map((x) => one(x)).join("")]);
       if (mine.length || addBtn) groups.push([langOf(hass) === "en" ? "My scenes" : "Мои сцены", mine.map((x) => one(x)).join("") + addBtn]);
-      return `<div class="sgs">${groups.map(([n, h]) => `<div class="sg"><span class="caps ser">${esc(n)}</span><div class="scn ${kind}">${h}</div></div>`).join("")}</div>`;
+      return `<div class="sgs">${groups.map(([n, h]) => `<div class="sg">${n ? `<span class="caps ser">${esc(n)}</span>` : ""}<div class="scn ${kind}">${h}</div></div>`).join("")}</div>`;
     }
     // Blind scenes of two or more curtain types («Открыть Шторы», «Закрыть Шторы», «Открыть Тюль»…): a labelled row per type,
     // short action names inside (family test 29.10) — «+ Сцена» ends the last row.
@@ -1901,6 +2009,20 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
     const g = goal === undefined || goal === null ? "" : `${fmt(goal, goal % 1 ? 1 : 0)}°`;
     return now === "heat" || now === "cool" ? w[now] + (g ? ` до ${g}` : "") : w[now] || "";
   };
+  /** The accent of a thermostat is its MODE, always (Apple Home / Nest / Ecobee; owner 29.10: «В норме» painted the
+   * whole card grey): heat amber, cool ice, auto / range by what it does now (else its own), dry / fan theirs. Off and no
+   * link — "" (grey). For the mode buttons: `climateTone(null, null, mode)`. */
+  const climateTone = (s, now, mode = s?.state) => {
+    if (!mode || ["off", "unavailable", "unknown"].includes(mode)) return "";
+    if (mode === "heat" || mode === "cool" || mode === "dry") return mode;
+    if (mode === "fan_only") return "fan";
+    return now === "heat" || now === "cool" ? now : "auto";
+  };
+  /** Not working this minute (at target, waiting): the same colour, a little softer — never grey. */
+  const toneCalm = (tone, now) => !!tone && !["heat", "cool", "dry", "fan"].includes(now);
+  /** The mode accents as CSS variables: --ac (fill / line), --acT (text), --acG (glow). */
+  const TONE_CSS = `.m-heat{--ac:var(--amber);--acT:var(--amberT);--acG:var(--amberGlow)}.m-cool{--ac:var(--ice);--acT:color-mix(in srgb,var(--ice) 78%,var(--ink));--acG:var(--iceGlow)}.m-auto{--ac:var(--mint);--acT:var(--mintT);--acG:color-mix(in srgb,var(--mint) 45%,transparent)}.m-dry{--ac:var(--eh-dry,#2AA5B8);--acT:color-mix(in srgb,var(--eh-dry,#2AA5B8) 78%,var(--ink));--acG:color-mix(in srgb,var(--eh-dry,#2AA5B8) 45%,transparent)}.m-fan{--ac:var(--eh-fan,#8B74E8);--acT:color-mix(in srgb,var(--eh-fan,#8B74E8) 78%,var(--ink));--acG:color-mix(in srgb,var(--eh-fan,#8B74E8) 45%,transparent)}
+.modes button.on.mk{background:var(--ac);color:#141414;font-weight:600;box-shadow:0 2px 12px -4px var(--acG)}`;
   /** The mode as small print only when it says something the action doesn't («режим: авто»). */
   const modeDiff = (state, now) => {
     const m = modeSmall(state);
@@ -2158,13 +2280,13 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
 <div class="tpl" style="height:${H}px"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">${ticksY.map((v) => `<line class="gr" x1="0" x2="${W}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" vector-effect="non-scaling-stroke"/>`).join("")}<path class="ar" d="${area}"/>${sp.length ? `<path class="sp" d="${spLine}" vector-effect="non-scaling-stroke"/>` : ""}<path class="cu" d="${line}" vector-effect="non-scaling-stroke"/></svg>${ends}${ticksY.map((v) => `<span class="ty" style="top:${((y(v) / H) * 100).toFixed(1)}%">${fmt(v, digits)}°</span>`).join("")}</div>
 <div class="tx">${ticksX.map((t) => `<span style="left:${(((t - t0) / span) * 100).toFixed(1)}%">${hm(t)}</span>`).join("")}<span class="now">сейчас</span></div>`);
   };
-  const TCHART_CSS = `.tch{position:relative;margin-top:14px;--tc:var(--ink2)}.tch.heat{--tc:var(--amber)}.tch.cool{--tc:var(--ice)}
+  const TCHART_CSS = `.tch{position:relative;margin-top:14px;--tc:var(--ink2);--tsp:var(--ink2)}.tch.heat{--tc:var(--amber)}.tch.cool{--tc:var(--ice)}.tch.auto{--tc:var(--mint)}.tch.dry{--tc:var(--eh-dry,#2AA5B8)}.tch.fan{--tc:var(--eh-fan,#8B74E8)}.tch:is(.heat,.cool,.auto,.dry,.fan){--tsp:var(--tc)}.tch.calm .cu{opacity:.78}.tch.calm .ar{opacity:.07}.tch.calm .sp{opacity:.6}
 .tlg{display:flex;align-items:center;gap:14px;height:16px;margin-bottom:6px;font:400 11px Onest,sans-serif;color:var(--ink3);white-space:nowrap}.tlg .per{margin-left:auto;margin-right:34px}
 .tlg i{display:inline-block;width:14px;border-top:2px solid var(--tc);vertical-align:middle;margin:-2px 6px 0 0}.tlg .ds{border-top:2px dashed var(--ink2);opacity:.8}.tlg span:first-child{color:var(--ink2)}
 .tpl{position:relative;margin-right:34px}.tpl svg{display:block;width:100%;height:100%;overflow:visible}
 .tpl .gr{stroke:var(--hair);stroke-width:1}.tpl .cu{fill:none;stroke:var(--tc);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}.tpl .ar{fill:var(--tc);opacity:.10;stroke:none}
-.tpl .el{position:absolute;right:2px;font:500 11px Onest,sans-serif;white-space:nowrap;font-variant-numeric:tabular-nums;pointer-events:none;padding:1px 5px;border-radius:7px;background:var(--eh-glass,var(--ha-card-background,var(--card-background-color,#fff)))}.tpl .el.cl{color:var(--tc)}.tpl .el.sl{color:var(--ink2)}
-.tpl .sp{fill:none;stroke:var(--ink2);stroke-width:1.25;stroke-dasharray:5 4;opacity:.8}
+.tpl .el{position:absolute;right:2px;font:500 11px Onest,sans-serif;white-space:nowrap;font-variant-numeric:tabular-nums;pointer-events:none;padding:1px 5px;border-radius:7px;background:var(--eh-glass,var(--ha-card-background,var(--card-background-color,#fff)))}.tpl .el.cl{color:var(--tc)}.tpl .el.sl{color:color-mix(in srgb,var(--tsp) 70%,var(--ink2))}
+.tpl .sp{fill:none;stroke:var(--tsp);stroke-width:1.25;stroke-dasharray:5 4;opacity:.8}
 .ty{position:absolute;left:calc(100% + 6px);transform:translateY(-50%);font:400 11px Onest,sans-serif;color:var(--ink3);white-space:nowrap;font-variant-numeric:tabular-nums}
 .tx{position:relative;height:16px;margin:6px 34px 0 0;font:400 11px Onest,sans-serif;color:var(--ink3);font-variant-numeric:tabular-nums}.tx span{position:absolute;top:0;transform:translateX(-50%);white-space:nowrap}.tx .now{left:auto;right:-34px;transform:none}
 .tno{position:absolute;inset:0;display:grid;place-items:center;border-radius:14px;background:var(--track);font:400 13px Onest,sans-serif;color:var(--ink3)}`;
@@ -2205,6 +2327,7 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
     set hass(hass) {
       this._hass = hass;
       AGENT.hass = hass;
+      SELF.check(hass, langOf(hass));
       if (this._pop) this._pop.hass = hass; // the control sheet it opened stays live
       const lang = langOf(hass);
       if (lang !== LANG) {
@@ -2965,26 +3088,26 @@ ${rows.map((r) => `<div class="rw"><span class="caps sub">${esc(r.title || (r.ki
       return tchart(data, { cur, sp: frost ? undefined : num(a.temperature) }, { H, label, tone });
     }
     css() {
-      return `${TCHART_CSS}${VALVE_CSS}.sub .act{margin-right:6px}.c{padding:20px 22px}.nr{display:flex;align-items:center;gap:18px;flex-wrap:wrap}.st{flex:none}.idle .act i{background:var(--mint);box-shadow:0 0 8px var(--mint)}
+      return `${TCHART_CSS}${VALVE_CSS}${TONE_CSS}.sub .act{margin-right:6px}.c{padding:20px 22px}.nr{display:flex;align-items:center;gap:18px;flex-wrap:wrap}.st{flex:none}.act.k-idle i{background:var(--mint);box-shadow:0 0 8px var(--mint)}
 .t{font-size:76px;line-height:.9}.t sup{font:300 20px Onest,sans-serif;vertical-align:top;position:relative;top:8px;color:var(--ink2);margin-left:2px}
 .sub{font:400 13px Onest,sans-serif;color:var(--ink2);margin-top:8px}.st{display:flex;flex-direction:column;gap:8px}
 .none{font:300 20px/1.2 Onest,sans-serif;color:var(--ink2);margin:6px 0}
 .st button{width:48px;height:48px;border-radius:24px;display:grid;place-items:center;box-shadow:var(--eh-edge,inset 0 0 0 1px var(--line));background:var(--eh-glass,transparent);font:300 26px Onest,sans-serif}
-.st:not(.row2) button{width:auto;min-width:64px;height:56px;padding:0 8px;border-radius:20px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px}.st button b{font:300 24px/1 Onest,sans-serif}.st button small{font:500 11px/1.1 Onest,sans-serif;color:var(--ink2)}.stc{font:400 11px/1.2 Onest,sans-serif;color:var(--ink3);text-align:center}
+.st:not(.row2){gap:12px}.st:not(.row2) button{width:60px;height:60px;border-radius:30px;font:300 34px/1 Onest,sans-serif}
+.toned .st button{background:color-mix(in srgb,var(--ac) 16%,transparent);box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--ac) 55%,transparent);color:var(--acT)}.toned.calm .st button{background:color-mix(in srgb,var(--ac) 10%,transparent);box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--ac) 38%,transparent)}
 .mh{font:500 11px Onest,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--ink2);margin-top:16px}.mh+.modes{margin-top:6px}
 .st button:active{transform:scale(.94)}.st button:disabled{opacity:.35;pointer-events:none}
 .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;min-height:22px}
 .nos{font:400 13px Onest,sans-serif;color:var(--ink2);margin-top:4px}.goal{font:500 11px Onest,sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--ink3);margin-left:8px;vertical-align:top;position:relative;top:14px}
 .day{font:400 13px Onest,sans-serif;color:var(--ink2);margin-top:3px}
 .act{display:inline-flex;align-items:center;gap:7px;font:500 12px Onest,sans-serif;color:var(--ink2);padding:4px 10px;border-radius:11px;background:var(--track)}
-.act i{width:6px;height:6px;border-radius:3px;background:var(--ink3)}.act.bad{color:var(--alertT)}.act.bad i,.heat .act.bad i{background:var(--alert);box-shadow:0 0 8px var(--alert)}.act.frost i,.heat .act.frost i{background:var(--ice);box-shadow:none}.heat .act i{background:var(--amber);box-shadow:0 0 8px var(--amber)}.cool .act i{background:var(--ice);box-shadow:0 0 8px var(--ice)}
+.act i{width:6px;height:6px;border-radius:3px;background:var(--ink3)}.act.bad{color:var(--alertT)}.act.k-heat i{background:var(--amber);box-shadow:0 0 8px var(--amber)}.act.k-cool i{background:var(--ice);box-shadow:0 0 8px var(--ice)}.act.k-dry i,.act.k-fan i{background:var(--ac,var(--ink3))}.act.bad i{background:var(--alert);box-shadow:0 0 8px var(--alert)}.act.frost i{background:var(--ice);box-shadow:none}
 .scale{margin-top:18px;touch-action:pan-y;cursor:ew-resize;user-select:none;-webkit-user-select:none;padding:6px 0}
 .ends{display:flex;justify-content:space-between;font:400 11px Onest,sans-serif;color:var(--ink3);margin-top:6px}
 .ticks{display:flex;justify-content:space-between;align-items:flex-end;height:34px}
-.ticks i{width:2px;border-radius:1px;background:var(--ink3);height:10px;position:relative}.ticks i.m{height:16px}.ticks i.a{height:34px;width:3px;background:var(--amber);box-shadow:0 0 10px var(--amberGlow)}
+.ticks i{width:2px;border-radius:1px;background:var(--ink3);height:10px;position:relative}.ticks i.m{height:16px}.ticks i.a{height:34px;width:3px;background:var(--ac,var(--ink2));box-shadow:0 0 10px var(--acG,transparent)}.calm .ticks i.a{box-shadow:0 0 6px var(--acG,transparent)}
 .ticks i.cur::after{content:"";position:absolute;left:50%;bottom:-9px;width:5px;height:5px;border-radius:3px;transform:translateX(-50%);background:var(--ink2)}
-.dragging .t .v{color:var(--amberT)}.cool.dragging .t .v{color:var(--ice)}
-.cool .ticks i.a{background:var(--ice);box-shadow:0 0 8px var(--iceGlow)}
+.dragging .t .v{color:var(--acT,var(--ink))}
 .ticks i.ph,.ticks i.pc{height:24px;width:3px;opacity:.55}.ticks i.ph{background:var(--amber)}.ticks i.pc{background:var(--ice)}
 .ticks i.ph.sel,.ticks i.pc.sel{height:34px;opacity:1}.ticks i.ph.sel{box-shadow:0 0 10px var(--amberGlow)}.ticks i.pc.sel{box-shadow:0 0 10px var(--iceGlow)}
 .prs{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}.pr{display:inline-flex;align-items:center;gap:7px;min-height:36px;padding:0 12px;border-radius:12px;font:500 13px Onest,sans-serif;color:var(--ink2);box-shadow:inset 0 0 0 1px var(--line)}
@@ -2994,14 +3117,13 @@ ${rows.map((r) => `<div class="rw"><span class="caps sub">${esc(r.title || (r.ki
 .pair2{font:400 12px/1.3 Onest,sans-serif;color:var(--ink3)}
 .modes{display:flex;gap:6px;margin-top:16px}.modes.fan{margin-top:8px;align-items:center}.modes.fan button{white-space:nowrap;padding:0 4px;font-size:12px;min-width:0}.modes .fl{flex:0 0 auto;color:var(--ink3);--mdc-icon-size:18px;padding:0 2px}.modes button{flex:1;min-height:44px;padding:0 6px;border-radius:14px;font:500 13px Onest,sans-serif;color:var(--ink2);box-shadow:inset 0 0 0 1px var(--line)}
 .modes .on{color:var(--ink);background:var(--track);box-shadow:none}.modes .arm{color:var(--alertT);background:color-mix(in srgb,var(--alert) 14%,transparent);box-shadow:inset 0 0 0 1.5px var(--alert)}
-.heat .glow{background:radial-gradient(50% 50% at 20% 10%,var(--amberGlow),transparent 70%);opacity:.6}
+.toned .glow{background:radial-gradient(50% 50% at 20% 10%,var(--acG),transparent 70%);opacity:.6}.toned.calm .glow{opacity:.32}
 .cc{padding:14px 14px 14px 18px}.ccrow{display:flex;align-items:center;gap:12px;position:relative}.ccn{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}
 .ccn .caps{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ccn .sub{margin:0}
 .cct{font-size:40px;line-height:1}.cct small{font:300 15px Onest,sans-serif;color:var(--ink2);margin-left:1px}
 .cct .tgc{display:block;margin-top:4px;text-align:right;font:400 12px/1.2 Onest,sans-serif;color:var(--ink2);letter-spacing:0}
 .sens{display:flex;gap:6px;margin-top:2px;flex-wrap:wrap}.sens b{font:500 12px Onest,sans-serif;padding:3px 7px;border-radius:8px;background:var(--track);color:var(--ink2);white-space:nowrap}.sens i{font-style:normal;color:var(--ink3);margin-right:5px}.c .sens{margin-top:8px}
 .st.row2{flex-direction:row}.st.row2 button{width:44px;height:44px;border-radius:22px;font-size:22px}
-.cool .glow{background:radial-gradient(50% 50% at 20% 10%,var(--iceGlow),transparent 70%);opacity:.6}
 .zs .caps{display:block;margin-bottom:4px}.zr{display:flex;align-items:center;gap:12px;padding:8px 0;border-top:1px solid var(--hair)}.zr:nth-child(2){border-top:0}
 .zn{font:500 15px/1.25 Onest,sans-serif;color:var(--ink);white-space:normal;overflow-wrap:break-word;hyphens:auto}.zs .zr .ccn{cursor:pointer}.zs .zr:not(.sel) .zn{color:var(--ink2)}.zs .cct{font-size:32px}.zr.heat .zn::after{content:"";display:inline-block;width:6px;height:6px;border-radius:3px;background:var(--amber);margin-left:7px;vertical-align:middle}`;
     }
@@ -3038,8 +3160,11 @@ ${rows.map((r) => `<div class="rw"><span class="caps sub">${esc(r.title || (r.ki
       // warmer than the goal isn't believable (persona review 25.10) — hvac_action is trusted only when it fits (climateNow);
       // a valve / heat command of the zone that is on is a fact.
       const now = !known ? null : climateNow(this._hass, s, this._config.activity);
-      const mood = now === "heat" ? "heat" : now === "cool" ? "cool" : "";
-      const cls = mood || (now === "idle" ? "idle" : "");
+      // The colour is the MODE's (owner 29.10, Apple Home / Nest way): amber in «Нагрев» even at target, a little softer
+      // then; grey only off / no link. The chip alone says what it does now.
+      const tone = known ? climateTone(s, now) : "";
+      const calm = toneCalm(tone, now);
+      const cls = tone ? `m-${tone} toned${calm ? " calm" : ""}` : "";
       const goalOf = now === "heat" && pair?.heat !== undefined ? pair.heat : now === "cool" && pair?.cool !== undefined ? pair.cool : target;
       const goalShown = goalOf !== undefined && !(now === "heat" && cur >= goalOf) ? goalOf : undefined;
       const frost = frostOf(s);
@@ -3077,7 +3202,7 @@ ${rows.map((r) => `<div class="rw"><span class="caps sub">${esc(r.title || (r.ki
       const season = a.house_mode === "summer" ? "Лето" : a.house_mode === "winter" ? "Зима" : "";
       const fl = season === "Зима" && Array.isArray(a.floor_targets) ? a.floor_targets.map(num).filter((v) => v !== undefined) : [];
       const floorNow = fl.length ? ` · пол ${Math.min(...fl) === Math.max(...fl) ? fmt(fl[0]) : `${fmt(Math.min(...fl))}–${fmt(Math.max(...fl))}`}°` : "";
-      const chart = this.chart(this._config.entity, this._config.floor ? "Пол" : "В комнате", mood, 96);
+      const chart = this.chart(this._config.entity, this._config.floor ? "Пол" : "В комнате", tone ? `${tone}${calm ? " calm" : ""}` : "", 96);
       // A thermostat of another integration may take no setpoint at all (features: TARGET_TEMPERATURE 1, RANGE 2): no hint, no scale.
       const fixed = target === undefined && !pair && num(a.supported_features) !== undefined && (num(a.supported_features) & 3) === 0 && !["unavailable", "unknown"].includes(s.state);
       const noTarget = target === undefined && !fixed ? `<div class="nos">${["unavailable", "unknown"].includes(s.state) ? "нет связи с термостатом" : "нужная температура ещё не пришла от системы"}</div>` : "";
@@ -3085,15 +3210,16 @@ ${rows.map((r) => `<div class="rw"><span class="caps sub">${esc(r.title || (r.ki
       const bigTgt = target === undefined || frost ? `<div class="t thin tbig"><span class="v">${cur === undefined ? "—" : fmt(cur, 1)}</span>${cur === undefined ? "" : `<sup>°C</sup>${frost ? `<span class="goal">сейчас</span>` : ""}`}</div>` : `<div class="t thin tbig"><span class="v">${fmt(target, digits)}</span><sup>°C</sup>${pair ? `<span class="goal">${sel === "heat" ? "обогрев до" : "охлаждение от"}</span>` : ""}</div>`;
       const small = [cur === undefined ? (this._config.floor ? "нет данных" : "нет данных из комнаты") : target !== undefined && !frost ? `Сейчас ${fmt(cur, 1)}°` : "", modeTxt].filter(Boolean).join(" · ");
       const stp = fmt(step, step % 1 ? 1 : 0);
-      const stBtns = target === undefined || frost ? "" : `<div class="st"><button data-d="${step}" aria-label="Теплее на ${stp}°"><b>+</b><small>теплее</small></button><button data-d="${-step}" aria-label="Холоднее на ${stp}°"><b>−</b><small>прохладнее</small></button><span class="stc">шаг ${stp}°</span></div>`;
+      // Just «+» and «−» (owner 29.10: «очевидно, что + теплее − прохладнее»); the words are for screen readers.
+      const stBtns = target === undefined || frost ? "" : `<div class="st"><button data-d="${step}" aria-label="Теплее на ${stp}°">+</button><button data-d="${-step}" aria-label="Холоднее на ${stp}°">−</button></div>`;
       return `<div class="glass c ${cls}"><div class="glow"></div><div style="position:relative">
 <div class="top"><span class="caps">${esc(this._config.label || "Климат")}${season ? ` · ${season}` : ""}</span></div>
 <div class="nr">${bigTgt}${stBtns}</div>${noTarget}
-<div class="sub">${small ? `${esc(small)} ` : ""}${doing ? `<span class="act${fault ? " bad" : frost ? " frost" : ""}"><i></i>${doing}</span>` : ""}${valveIcons(this._hass, this._config.activity?.valves)}${floorNow}${hum !== undefined ? ` · влажность ${fmt(hum)} %` : ""}</div>${readings.length ? this.readingsRow(readings) : ""}${pairRow}
+<div class="sub">${small ? `${esc(small)} ` : ""}${doing ? `<span class="act${fault ? " bad" : frost ? " frost" : now ? ` k-${now}` : ""}"><i></i>${doing}</span>` : ""}${valveIcons(this._hass, this._config.activity?.valves)}${floorNow}${hum !== undefined ? ` · влажность ${fmt(hum)} %` : ""}</div>${readings.length ? this.readingsRow(readings) : ""}${pairRow}
 ${chart}
 ${fixed || frost ? "" : `<div class="scale" data-min="${min}" data-max="${max}" data-step="${step}"${pair ? ` data-pair="1"` : ""}><div class="ticks">${ticks}</div><div class="ends"><span>${fmt(min)}°</span><span>проведите, чтобы изменить</span><span>${fmt(max)}°</span></div></div>`}
-${opts.length ? `<div class="mh">Режим</div><div class="modes">${opts.slice(0, 5).map(([k, l, on]) => `<button class="${on ? "on" : ""}" data-${useModes ? "m" : "p"}="${esc(k)}">${esc(l)}</button>`).join("")}</div>` : ""}
-${fans.length > 1 || swing ? `<div class="mh">Вентилятор</div><div class="modes fan"><span class="fl"><ha-icon icon="hauflo:fan"></ha-icon></span>${fans.slice(0, 5).map((f) => `<button class="${known && a.fan_mode === f ? "on" : ""}" data-f="${esc(f)}">${esc(FAN[f] || f)}</button>`).join("")}${swing ? `<button class="${known && a.swing_mode && a.swing_mode !== "off" ? "on" : ""}" data-sw="${esc(a.swing_mode && a.swing_mode !== "off" ? "off" : swing)}">Обдув</button>` : ""}</div>` : ""}</div></div>`;
+${opts.length ? `<div class="mh">Режим</div><div class="modes">${opts.slice(0, 5).map(([k, l, on]) => `<button class="${!on ? "" : useModes ? (climateTone(null, now, k) ? `on mk m-${climateTone(null, now, k)}` : "on") : tone ? "on mk" : "on"}" data-${useModes ? "m" : "p"}="${esc(k)}" aria-pressed="${!!on}">${esc(l)}</button>`).join("")}</div>` : ""}
+${fans.length > 1 || swing ? `<div class="mh">Вентилятор</div><div class="modes fan"><span class="fl"><ha-icon icon="hauflo:fan"></ha-icon></span>${fans.slice(0, 5).map((f) => `<button class="${known && a.fan_mode === f ? (tone ? "on mk" : "on") : ""}" data-f="${esc(f)}" aria-pressed="${known && a.fan_mode === f}">${esc(FAN[f] || f)}</button>`).join("")}${swing ? `<button class="${known && a.swing_mode && a.swing_mode !== "off" ? (tone ? "on mk" : "on") : ""}" data-sw="${esc(a.swing_mode && a.swing_mode !== "off" ? "off" : swing)}">Обдув</button>` : ""}</div>` : ""}</div></div>`;
     }
     /** Floor-heating zones of one room in one card: a line each — name, now, setpoint, ± (persona review 25.10). */
     zones() {
@@ -3106,17 +3232,22 @@ ${fans.length > 1 || swing ? `<div class="mh">Вентилятор</div><div cla
         const step = Math.max(num(a.target_temp_step) || 0.5, 0.5);
         const nowZ = climateNow(this._hass, s, z.activity);
         const heating = nowZ === "heat";
+        const zt = cur === undefined && target === undefined ? "" : climateTone(s, nowZ);
         const zWord = s && faultOf(this, z.entity, true) ? "Авария" : frostOf(s) ? "Защита от замерзания" : "";
-        return `<div class="zr ${heating ? "heat" : ""}${i === zi ? " sel" : ""}"><div class="ccn" data-z="${i}"><span class="zn">${esc(z.name || nameOf(s, z.entity))}</span><span class="sub">${!s || ["unavailable", "unknown"].includes(s.state) ? "нет связи" : cur === undefined ? "нет данных" : zWord || climateLine(nowZ, target) || "пол сейчас"}${s &&!["unavailable", "unknown"].includes(s.state) && target === undefined ? " · нужная температура ещё не пришла" : ""}</span>${valveIcons(this._hass, z.activity?.valves)}</div>
+        return `<div class="zr ${heating ? "heat" : ""}${i === zi ? " sel" : ""}${zt ? ` m-${zt} toned${toneCalm(zt, nowZ) ? " calm" : ""}` : ""}"><div class="ccn" data-z="${i}"><span class="zn">${esc(z.name || nameOf(s, z.entity))}</span><span class="sub">${!s || ["unavailable", "unknown"].includes(s.state) ? "нет связи" : cur === undefined ? "нет данных" : zWord || climateLine(nowZ, target) || "пол сейчас"}${s &&!["unavailable", "unknown"].includes(s.state) && target === undefined ? " · нужная температура ещё не пришла" : ""}</span>${valveIcons(this._hass, z.activity?.valves)}</div>
 ${this.cct(cur, target, step, z.entity)}
 <div class="st row2"><button data-e="${esc(z.entity)}" data-d="${-step}" aria-label="Холоднее на ${fmt(step, step % 1 ? 1 : 0)}°"${target === undefined ? " disabled" : ""}>−</button><button data-e="${esc(z.entity)}" data-d="${step}" aria-label="Теплее на ${fmt(step, step % 1 ? 1 : 0)}°"${target === undefined ? " disabled" : ""}>+</button></div></div>`;
       });
-      const any = this._config.zones.some((z) => climateNow(this._hass, st(this._hass, z.entity), z.activity) === "heat");
+      // The card's glow: the zones' mode (heat — amber), full while one heats, softer while all are at target.
+      const nows = this._config.zones.map((z) => climateNow(this._hass, st(this._hass, z.entity), z.activity));
+      const any = nows.includes("heat");
+      const cardTone = any ? "heat" : this._config.zones.map((z, i) => climateTone(st(this._hass, z.entity), nows[i])).find(Boolean) || "";
       // One chart for the zone tapped (the first at the start): a chart per line would be a wall of lines.
       const z = this._config.zones[zi];
       const zs = st(this._hass, z.entity);
-      const chart = this.chart(z.entity, `Пол · ${z.name || nameOf(zs, z.entity)}`, climateNow(this._hass, zs, z.activity) === "heat" ? "heat" : "", 64);
-      return `<div class="glass cc zs ${any ? "heat" : ""}"><div class="glow"></div><div style="position:relative"><div class="caps">${esc(this._config.label || "Тёплый пол")}</div>${rows.join("")}${chart}</div></div>`;
+      const zt = climateTone(zs, nows[zi]);
+      const chart = this.chart(z.entity, `Пол · ${z.name || nameOf(zs, z.entity)}`, zt ? `${zt}${toneCalm(zt, nows[zi]) ? " calm" : ""}` : "", 64);
+      return `<div class="glass cc zs${cardTone ? ` m-${cardTone} toned${toneCalm(cardTone, any ? "heat" : "idle") ? " calm" : ""}` : ""}"><div class="glow"></div><div style="position:relative"><div class="caps">${esc(this._config.label || "Тёплый пол")}</div>${rows.join("")}${chart}</div></div>`;
     }
     /** The other readings the card shows (a floor's sensors), each with its value. */
     readings() {
@@ -3137,14 +3268,16 @@ ${this.cct(cur, target, step, z.entity)}
       const step = Math.max(num(a.target_temp_step) || 0.5, 0.5);
       const nowC = climateNow(this._hass, s, this._config.activity);
       const heating = nowC === "heat";
+      const ct = cur === undefined && target === undefined ? "" : climateTone(s, nowC);
+      const ctc = ct ? `${ct}${toneCalm(ct, nowC) ? " calm" : ""}` : "";
       const cWord = faultOf(this, this._config.entity, !!this._config.floor) ? "Авария" : frostOf(s) ? "Защита от замерзания" : "";
       // A floor with several sensors: each one's reading, by its name (owner 2026-10-25, 27.10).
       const sensors = this.readings();
       // The line is always there (no data says so): a card that grows and shrinks with the state moves the page.
-      return `<div class="glass cc ${heating ? "heat" : ""}"><div class="glow"></div><div class="ccrow">
+      return `<div class="glass cc${ct ? ` m-${ct} toned${toneCalm(ct, nowC) ? " calm" : ""}` : ""}"><div class="glow"></div><div class="ccrow">
 <div class="ccn" data-open="1" role="button" tabindex="0"><span class="caps">${esc(this._config.label || nameOf(s, this._config.entity))}</span><span class="sub">${cur === undefined ? "нет данных" : cWord || climateLine(nowC, target) || (this._config.floor ? "пол сейчас" : "сейчас")}${target === undefined && !["unavailable", "unknown"].includes(s.state) ? " · нужная температура ещё не пришла" : ""}</span>${valveIcons(this._hass, this._config.activity?.valves)}${pair ? `<span class="pair2">${["heat", "cool"].filter((k) => pair[k] !== undefined).map((k) => `${k === "heat" ? "обогрев до" : "охлаждение от"} ${fmt(pair[k])}°`).join(" · ")}</span>` : ""}${sensors.length > 1 ? this.readingsRow(sensors) : ""}</div>
 ${this.cct(cur, target, step, this._config.entity)}
-<div class="st row2"><button data-d="${-step}" aria-label="Холоднее на ${fmt(step, step % 1 ? 1 : 0)}°"${target === undefined ? " disabled" : ""}>−</button><button data-d="${step}" aria-label="Теплее на ${fmt(step, step % 1 ? 1 : 0)}°"${target === undefined ? " disabled" : ""}>+</button></div></div>${this.chart(this._config.entity, this._config.floor ? "Пол" : "Температура", heating ? "heat" : "", 56)}</div>`;
+<div class="st row2"><button data-d="${-step}" aria-label="Холоднее на ${fmt(step, step % 1 ? 1 : 0)}°"${target === undefined ? " disabled" : ""}>−</button><button data-d="${step}" aria-label="Теплее на ${fmt(step, step % 1 ? 1 : 0)}°"${target === undefined ? " disabled" : ""}>+</button></div></div>${this.chart(this._config.entity, this._config.floor ? "Пол" : "Температура", ctc, 56)}</div>`;
     }
     bind() {
       const id = this._config.entity;
@@ -4917,7 +5050,7 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
       return "other";
     }
     css() {
-      return `${super.css()}.d{padding:18px 18px 16px}.d .sub{display:block;margin:18px 0 0 2px;font-size:10px}.r ha-icon{--mdc-icon-size:18px;color:var(--ink3);flex:0 0 auto}.r.run ha-icon{color:var(--amberT)}.r.fault ha-icon{color:var(--alertT)}
+      return `${super.css()}${TONE_CSS}.cl.toned .pm button{background:color-mix(in srgb,var(--ac) 16%,transparent);box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--ac) 55%,transparent);color:var(--acT)}.cl.toned.calm .pm button{background:color-mix(in srgb,var(--ac) 10%,transparent);box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--ac) 38%,transparent)}.d{padding:18px 18px 16px}.d .sub{display:block;margin:18px 0 0 2px;font-size:10px}.r ha-icon{--mdc-icon-size:18px;color:var(--ink3);flex:0 0 auto}.r.run ha-icon{color:var(--amberT)}.r.fault ha-icon{color:var(--alertT)}
 .empty{font:400 14px/1.5 Onest,sans-serif;color:var(--ink2);margin:6px 2px 2px}.hint{font:400 13px/1.45 Onest,sans-serif;color:var(--ink3);margin:8px 2px 0}.hint b{font-weight:500;color:var(--ink2)}.r{min-height:56px}
 .cl{display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px solid var(--hair)}.sub+.cl,.cl:first-of-type{border-top:0}
 .cl .ccn{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;cursor:pointer}.cl .zn{font:500 15px/1.25 Onest,sans-serif;color:var(--ink);overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
@@ -4967,9 +5100,11 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
       const modeKey = wh ? a.operation_mode : s.state;
       const chips =
         modes.length > 1 && !nd(s)
-          ? `<div class="modes">${modes.slice(0, 6).map((m) => `<button class="${m === modeKey ? "on" : ""}" data-mode="${esc(m)}" data-e="${esc(id)}">${esc(wh ? (WH_MODE[m] ?? m) : (HVAC[m] ?? m))}</button>`).join("")}</div>`
+          ? `<div class="modes">${modes.slice(0, 6).map((m) => `<button class="${m !== modeKey ? "" : !wh && climateTone(null, nowC, m) ? `on mk m-${climateTone(null, nowC, m)}` : "on"}" data-mode="${esc(m)}" data-e="${esc(id)}" aria-pressed="${m === modeKey}">${esc(wh ? (WH_MODE[m] ?? m) : (HVAC[m] ?? m))}</button>`).join("")}</div>`
           : "";
-      return `<div class="cl${heating ? " heat" : ""}${off ? " off" : ""}"><div class="ccn" data-info="${esc(id)}" role="button" tabindex="0"><span class="zn">${esc(this.label(id))}</span><span class="cs">${sub}</span></div>
+      // The mode's colour on ± and the mode chip, softer at target; grey only off / no link (owner 29.10).
+      const tn = wh || nd(s) ? "" : climateTone(s, nowC);
+      return `<div class="cl${heating ? " heat" : ""}${off ? " off" : ""}${tn ? ` m-${tn} toned${toneCalm(tn, nowC) ? " calm" : ""}` : ""}"><div class="ccn" data-info="${esc(id)}" role="button" tabindex="0"><span class="zn">${esc(this.label(id))}</span><span class="cs">${sub}</span></div>
 <div class="cct thin">${big}<span class="tgc">${tgtTxt && cur !== undefined ? `Сейчас ${fmt(cur, 1)}°` : ""}</span></div>
 <div class="pm"><button data-e="${esc(id)}" data-d="${-step}" aria-label="Холоднее на ${fmt(step, step % 1 ? 1 : 0)}°"${can ? "" : " disabled"}>−</button><button data-e="${esc(id)}" data-d="${step}" aria-label="Теплее на ${fmt(step, step % 1 ? 1 : 0)}°"${can ? "" : " disabled"}>+</button></div></div>${chips}`;
     }
@@ -5421,16 +5556,16 @@ ${!vs.length && ss.length ? `<div class="hint" data-own>${LL("Кран не на
       this.closeEdit();
     }
     css() {
-      return `.k{padding:16px}.hd{display:flex;align-items:center;gap:10px}.hd .caps{flex:1}.sum{font:400 13px Onest,sans-serif;color:var(--ink2);margin-top:2px}
+      return `${TONE_CSS}.k{padding:16px}.hd{display:flex;align-items:center;gap:10px}.hd .caps{flex:1}.sum{font:400 13px Onest,sans-serif;color:var(--ink2);margin-top:2px}
 .off{min-height:40px;padding:0 14px;border-radius:20px;font:500 13px Onest,sans-serif;color:var(--ink2);box-shadow:inset 0 0 0 1px var(--line)}
 .rows{margin-top:10px;display:flex;flex-direction:column}.r{display:flex;align-items:center;gap:12px;min-height:52px;border-top:1px solid var(--hair);cursor:pointer}.r:first-child,.fl+.r{border-top:0}
-.r ha-icon{--mdc-icon-size:20px;color:var(--ink3)}.r.on ha-icon{color:var(--ice)}.r.on.warm ha-icon{color:var(--amberT)}.r .nm{flex:1;min-width:0;font:500 14px/1.25 Onest,sans-serif;white-space:normal;overflow-wrap:break-word;hyphens:auto}
-.r .w{font:400 13px Onest,sans-serif;color:var(--ink2);white-space:nowrap}.r .t{display:flex;flex-direction:column;align-items:flex-end;justify-content:center;font:300 22px Onest,sans-serif;min-width:52px;text-align:right}.r .t b{font:300 22px/1.05 Onest,sans-serif}.r .t small{font:400 12px/1.2 Onest,sans-serif;color:var(--ink2);white-space:nowrap}.r.un{opacity:.5}.r .nm small .hot{color:var(--amberT)}.sw::before{content:"";display:inline-block;width:6px;height:6px;border-radius:3px;margin-right:6px;vertical-align:middle;background:var(--ink3)}.sw.heat::before{background:var(--amber)}.sw.cool::before{background:var(--ice)}.sw.idle::before{background:var(--mint)}.r.on.idle ha-icon{color:var(--mintT)}.r.chill .nm small .hot{color:var(--ice)}
-.r button.t{min-height:44px;padding:0 6px;margin-right:-6px;border-radius:14px;color:var(--ink);font-variant-numeric:tabular-nums}.r button.t{position:relative}.r button.t.hint::after{content:"±";position:absolute;top:3px;right:-1px;font:500 11px Onest,sans-serif;color:var(--ink3)}.r button.t:hover{background:var(--track)}.r .t.pend{color:var(--ice)}.fh .r .t.pend{color:var(--amberT)}
+.r ha-icon{--mdc-icon-size:20px;color:var(--ink3)}.r.toned ha-icon{color:var(--acT)}.r.toned.calm ha-icon{opacity:.8}.r .nm{flex:1;min-width:0;font:500 14px/1.25 Onest,sans-serif;white-space:normal;overflow-wrap:break-word;hyphens:auto}
+.r .w{font:400 13px Onest,sans-serif;color:var(--ink2);white-space:nowrap}.r .t{display:flex;flex-direction:column;align-items:flex-end;justify-content:center;font:300 22px Onest,sans-serif;min-width:52px;text-align:right}.r .t b{font:300 22px/1.05 Onest,sans-serif}.r .t small{font:400 12px/1.2 Onest,sans-serif;color:var(--ink2);white-space:nowrap}.r.un{opacity:.5}.r .nm small .hot{color:var(--amberT)}.sw::before{content:"";display:inline-block;width:6px;height:6px;border-radius:3px;margin-right:6px;vertical-align:middle;background:var(--ink3)}.sw.heat::before{background:var(--amber)}.sw.cool::before{background:var(--ice)}.sw.idle::before{background:var(--mint)}.sw.dry::before,.sw.fan::before{background:var(--ac,var(--ink3))}.r .nm small .sw.cool.hot{color:var(--acT,var(--ice))}.r .nm small .sw:is(.dry,.fan).hot{color:var(--acT,var(--ink2))}
+.r button.t{min-height:44px;padding:0 6px;margin-right:-6px;border-radius:14px;color:var(--ink);font-variant-numeric:tabular-nums}.r button.t{position:relative}.r button.t.hint::after{content:"±";position:absolute;top:3px;right:-1px;font:500 11px Onest,sans-serif;color:var(--ink3)}.r button.t:hover{background:var(--track)}.r .t.pend{color:var(--acT,var(--ink2))}
 .r .ed{display:flex;align-items:center;gap:2px;margin-right:-6px}.r .ed button{width:44px;height:44px;border-radius:22px;background:var(--track);color:var(--ink);font:400 22px/1 Onest,sans-serif;display:grid;place-items:center}
-.r .ed b{font:300 22px Onest,sans-serif;min-width:58px;text-align:center;color:var(--ink)}.fh .r .ed b,.r.warm .ed b{color:var(--amberT)}.r.chill .ed b{color:var(--ice)}.r .ed button:disabled{opacity:.35;cursor:default}
+.r .ed b{font:300 22px Onest,sans-serif;min-width:58px;text-align:center;color:var(--ink)}.r.toned .ed b{color:var(--acT)}.r .ed button:disabled{opacity:.35;cursor:default}
 .r .nm small span{hyphens:manual}.r .nm small .sw{white-space:nowrap}.r .nm small .sw.fault{color:var(--alertT);font-weight:600}.r .nm small .sw.frost{color:var(--ice)}.r.fault ha-icon{color:var(--alertT)}
-.r .nm small{display:block;font:400 12px/1.3 Onest,sans-serif;color:var(--ink2);margin-top:1px;white-space:normal;overflow-wrap:break-word;hyphens:auto}.r .nm small.err{color:var(--alertT)}.fh .r.on ha-icon{color:var(--amberT)}.fl{font:500 11px/1.2 Onest,sans-serif;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);padding:14px 0 6px;border-top:1px solid var(--hair)}.fl:first-child{border-top:0;padding-top:4px}`;
+.r .nm small{display:block;font:400 12px/1.3 Onest,sans-serif;color:var(--ink2);margin-top:1px;white-space:normal;overflow-wrap:break-word;hyphens:auto}.r .nm small.err{color:var(--alertT)}.fl{font:500 11px/1.2 Onest,sans-serif;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);padding:14px 0 6px;border-top:1px solid var(--hair)}.fl:first-child{border-top:0;padding-top:4px}`;
     }
     /** A row's setpoint and how to send a new one: the climate's own; a climate kept between two values (heat_cool:
      * low / high) — the one of the mode it's in, the other kept (as the large card does it). */
@@ -5507,9 +5642,9 @@ ${!vs.length && ss.length ? `<div class="hint" data-own>${LL("Кран не на
         const lit = acting(nw) || nw === "idle";
         const editing = this._ed?.id === e.entity;
         const state = [word, modeTxt].filter(Boolean).join(" · ");
-        // Warm / lit only while it acts (owner 28.10, Д16): a thermostat in «нагрев» that waits is grey.
-        const warm = nw === "heat";
-        const chill = nw === "cool";
+        // The colour is the mode's (owner 29.10): «Нагрев» at target stays amber, softer; grey only off / no link.
+        const tn = known(e.s) ? climateTone(e.s, nw === "fault" ? nowOf(e) : nw) : "";
+        const tcls = tn ? ` m-${tn} toned${toneCalm(tn, nw === "fault" ? nowOf(e) : nw) ? " calm" : ""}` : "";
         const failed = this._failed?.id === e.entity && now - this._failed.at < 6000;
         const zoned = e.zone && String(e.name || "").endsWith(` · ${e.zone}`);
         // The room/zone strip can leave «, Спальня» or an empty name: separators trimmed; a name equal to the zone shows the zone once.
@@ -5537,7 +5672,7 @@ ${!vs.length && ss.length ? `<div class="hint" data-own>${LL("Кран не на
           : target === undefined || e.s.state === "off" || !sp || frost
             ? `<div class="t"><b>${curTxt}</b>${frost ? `<small>${esc("сейчас")}</small>` : ""}</div>`
             : `<button class="t${pend ? " pend" : ""}${hint ? " hint" : ""}" data-t="${esc(e.entity)}" aria-label="Изменить нужную температуру"><b>${digits(target)}°</b><small>Сейчас ${curTxt}</small></button>`;
-        return `${head}<div class="r ${lit ? "on" : ""}${nw === "idle" ? " idle" : ""}${fault ? " fault" : ""} ${known(e.s) ? "" : "un"}${warm ? " warm" : chill ? " chill" : ""}" data-i="${esc(e.entity)}"${e.path ? ` data-p="${esc(e.path)}"` : ""}><ha-icon icon="hauflo:${fh ? "floor-heat" : !fh && activeMode(e.s) === "heat" ? "radiator" : "ac"}"></ha-icon><div class="nm">${esc(name)}${sub}</div>${tail}</div>`;
+        return `${head}<div class="r ${lit ? "on" : ""}${nw === "idle" ? " idle" : ""}${fault ? " fault" : ""} ${known(e.s) ? "" : "un"}${tcls}" data-i="${esc(e.entity)}"${e.path ? ` data-p="${esc(e.path)}"` : ""}><ha-icon icon="hauflo:${fh ? "floor-heat" : !fh && activeMode(e.s) === "heat" ? "radiator" : "ac"}"></ha-icon><div class="nm">${esc(name)}${sub}</div>${tail}</div>`;
       });
       // The header says what is going on, not how many have a mode on (Д16): «Греют: 2 · Охлаждают: 1» / «Все ждут» /
       // «Все выключены»; «Включено: N из M» only when nothing says what they do.

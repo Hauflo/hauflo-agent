@@ -309,6 +309,36 @@ async def test_a_yes_with_an_expired_code_goes_back_to_the_code(hass: HomeAssist
     assert entry.data[CONF_SECRET] == "old"
 
 
+async def test_a_transfer_request_code_records_the_owners_yes_and_changes_nothing(hass: HomeAssistant, aioclient_mock) -> None:
+    """Owner 29.10 (route B via Hauflo support): the request's code asks the question; «yes» is only evidence on the
+    request — the server answers «recorded», no secret: this HA keeps its link and its project."""
+    entry = MockConfigEntry(domain=DOMAIN, title="Hauflo — A", data={CONF_SERVER: "https://app.hauflo.ru", CONF_SECRET: "old"}, options={"ranges": ["1/1/1"]})
+    entry.add_to_hass(hass)
+    aioclient_mock.post("https://app.hauflo.ru/api/agent/pair", status=409, json={"code": "pair_transfer", "company": "Сервис-Дом", "request": True})
+    result = await entry.start_reconfigure_flow(hass)
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"code": "RU-ABC-DEF-GHK"})
+    assert result["type"] is FlowResultType.MENU and result["step_id"] == "transfer"
+    aioclient_mock.clear_requests()
+    aioclient_mock.post("https://app.hauflo.ru/api/agent/pair", status=409, json={"code": "pair_transfer_recorded", "company": "Сервис-Дом"})
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"next_step_id": "transfer_yes"})
+    assert result["type"] is FlowResultType.ABORT and result["reason"] == "transfer_recorded"
+    assert result["description_placeholders"] == {"company": "Сервис-Дом"}
+    assert aioclient_mock.mock_calls[-1][2] == {"code": "RU-ABC-DEF-GHK", "previous": "old", "confirmTakeover": True, "confirmTransfer": True}
+    assert entry.data[CONF_SECRET] == "old" and entry.title == "Hauflo — A" and entry.options["ranges"] == ["1/1/1"]
+
+
+async def test_an_old_intake_code_is_refused_with_what_to_do(hass: HomeAssistant, aioclient_mock) -> None:
+    """An intake project's code (the copy route before 29.10): the server refuses — the flow ends saying a request to
+    Hauflo support is the way, nothing changed."""
+    entry = MockConfigEntry(domain=DOMAIN, title="Hauflo — A", data={CONF_SERVER: "https://app.hauflo.ru", CONF_SECRET: "old"})
+    entry.add_to_hass(hass)
+    aioclient_mock.post("https://app.hauflo.ru/api/agent/pair", status=409, json={"code": "pair_transfer_request"})
+    result = await entry.start_reconfigure_flow(hass)
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"code": "RU-ABC-DEF-GHK"})
+    assert result["type"] is FlowResultType.ABORT and result["reason"] == "transfer_via_request"
+    assert entry.data[CONF_SECRET] == "old"
+
+
 async def test_reconfigure_asks_for_the_new_projects_addresses(hass: HomeAssistant, aioclient_mock) -> None:
     """Integrator review 29.10 (defect 4): a takeover kept the previous project's ranges silently, the plan then said
     «ошибка: 23». Now the new project's addresses are asked for, and what goes of the old list is said."""

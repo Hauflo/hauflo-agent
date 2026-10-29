@@ -11,8 +11,9 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from aiohttp import web
 from homeassistant.components.frontend import add_extra_js_url
-from homeassistant.components.http import StaticPathConfig
+from homeassistant.components.http import KEY_HASS, HomeAssistantView
 
 from .const import VERSION
 from homeassistant.components import persistent_notification
@@ -104,6 +105,8 @@ DARK = {
     "eh-alert": "#FF5A5F",
     "eh-alert-glow": "rgba(255,70,80,.55)",
     "eh-mint": "#5CE0B4",
+    "eh-dry": "#62D0DE",
+    "eh-fan": "#B4A4FF",
     "eh-track": "rgba(255,255,255,.08)",
 }
 
@@ -162,6 +165,8 @@ LIGHT = {
     "eh-alert": "#E5383E",
     "eh-alert-glow": "rgba(255,80,80,.45)",
     "eh-mint": "#14946C",
+    "eh-dry": "#1E97AA",
+    "eh-fan": "#7B61E0",
     "eh-track": "rgba(18,18,18,.07)",
 }
 
@@ -269,7 +274,7 @@ async def async_setup(hass: HomeAssistant) -> None:
     www = Path(__file__).parent / "www"
     if not hass.data.get(DATA_WWW) and await hass.async_add_executor_job(www.is_dir):
         hass.data[DATA_WWW] = True
-        await hass.http.async_register_static_paths([StaticPathConfig("/hauflo_static", str(www), False)])
+        hass.http.register_view(StaticView(www))
         # An independent house loads them from /config/www/hauflo (keep.py) — not twice.
         if not hass.data.get(DATA_CARDS_LOCAL):
             add_extra_js_url(hass, ICONS_URL)
@@ -278,6 +283,37 @@ async def async_setup(hass: HomeAssistant) -> None:
             # the resources again until a reload (integrator review r2, D2) — HA says so. Gone at the next HA start.
             if hass.state is CoreState.running:
                 _say_reload(hass)
+
+
+# A versioned address (`?v=` — the cards, the icons) never changes its content: kept for a year. Without one (the fonts,
+# an address typed by hand) the browser asks again every time (a 304 when nothing changed) — HA's own static paths say
+# nothing, and a browser then guesses how long to keep a file, so a version-less address could stay old for days.
+CACHE_VERSIONED = "public, max-age=31536000, immutable"
+CACHE_PLAIN = "no-cache"
+
+
+class StaticView(HomeAssistantView):
+    """The agent's www folder at /hauflo_static: HA's extra JS loads before anyone has logged in (no auth, like HA's
+    own static paths), only files inside the folder."""
+
+    url = "/hauflo_static/{path:.+}"
+    name = "hauflo:static"
+    requires_auth = False
+
+    def __init__(self, root: Path) -> None:
+        self._root = root.resolve()
+
+    def _file(self, path: str) -> Path | None:
+        f = (self._root / path).resolve()
+        return f if f.is_relative_to(self._root) and f.is_file() else None
+
+    async def get(self, request: web.Request, path: str) -> web.StreamResponse:
+        f = await request.app[KEY_HASS].async_add_executor_job(self._file, path)
+        if f is None:
+            raise web.HTTPNotFound
+        return web.FileResponse(f, headers={"Cache-Control": CACHE_VERSIONED if request.query.get("v") else CACHE_PLAIN})
+
+    head = get
 
 
 RELOAD_NOTE = "hauflo_cards_reload"
