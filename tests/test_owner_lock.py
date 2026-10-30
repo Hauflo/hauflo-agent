@@ -25,7 +25,7 @@ ALLOWLIST = {
     "config/entity_registry/list", "config/entity_registry/get", "config/entity_registry/get_entries", "config/entity_registry/update",
     "knx/get_knx_project", "knx/get_entity_config", "knx/validate_entity", "knx/create_entity", "knx/update_entity",
     "knx/delete_entity", "knx/create_device", "knx/get_entities_by_group", "knx/group_monitor_info", "knx/get_expose_groups", "knx/get_time_server_config",
-    "lovelace/config", "lovelace/config/save", "lovelace/dashboards/list", "lovelace/dashboards/create", "lovelace/dashboards/update",
+    "lovelace/config", "lovelace/config/save", "lovelace/dashboards/list", "lovelace/dashboards/create", "lovelace/dashboards/update", "lovelace/dashboards/delete",
     "homeassistant/expose_entity", "homeassistant/expose_entity/list",
 }
 # What changes the house — refused while locked. Listed by hand: moving one into «reads» must fail this test.
@@ -34,7 +34,7 @@ WRITES = {
     "config/label_registry/create", "config/label_registry/delete",
     "config/device_registry/update", "config/device_registry/remove", "config/device_registry/remove_config_entry", "config/entity_registry/update",
     "knx/create_entity", "knx/update_entity", "knx/delete_entity", "knx/create_device",
-    "lovelace/config/save", "lovelace/dashboards/create", "lovelace/dashboards/update",
+    "lovelace/config/save", "lovelace/dashboards/create", "lovelace/dashboards/update", "lovelace/dashboards/delete",
     "homeassistant/expose_entity",
 }
 SERVICES = {("homeassistant", "update_entity"): False, ("frontend", "set_theme"): True, ("scene", "reload"): False}
@@ -45,7 +45,7 @@ HTTP = [
     ("GET", "/api/hauflo/notify", False), ("POST", "/api/hauflo/notify", False), ("POST", "/api/hauflo/notify/test", False),
     ("GET", "/api/hauflo/alarms", False), ("POST", "/api/hauflo/sidebar", True), ("GET", "/api/hauflo/owned", False), ("GET", "/api/hauflo/ranges", False),
     ("POST", "/api/hauflo/ownership", False), ("GET", "/api/hauflo/ownership", False), ("POST", "/api/hauflo/alarms", False),
-    ("GET", "/api/hauflo/comfort", False), ("POST", "/api/hauflo/comfort", True),
+    ("GET", "/api/hauflo/season/config", False), ("POST", "/api/hauflo/season/config", True),
     ("GET", "/api/homekit/pairingqr?e1-x", False),
     ("GET", "/api/config/scene/config/hauflo_r1", False), ("POST", "/api/config/scene/config/hauflo_r1", True), ("DELETE", "/api/config/scene/config/hauflo_r1", True),
     ("GET", "/api/config/config_entries/flow_handlers", False), ("POST", "/api/config/config_entries/flow", True),

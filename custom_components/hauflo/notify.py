@@ -32,8 +32,10 @@ from homeassistant.helpers import area_registry as ar, device_registry as dr, en
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
 from homeassistant.util import dt as dt_util, slugify
 
+from .natural import natural_key
 from .storage import HaufloStore
 from .const import LOCKED_CODE, MONITOR_LABELS
+from .tuning import TUNING
 
 _LOGGER = logging.getLogger(__name__)
 STORE_KEY = "hauflo.notify"
@@ -42,21 +44,22 @@ ACTION_EVENT = "mobile_app_notification_action"
 ACK = "HAUFLO_ACK"
 # What a push button may do: shut a valve / switch something off — never unlock, open, arm (security review 25.10).
 RUN_SERVICES = {"valve.close_valve", "switch.turn_off"}
+_T = TUNING["notify"]
 # Loud (critical: rings through silent mode) only for what endangers the house; a repeat no more often than this.
-CRITICAL_CLASSES = {"moisture", "smoke", "gas", "carbon_monoxide", "heat", "problem", "safety"}
-REPEAT_MIN = 5
+CRITICAL_CLASSES = set(_T["critical_classes"])
+REPEAT_MIN = _T["repeat_min"]
 RUN = "HAUFLO_RUN"
 # Device classes worth an alarm, for Hauflo's suggestions.
-ALARM_CLASSES = {"connectivity", "moisture", "smoke", "gas", "carbon_monoxide", "problem", "safety", "heat", "cold", "tamper", "door", "window", "opening", "motion", "battery"}
+ALARM_CLASSES = set(_T["alarm_classes"])
 NOT_A_STATE = {STATE_UNAVAILABLE, STATE_UNKNOWN, None}
-GROUP_WINDOW = 3  # seconds: alarms of one rule starting together are told together
+GROUP_WINDOW = _T["group_window_s"]  # seconds: alarms of one rule starting together are told together
 # An alarm sensor with no data this long (after it once reported) is said: it would stay silent through the very
 # alarm it is for (SCADA expert 25.10, ISA-18.2 — a bad-quality input is a diagnostic alarm, not «all quiet»).
-NODATA_AFTER = 15 * 60
+NODATA_AFTER = _T["nodata_after_s"]
 # A sensor flapping alarm / normal (ISA-18.2 chattering, SCADA expert 25.10): this many alarms within the window are
 # said once as «дребезжит», then quiet until it stays put for the window — on the screen it's still shown.
-CHATTER_COUNT = 3
-CHATTER_WINDOW = 10 * 60
+CHATTER_COUNT = _T["chatter_count"]
+CHATTER_WINDOW = _T["chatter_window_s"]
 LINK_KINDS = ("connection", "link", "connectivity")
 # The HA app's push fails quietly — mobile_app logs it and the service call returns (narrow round 25.10, D4: «sent»
 # for a phone that never got it). Which phone a log line is about: the task sending to it.
@@ -82,19 +85,19 @@ class _PushErrors(logging.Handler):
 # a flapping house must not use it up before the leak. Normal ones are capped hourly and daily; critical ones go
 # until the higher daily cap. What's over is still on the screen and in HA's bell, and Hauflo's Telegram/email
 # don't depend on it.
-PUSH_HOUR_MAX = 20
-PUSH_DAY_MAX = 80
-PUSH_DAY_CRITICAL = 200
+PUSH_HOUR_MAX = _T["push_hour_max"]
+PUSH_DAY_MAX = _T["push_day_max"]
+PUSH_DAY_CRITICAL = _T["push_day_critical"]
 # Repeats of an unaccepted alarm at the rule's pace this many times; then at most hourly until someone accepts.
-REPEAT_FAST = 12
+REPEAT_FAST = _T["repeat_fast"]
 SCOPES = ("all", "critical", "off")
 PHONE_ID = re.compile(r"^mobile_app_[a-z0-9_]+$")
 # A test rings a phone at full volume: at most once per phone in this many seconds, and a few tests a minute in all.
-TEST_GAP = 20
-TEST_PER_MIN = 10
-GROUP_MIN = 3  # from this many devices at once — one message instead of one per device
-LIST_MAX = 8
-HEARTBEAT = re.compile(r"heartbeat|hearbeat|связь|связи|link|alive|online|пульс", re.I)
+TEST_GAP = _T["test_gap_s"]
+TEST_PER_MIN = _T["test_per_min"]
+GROUP_MIN = _T["group_min"]  # from this many devices at once — one message instead of one per device
+LIST_MAX = _T["list_max"]
+HEARTBEAT = re.compile(_T["heartbeat_words"], re.I)
 
 
 SOURCE_DOMAINS = ("binary_sensor.", "sensor.")
@@ -147,14 +150,9 @@ def _device_class(hass: HomeAssistant | None, eid: str) -> str | None:
 # motion/presence sensor (security review 28.10: the family's motion sensor on a critical rule), nor a door / window /
 # gate contact (Д8, 29.10) — by its name or its entity id (transliterated: okno, dver…). Word starts only: «outdoor»,
 # «поворот» are no door or gate.
-QUIET_NAME = re.compile(
-    r"motion|presence|occupan|движен|присутств"
-    r"|(?<![a-z])(door|window|gate|contact|reed)|(?<![а-я])(окн|окон|двер|створк|ворот|калитк|геркон)"
-    r"|(?<![a-z])(okn|okon|dver|stvork|vorot|kalitk|gerkon)",
-    re.I,
-)
+QUIET_NAME = re.compile(_T["quiet_name_words"], re.I)
 # …unless it says it is a leak / smoke / gas sensor: «Протечка у окна» stays loud.
-LOUD_NAME = re.compile(r"leak|flood|water|smoke|fire|(?<![a-z])gas|протеч|залив|вод[аы]|дым|пожар|(?<![а-я])газ|protech|zaliv|dym", re.I)
+LOUD_NAME = re.compile(_T["loud_name_words"], re.I)
 DOWNGRADE = re.compile(r"^(no_sources|quiet_class:[a-z_]{1,32}|quiet_name)$")
 
 
@@ -390,7 +388,8 @@ class NotifyEngine:
         # Link/heartbeat sensors seen healthy at least once: before that an «off» is commissioning, not a lost link
         # (integrator run 25.10: «Связь со щитом — 39 устройств» right after saving the rules on a site without a bus).
         self._seen_ok: set[str] = set()
-        # phone service → monotonic times of its pushes in the last day (the agent's own cap, PUSH_*).
+        # phone service → wall-clock times of its pushes in the last day (the agent's own cap, PUSH_*) — kept over a
+        # restart (active_store), so a restart doesn't give a flapping house a fresh day.
         self._pushes: dict[str, list[float]] = {}
         # phone service → when HA's relay last said «rate limit» / the agent's cap last held a push back.
         self.limited: dict[str, str] = {}
@@ -407,6 +406,7 @@ class NotifyEngine:
         self.config = _clean_rules(await self.store.async_load(), self.hass, self.owns)
         saved = await self.active_store.async_load() or {}
         self._seen_ok = {str(x) for x in saved.get("seen_ok") or []}
+        self._pushes = {str(k): [float(t) for t in v if isinstance(t, (int, float))] for k, v in (saved.get("pushes") or {}).items() if isinstance(v, list)}
         self.unacked_rtn = {str(k): v for k, v in (saved.get("rtn") or {}).items() if isinstance(v, dict)}
         self._restored = {k: v for k, v in (saved.get("active") or {}).items() if isinstance(v, dict)}
         for rule_id, g in (saved.get("groups") or {}).items():
@@ -459,6 +459,7 @@ class NotifyEngine:
             "groups": {r: {f: g.get(f) for f in ("since", "acked_by", "count", "last")} for r, g in self.groups.items()},
             "seen_ok": sorted(self._seen_ok),
             "rtn": self.unacked_rtn,
+            "pushes": self._pushes,
         }
 
     @callback
@@ -568,7 +569,7 @@ class NotifyEngine:
             state = self.hass.states.get(entity_id)
             by.setdefault(self._where(state) if state else "", []).append(self._name(entity_id))
         parts, shown = [], 0
-        for area in sorted(by, key=lambda a: (a == "", a)):
+        for area in sorted(by, key=lambda a: (a == "", natural_key(a))):
             if shown >= LIST_MAX:
                 break
             names = by[area][: LIST_MAX - shown]
@@ -1052,8 +1053,8 @@ class NotifyEngine:
 
     def _room(self, service: str, critical: bool) -> bool:
         """Under the agent's own cap for this phone (PUSH_*)."""
-        now = time.monotonic()
-        log = [t for t in self._pushes.get(service, []) if now - t < 86400]
+        now = time.time()
+        log = [t for t in self._pushes.get(service, []) if 0 <= now - t < 86400]
         self._pushes[service] = log
         if critical:
             return len(log) < PUSH_DAY_CRITICAL
@@ -1087,7 +1088,8 @@ class NotifyEngine:
                 held.append(phone["service"])
                 self.throttled[phone["service"]] = dt_util.utcnow().isoformat()
                 return
-            self._pushes.setdefault(phone["service"], []).append(time.monotonic())
+            self._pushes.setdefault(phone["service"], []).append(time.time())
+            self._save()
             data: dict[str, Any] = {"tag": tag}
             if actions:
                 data["actions"] = actions
@@ -1127,6 +1129,19 @@ class NotifyEngine:
         if results is not None:
             results.update({s: "sent" for s in sent} | {s: "failed" for s in failed} | {s: "rate_limited" for s in limited})
         return sent
+
+    async def async_tell(self, title: str, message: str, user_id: str | None = None, *, actions: list | None = None, tag: str | None = None) -> list[str]:
+        """A value rule's message (rules.py), the season's suggestion (season.py): to one HA user's phones («уведомить
+        меня»), else to every phone that gets the house's messages (its «audience»), and — to everyone — a note in HA too.
+        `tag`: one message replacing the previous one of its kind (push tag and HA note id)."""
+        phones = self.phones()
+        if user_id:
+            people = {s.entity_id for s in self.hass.states.async_all("person") if s.attributes.get("user_id") == user_id}
+            targets = [p for p in phones if p["person"] in people]
+        else:
+            targets = [p for p in phones if self.scope(p) == "all"]
+            self._note(message, title=title, notification_id=tag or f"hauflo_rule_{slugify(title)[:40]}")
+        return await self._send({}, title, message, tag=tag or f"hauflo-rule-{slugify(title)[:40]}", critical=False, targets=targets, actions=actions)
 
     def test_wait(self, body: dict[str, Any]) -> int:
         """Seconds until this test may ring its phones (0 = now): each phone at most once per TEST_GAP, TEST_PER_MIN
@@ -1222,8 +1237,8 @@ class NotifyEngine:
             "config": self.config,
             "people": self.people(),
             "phones": self.phones(),
-            "candidates": sorted(candidates, key=lambda c: (c["area"], c["name"])),
-            "actuators": sorted(valves, key=lambda c: (c["area"], c["name"])),
+            "candidates": sorted(candidates, key=lambda c: (natural_key(c["area"]), natural_key(c["name"]))),
+            "actuators": sorted(valves, key=lambda c: (natural_key(c["area"]), natural_key(c["name"]))),
             "active": [{"key": k, "since": v["since"], "acked_by": v["acked_by"], "count": v["count"]} for k, v in self.active.items()],
             "log": self.sent_log[:10],
             # Phones HA's push relay refused today («rate limit») / the agent's own cap held back — said on the page.

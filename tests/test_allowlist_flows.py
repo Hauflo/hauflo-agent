@@ -167,6 +167,10 @@ async def test_ws_rooms_labels_dashboards(hass, world):
 
     hass.data[LOVELACE_DATA] = NS(dashboards={"hauflo-a": NS(config={"id": "dash_a"}), "mine": NS(config={"id": "dash_b"}), "hauflo-a-copy-1": NS(config={"id": "dash_c"}), None: NS(config=None)})
     assert W({"type": "lovelace/dashboards/update", "dashboard_id": "dash_a"})
+    # removing an old project's dashboard: only a Hauflo-made one that isn't a copy, by id, nothing else in the frame
+    assert W({"type": "lovelace/dashboards/delete", "dashboard_id": "dash_a"})
+    assert not W({"type": "lovelace/dashboards/delete", "dashboard_id": "dash_b"}) and not W({"type": "lovelace/dashboards/delete", "dashboard_id": "dash_c"})
+    assert not W({"type": "lovelace/dashboards/delete", "dashboard_id": "dash_a", "url_path": "mine"}) and not W({"type": "lovelace/dashboards/delete"})
     assert not W({"type": "lovelace/dashboards/update", "dashboard_id": "dash_b"}) and not W({"type": "lovelace/dashboards/update", "dashboard_id": "dash_c"})
     # simple allow rules
     assert not W({"type": "manifest/get", "integration": "cloud"}) and W({"type": "manifest/get", "integration": "knx"})

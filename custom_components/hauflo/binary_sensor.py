@@ -22,6 +22,11 @@ PARALLEL_UPDATES = 0
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEntitiesCallback) -> None:
     add([HaufloLink(entry)])
+    # «Правила по значениям»: one «сработало» sensor per rule (rules.py).
+    if (engine := getattr(entry.runtime_data, "rules", None)) is not None:
+        engine.add_binary = add
+        engine.binaries.clear()
+        engine.sync_entities()
 
 
 class HaufloLink(BinarySensorEntity):

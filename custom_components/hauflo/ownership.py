@@ -28,6 +28,7 @@ from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN, MONITOR_LABEL, MONITOR_LABEL_EN, MONITOR_LABELS
 from .storage import HaufloStore
+from .tuning import TUNING
 
 _LOGGER = logging.getLogger(__name__)
 LABEL = "Hauflo"
@@ -45,7 +46,8 @@ MONITOR_TEXT = {
 _OLD_MONITOR_TEXT = {"Hauflo: следить и присылать аварии в Telegram", "Hauflo: watch it and send alarms to Telegram"}
 STORE_KEY = "hauflo.ownership"
 SIGNAL = f"{DOMAIN}_ownership"
-SYNC_DELAY = 20  # seconds after the last registry change (a deploy writes hundreds in a row)
+_T = TUNING["ownership"]
+SYNC_DELAY = _T["sync_delay_s"]  # seconds after the last registry change (a deploy writes hundreds in a row)
 MAX_LIST = 50
 _ENTITY = re.compile(r"[a-z_]+\.[a-z0-9_]{1,200}")
 _AUTOMATION_PREFIX = "hauflo_auto_"

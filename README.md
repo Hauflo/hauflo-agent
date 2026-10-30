@@ -38,7 +38,7 @@ No hand-built cards. Change the ETS project, re-import: the dashboard follows.
 - **Climate** with a 24-hour chart. Heat and cool setpoints where the thermostat has both. Floor heating says “heating” or “holding”.
 - **Blinds** for the whole room or one by one.
 - **Their own look.** Scenes in their blocks or on top, climate large or compact. One tap back to the integrator’s choice.
-- **Settings.** Light or dark theme for each person. Winter or summer for all air conditioners at once.
+- **Settings.** Light or dark theme for each person. Winter or summer (or Heating / Cooling, as the integrator names it) for the thermostats the integrator chose, at once; a suggestion when the outdoor temperature says it's time.
 - **Alarms** that ring even on silent, with an action button and **Accept**.
 - **Phone and wall tablet**, with kiosk mode and a night screen. English and Russian.
 
@@ -92,8 +92,6 @@ All of them belong to one service device, **Hauflo**.
 | Entity | What it is | When |
 | --- | --- | --- |
 | `binary_sensor.hauflo_link` (**Link**, diagnostic) | On while the agent is connected to Hauflo. Attribute `server`: which Hauflo server. | Always |
-| `climate.hauflo_comfort_<room>` (**Comfort · room**) | The room temperature the family wants. The agent keeps that room's floor heating between the integrator's limits. | Only rooms where the integrator turned the comfort floor on |
-| `select.hauflo_house_mode` (**House mode**: Winter / Summer) | Winter: only the floor heats. Summer: the air conditioners cool, the floor rests. | With the first comfort floor room |
 | `sensor.hauflo_made_in_this_home` (**Made in this home**, diagnostic) | How many entities Hauflo made or took over here. Attributes: `by_kind`, `hand_edited` (renamed or disabled in Home Assistant, or kept as a hand edit by the last plan), `next_deploy` (what the next deploy would create, update, offer to remove, and when Hauflo said it). Read only. | Always |
 
 **The label «Hauflo».** Every entity Hauflo made or took over carries the label **Hauflo** (**Settings → Areas, labels & zones → Labels**, or the label filter on the entities page). The agent puts it on and takes it off itself, only on Hauflo’s own; a label set by hand on anything else is taken off. Entity ids never change. While **Allow Hauflo to change this home's setup** is off, the label isn’t touched. **Hauflo monitoring** is a different label: you put it on devices Hauflo didn’t make, to watch them.
@@ -102,7 +100,7 @@ Everything else a deploy makes (rooms, KNX entities, light groups, scenes, dashb
 
 ## How data updates
 
-No polling. The agent keeps one outgoing WebSocket to Hauflo, reconnecting by itself with backoff. **Link** changes the moment the connection does. **Comfort** and **House mode** follow the floor thermostats' state changes; the floor is written slowly, once per interval (10 minutes by default) and a minute after a new target. Every minute the agent sends Hauflo a short status (see [What leaves the house](#what-leaves-the-house)).
+No polling. The agent keeps one outgoing WebSocket to Hauflo, reconnecting by itself with backoff. **Link** changes the moment the connection does. Every minute the agent sends Hauflo a short status (see [What leaves the house](#what-leaves-the-house)).
 
 ## What leaves the house
 
@@ -190,7 +188,7 @@ To watch any other entity (a boiler fault, ventilation, a battery), give it the 
 
 No. A command goes to the bus when a person acts: a tap on the dashboard, a scene, voice, an alarm’s action button, the Winter/Summer switch, or a rule the family set in **Automations**.
 
-Two exceptions. The first, only if the integrator turns it on for a room: the **comfort floor**. The client sets the room temperature, and the agent keeps that room’s floor heating between a comfortable minimum and an upper limit. It writes slowly (once per interval, 10 minutes by default) and only inside the limits.
+Two exceptions. The first: the **Winter/Summer resend**. A KNX thermostat can lose its mode after a bus power loss or a reset, so the agent sends the mode the family chose again — every hour by default (the integrator can change it or turn it off), after Home Assistant starts and when the KNX connection is back. It never turns a thermostat on; a shared heat/cool address goes once. The outdoor-temperature suggestion only asks the family, it never switches by itself.
 
 The second, when the family switches it on: **Away — presence simulation**. Lights only in the evening dark, blinds at the usual times; only Hauflo’s own lights and blinds. Switched off, it turns off the lights it turned on.
 
@@ -199,7 +197,7 @@ The second, when the family switches it on: **Away — presence simulation**. Li
 <details>
 <summary><b>What happens if Hauflo or the internet is down?</b></summary>
 
-The home keeps working. It is plain Home Assistant with standard KNX devices. The dashboard, automations, push alarms and the comfort floor run inside Home Assistant. Hauflo shows the site as offline, and the agent reconnects by itself.
+The home keeps working. It is plain Home Assistant with standard KNX devices. The dashboard, automations, push alarms and the Winter/Summer switch run inside Home Assistant. Hauflo shows the site as offline, and the agent reconnects by itself.
 
 </details>
 
@@ -283,7 +281,7 @@ Switch the whole house to summer from your own automation: `select.select_option
 
 **Remove** in **Settings → Devices & services → Hauflo → Delete**, then in HACS. In Hauflo the project shows “agent offline”. Unlink it there, or pair again later.
 
-**Removal takes with it:** the agent’s system user, its voice sentences (`custom_sentences/ru/hauflo.yaml`), the alarm rules and the comfort floor settings, the guest links and the guest log, who services the home and its access history (`.storage/hauflo.service`), the last plan shown on **Made in this home**, and the hidden sidebar panels come back for everyone. The lights “Away” turned on are switched off. Alarms stop with the agent: to keep them, run **Make the house independent** first.
+**Removal takes with it:** the agent’s system user, its voice sentences (`custom_sentences/ru/hauflo.yaml`), the alarm rules and the Winter/Summer settings, the guest links and the guest log, who services the home and its access history (`.storage/hauflo.service`), the last plan shown on **Made in this home**, and the hidden sidebar panels come back for everyone. The lights “Away” turned on are switched off. Alarms stop with the agent: to keep them, run **Make the house independent** first.
 
 **The family’s dashboard keeps working** (checked on a clean Home Assistant: removed, the integration’s files deleted, restarted). At removal the cards, icons and font are copied to `/config/www/hauflo` and added as dashboard resources `/local/hauflo/hauflo-icons.js` and `/local/hauflo/hauflo-cards.js`. Only the Hauflo Atelier theme goes: the cards fall back to Home Assistant’s look. In YAML resource mode Home Assistant shows what to add.
 
@@ -311,7 +309,7 @@ Switch the whole house to summer from your own automation: `select.select_option
 - writes each enabled Hauflo alarm rule as a plain automation in `automations.yaml`, named «Alarm: <rule>»: the same sensors and alarm states, a push to the same Home Assistant app phones (critical where the rule is), a notification in Home Assistant, and the rule’s button (such as “Shut off water”) on the push. A copy of `automations.yaml` is made first. A hand-formatted file is left alone and you’re told so. An automation made this way before is left as it is;
 - deletes nothing. Until you remove the integration, an alarm comes twice (Hauflo and the automation).
 
-**What stops once Hauflo is removed:** cloud monitoring (“agent offline”, “KNX bus silent”, the monitoring page), email and Telegram alarms, the alarm history, repeats until **Accept**, deploys and updates from the project, guest links, the “Away” presence simulation, the comfort floor, voice sentences, and editing the family’s automations and scenes on the dashboard (the ones already made keep running). The phones in the automations are the ones the app had then: a new phone needs to be added to them by hand.
+**What stops once Hauflo is removed:** cloud monitoring (“agent offline”, “KNX bus silent”, the monitoring page), email and Telegram alarms, the alarm history, repeats until **Accept**, deploys and updates from the project, guest links, the “Away” presence simulation, the Winter/Summer resend and suggestion, voice sentences, and editing the family’s automations and scenes on the dashboard (the ones already made keep running). The phones in the automations are the ones the app had then: a new phone needs to be added to them by hand.
 
 ## Support
 

@@ -3,14 +3,17 @@
 0.13.0 refuse the whole dashboard). The fixtures are written by backend/src/ha/dashboardTunnel.test.ts from the
 example projects, one per style and agent version. Ownership is the real check (`_hauflo_entity` → a KNX entity
 Hauflo created), not stubbed. Runs without Home Assistant: python3 agent/tests/test_generated_dashboards.py."""
-import ast, contextlib, glob, ipaddress, json, logging, pathlib, re, types
+import ast, contextlib, glob, ipaddress, json, logging, pathlib, re, sys, types
 
 HERE = pathlib.Path(__file__).parent
 src = open(HERE.parent / "custom_components/hauflo/__init__.py").read()
 tree = ast.parse(src)
 FUNCS = {"_lovelace_ok", "_area_lights_owned", "_image_ok", "_hauflo_entity", "_own_entity", "_protected", "_platform", "_owned_knx", "_owned_knx_writes", "_knx_writes", "_ga_key"}
 keep = [n for n in tree.body if (isinstance(n, ast.Assign) and any(getattr(t, "id", "").startswith("_") for t in n.targets)) or (isinstance(n, ast.FunctionDef) and n.name in FUNCS)]
-ns = {"json": json, "re": re, "contextlib": contextlib, "ipaddress": ipaddress, "Any": object, "HomeAssistant": object, "logging": logging, "__name__": "agent", "DOMAIN": "hauflo"}
+sys.path.insert(0, str(HERE.parent / "custom_components/hauflo"))
+from tunnel import TUNNEL  # noqa: E402 — plain Python, no HA
+from tuning import TUNING  # noqa: E402
+ns = {"TUNNEL": TUNNEL, "TUNING": TUNING, "json": json, "re": re, "contextlib": contextlib, "ipaddress": ipaddress, "Any": object, "HomeAssistant": object, "logging": logging, "__name__": "agent", "DOMAIN": "hauflo"}
 exec(compile(ast.Module(body=keep, type_ignores=[]), "agent", "exec"), ns)
 
 # Card / feature types an agent learnt in a version (backend AGENT_FEATURE_MIN): older agents refuse them.

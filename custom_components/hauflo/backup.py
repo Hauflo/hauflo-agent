@@ -16,6 +16,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
+from .tuning import TUNING
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -25,16 +26,17 @@ LAST: dict[str, Any] = {}
 # / a NAS (HA expert 28.10). The older «03:49:56» ones are still Hauflo's (their retention goes on).
 _OURS = re.compile(r"^Hauflo \d{4}-\d\d-\d\d \d\d[:.]\d\d([:.]\d\d)?$")
 NAME_FORMAT = "Hauflo %Y-%m-%d %H.%M.%S"
+_T = TUNING["backup"]
 # Hauflo's tunnel request lives 30 s: answer «running» well before, a longer backup is followed by GET (integrator
 # run 18: a 40 s backup always failed the deploy with «timed out»).
-_WAIT = 20
-_KEEP = 3  # Hauflo's own backups kept — older ones go (integrator run 18: six in 35 minutes, gigabytes with media)
+_WAIT = _T["wait_s"]
+_KEEP = _T["keep"]  # Hauflo's own backups kept — older ones go (integrator run 18: six in 35 minutes, gigabytes with media)
 # Never cleaned away by asking for more (security expert 25.10: three backups in a row wiped every one from before an
 # attack): a day's are all kept, and the newest older than a week stays as the last good one.
-_KEEP_DAY = 24 * 3600
-_KEEP_WEEK = 7 * 24 * 3600
-_REUSE = 600  # one asked within 10 minutes of the last is that one
-FRESH = 1800  # changes through the tunnel need a backup (or the integrator's «without») this recent
+_KEEP_DAY = _T["keep_day_s"]
+_KEEP_WEEK = _T["keep_week_s"]
+_REUSE = _T["reuse_s"]  # one asked within 10 minutes of the last is that one
+FRESH = _T["fresh_s"]  # changes through the tunnel need a backup (or the integrator's «without») this recent
 NO_BACKUP_NOTE = "hauflo_no_backup"
 
 

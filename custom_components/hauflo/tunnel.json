@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "about": "What Hauflo may ask of this Home Assistant through the agent's tunnel: the one list. The agent (__init__.py _ws_allowed / _http_allowed) checks every frame against it first and then by owner (only what Hauflo made); the backend's tests (backend/src/ha/tunnelAllow.ts) refuse the same in their fake HA, and the contract test walks every call the backend makes against it. A path a call doesn't name here is refused. Checked when the agent loads (tunnel.py).",
+  "ws": {
+    "commands": [
+      "get_states", "get_config", "ping", "unsubscribe_events", "persistent_notification/subscribe", "cloud/status", "frontend/get_themes", "manifest/get", "get_panels",
+      "config_entries/get",
+      "config/area_registry/list", "config/area_registry/create", "config/area_registry/update", "config/area_registry/delete",
+      "config/floor_registry/list", "config/floor_registry/create", "config/floor_registry/update",
+      "config/label_registry/list", "config/label_registry/create", "config/label_registry/delete",
+      "config/device_registry/list", "config/device_registry/update", "config/device_registry/remove", "config/device_registry/remove_config_entry",
+      "config/entity_registry/list", "config/entity_registry/get", "config/entity_registry/get_entries", "config/entity_registry/update",
+      "knx/get_knx_project", "knx/get_entity_config", "knx/validate_entity", "knx/create_entity", "knx/update_entity",
+      "knx/delete_entity", "knx/create_device", "knx/get_entities_by_group", "knx/group_monitor_info", "knx/get_expose_groups", "knx/get_time_server_config",
+      "lovelace/config", "lovelace/config/save", "lovelace/dashboards/list", "lovelace/dashboards/create", "lovelace/dashboards/update", "lovelace/dashboards/delete",
+      "homeassistant/expose_entity", "homeassistant/expose_entity/list"
+    ],
+    "reads": [
+      "get_states", "get_config", "ping", "unsubscribe_events", "persistent_notification/subscribe", "cloud/status", "frontend/get_themes", "manifest/get", "get_panels",
+      "config_entries/get", "config/area_registry/list", "config/floor_registry/list", "config/label_registry/list",
+      "config/device_registry/list", "config/entity_registry/list", "config/entity_registry/get", "config/entity_registry/get_entries",
+      "knx/get_knx_project", "knx/get_entity_config", "knx/validate_entity", "knx/get_entities_by_group", "knx/group_monitor_info",
+      "knx/get_expose_groups", "knx/get_time_server_config",
+      "lovelace/config", "lovelace/dashboards/list", "homeassistant/expose_entity/list"
+    ],
+    "agent_commands": ["hauflo/dashboard/plan", "hauflo/dashboard/save"],
+    "services": [["homeassistant", "update_entity"], ["frontend", "set_theme"], ["scene", "reload"]],
+    "read_services": [["homeassistant", "update_entity"], ["scene", "reload"]],
+    "manifests": ["hauflo", "knx"],
+    "config_entries": ["knx", "group", "homekit", "yandex_smart_home", "template", "hauflo"],
+    "config_entries_owned_only": ["template"]
+  },
+  "http": {
+    "routes": [
+      { "id": "info", "path": "/api/", "methods": ["GET"] },
+      { "id": "info", "path": "/api/config", "methods": ["GET"] },
+      { "id": "hauflo", "path": "/api/hauflo/backup", "methods": ["GET", "POST"] },
+      { "id": "hauflo", "path": "/api/hauflo/notify", "methods": ["GET", "POST"] },
+      { "id": "hauflo", "path": "/api/hauflo/notify/test", "methods": ["POST"] },
+      { "id": "hauflo", "path": "/api/hauflo/alarms", "methods": ["GET", "POST"] },
+      { "id": "hauflo", "path": "/api/hauflo/sidebar", "methods": ["POST"] },
+      { "id": "hauflo", "path": "/api/hauflo/owned", "methods": ["GET"] },
+      { "id": "hauflo", "path": "/api/hauflo/ranges", "methods": ["GET", "POST"] },
+      { "id": "hauflo", "path": "/api/hauflo/ownership", "methods": ["GET", "POST"] },
+      { "id": "hauflo", "path": "/api/hauflo/season/config", "methods": ["GET", "POST"] },
+      { "id": "hauflo", "path": "/api/hauflo/rules", "methods": ["GET", "POST"] },
+      { "id": "homekit_qr", "path": "/api/homekit/pairingqr", "methods": ["GET"] },
+      { "id": "scene", "path": "/api/config/scene/config/{scene_id}", "methods": ["GET", "POST", "DELETE"] },
+      { "id": "flow_handlers", "path": "/api/config/config_entries/flow_handlers", "methods": ["GET"] },
+      { "id": "flow", "path": "/api/config/config_entries/flow", "methods": ["POST"] },
+      { "id": "flow_step", "path": "/api/config/config_entries/flow/{flow_id}", "methods": ["GET", "POST", "DELETE"] },
+      { "id": "options", "path": "/api/config/config_entries/options/flow", "methods": ["POST"] },
+      { "id": "options_step", "path": "/api/config/config_entries/options/flow/{flow_id}", "methods": ["GET", "POST", "DELETE"] },
+      { "id": "entry_delete", "path": "/api/config/config_entries/entry/{entry_id}", "methods": ["DELETE"] },
+      { "id": "diagnostics", "path": "/api/diagnostics/config_entry/{entry_id}", "methods": ["GET"] }
+    ],
+    "locked_ok": [["/api/hauflo/notify", "POST"], ["/api/hauflo/notify/test", "POST"], ["/api/hauflo/ownership", "POST"], ["/api/hauflo/alarms", "POST"]],
+    "locked_read_ops": [{ "path": "/api/hauflo/rules", "method": "POST", "ops": ["preview"] }]
+  },
+  "flows": {
+    "setup": ["knx", "group", "homekit", "yandex_smart_home", "template", "switch_as_x"],
+    "options": ["knx", "group", "homekit", "template", "switch_as_x"],
+    "owned_only": ["group", "homekit", "knx", "template", "switch_as_x"],
+    "delete": ["group", "homekit", "template", "switch_as_x"],
+    "tracked": ["homekit", "group", "knx", "template", "switch_as_x"],
+    "diagnostics": ["homekit", "yandex_smart_home"],
+    "entities_by_entry": ["group", "template", "switch_as_x"],
+    "switch_as_x": {
+      "keys": { "user": ["entity_id", "target_domain", "invert"] },
+      "options_keys": { "init": ["invert"] },
+      "required": ["entity_id", "target_domain"],
+      "target_domains": ["light"],
+      "source_domains": ["switch"]
+    },
+    "template": {
+      "menu": ["binary_sensor"],
+      "keys": { "binary_sensor": ["name", "state", "device_class"] },
+      "options_keys": { "binary_sensor": ["state"] },
+      "required": ["state"],
+      "device_classes": ["problem"],
+      "max_name": 255,
+      "max_state": 4000,
+      "tokens": [
+        { "re": "\\s+" },
+        { "re": "\\{\\{|\\}\\}|[()\\[\\],>-]" },
+        { "re": "(?:and|or|not|in|is|none)\\b" },
+        { "re": "\\d{1,9}(?:\\.\\d{1,3})?" },
+        { "re": "'[a-z_]{1,32}'" },
+        { "re": "now\\(\\)" },
+        { "re": "\\.total_seconds\\(\\)" },
+        { "re": "states\\('([a-z_]{1,64}\\.[a-z0-9_]{1,200})'\\)", "entity": 1 },
+        { "re": "states\\.([a-z_]{1,64}\\.[a-z0-9_]{1,200})(?:\\.(?:last_changed|last_reported))?", "entity": 1 }
+      ]
+    }
+  },
+  "direct_only": ["knx/project_file_process", "backup/agents/info", "backup/generate", "backup/info"]
+}

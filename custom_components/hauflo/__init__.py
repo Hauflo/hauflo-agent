@@ -33,11 +33,13 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
 
-from . import automations, backup, comfort, dashmerge, guest, house, issues, keep, notify, ownership, presence, ranges, scenes, season, service, sidebar, theme, titles, voice
+from . import automations, backup, dashmerge, guest, house, issues, keep, notify, ownership, presence, ranges, retired, rules, scenes, season, service, sidebar, theme, titles, voice
 from . import order as block_order
 from .issues import DEGRADED, degrade  # noqa: F401 — DEGRADED: diagnostics read it here
 from .storage import HaufloStore
 from .const import DATA_CARDS_LOCAL, CONF_REFRESH_TOKEN_ID, CONF_SECRET, CONF_SERVER, CONF_USER_ID, DATA_NOTIFY_VIEWS, DATA_UNLINKED, DOMAIN, MONITOR_LABEL, MONITOR_LABEL_EN, MONITOR_LABELS, OWNED_STORE, STATUS_EVERY, VERSION, CONF_RANGES, CONF_ALLOW_CHANGES, LOCKED_CODE
+from .tuning import TUNING
+from .tunnel import TUNNEL
 
 _LOGGER = logging.getLogger(__name__)
 PROBLEM_ON = {"problem", "safety", "smoke", "gas", "moisture", "battery", "heat", "cold", "carbon_monoxide", "tamper", "vibration"}
@@ -63,32 +65,18 @@ async def _local_token(hass: HomeAssistant, entry: ConfigEntry):
 
 # What Hauflo may do in this HA through the tunnel — exactly what its deploy and status use, nothing by prefix
 # (security review 25.10: «config/» let an automation with any service through, «lovelace/» a JS resource):
-# registries, the KNX UI, dashboards, voice exposure, HomeKit / Alice / group flows, its own scenes, status reads.
-_WS_EXACT = {
-    "get_states", "get_config", "ping", "unsubscribe_events", "persistent_notification/subscribe", "cloud/status", "frontend/get_themes", "manifest/get", "get_panels",
-    "config_entries/get",
-    "config/area_registry/list", "config/area_registry/create", "config/area_registry/update", "config/area_registry/delete",
-    "config/floor_registry/list", "config/floor_registry/create", "config/floor_registry/update",
-    "config/label_registry/list", "config/label_registry/create", "config/label_registry/delete",
-    "config/device_registry/list", "config/device_registry/update", "config/device_registry/remove", "config/device_registry/remove_config_entry",
-    "config/entity_registry/list", "config/entity_registry/get", "config/entity_registry/get_entries", "config/entity_registry/update",
-    "knx/get_knx_project", "knx/get_entity_config", "knx/validate_entity", "knx/create_entity", "knx/update_entity",
-    "knx/delete_entity", "knx/create_device", "knx/get_entities_by_group", "knx/group_monitor_info", "knx/get_expose_groups", "knx/get_time_server_config",
-    "lovelace/config", "lovelace/config/save", "lovelace/dashboards/list", "lovelace/dashboards/create", "lovelace/dashboards/update",
-    "homeassistant/expose_entity", "homeassistant/expose_entity/list",
-}
-_SERVICES = {("homeassistant", "update_entity"), ("frontend", "set_theme"), ("scene", "reload")}
+# registries, the KNX UI, dashboards, voice exposure, HomeKit / Alice / group / template flows, its own scenes, status
+# reads. The lists are tunnel.json — the one source the backend's tests check their calls against (tester 30.10: the
+# rules' «template» flow passed the backend's fake HA and was refused here, «403 Hauflo agent: not allowed»).
+_TW = TUNNEL["ws"]
+_TH = TUNNEL["http"]
+_TF = TUNNEL["flows"]
+_WS_EXACT = set(_TW["commands"])
+_SERVICES = {(d, s) for d, s in _TW["services"]}
 # What only reads (or refreshes) — every other allowed command changes the house and needs a fresh backup first
 # (security expert 25.10: the backup was the cloud's promise, not the agent's).
-_WS_READS = {
-    "get_states", "get_config", "ping", "unsubscribe_events", "persistent_notification/subscribe", "cloud/status", "frontend/get_themes", "manifest/get", "get_panels",
-    "config_entries/get", "config/area_registry/list", "config/floor_registry/list", "config/label_registry/list",
-    "config/device_registry/list", "config/entity_registry/list", "config/entity_registry/get", "config/entity_registry/get_entries",
-    "knx/get_knx_project", "knx/get_entity_config", "knx/validate_entity", "knx/get_entities_by_group", "knx/group_monitor_info",
-    "knx/get_expose_groups", "knx/get_time_server_config",
-    "lovelace/config", "lovelace/dashboards/list", "homeassistant/expose_entity/list",
-}
-_READ_SERVICES = {("homeassistant", "update_entity"), ("scene", "reload")}
+_WS_READS = set(_TW["reads"])
+_READ_SERVICES = {(d, s) for d, s in _TW["read_services"]}
 _CREATES = {"config/area_registry/create": "area", "config/floor_registry/create": "floor", "config/label_registry/create": "label"}
 
 
@@ -108,32 +96,51 @@ def _http_changes(method: str, path: str) -> bool:
 # fail closed — over the websocket all but reads (_ws_changes), over REST all but GET. Only the alarm delivery stays:
 # its rules and a test push configure who is told, not the house (owner 28.10: monitoring and alarms keep working).
 # Accepting an alarm («Принято» from Hauflo's monitoring, service review r2 D8) doesn't change the house either.
-_LOCKED_HTTP_OK = {("/api/hauflo/notify", "POST"), ("/api/hauflo/notify/test", "POST"), ("/api/hauflo/ownership", "POST"), ("/api/hauflo/alarms", "POST")}
+_LOCKED_HTTP_OK = {(p, m) for p, m in _TH["locked_ok"]}
 
 
 def _ws_locked(msg: dict[str, Any]) -> bool:
     return _ws_changes(msg)
 
 
-def _http_locked(method: str, path: str) -> bool:
-    return method != "GET" and (path.split("?")[0], method) not in _LOCKED_HTTP_OK
-# Integrations Hauflo sets up or tunes (flows, options); entries it may delete (its own light/cover groups).
-_FLOW_DOMAINS = {"knx", "group", "homekit", "yandex_smart_home"}
-_HAUFLO_VIEWS = {
-    ("/api/hauflo/backup", "GET"), ("/api/hauflo/backup", "POST"), ("/api/hauflo/notify", "GET"), ("/api/hauflo/notify", "POST"),
-    ("/api/hauflo/notify/test", "POST"), ("/api/hauflo/alarms", "GET"), ("/api/hauflo/sidebar", "POST"),
-    # «Принято» from Hauflo's «Мониторинг» by the service company's person on duty (service review r2 D8): the same
-    # accept as the push button / the dashboard's, said with that person's name.
-    ("/api/hauflo/alarms", "POST"),
-    ("/api/hauflo/owned", "GET"), ("/api/hauflo/ranges", "GET"),
-    # What the next deploy would change, shown in HA («Создано в этом доме», ownership.py): info only. GET: the hand
-    # edits (renamed / disabled entity ids) for the service passport in the handover pack (service review r2 D5).
-    ("/api/hauflo/ownership", "POST"), ("/api/hauflo/ownership", "GET"),
-    # Only an ASK: what the project writes goes to the owner's «Allow / Decline» in Repairs (ranges.py), never granted.
-    ("/api/hauflo/ranges", "POST"),
-    # «Комфортный пол»: the integrator's settings (comfort.py checks them itself).
-    ("/api/hauflo/comfort", "GET"), ("/api/hauflo/comfort", "POST"),
-}
+# A POST that only reads: a value rule's dry run (rules.py «preview») — the body the lock reads is the one sent on.
+_LOCKED_READ_OPS = {(r["path"], r["method"]): set(r["ops"]) for r in _TH["locked_read_ops"]}
+
+
+def _http_locked(method: str, path: str, body: Any = None) -> bool:
+    bare = path.split("?")[0]
+    if method == "GET" or (bare, method) in _LOCKED_HTTP_OK:
+        return False
+    if (ops := _LOCKED_READ_OPS.get((bare, method))) is not None:
+        try:
+            data = json.loads(body) if isinstance(body, (str, bytes)) and body else body
+        except ValueError:
+            return True
+        return not (isinstance(data, dict) and data.get("op") in ops)
+    return True
+# Integrations Hauflo sets up (flows) or tunes (options) — the options and the delete only of an entry it set up itself
+# (owned_only); the entries whose answer it tracks as its own; the ones whose diagnostics it reads.
+_FLOW_DOMAINS = set(_TF["setup"])
+_OPTIONS_DOMAINS = set(_TF["options"])
+_OWNED_ONLY = set(_TF["owned_only"])
+_DELETE_DOMAINS = set(_TF["delete"])
+_TRACKED_DOMAINS = set(_TF["tracked"])
+_DIAG_DOMAINS = set(_TF["diagnostics"])
+# Platforms whose entities are Hauflo's only through the config entry it set up (its groups, its rules' sensors).
+_ENTRY_PLATFORMS = set(_TF["entities_by_entry"])
+# config_entries/get: only the integrations Hauflo sets up — not every title in the house («Анин iPhone»; panel round
+# 6); of «template» only the entries it made (the integrator's own template helpers aren't the cloud's to see).
+_ENTRY_DOMAINS = set(_TW["config_entries"])
+_ENTRY_OWNED_ONLY = set(_TW["config_entries_owned_only"])
+_MANIFESTS = set(_TW["manifests"])
+# REST: a path by its route (a {placeholder} is one non-empty segment) and method; every route has its own checks below.
+_ROUTES = [(r["id"], r["path"].split("/"), set(r["methods"])) for r in _TH["routes"]]
+# The agent's own views, each with its methods — not whatever a future view may be (security round 4). Among them:
+# «Принято» from Hauflo's «Мониторинг» (service review r2 D8); «Создано в этом доме» and the service passport's hand
+# edits (ownership, r2 D5); /ranges POST only ASKS — the owner's «Allow / Decline» in Repairs grants; «Правила по
+# значениям» check every target and limit themselves (rules.py); the season's settings only pick among the climates
+# HA says can heat and cool (season.py).
+_HAUFLO_VIEWS = {(r["path"], m) for r in _TH["routes"] if r["id"] == "hauflo" for m in r["methods"]}
 _MAX_CHANNELS = 8
 
 
@@ -148,14 +155,14 @@ _SCENE_DOMAINS = {"light", "cover", "switch", "climate", "fan", "media_player"}
 
 
 def _own_entity(hass: HomeAssistant | None, entity_id: Any, owned_entries: set[str] | None = None) -> bool:
-    """Hauflo's own: KNX / its agent's entities, a group it set up through the tunnel, a scene it wrote (hauflo_…) —
-    never the integrator's own group helper or scene (security re-review round 5)."""
+    """Hauflo's own: KNX / its agent's entities, a group or a rule sensor it set up through the tunnel, a scene it wrote (hauflo_…) —
+    never the integrator's own group or template helper or scene (security re-review round 5)."""
     if hass is None or not isinstance(entity_id, str):
         return False
     entry = er.async_get(hass).async_get(entity_id)
     if entry is None:
         return False
-    if entry.platform == "group":
+    if entry.platform in _ENTRY_PLATFORMS:
         return owned_entries is not None and entry.config_entry_id in owned_entries
     if entry.platform == "homeassistant" and entry.domain == "scene":
         return str(entry.unique_id).startswith("hauflo_")
@@ -823,7 +830,93 @@ def _flow_step(manager: Any, flow_id: str) -> str | None:
         return None
 
 
-def _flow_input_ok(hass: HomeAssistant, domain: str | None, data: dict[str, Any], memo: dict[str, list[str]] | None = None, flow_id: str = "", step: str | None = None, owned: set[str] | None = None, owned_entries: set[str] | None = None) -> bool:
+# The sub-blocks' and the hints' rules (backend blockRulesDeploy.ts) are HA's own template binary sensors, made with the
+# «template» helper's config flow. Security decision (30.10): a template is Jinja HA renders on every change of what
+# it reads — through the tunnel it could read what the agent keeps from Hauflo (a person, a phone, a presence sensor:
+# _scrub_states) and hand it back as an unscrubbed state, a «sensor» could carry the value whole, a «switch» / «button»
+# helper runs actions (a gate's relay). So only what a rule is: a binary sensor (on = the warning is up), its name,
+# its state template, the «problem» class — nothing else (no device, no actions, no availability). The template is
+# read token by token against tunnel.json's grammar, the one ruleTemplate (backend deviceBlocks.ts) writes: states of
+# entities, their last change / report, now(), comparisons and and / or / not — no filters, no {% %}, no loops, no
+# expand() / area_entities() that would reach the rest of the house. Every entity it names is Hauflo's own (its KNX
+# entities, groups, rule sensors) and not a private domain — what Hauflo already reads in get_states, so the sensor
+# tells it nothing new; it never acts (HA's sandbox renders templates read-only). Options and the delete only of a
+# template entry the agent saw made through the tunnel (_track_entry; _OWNED_ONLY), never the integrator's helpers;
+# config_entries/get of «template» answers with those alone.
+_TPL = _TF["template"]
+_TPL_TOKENS = [(re.compile(t["re"]), t.get("entity")) for t in _TPL["tokens"]]
+_TPL_MENU = set(_TPL["menu"])
+_TPL_KEYS = {k: set(v) for k, v in _TPL["keys"].items()}
+# HA's options form of a binary sensor helper has the template alone (its class is set once, at setup).
+_TPL_OPTION_KEYS = {k: set(v) for k, v in _TPL["options_keys"].items()}
+_TPL_CLASSES = set(_TPL["device_classes"])
+
+
+def _template_entities(text: Any) -> list[str] | None:
+    """The entities a rule's template reads; None — not a rule's template (any other Jinja, too long)."""
+    if not isinstance(text, str) or not text.strip() or len(text) > _TPL["max_state"]:
+        return None
+    pos, ents = 0, []
+    while pos < len(text):
+        for rx, group in _TPL_TOKENS:
+            m = rx.match(text, pos)
+            if m is not None and m.end() > pos:
+                if group:
+                    ents.append(m.group(group))
+                pos = m.end()
+                break
+        else:
+            return None
+    return ents
+
+
+def _rule_reads_ok(hass: HomeAssistant | None, eid: str, owned: set[str] | None, owned_entries: set[str] | None) -> bool:
+    """What a rule may read: Hauflo's own entity, not a private domain (where people are, a lock)."""
+    return eid.split(".")[0] not in _PRIVATE_STATE and _own_entity(hass, eid, owned_entries) and (_platform(hass, eid) != "knx" or _owned_knx(hass, eid, owned))
+
+
+def _template_step_ok(hass: HomeAssistant | None, data: dict[str, Any], step: str | None, owned: set[str] | None, owned_entries: set[str] | None, options: bool) -> bool:
+    """A template helper's step, by HA's own current step: the menu picks a binary sensor; its form (setup or
+    options) sets only the rule's name, template and class."""
+    if step == "user" and not options:
+        return set(data) == {"next_step_id"} and str(data.get("next_step_id")) in _TPL_MENU
+    keys = (_TPL_OPTION_KEYS if options else _TPL_KEYS).get(str(step))
+    if keys is None or not set(data) <= keys or any(k not in data for k in _TPL["required"]):
+        return False
+    if "device_class" in data and str(data["device_class"]) not in _TPL_CLASSES:
+        return False
+    if "name" in data and not (isinstance(data["name"], str) and 0 < len(data["name"]) <= _TPL["max_name"]):
+        return False
+    ents = _template_entities(data.get("state"))
+    return ents is not None and all(_rule_reads_ok(hass, e, owned, owned_entries) for e in ents)
+
+
+# A lamp outlet deployed as a switch, shown as a light (backend lampWrappers.ts, design B7): HA's «Switch as X» helper
+# over it. Security decision (30.10): the helper operates whatever it wraps — over the integrator's gate relay or a
+# lock it would hand them to every light group, scene and voice phrase as a «light». So only a light, only over a
+# switch Hauflo made itself and may hand on (_hauflo_entity: its own KNX switch, never protected), with the keys HA's
+# form has; options (invert) and the delete only of a helper the agent saw made through the tunnel (_OWNED_ONLY).
+_SAX = _TF["switch_as_x"]
+_SAX_KEYS = {k: set(v) for k, v in _SAX["keys"].items()}
+_SAX_OPTION_KEYS = {k: set(v) for k, v in _SAX["options_keys"].items()}
+
+
+def _switch_as_x_step_ok(hass: HomeAssistant | None, data: dict[str, Any], step: str | None, owned: set[str] | None, owned_entries: set[str] | None, options: bool) -> bool:
+    """A «Switch as X» helper's step, by HA's own current step."""
+    keys = (_SAX_OPTION_KEYS if options else _SAX_KEYS).get(str(step))
+    if keys is None or not set(data) <= keys:
+        return False
+    if "invert" in data and not isinstance(data["invert"], bool):
+        return False
+    if options:
+        return True
+    if any(k not in data for k in _SAX["required"]) or str(data.get("target_domain")) not in _SAX["target_domains"]:
+        return False
+    eid = data.get("entity_id")
+    return isinstance(eid, str) and eid.split(".", 1)[0] in _SAX["source_domains"] and _hauflo_entity(hass, eid, owned, owned_entries)
+
+
+def _flow_input_ok(hass: HomeAssistant, domain: str | None, data: dict[str, Any], memo: dict[str, list[str]] | None = None, flow_id: str = "", step: str | None = None, owned: set[str] | None = None, owned_entries: set[str] | None = None, options: bool = False) -> bool:
     """What a flow step may set (security re-review round 3: only the handler was checked, not the input): never
     a lock / alarm / valve for a voice assistant or a group, HomeKit as a bridge of included entities, Alice by the
     label, KNX to an interface in the house and its telegram history kept in HA."""
@@ -831,6 +924,10 @@ def _flow_input_ok(hass: HomeAssistant, domain: str | None, data: dict[str, Any]
         return False
     if domain == "homekit":
         return _homekit_step_ok(hass, data, memo, flow_id, step, owned, owned_entries)
+    if domain == "template":
+        return _template_step_ok(hass, data, step, owned, owned_entries, options)
+    if domain == "switch_as_x":
+        return _switch_as_x_step_ok(hass, data, step, owned, owned_entries, options)
     if domain == "group" and "entities" in data:
         # A Hauflo group holds only Hauflo's own (panel round 6: the integrator's gate relay inside «All covers» went to
         # Siri with the group).
@@ -1115,10 +1212,10 @@ def _ws_allowed(msg: dict[str, Any], hass: HomeAssistant | None = None, owned: s
         return False
     if t == "manifest/get":
         # Only what the deploy reads (the agent's own version) and KNX's — not which integrations the house runs.
-        return msg.get("integration") in ("hauflo", "knx")
+        return isinstance(msg.get("integration"), str) and msg["integration"] in _MANIFESTS
     if t == "config_entries/get":
-        # Only the integrations Hauflo sets up — not every title in the house («Анин iPhone»; panel round 6).
-        return msg.get("domain") in _FLOW_DOMAINS | {DOMAIN}  # the agent's own: the dashboard needs its cards
+        # The agent's own among them: the dashboard needs its cards.
+        return isinstance(msg.get("domain"), str) and msg["domain"] in _ENTRY_DOMAINS
     if t == "config/entity_registry/update":
         # Hauflo's own only (a KNX one only if it created it), never a lock / the alarm / a valve, and never handed
         # to a voice assistant through the registry's options (security re-review round 4).
@@ -1178,6 +1275,10 @@ def _ws_allowed(msg: dict[str, Any], hass: HomeAssistant | None = None, owned: s
         return str(msg.get("url_path") or "").startswith("hauflo-") and _lovelace_ok(hass, msg.get("config"), owned, owned_entries)
     if t == "lovelace/dashboards/update":
         return _own_dashboard(hass, msg.get("dashboard_id"))
+    if t == "lovelace/dashboards/delete":
+        # An old project's dashboard the integrator ticked for removal: only one Hauflo made (hauflo-…), never a copy
+        # (the integrator's old cards) and never the client's own.
+        return set(msg) <= {"id", "type", "dashboard_id"} and _own_dashboard(hass, msg.get("dashboard_id"))
     if t == "homeassistant/expose_entity":
         # Hauflo hands its own to a voice assistant, never the integrator's group or scene (integrator run 20); taking
         # one away from it is fine for any.
@@ -1281,8 +1382,20 @@ def _flow_handler(manager: Any, flow_id: str) -> str | None:
         return None
 
 
+def _route(method: str, bare: str) -> str | None:
+    """The tunnel.json route a REST call is on (its id), None — not one Hauflo may call."""
+    segs = bare.split("/")
+    for rid, pattern, methods in _ROUTES:
+        if method in methods and len(pattern) == len(segs) and all(p == s or (p[:1] == "{" and p[-1:] == "}" and bool(s)) for p, s in zip(pattern, segs)):
+            return rid
+    return None
+
+
+def _owned_entry(owned_entries: set[str] | None, entry_id: Any) -> bool:
+    return owned_entries is not None and isinstance(entry_id, str) and entry_id in owned_entries
+
+
 def _http_allowed(hass: HomeAssistant, method: str, path: str, body: Any, owned_entries: set[str] | None = None, memo: dict[str, list[str]] | None = None, owned: set[str] | None = None) -> bool:
-    low = path.lower()
     if ".." in path or "%" in path or "\\" in path:
         return False
     bare = path.split("?")[0]
@@ -1293,17 +1406,14 @@ def _http_allowed(hass: HomeAssistant, method: str, path: str, body: Any, owned_
         return False  # fail closed: a body no check could read never passes (security re-review round 5)
     if not isinstance(data, dict):
         return False
-    if bare in ("/api/", "/api/config") and method == "GET":
+    route = _route(method, bare)
+    if route in ("info", "hauflo", "flow_handlers"):
         return True
-    if bare.startswith("/api/hauflo/"):
-        # The agent's own views, each with its methods — not whatever a future view may be (security round 4).
-        return (bare, method) in _HAUFLO_VIEWS
-    if bare == "/api/homekit/pairingqr" and method == "GET":
+    if route == "homekit_qr":
         # «?<entry_id>-<secret>»: only a bridge Hauflo set up, never the integrator's QR (security expert 25.10).
-        entry = path.split("?", 1)[1].split("-", 1)[0] if "?" in path else ""
-        return bool(entry) and owned_entries is not None and entry in owned_entries
-    if low.startswith("/api/config/scene/config/") and method in ("POST", "DELETE", "GET"):
-        if not (len(parts) == 5 and parts[4].startswith("hauflo_")):
+        return _owned_entry(owned_entries, path.split("?", 1)[1].split("-", 1)[0] if "?" in path else "")
+    if route == "scene":
+        if not parts[4].startswith("hauflo_"):
             return False
         # A scene the family made on the dashboard (scenes.py) is theirs: the cloud never reads, rewrites or deletes it.
         if parts[4].startswith("hauflo_fam_"):
@@ -1312,9 +1422,7 @@ def _http_allowed(hass: HomeAssistant, method: str, path: str, body: Any, owned_
         # Only Hauflo's own (panel round 6: the integrator's gate relay in «Evening»).
         ents = data.get("entities", {}) if method == "POST" else {}
         return isinstance(ents, dict) and all(isinstance(k, str) and k.split(".")[0] in _SCENE_DOMAINS and _hauflo_entity(hass, k, owned, owned_entries) for k in ents)
-    if bare == "/api/config/config_entries/flow_handlers" and method == "GET":
-        return True
-    if bare == "/api/config/config_entries/flow" and method == "POST":
+    if route == "flow":
         handler = str(data.get("handler"))
         # A second Alice link would be someone else's Yandex account on this house.
         if handler == "yandex_smart_home" and hass.config_entries.async_entries(handler):
@@ -1322,55 +1430,54 @@ def _http_allowed(hass: HomeAssistant, method: str, path: str, body: Any, owned_
         # A reconfigure (an entry_id in the body) rewrites a live connection and reloads it at once: only a KNX link
         # Hauflo set up itself — never the integrator's (KNX expert 25.10: the house would lose the bus).
         if data.get("entry_id") is not None:
-            return handler == "knx" and owned_entries is not None and str(data.get("entry_id")) in owned_entries
+            return handler == "knx" and _owned_entry(owned_entries, str(data.get("entry_id")))
         # KNX is single-entry: a new setup while one exists is never Hauflo's to start.
         if handler == "knx" and hass.config_entries.async_entries("knx"):
             return False
         return handler in _FLOW_DOMAINS
-    if bare.startswith("/api/config/config_entries/flow/") and len(parts) == 5 and method in ("GET", "POST", "DELETE"):
+    if route == "flow_step":
         domain = _flow_handler(hass.config_entries.flow, parts[4])
         step = _flow_step(hass.config_entries.flow, parts[4])
         return domain in _FLOW_DOMAINS and (method != "POST" or _flow_input_ok(hass, domain, data, memo, parts[4], step, owned, owned_entries))
-    if bare == "/api/config/config_entries/options/flow" and method == "POST":
+    if route == "options":
         # Alice's options are never Hauflo's to change (it only sets the integration up): another connection type or
         # skill would hand the house to someone else's Yandex account (security re-review round 4).
-        # A group's or a bridge's options only for one Hauflo set up (security re-review round 5: the integrator's own
-        # helpers and bridges were reachable).
+        # A group's, a bridge's, a rule sensor's options only for one Hauflo set up (security re-review round 5: the
+        # integrator's own helpers and bridges were reachable); KNX too (panel round 6: the integrator's KNX link
+        # could be pointed elsewhere and the house lost the bus).
         handler = str(data.get("handler"))
         domain = _entry_domain(hass, handler)
-        # KNX too (panel round 6: the integrator's KNX link could be pointed elsewhere and the house lost the bus).
-        if domain in ("group", "homekit", "knx") and (owned_entries is None or handler not in owned_entries):
+        if domain in _OWNED_ONLY and not _owned_entry(owned_entries, handler):
             return False
-        return domain in _FLOW_DOMAINS - {"yandex_smart_home"}
-    if bare.startswith("/api/config/config_entries/options/flow/") and len(parts) == 6 and method in ("GET", "POST", "DELETE"):
+        return domain in _OPTIONS_DOMAINS
+    if route == "options_step":
         handler = _flow_handler(hass.config_entries.options, parts[5])
         domain = _entry_domain(hass, handler) if handler is not None else None
-        if domain in ("group", "homekit", "knx") and (owned_entries is None or handler not in owned_entries):
+        if domain in _OWNED_ONLY and not _owned_entry(owned_entries, handler):
             return False
         step = _flow_step(hass.config_entries.options, parts[5])
-        return domain in _FLOW_DOMAINS - {"yandex_smart_home"} and (method != "POST" or _flow_input_ok(hass, domain, data, memo, parts[5], step, owned, owned_entries))
-    if bare.startswith("/api/config/config_entries/entry/") and len(parts) == 5 and method == "DELETE":
-        # Its groups; a HomeKit bridge only if it was made through this agent (Siri switched off — integrator run 18).
-        domain = _entry_domain(hass, parts[4])
-        return domain in ("group", "homekit") and owned_entries is not None and parts[4] in owned_entries
-    if bare.startswith("/api/diagnostics/config_entry/") and len(parts) == 4 and method == "GET":
+        return domain in _OPTIONS_DOMAINS and (method != "POST" or _flow_input_ok(hass, domain, data, memo, parts[5], step, owned, owned_entries, options=True))
+    if route == "entry_delete":
+        # Its groups and rule sensors; a HomeKit bridge only if it was made through this agent (Siri switched off —
+        # integrator run 18).
+        return _entry_domain(hass, parts[4]) in _DELETE_DOMAINS and _owned_entry(owned_entries, parts[4])
+    if route == "diagnostics":
         # Only what Hauflo reads there: the filter of a HomeKit bridge it set up, Alice's label settings — never
         # another's bridge (narrow round 25.10: an integrator's bridge's diagnostics gave a phone's coordinates and
         # user ids). The answer is cut to those fields too (_scrub_diagnostics).
         domain = _entry_domain(hass, parts[3])
-        if domain == "homekit":
-            return owned_entries is not None and parts[3] in owned_entries
-        return domain == "yandex_smart_home"
+        return domain in _DIAG_DOMAINS and (domain not in _OWNED_ONLY or _owned_entry(owned_entries, parts[3]))
     return False
 
 
+_T = TUNING["link"]
 # Reconnects after a Hauflo restart or an outage (HA core + SRE review 29.10): every agent knocking at the same second
 # is a storm — each wait is spread ±50 %, and after the server said «reconnect» (a planned restart) the first knock
 # comes 1–30 s later at random.
-RECONNECT_HINT_WAIT = (1.0, 30.0)
-LINK_LOST_ISSUE_AFTER = 6 * 3600  # the link down this long: said in HA's Repairs
+RECONNECT_HINT_WAIT = tuple(_T["reconnect_hint_wait_s"])
+LINK_LOST_ISSUE_AFTER = _T["lost_issue_after_s"]  # the link down this long: said in HA's Repairs
 # A frame this big (a dashboard, a plan) is parsed off the event loop: json.loads of megabytes blocks HA's loop.
-BIG_FRAME = 256 * 1024
+BIG_FRAME = _T["big_frame_bytes"]
 
 
 def _next_wait(delay: float, hinted: bool, uniform: Callable[[float, float], float] = random.uniform) -> float:
@@ -1397,7 +1504,8 @@ class Agent:
         self.engine: notify.NotifyEngine | None = None  # alarms to the phones (set up right after the agent)
         self.automations: Any = None  # the dashboard's «Автоматизации» (automations.py), made on first use
         self.presence: presence.Presence | None = None  # «Нет дома — имитация присутствия» (presence.py)
-        self.comfort = comfort.ComfortEngine(hass)  # «Комфортный пол» and the house mode (comfort.py)
+        self.season: season.Season | None = None  # «Зима / Лето»: the switch, the resend, the suggestion (season.py)
+        self.rules: rules.Rules | None = None  # «Правила по значениям» and the derived values (rules.py, derived.py)
         self.guest: guest.GuestAccess | None = None  # «Гостевой доступ» (guest.py), set up with the entry
         self.ownership: ownership.Ownership | None = None  # the «Hauflo» label and «Создано в этом доме» (ownership.py)
         self.owned: set[str] = set()
@@ -1566,7 +1674,7 @@ class Agent:
         except ValueError:
             return
         entry_id = (res.get("result") or {}).get("entry_id") if isinstance(res, dict) and res.get("type") == "create_entry" else None
-        if isinstance(entry_id, str) and _entry_domain(self.hass, entry_id) in ("homekit", "group", "knx"):
+        if isinstance(entry_id, str) and _entry_domain(self.hass, entry_id) in _TRACKED_DOMAINS:
             self.owned_entries.add(entry_id)
             self._owned_store.async_delay_save(self._owned_data, 0)  # at once: a crash right after a create mustn't lose it (HA expert 25.10)
             self._owned_changed()
@@ -1596,6 +1704,11 @@ class Agent:
                 continue
             kind, ref = self._pending.pop(key)
             res = r.get("result")
+            if kind == "config_entries/get":
+                # Of «template» only the rule sensors Hauflo made: the integrator's own helpers stay in the house.
+                r["result"] = [e for e in res if isinstance(e, dict) and e.get("entry_id") in self.owned_entries] if isinstance(res, list) else []
+                scrubbed = True
+                continue
             if kind in _SCRUBBED:
                 r["result"] = (
                     _scrub_states(res, self.hass, self._state_visible) if kind == "get_states" else _scrub_config(res) if kind == "get_config"
@@ -1778,6 +1891,8 @@ class Agent:
             return
         if msg.get("type") in _SCRUBBED:
             self._pending[(ch, msg.get("id"))] = (str(msg["type"]), None)
+        if msg.get("type") == "config_entries/get" and msg.get("domain") in _ENTRY_OWNED_ONLY:
+            self._pending[(ch, msg.get("id"))] = ("config_entries/get", None)
         if msg.get("type") == "persistent_notification/subscribe":
             self._note_subs.add((ch, msg.get("id")))
         if msg.get("type") in _CREATES:
@@ -1799,7 +1914,7 @@ class Agent:
 
     async def _http(self, f: dict[str, Any]) -> None:
         path = str(f.get("path", ""))
-        if self.locked and _http_locked(str(f.get("method", "GET")).upper(), path):
+        if self.locked and _http_locked(str(f.get("method", "GET")).upper(), path, f.get("body")):
             _LOGGER.info("Hauflo: %s %s refused — changes by Hauflo are switched off in HA", f.get("method"), path.split("?")[0])
             await self.send({"t": "http_res", "id": f.get("id"), "status": 423, "body": json.dumps({"code": LOCKED_CODE})})
             return
@@ -1977,7 +2092,7 @@ class Agent:
             task.cancel()
 
 
-PLATFORMS = ["binary_sensor", "climate", "select", "sensor"]
+PLATFORMS = ["binary_sensor", "sensor", "switch"]
 
 
 type HaufloConfigEntry = ConfigEntry[Agent]
@@ -1992,12 +2107,44 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
     agent = Agent(hass, entry)
     await agent.async_load()
     entry.runtime_data = agent
-    # The floor follows the room even without Hauflo online: settings from HA's storage, before the entities exist.
     owns = lambda eid: _own_entity(hass, eid, agent.owned_entries) and (_platform(hass, eid) != "knx" or _owned_knx(hass, eid, agent.owned))  # noqa: E731
-    agent.comfort.owns = owns
-    agent.comfort.entry_id = entry.entry_id
-    comfort.async_migrate_unique_ids(hass, entry.entry_id)
-    await agent.comfort.async_load()
+    # «Зима / Лето» from HA's storage (it keeps working without Hauflo online); «Комфортный пол» of an earlier agent is
+    # taken away cleanly — its own entities and store only, the KNX thermostats untouched (retired.py).
+    agent.season = season.Season(hass, lambda: agent.engine, lambda: agent.rules, owns)
+    await agent.season.async_load()
+    try:
+        await retired.async_retire_comfort(hass, entry.entry_id, agent.season.async_seed)
+    except Exception as err:  # noqa: BLE001 — never stops the agent
+        degrade("comfort floor removal", err)
+
+    async def _tell(title: str, message: str, user_id: str | None) -> None:
+        if agent.engine is not None:
+            await agent.engine.async_tell(title, message, user_id)
+
+    async def _ask(title: str, message: str, actions: list, tag: str) -> None:
+        # A rule's suggestion: to every phone that gets the house's messages, with «Сделать / Не сейчас».
+        if agent.engine is not None:
+            await agent.engine.async_tell(title, message, None, actions=actions, tag=tag)
+
+    async def _season_set(mode: str, _why: str | None) -> None:
+        await agent.season.apply(mode, None)
+
+    # «Правила по значениям»: loaded before the platforms (their entities come from it), run after them.
+    agent.rules = rules.Rules(
+        hass,
+        owns=lambda eid: _hauflo_entity(hass, eid, agent.owned, agent.owned_entries),
+        own_raw=owns,  # a valve's «close» only — every other target goes through _hauflo_entity
+        season=agent.season.rule_season,
+        tell=_tell,
+        season_now=agent.season.current,
+        season_set=_season_set,
+        ask=_ask,
+    )
+    agent.rules.entry_id = entry.entry_id
+    try:
+        await agent.rules.async_load()
+    except Exception as err:  # noqa: BLE001 — never stops the agent
+        degrade("value rules", err)
     # The «Hauflo» label on what Hauflo made, and «Создано в этом доме» (ownership.py) — before the sensor is added.
     agent.ownership = ownership.Ownership(hass, lambda: agent.owned, lambda: agent.owned_entries, lambda: agent.locked)
     try:
@@ -2005,7 +2152,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
     except Exception as err:  # noqa: BLE001 — never stops the agent
         degrade("hauflo label", err)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    agent.comfort.async_start()
+    try:
+        await agent.season.async_start()
+    except Exception as err:  # noqa: BLE001 — never stops the agent
+        degrade("season", err)
+    try:
+        await agent.rules.async_start()
+    except Exception as err:  # noqa: BLE001 — never stops the agent
+        degrade("value rules", err)
     # The cards: served by the agent, or — a house made independent — from /config/www/hauflo, refreshed to this
     # version; fallback copies an earlier removal left are taken off (keep.py). Before the theme adds its scripts, and
     # both before the link starts: a deploy right after it must find the cards served (integrator review r2, D2).
@@ -2053,9 +2207,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
         hass.http.register_view(OwnedView())
         hass.http.register_view(ownership.OwnershipView(_ownership))
         hass.http.register_view(RangesView())
-        hass.http.register_view(comfort.ComfortView(lambda: _comfort(hass)))
+        hass.http.register_view(rules.RulesView(lambda: _rules(hass)))
         hass.http.register_view(sidebar.SidebarView())
         hass.http.register_view(season.SeasonView(lambda: _season(hass)))
+        hass.http.register_view(season.SeasonConfigView(lambda: _season(hass)))
         hass.http.register_view(titles.TitlesView())
         hass.http.register_view(block_order.OrderView())
         hass.http.register_view(automations.AutomationsView(lambda: _automations(hass)))
@@ -2171,7 +2326,7 @@ def _engine(hass: HomeAssistant) -> notify.NotifyEngine | None:
 
 def _season(hass: HomeAssistant) -> season.Season | None:
     for entry in hass.config_entries.async_loaded_entries(DOMAIN):
-        return season.Season(hass, lambda: entry.runtime_data.comfort)
+        return entry.runtime_data.season
     return None
 
 
@@ -2215,16 +2370,21 @@ def _guest(hass: HomeAssistant) -> guest.GuestAccess | None:
     return None
 
 
-def _comfort(hass: HomeAssistant) -> comfort.ComfortEngine | None:
+def _rules(hass: HomeAssistant) -> rules.Rules | None:
     for entry in hass.config_entries.async_loaded_entries(DOMAIN):
-        return entry.runtime_data.comfort
+        return entry.runtime_data.rules
     return None
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bool:
     if not await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         return False
-    entry.runtime_data.comfort.async_stop()
+    if (sn := entry.runtime_data.season) is not None:
+        sn.async_stop()
+        await sn.store.async_save(sn.data())  # the last resend kept (a delayed save would be lost)
+    if (vr := entry.runtime_data.rules) is not None:
+        vr.async_stop()
+        await vr.store.async_save(vr.data())  # the state as it is now (a delayed save would be lost)
     if (sim := entry.runtime_data.presence) is not None:
         entry.runtime_data.presence = None
         sim.async_stop()
@@ -2268,7 +2428,11 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     with contextlib.suppress(Exception):
         await notify.NotifyEngine(hass).async_remove()
     with contextlib.suppress(Exception):
-        await comfort.ComfortEngine(hass).async_remove()
+        await HaufloStore(hass, retired.COMFORT_STORE).async_remove()
+    with contextlib.suppress(Exception):
+        await HaufloStore(hass, season.STORE_KEY).async_remove()
+    with contextlib.suppress(Exception):
+        await HaufloStore(hass, rules.STORE_KEY).async_remove()
     # The guest log names the house's people and when guests came (personal data, HA core review 29.10): it goes with
     # the agent, and so do the links — nobody serves them any more. The dashboards stay (deliberate, keep.py).
     try:

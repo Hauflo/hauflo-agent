@@ -44,6 +44,7 @@ from homeassistant.helpers import area_registry as ar, device_registry as dr, en
 from homeassistant.util import dt as dt_util
 
 from .house import refuse
+from .natural import natural_key
 from .storage import HaufloStore
 _LOGGER = logging.getLogger(__name__)
 STORE_KEY = "hauflo.automations"
@@ -255,8 +256,8 @@ class Automations:
             "covers": out["cover"],
             "lights": out["light"],
             "scenes": out["scene"],
-            "rooms": sorted(({"area_id": a, "name": names.get(a, a), "lights": n} for a, n in rooms.items()), key=lambda r: r["name"]),
-            "cover_rooms": sorted(cover_rooms, key=lambda r: r["name"]),
+            "rooms": sorted(({"area_id": a, "name": names.get(a, a), "lights": n} for a, n in rooms.items()), key=lambda r: natural_key(r["name"])),
+            "cover_rooms": sorted(cover_rooms, key=lambda r: natural_key(r["name"])),
             "areas": names,
         }
 

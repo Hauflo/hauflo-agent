@@ -1,0 +1,926 @@
+{
+ "calls": [
+  {
+   "file": "ha/alisa.ts",
+   "kind": "rest",
+   "call": "DELETE /api/config/config_entries/flow/{x}",
+   "params": {},
+   "domains": [
+    "yandex_smart_home"
+   ]
+  },
+  {
+   "file": "ha/alisa.ts",
+   "kind": "rest",
+   "call": "GET /api/config/config_entries/flow_handlers",
+   "params": {}
+  },
+  {
+   "file": "ha/alisa.ts",
+   "kind": "rest",
+   "call": "GET /api/diagnostics/config_entry/{x}",
+   "params": {},
+   "domains": [
+    "yandex_smart_home"
+   ]
+  },
+  {
+   "file": "ha/alisa.ts",
+   "kind": "rest",
+   "call": "POST /api/config/config_entries/flow",
+   "params": {
+    "handler": "yandex_smart_home"
+   }
+  },
+  {
+   "file": "ha/alisa.ts",
+   "kind": "rest",
+   "call": "POST /api/config/config_entries/flow/{x}",
+   "params": {},
+   "domains": [
+    "yandex_smart_home"
+   ]
+  },
+  {
+   "file": "ha/alisa.ts",
+   "kind": "ws",
+   "call": "config_entries/get",
+   "params": {
+    "domain": "yandex_smart_home"
+   }
+  },
+  {
+   "file": "ha/alisa.ts",
+   "kind": "ws",
+   "call": "config/area_registry/list",
+   "params": {}
+  },
+  {
+   "file": "ha/alisa.ts",
+   "kind": "ws",
+   "call": "config/area_registry/update",
+   "params": {}
+  },
+  {
+   "file": "ha/alisa.ts",
+   "kind": "ws",
+   "call": "config/entity_registry/get_entries",
+   "params": {}
+  },
+  {
+   "file": "ha/alisa.ts",
+   "kind": "ws",
+   "call": "config/entity_registry/update",
+   "params": {}
+  },
+  {
+   "file": "ha/alisa.ts",
+   "kind": "ws",
+   "call": "config/label_registry/create",
+   "params": {}
+  },
+  {
+   "file": "ha/alisa.ts",
+   "kind": "ws",
+   "call": "config/label_registry/list",
+   "params": {}
+  },
+  {
+   "file": "ha/applyAreaSync.ts",
+   "kind": "ws",
+   "call": "config/area_registry/create",
+   "params": {}
+  },
+  {
+   "file": "ha/applyAreaSync.ts",
+   "kind": "ws",
+   "call": "config/area_registry/list",
+   "params": {}
+  },
+  {
+   "file": "ha/applyAreaSync.ts",
+   "kind": "ws",
+   "call": "config/area_registry/update",
+   "params": {}
+  },
+  {
+   "file": "ha/applyAreaSync.ts",
+   "kind": "ws",
+   "call": "config/device_registry/list",
+   "params": {}
+  },
+  {
+   "file": "ha/applyAreaSync.ts",
+   "kind": "ws",
+   "call": "config/device_registry/update",
+   "params": {}
+  },
+  {
+   "file": "ha/applyAreaSync.ts",
+   "kind": "ws",
+   "call": "config/floor_registry/create",
+   "params": {}
+  },
+  {
+   "file": "ha/applyAreaSync.ts",
+   "kind": "ws",
+   "call": "config/floor_registry/list",
+   "params": {}
+  },
+  {
+   "file": "ha/applyAreaSync.ts",
+   "kind": "ws",
+   "call": "config/floor_registry/update",
+   "params": {}
+  },
+  {
+   "file": "ha/blockRulesDeploy.ts",
+   "kind": "rest",
+   "call": "DELETE /api/config/config_entries/entry/{x}",
+   "params": {},
+   "domains": [
+    "template"
+   ]
+  },
+  {
+   "file": "ha/blockRulesDeploy.ts",
+   "kind": "rest",
+   "call": "POST /api/config/config_entries/flow",
+   "params": {
+    "handler": "template"
+   }
+  },
+  {
+   "file": "ha/blockRulesDeploy.ts",
+   "kind": "rest",
+   "call": "POST /api/config/config_entries/flow/{x}",
+   "params": {},
+   "domains": [
+    "template"
+   ]
+  },
+  {
+   "file": "ha/blockRulesDeploy.ts",
+   "kind": "rest",
+   "call": "POST /api/config/config_entries/options/flow",
+   "params": {},
+   "domains": [
+    "template"
+   ]
+  },
+  {
+   "file": "ha/blockRulesDeploy.ts",
+   "kind": "rest",
+   "call": "POST /api/config/config_entries/options/flow/{x}",
+   "params": {},
+   "domains": [
+    "template"
+   ]
+  },
+  {
+   "file": "ha/blockRulesDeploy.ts",
+   "kind": "ws",
+   "call": "config_entries/get",
+   "params": {
+    "domain": "template"
+   }
+  },
+  {
+   "file": "ha/blockRulesDeploy.ts",
+   "kind": "ws",
+   "call": "config/entity_registry/list",
+   "params": {}
+  },
+  {
+   "file": "ha/blockRulesDeploy.ts",
+   "kind": "ws",
+   "call": "config/entity_registry/update",
+   "params": {}
+  },
+  {
+   "file": "ha/blockRulesDeploy.ts",
+   "kind": "ws",
+   "call": "homeassistant/expose_entity",
+   "params": {}
+  },
+  {
+   "file": "ha/cloudVoice.ts",
+   "kind": "ws",
+   "call": "cloud/status",
+   "params": {}
+  },
+  {
+   "file": "ha/cloudVoice.ts",
+   "kind": "ws",
+   "call": "config/entity_registry/get_entries",
+   "params": {}
+  },
+  {
+   "file": "ha/cloudVoice.ts",
+   "kind": "ws",
+   "call": "homeassistant/expose_entity",
+   "params": {}
+  },
+  {
+   "file": "ha/cloudVoice.ts",
+   "kind": "ws",
+   "call": "homeassistant/expose_entity/list",
+   "params": {}
+  },
+  {
+   "file": "ha/commissioning.ts",
+   "kind": "ws",
+   "call": "call_service",
+   "params": {
+    "domain": "homeassistant",
+    "service": "update_entity"
+   }
+  },
+  {
+   "file": "ha/commissioning.ts",
+   "kind": "ws",
+   "call": "get_states",
+   "params": {}
+  },
+  {
+   "file": "ha/commissioning.ts",
+   "kind": "ws",
+   "call": "knx/group_monitor_info",
+   "params": {}
+  },
+  {
+   "file": "ha/dashboardRefresh.ts",
+   "kind": "ws",
+   "call": "config/entity_registry/list",
+   "params": {}
+  },
+  {
+   "file": "ha/dashboardRefresh.ts",
+   "kind": "ws",
+   "call": "hauflo/dashboard/save",
+   "params": {}
+  },
+  {
+   "file": "ha/dashboardRefresh.ts",
+   "kind": "ws",
+   "call": "lovelace/config",
+   "params": {}
+  },
+  {
+   "file": "ha/dashboardRefresh.ts",
+   "kind": "ws",
+   "call": "lovelace/dashboards/list",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "rest",
+   "call": "DELETE /api/config/config_entries/entry/{x}",
+   "params": {},
+   "domains": [
+    "homekit"
+   ]
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "rest",
+   "call": "GET /api/hauflo/owned",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "rest",
+   "call": "GET /api/hauflo/ranges",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "rest",
+   "call": "POST /api/hauflo/ownership",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "rest",
+   "call": "POST /api/hauflo/ranges",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "rest",
+   "call": "POST /api/hauflo/season/config",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "rest",
+   "call": "POST /api/hauflo/sidebar",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "ws",
+   "call": "call_service",
+   "params": {
+    "domain": "frontend",
+    "service": "set_theme"
+   }
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "ws",
+   "call": "config_entries/get",
+   "params": {
+    "domain": "hauflo"
+   }
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "ws",
+   "call": "config_entries/get",
+   "params": {
+    "domain": "knx"
+   }
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "ws",
+   "call": "config/area_registry/delete",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "ws",
+   "call": "config/area_registry/list",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "ws",
+   "call": "config/device_registry/remove_config_entry",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "ws",
+   "call": "config/device_registry/remove",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "ws",
+   "call": "config/entity_registry/get",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "ws",
+   "call": "config/entity_registry/list",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "ws",
+   "call": "config/entity_registry/update",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "ws",
+   "call": "config/label_registry/create",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "ws",
+   "call": "config/label_registry/delete",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "ws",
+   "call": "config/label_registry/list",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "ws",
+   "call": "frontend/get_themes",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "ws",
+   "call": "get_config",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "ws",
+   "call": "get_panels",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "ws",
+   "call": "get_states",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "ws",
+   "call": "hauflo/dashboard/plan",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "ws",
+   "call": "hauflo/dashboard/save",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "ws",
+   "call": "homeassistant/expose_entity",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "ws",
+   "call": "knx/create_entity",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "ws",
+   "call": "knx/delete_entity",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "ws",
+   "call": "knx/get_entities_by_group",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "ws",
+   "call": "knx/get_entity_config",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "ws",
+   "call": "knx/get_expose_groups",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "ws",
+   "call": "knx/get_time_server_config",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "ws",
+   "call": "knx/update_entity",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "ws",
+   "call": "knx/validate_entity",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "ws",
+   "call": "lovelace/config",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "ws",
+   "call": "lovelace/config/save",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "ws",
+   "call": "lovelace/dashboards/create",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "ws",
+   "call": "lovelace/dashboards/delete",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "ws",
+   "call": "lovelace/dashboards/list",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "ws",
+   "call": "lovelace/dashboards/update",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "ws",
+   "call": "manifest/get",
+   "params": {
+    "integration": "hauflo"
+   }
+  },
+  {
+   "file": "ha/haBackup.ts",
+   "kind": "rest",
+   "call": "GET /api/hauflo/backup",
+   "params": {}
+  },
+  {
+   "file": "ha/haBackup.ts",
+   "kind": "rest",
+   "call": "POST /api/hauflo/backup",
+   "params": {}
+  },
+  {
+   "file": "ha/haBackup.ts",
+   "kind": "ws",
+   "call": "backup/agents/info",
+   "params": {}
+  },
+  {
+   "file": "ha/haBackup.ts",
+   "kind": "ws",
+   "call": "backup/generate",
+   "params": {}
+  },
+  {
+   "file": "ha/haBackup.ts",
+   "kind": "ws",
+   "call": "backup/info",
+   "params": {}
+  },
+  {
+   "file": "ha/haBackup.ts",
+   "kind": "ws",
+   "call": "get_config",
+   "params": {}
+  },
+  {
+   "file": "ha/haClient.ts",
+   "kind": "rest",
+   "call": "POST /api/hauflo/backup",
+   "params": {}
+  },
+  {
+   "file": "ha/haClient.ts",
+   "kind": "ws",
+   "call": "unsubscribe_events",
+   "params": {}
+  },
+  {
+   "file": "ha/lampWrappers.ts",
+   "kind": "rest",
+   "call": "DELETE /api/config/config_entries/entry/{x}",
+   "params": {},
+   "domains": [
+    "switch_as_x"
+   ]
+  },
+  {
+   "file": "ha/lampWrappers.ts",
+   "kind": "rest",
+   "call": "POST /api/config/config_entries/flow",
+   "params": {
+    "handler": "switch_as_x"
+   }
+  },
+  {
+   "file": "ha/lampWrappers.ts",
+   "kind": "rest",
+   "call": "POST /api/config/config_entries/flow/{x}",
+   "params": {},
+   "domains": [
+    "switch_as_x"
+   ]
+  },
+  {
+   "file": "ha/lampWrappers.ts",
+   "kind": "ws",
+   "call": "config/entity_registry/list",
+   "params": {}
+  },
+  {
+   "file": "ha/lampWrappers.ts",
+   "kind": "ws",
+   "call": "config/entity_registry/update",
+   "params": {}
+  },
+  {
+   "file": "ha/lampWrappers.ts",
+   "kind": "ws",
+   "call": "homeassistant/expose_entity",
+   "params": {}
+  },
+  {
+   "file": "ha/roomLighting.ts",
+   "kind": "rest",
+   "call": "DELETE /api/config/config_entries/entry/{x}",
+   "params": {},
+   "domains": [
+    "group"
+   ]
+  },
+  {
+   "file": "ha/roomLighting.ts",
+   "kind": "rest",
+   "call": "DELETE /api/config/scene/config/{x}",
+   "params": {}
+  },
+  {
+   "file": "ha/roomLighting.ts",
+   "kind": "rest",
+   "call": "GET /api/config/scene/config/{x}",
+   "params": {}
+  },
+  {
+   "file": "ha/roomLighting.ts",
+   "kind": "rest",
+   "call": "POST /api/config/config_entries/flow",
+   "params": {
+    "handler": "group"
+   }
+  },
+  {
+   "file": "ha/roomLighting.ts",
+   "kind": "rest",
+   "call": "POST /api/config/config_entries/flow/{x}",
+   "params": {},
+   "domains": [
+    "group"
+   ]
+  },
+  {
+   "file": "ha/roomLighting.ts",
+   "kind": "rest",
+   "call": "POST /api/config/config_entries/options/flow",
+   "params": {},
+   "domains": [
+    "group"
+   ]
+  },
+  {
+   "file": "ha/roomLighting.ts",
+   "kind": "rest",
+   "call": "POST /api/config/config_entries/options/flow/{x}",
+   "params": {},
+   "domains": [
+    "group"
+   ]
+  },
+  {
+   "file": "ha/roomLighting.ts",
+   "kind": "rest",
+   "call": "POST /api/config/scene/config/{x}",
+   "params": {}
+  },
+  {
+   "file": "ha/roomLighting.ts",
+   "kind": "ws",
+   "call": "config_entries/get",
+   "params": {
+    "domain": "group"
+   }
+  },
+  {
+   "file": "ha/roomLighting.ts",
+   "kind": "ws",
+   "call": "config/entity_registry/list",
+   "params": {}
+  },
+  {
+   "file": "ha/roomLighting.ts",
+   "kind": "ws",
+   "call": "config/entity_registry/update",
+   "params": {}
+  },
+  {
+   "file": "ha/roomLighting.ts",
+   "kind": "ws",
+   "call": "homeassistant/expose_entity",
+   "params": {}
+  },
+  {
+   "file": "ha/siri.ts",
+   "kind": "rest",
+   "call": "DELETE /api/config/config_entries/flow/{x}",
+   "params": {},
+   "domains": [
+    "homekit"
+   ]
+  },
+  {
+   "file": "ha/siri.ts",
+   "kind": "rest",
+   "call": "GET /api/diagnostics/config_entry/{x}",
+   "params": {},
+   "domains": [
+    "homekit"
+   ]
+  },
+  {
+   "file": "ha/siri.ts",
+   "kind": "rest",
+   "call": "GET /api/homekit/pairingqr",
+   "params": {}
+  },
+  {
+   "file": "ha/siri.ts",
+   "kind": "rest",
+   "call": "POST /api/config/config_entries/flow",
+   "params": {
+    "handler": "homekit"
+   }
+  },
+  {
+   "file": "ha/siri.ts",
+   "kind": "rest",
+   "call": "POST /api/config/config_entries/flow/{x}",
+   "params": {},
+   "domains": [
+    "homekit"
+   ]
+  },
+  {
+   "file": "ha/siri.ts",
+   "kind": "rest",
+   "call": "POST /api/config/config_entries/options/flow",
+   "params": {},
+   "domains": [
+    "homekit"
+   ]
+  },
+  {
+   "file": "ha/siri.ts",
+   "kind": "rest",
+   "call": "POST /api/config/config_entries/options/flow/{x}",
+   "params": {},
+   "domains": [
+    "homekit"
+   ]
+  },
+  {
+   "file": "ha/siri.ts",
+   "kind": "ws",
+   "call": "config_entries/get",
+   "params": {
+    "domain": "homekit"
+   }
+  },
+  {
+   "file": "ha/siri.ts",
+   "kind": "ws",
+   "call": "config/area_registry/list",
+   "params": {}
+  },
+  {
+   "file": "ha/siri.ts",
+   "kind": "ws",
+   "call": "config/entity_registry/get_entries",
+   "params": {}
+  },
+  {
+   "file": "ha/siri.ts",
+   "kind": "ws",
+   "call": "config/floor_registry/list",
+   "params": {}
+  },
+  {
+   "file": "ha/siri.ts",
+   "kind": "ws",
+   "call": "persistent_notification/subscribe",
+   "params": {}
+  },
+  {
+   "file": "handover/passportData.ts",
+   "kind": "rest",
+   "call": "GET /api/hauflo/ownership",
+   "params": {}
+  },
+  {
+   "file": "index.ts",
+   "kind": "rest",
+   "call": "DELETE /api/config/config_entries/flow/{x}",
+   "params": {},
+   "domains": [
+    "knx"
+   ]
+  },
+  {
+   "file": "index.ts",
+   "kind": "rest",
+   "call": "GET /api/hauflo/notify",
+   "params": {}
+  },
+  {
+   "file": "index.ts",
+   "kind": "rest",
+   "call": "GET /api/hauflo/rules",
+   "params": {}
+  },
+  {
+   "file": "index.ts",
+   "kind": "rest",
+   "call": "GET /api/hauflo/season/config",
+   "params": {}
+  },
+  {
+   "file": "index.ts",
+   "kind": "rest",
+   "call": "POST /api/config/config_entries/flow",
+   "params": {
+    "handler": "knx"
+   }
+  },
+  {
+   "file": "index.ts",
+   "kind": "rest",
+   "call": "POST /api/config/config_entries/flow/{x}",
+   "params": {},
+   "domains": [
+    "knx"
+   ]
+  },
+  {
+   "file": "index.ts",
+   "kind": "rest",
+   "call": "POST /api/hauflo/alarms",
+   "params": {}
+  },
+  {
+   "file": "index.ts",
+   "kind": "rest",
+   "call": "POST /api/hauflo/notify",
+   "params": {}
+  },
+  {
+   "file": "index.ts",
+   "kind": "rest",
+   "call": "POST /api/hauflo/notify/test",
+   "params": {}
+  },
+  {
+   "file": "index.ts",
+   "kind": "rest",
+   "call": "POST /api/hauflo/rules",
+   "params": {}
+  },
+  {
+   "file": "index.ts",
+   "kind": "ws",
+   "call": "cloud/status",
+   "params": {}
+  },
+  {
+   "file": "index.ts",
+   "kind": "ws",
+   "call": "config_entries/get",
+   "params": {
+    "domain": "knx"
+   }
+  },
+  {
+   "file": "index.ts",
+   "kind": "ws",
+   "call": "knx/get_knx_project",
+   "params": {}
+  },
+  {
+   "file": "index.ts",
+   "kind": "ws",
+   "call": "knx/project_file_process",
+   "params": {}
+  }
+ ],
+ "templates": [
+  "{{ states('switch.vent_a') not in ['off', 'unavailable', 'unknown'] and not (states('light.room_b') not in ['off', 'unavailable', 'unknown']) }}",
+  "{{ (states('switch.vent_a') not in ['off', 'unavailable', 'unknown'] and not (states('cover.blind_c') in ['open', 'opening'])) and (states('light.room_b') not in ['off', 'unavailable', 'unknown'] or states('binary_sensor.window_d') not in ['off', 'unavailable', 'unknown']) }}",
+  "{{ ((states.switch.vent_a is not none and states('switch.vent_a') not in ['off', 'unavailable', 'unknown'] and (now() - states.switch.vent_a.last_changed).total_seconds() > 300) or (states.binary_sensor.window_d is not none and states('binary_sensor.window_d') not in ['off', 'unavailable', 'unknown'] and (now() - states.binary_sensor.window_d.last_changed).total_seconds() > 300)) and not (not (states('cover.blind_c') in ['open', 'opening'])) }}",
+  "{{ (states.binary_sensor.window_d is not none and states('binary_sensor.window_d') not in ['off', 'unavailable', 'unknown'] and (now() - states.binary_sensor.window_d.last_changed).total_seconds() > 600) }}",
+  "{{ (states.cover.blind_c is not none and not (not (states('cover.blind_c') in ['open', 'opening'])) and (now() - states.cover.blind_c.last_changed).total_seconds() > 900) }}",
+  "{{ ((states.switch.vent_a is not none and (now() - states.switch.vent_a.last_reported).total_seconds() > 3600) and (states.light.room_b is not none and (now() - states.light.room_b.last_reported).total_seconds() > 3600)) }}",
+  "{{ (states('switch.vent_a') not in ['off', 'unavailable', 'unknown'] and not (not (states('cover.blind_c') in ['open', 'opening']))) or ((states.binary_sensor.window_d is not none and states('binary_sensor.window_d') not in ['off', 'unavailable', 'unknown'] and (now() - states.binary_sensor.window_d.last_changed).total_seconds() > 180)) }}"
+ ],
+ "entities": [
+  "binary_sensor.window_d",
+  "cover.blind_c",
+  "light.room_b",
+  "switch.vent_a"
+ ]
+}

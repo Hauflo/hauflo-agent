@@ -23,6 +23,7 @@ from homeassistant.components.http import KEY_HASS, HomeAssistantView
 from homeassistant.core import HomeAssistant
 
 from . import service as service_info
+from .natural import natural_key
 from .storage import HaufloStore
 
 STORE_KEY = "hauflo.house"
@@ -172,7 +173,7 @@ class HouseView(HomeAssistantView):
         if user and user.is_admin:
             people = [u for u in await hass.auth.async_get_users() if not u.system_generated and u.is_active]
             out["restricted"] = list(data.get("restricted") or [])
-            out["users"] = [{"id": u.id, "name": u.name or "", "admin": u.is_admin} for u in sorted(people, key=lambda u: (not u.is_admin, (u.name or "").lower()))]
+            out["users"] = [{"id": u.id, "name": u.name or "", "admin": u.is_admin} for u in sorted(people, key=lambda u: (not u.is_admin, natural_key(u.name)))]
         return self.json(out)
 
     async def post(self, request):

@@ -45,6 +45,7 @@ from homeassistant.util import dt as dt_util
 from .house import refuse
 from .storage import HaufloStore
 from .const import LOCKED_CODE
+from .tuning import TUNING
 
 _LOGGER = logging.getLogger(__name__)
 STORE_KEY = "hauflo.scenes"
@@ -60,9 +61,10 @@ _FAMILY = re.compile(r"hauflo_fam_([a-z0-9]{1,12})_([lc])_[a-z0-9]{6,16}")
 _HAUFLO = re.compile(r"(?:hauflo|easyha)_(?!fam_)[a-z0-9]{1,12}_(?:cv_)?[a-z0-9]{1,16}")
 _CONTROL = re.compile("[\x00-\x1f\x7f-\x9f  ]+")
 _FILE_LOCK = asyncio.Lock()
+_T = TUNING["scenes"]
 # KNX scene learn: one per scene per LEARN_EVERY seconds, LEARN_PER_MINUTE for the whole house.
-LEARN_EVERY = 5.0
-LEARN_PER_MINUTE = 6
+LEARN_EVERY = _T["learn_every_s"]
+LEARN_PER_MINUTE = _T["learn_per_minute"]
 MAX_NAMES = 200
 _clock = time.monotonic  # the tests move it
 

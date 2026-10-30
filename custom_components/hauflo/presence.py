@@ -50,37 +50,39 @@ from homeassistant.util import dt as dt_util
 
 from .house import refuse
 from .storage import HaufloStore
+from .tuning import TUNING
 _LOGGER = logging.getLogger(__name__)
 STORE_KEY = "hauflo.presence"
-LEARN_DAYS = 14
-JITTER = 15  # ± minutes
-SLOT = 15  # minutes
-SLOTS = 96
+_T = TUNING["presence"]
+LEARN_DAYS = _T["learn_days"]
+JITTER = _T["jitter_min"]  # ± minutes
+SLOT = _T["slot_min"]  # minutes
+SLOTS = _T["slots"]
 # A «day» here runs 04:00 → 04:00, so an evening that ends at 00:40 is still that day's evening. Minutes from 04:00:
-EVENING = (660, 1260)  # 15:00 … 01:00
-MORNING = (0, 480)  # 04:00 … 12:00 — blinds opening
-AFTERNOON = (480, 1380)  # 12:00 … 03:00 — blinds closing
-CAP_END = 1260  # lights off by 01:00
-DEFAULT_END = 1140  # 23:00 when the family's own end isn't known
-DARK_BEFORE = 20  # lights from sunset − 20 min
-P_MIN = 0.25  # a room counts as «usually lit» in a slot from this probability
-MIN_EVENINGS = 3
-MAX_ROOMS = 3
-LIGHTS_PER_ROOM = 2
-SUN_BRIGHTNESS = 60
-COALESCE = 180  # seconds: blind changes this close together are one
-MANUAL = 600  # seconds: touched by someone at home this recently — left alone
-WATCH_OFF = 1800  # seconds a light it lit that reads «off» after a restart is watched (KNX answers late)
-OURS_AFTER = 180  # seconds a device's reports after our command are still ours (a blind travels, KNX answers)
-MAX_EVENTS = 200  # a day
-LOG_SIZE = 20
-MAX_UNTIL_DAYS = 90
-REPLAN = (0, 5)
+EVENING = tuple(_T["evening"])  # 15:00 … 01:00
+MORNING = tuple(_T["morning"])  # 04:00 … 12:00 — blinds opening
+AFTERNOON = tuple(_T["afternoon"])  # 12:00 … 03:00 — blinds closing
+CAP_END = _T["cap_end"]  # lights off by 01:00
+DEFAULT_END = _T["default_end"]  # 23:00 when the family's own end isn't known
+DARK_BEFORE = _T["dark_before_min"]  # lights from sunset − 20 min
+P_MIN = _T["p_min"]  # a room counts as «usually lit» in a slot from this probability
+MIN_EVENINGS = _T["min_evenings"]
+MAX_ROOMS = _T["max_rooms"]
+LIGHTS_PER_ROOM = _T["lights_per_room"]
+SUN_BRIGHTNESS = _T["sun_brightness"]
+COALESCE = _T["coalesce_s"]  # seconds: blind changes this close together are one
+MANUAL = _T["manual_s"]  # seconds: touched by someone at home this recently — left alone
+WATCH_OFF = _T["watch_off_s"]  # seconds a light it lit that reads «off» after a restart is watched (KNX answers late)
+OURS_AFTER = _T["ours_after_s"]  # seconds a device's reports after our command are still ours (a blind travels, KNX answers)
+MAX_EVENTS = _T["max_events"]  # a day
+LOG_SIZE = _T["log_size"]
+MAX_UNTIL_DAYS = _T["max_until_days"]
+REPLAN = tuple(_T["replan"])
 MODES = ("learned", "sun")
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
-_LIVING = re.compile(r"гостин|кухн|столов|зал\b|living|kitchen|lounge|dining", re.I)
-MAX_SKIP = 200
-MAX_OURS = 3000  # its own commands remembered (14 days of them) — kept out of what it learns
+_LIVING = re.compile(_T["living_words"], re.I)
+MAX_SKIP = _T["max_skip"]
+MAX_OURS = _T["max_ours"]  # its own commands remembered (14 days of them) — kept out of what it learns
 DEFAULT: dict[str, Any] = {"enabled": False, "until": None, "lights": True, "covers": True, "mode": "learned", "since": None, "by": None, "log": [], "lit": [], "lit_at": {}, "ours": [], "skip_rooms": []}
 
 

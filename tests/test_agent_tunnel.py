@@ -635,7 +635,7 @@ async def test_views_are_admin_only_and_validate(hass: HomeAssistant, entry) -> 
     await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
     assert (await rng.post(Req(hass, body={"addresses": []}))).status == 409
-    for fn in (hauflo._ownership, hauflo._engine, hauflo._season, hauflo._automations, hauflo._scenes, hauflo._presence, hauflo._guest, hauflo._comfort):
+    for fn in (hauflo._ownership, hauflo._engine, hauflo._season, hauflo._automations, hauflo._scenes, hauflo._presence, hauflo._guest):
         assert fn(hass) is None
 
 
@@ -643,7 +643,7 @@ async def test_getters_with_a_loaded_entry(hass: HomeAssistant, entry) -> None:
     assert hauflo._automations(hass) is hauflo._automations(hass) is not None
     assert hauflo._scenes(hass) is hauflo._scenes(hass) is not None
     assert hauflo._season(hass) is not None and hauflo._presence(hass) is not None and hauflo._guest(hass) is not None
-    assert hauflo._comfort(hass) is not None and hauflo._ownership(hass) is not None
+    assert hauflo._ownership(hass) is not None
 
 
 async def test_ha_stop_stops_the_agent_and_a_new_link_reloads(hass: HomeAssistant, entry) -> None:

@@ -33,7 +33,8 @@ async def entry(hass: HomeAssistant):
 
 
 @pytest.fixture
-def bus(hass: HomeAssistant):
+def bus(hass: HomeAssistant, entry):
+    entry.runtime_data.season.owns = lambda eid: True  # these are Hauflo's own climates (the ownership rule: test_season_setup)
     made: list[tuple[str, object]] = []
 
     async def hvac(call: ServiceCall) -> None:

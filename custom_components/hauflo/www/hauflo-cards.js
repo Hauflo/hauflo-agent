@@ -583,6 +583,10 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
   // included — rescales ALL our text live, while boxes, paddings and icons keep their size (the layout stays intact).
   // --hf-ts = chosen size / detected phone text scale: «Как в телефоне» leaves it 1 (the app's enlargement stays).
   const TS = { mode: "phone", k: 1 };
+  let TS_BIG = false;
+  let TS_S = 1;
+  const TZ_MEMO = new Map();
+  const TS_CARDS = new Set();
   // «Ещё крупнее» (family review round 2: «шрифт крупнее, чем крупнее» for a 72-year-old) — 140 %.
   const TS_MULT = { normal: 1, big: 1.15, huge: 1.4, small: 0.9 };
   const tsGet = () => {
@@ -614,11 +618,63 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
       return 1;
     }
   };
+  // iPhone/iPad: WKWebView does not enlarge px text for Settings → Display → Text Size (Android WebView does), but it
+  // reports the user's size through `font: -apple-system-body` (17px at the default). «Как в телефоне» = that size / 17,
+  // clamped. SAME rules as frontend/src/lib/textScale.ts and the guest page (scripts/check-text-scale.mjs compares them).
+  // (`CSS` is this file's stylesheet string, so the browser API is reached as window.CSS)
+  const TEXT_SCALE = { base: 17, min: 0.85, max: 1.35 };
+  // A card narrower than a band's width takes at most that band's factor (a half-width cell on a phone cannot hold the
+  // largest text: words would break). Tuned by measurement: in the band every word of the longest typical label fits or hyphenates once.
+  const TEXT_BANDS = [[240, 1.12], [320, 1.2]];
+  const bandCap = (w) => (TEXT_BANDS.find(([max]) => w < max) || [0, Infinity])[1];
+  const tsApple = () => {
+    try {
+      const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+      if (!ios || !document.body || !window.CSS?.supports?.("font", "-apple-system-body")) return 1;
+      const el = document.createElement("span");
+      el.style.cssText = "position:absolute;left:-9999px;top:0;visibility:hidden;font:-apple-system-body";
+      document.body.appendChild(el);
+      const px = parseFloat(getComputedStyle(el).fontSize);
+      el.remove();
+      if (!(px > 0)) return 1;
+      const k = Math.min(TEXT_SCALE.max, Math.max(TEXT_SCALE.min, px / TEXT_SCALE.base));
+      return Math.abs(k - 1) < 0.01 ? 1 : Math.round(k * 1000) / 1000;
+    } catch (e) {
+      return 1;
+    }
+  };
+  /** This card's own factor: the phone's, but no more than its width carries (--hf-ts on the card overrides the page's). */
+  const tsCard = (c) => {
+    const w = c.getBoundingClientRect().width;
+    const k = w > 0 ? Math.min(TS_S, bandCap(w)) : TS_S;
+    if (TS_S > 1.01 && k < TS_S) c.style.setProperty("--hf-ts", String(k));
+    else c.style.removeProperty("--hf-ts");
+  };
+  const TS_RO = typeof ResizeObserver === "function" ? new ResizeObserver((es) => es.forEach((e) => tsCard(e.target))) : null;
   const tsApply = () => {
     TS.mode = tsGet();
     TS.k = TS.mode === "phone" ? 1 : tsDetect();
-    const s = TS.mode === "phone" ? 1 : Math.round((TS_MULT[TS.mode] / TS.k) * 1000) / 1000;
+    const s = TS.mode === "phone" ? tsApple() : Math.round((TS_MULT[TS.mode] / TS.k) * 1000) / 1000;
     document.documentElement.style.setProperty("--hf-ts", String(s));
+    // Enlarged text in a narrow cell (two cards a row on a phone): the cards get TZ_BIG below — drawn again when it flips.
+    TS_S = s;
+    const big = s > 1.01;
+    for (const r of [...TS_CARDS]) {
+      const c = r.deref();
+      if (c) tsCard(c);
+    }
+    if (big !== TS_BIG) {
+      TS_BIG = big;
+      TZ_MEMO.clear();
+      for (const r of [...TS_CARDS]) {
+        const c = r.deref();
+        if (!c) TS_CARDS.delete(r);
+        else {
+          c._sig = "";
+          if (c._hass && c._config && c.isConnected) c._update();
+        }
+      }
+    }
   };
   const tsSet = (mode) => {
     try {
@@ -633,12 +689,14 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
   else document.addEventListener("DOMContentLoaded", tsApply, { once: true });
   // A changed system font / the app back from the background / another tab of the same device.
   for (const [t, n] of [["resize", window], ["visibilitychange", document], ["storage", window]]) n.addEventListener(t, () => (t !== "visibilitychange" || !document.hidden) && tsApply());
-  const TZ_MEMO = new Map();
   const TZ_FONT = /(font:\s*(?:[^;}"(),]*?\s)?)(\d*\.?\d+)px(\/\d*\.?\d+(?:px)?)?(?=[\s;}"'])|(font-size:\s*)(\d*\.?\d+)px/g;
   const tzPx = (n) => `calc(${n}px*var(--hf-ts,1))`;
+  // Only when the text is enlarged (TS_BIG): long words and labels wrap inside a narrow cell instead of running out of it
+  // (card review: «Протечка» clipped at 1.35 in a half-width cell). At the default size the CSS is untouched.
+  const TZ_BIG_CSS = `h1,h2,.hl,.w,.sub,.nm,.tt,.caps,.lv,.goal,.big .st,.big .sub{hyphens:auto;overflow-wrap:break-word}.rel,.abs,.txt{overflow-wrap:anywhere}.hl{flex-wrap:wrap}.hl>*,.tx{min-width:0}.rel,.abs,.txt{white-space:normal!important}.vl2{flex-wrap:wrap}.vl2 button{white-space:normal;height:auto;min-height:44px;line-height:1.15;padding-top:6px;padding-bottom:6px}.sl:not([data-sl]):not(.bri) span{overflow-wrap:anywhere;min-width:0;white-space:normal!important;line-height:1.1;padding-right:12px!important;text-align:center}.g .hd{flex-wrap:wrap;gap:0 8px}.btns{flex-wrap:wrap}.btns button{flex:1 1 auto;padding:0 10px;white-space:normal}.big>div:not(.t){min-width:0}.sl:not([data-sl]):not(.bri){height:auto!important;min-height:68px;padding:8px 0}.pg button{white-space:normal}.more .mr{flex-wrap:wrap}.more .mr>span{flex:1 1 5em;min-width:5em}@container (max-width:240px){.lst{grid-template-columns:1fr}.big{flex-direction:column;align-items:flex-start;gap:10px}.modes{flex-wrap:wrap}.modes button{flex:1 1 auto;padding:0 10px}}@container (max-width:300px){.sl:not([data-sl]):not(.bri){display:block;padding:0;border-radius:34px 34px 22px 22px}.sl:not([data-sl]):not(.bri) span{display:block;padding:68px 16px 12px!important}}`;
   const TZ = (css, memo = true) => {
     if (memo && TZ_MEMO.has(css)) return TZ_MEMO.get(css);
-    const out = css.replace(TZ_FONT, (m, pre, n, lh, pre2, n2) => (pre2 ? pre2 + tzPx(n2) : pre + tzPx(n) + (lh ? (lh.endsWith("px") ? "/" + tzPx(lh.slice(1, -2)) : lh) : "")));
+    const out = css.replace(TZ_FONT, (m, pre, n, lh, pre2, n2) => (pre2 ? pre2 + tzPx(n2) : pre + tzPx(n) + (lh ? (lh.endsWith("px") ? "/" + tzPx(lh.slice(1, -2)) : lh) : ""))) + (memo && TS_BIG ? TZ_BIG_CSS : "");
     if (memo) {
       if (TZ_MEMO.size > 40) TZ_MEMO.clear();
       TZ_MEMO.set(css, out);
@@ -2035,7 +2093,7 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
     return (state === "heat" && (now === "heat" || now === "idle")) || (state === "cool" && (now === "cool" || now === "idle")) || (state === "dry" && now === "dry") || (state === "fan_only" && now === "fan") ? "" : m;
   };
   /** A name with the separators a strip left at its ends trimmed («Мастер спальня, » → «Мастер спальня»). */
-  const trimSep = (s) => String(s ?? "").replace(/^[\s,;·|\-–—:]+|[\s,;·|\-–—:]+$/g, "").trim();
+  const trimSep = (s) => String(s ?? "").replace(/^[\s,;·•|/\-–—:]+|[\s,;·•|/\-–—:]+$/g, "").trim();
   let TOAST_T;
   /** A short confirmation at the bottom (no button): «Сценарий «Вечер» включён». */
   const okToast = (text) => {
@@ -2301,6 +2359,9 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
       super();
       this.attachShadow({ mode: "open" });
       this._sig = "";
+      TS_CARDS.add(new WeakRef(this));
+      TS_RO?.observe(this);
+      // redrawn when the text size flips (tsApply); WeakRef: no listener to remove
       // A card that hides itself (hideCard) stays in HA's card wrapper — it shows again by itself when there is
       // something to show (HA's hui-card keeps an element with this flag connected).
       this.connectedWhileHidden = true;
@@ -3201,11 +3262,6 @@ ${rows.map((r) => `<div class="rw"><span class="caps sub">${esc(r.title || (r.ki
       const opts = useModes ? modes.map((m) => [m, HVAC[m], known && s.state === m]) : presets.map((p) => [p, PRESET[p] || p, known && a.preset_mode === p && !(p === "standby" && now === "heat")]);
       const digits = step < 1 && target !== undefined && target % 1 ? 1 : 0;
       const readings = this.readings();
-      // «Комфорт» of the agent (comfort.py): the house's season beside the label, and in winter the floor's setpoint
-      // the agent keeps now — the client sees why the room warms (owner 25.10).
-      const season = a.house_mode === "summer" ? "Лето" : a.house_mode === "winter" ? "Зима" : "";
-      const fl = season === "Зима" && Array.isArray(a.floor_targets) ? a.floor_targets.map(num).filter((v) => v !== undefined) : [];
-      const floorNow = fl.length ? ` · пол ${Math.min(...fl) === Math.max(...fl) ? fmt(fl[0]) : `${fmt(Math.min(...fl))}–${fmt(Math.max(...fl))}`}°` : "";
       const chart = this.chart(this._config.entity, this._config.floor ? "Пол" : "В комнате", tone ? `${tone}${calm ? " calm" : ""}` : "", 96);
       // A thermostat of another integration may take no setpoint at all (features: TARGET_TEMPERATURE 1, RANGE 2): no hint, no scale.
       const fixed = target === undefined && !pair && num(a.supported_features) !== undefined && (num(a.supported_features) & 3) === 0 && !["unavailable", "unknown"].includes(s.state);
@@ -3217,9 +3273,9 @@ ${rows.map((r) => `<div class="rw"><span class="caps sub">${esc(r.title || (r.ki
       // Just «+» and «−» (owner 29.10: «очевидно, что + теплее − прохладнее»); the words are for screen readers.
       const stBtns = target === undefined || frost ? "" : `<div class="st"><button data-d="${step}" aria-label="Теплее на ${stp}°">+</button><button data-d="${-step}" aria-label="Холоднее на ${stp}°">−</button></div>`;
       return `<div class="glass c ${cls}"><div class="glow"></div><div style="position:relative">
-<div class="top"><span class="caps">${esc(this._config.label || "Климат")}${season ? ` · ${season}` : ""}</span></div>
+<div class="top"><span class="caps">${esc(this._config.label || "Климат")}</span></div>
 <div class="nr">${bigTgt}${stBtns}</div>${noTarget}
-<div class="sub">${small ? `${esc(small)} ` : ""}${doing ? `<span class="act${fault ? " bad" : frost ? " frost" : now ? ` k-${now}` : ""}"><i></i>${doing}</span>` : ""}${valveIcons(this._hass, this._config.activity?.valves)}${floorNow}${hum !== undefined ? ` · влажность ${fmt(hum)} %` : ""}</div>${readings.length ? this.readingsRow(readings) : ""}${pairRow}
+<div class="sub">${small ? `${esc(small)} ` : ""}${doing ? `<span class="act${fault ? " bad" : frost ? " frost" : now ? ` k-${now}` : ""}"><i></i>${doing}</span>` : ""}${valveIcons(this._hass, this._config.activity?.valves)}${hum !== undefined ? ` · влажность ${fmt(hum)} %` : ""}</div>${readings.length ? this.readingsRow(readings) : ""}${pairRow}
 ${chart}
 ${fixed || frost ? "" : `<div class="scale" data-min="${min}" data-max="${max}" data-step="${step}"${pair ? ` data-pair="1"` : ""}><div class="ticks">${ticks}</div><div class="ends"><span>${fmt(min)}°</span><span>проведите, чтобы изменить</span><span>${fmt(max)}°</span></div></div>`}
 ${opts.length ? `<div class="mh">Режим</div><div class="modes">${opts.slice(0, 5).map(([k, l, on]) => `<button class="${!on ? "" : useModes ? (climateTone(null, now, k) ? `on mk m-${climateTone(null, now, k)}` : "on") : tone ? "on mk" : "on"}" data-${useModes ? "m" : "p"}="${esc(k)}" aria-pressed="${!!on}">${esc(l)}</button>`).join("")}</div>` : ""}
@@ -5013,7 +5069,7 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
       const ids = Object.values(h.entities || {})
         .filter((e) => !e.hidden && !e.entity_category && (e.area_id ? e.area_id === area : !!e.device_id && h.devices?.[e.device_id]?.area_id === area))
         .map((e) => e.entity_id)
-        .sort((a, b) => this.label(a).localeCompare(this.label(b)));
+        .sort((a, b) => this.label(a).localeCompare(this.label(b), undefined, { numeric: true, sensitivity: "base" }));
       this._memo = { ents: h.entities, devs: h.devices, area, ids };
       return ids;
     }
@@ -7696,10 +7752,23 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
       ru: {
         title: "Настройки", close: "Закрыть", theme: "Тема", light: "Светлая", dark: "Тёмная", auto: "Как на телефоне",
         themeHint: "Запоминается для вас. «Как на телефоне» — днём светлая, ночью тёмная, если так настроен телефон.",
-        season: "Сезон", winter: "Зима", winterSub: "кондиционеры греют", summer: "Лето", summerSub: "кондиционеры охлаждают",
-        now: (m) => `Сейчас: ${m === "heat" ? "зима — кондиционеры на обогреве" : "лето — кондиционеры на охлаждении"}.`,
+        // The switch's wording, as the integrator chose (agent season.py «labels»): the same buttons, other words.
+        L: {
+          season: {
+            season: "Сезон", winter: "Зима", winterSub: "кондиционеры греют", summer: "Лето", summerSub: "кондиционеры охлаждают",
+            now: (m) => `Сейчас: ${m === "heat" ? "зима — кондиционеры на обогреве" : "лето — кондиционеры на охлаждении"}.`,
+            last: (m) => (m === "heat" ? "зима" : "лето"), to: (m) => (m === "heat" ? "зиму" : "лето"), yesWinter: "Да, зима", yesSummer: "Да, лето",
+          },
+          mode: {
+            season: "Обогрев / Охлаждение", winter: "Обогрев", winterSub: "кондиционеры греют", summer: "Охлаждение", summerSub: "кондиционеры охлаждают",
+            now: (m) => `Сейчас: ${m === "heat" ? "обогрев" : "охлаждение"}.`,
+            last: (m) => (m === "heat" ? "обогрев" : "охлаждение"), to: (m) => (m === "heat" ? "обогрев" : "охлаждение"), yesWinter: "Да, обогрев", yesSummer: "Да, охлаждение",
+          },
+        },
         mixed: (h, c) => `Сейчас по-разному: на обогреве ${h}, на охлаждении ${c}.`,
-        allOff: (m) => `Кондиционеры выключены.${m ? ` Последний выбор — ${m === "heat" ? "зима" : "лето"}.` : ""}`,
+        allOff: (last) => `Кондиционеры выключены.${last ? ` Последний выбор — ${last}.` : ""}`,
+        suggest: (to, sg) => `Похоже, пора на ${to} — переключить? На улице среднесуточная ${sg.to === "heat" ? "ниже" : "выше"} ${sg.threshold}° уже ${sg.days} дн. подряд.`,
+        suggestYes: "Переключить", suggestLater: "Не сейчас",
         seasonHint: (n) => `Одной кнопкой — все ${n} кондиционер${n % 10 === 1 && n % 100 !== 11 ? "" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? "а" : "ов"} дома. Выключенные не включаются. Тёплые полы и батареи не трогаем.`,
         busy: "Переключаем…",
         done: (r) => [r.changed.length && `Переключили: ${r.changed.length}.`, r.sent.length && `Выключенным задан режим (не включали): ${r.names(r.sent)}.`, r.skipped.length && `Выключены, не трогали: ${r.names(r.skipped)} — включите и выберите режим в комнате.`, r.failed.length && `Не ответили: ${r.names(r.failed)}.`].filter(Boolean).join(" ") || "Уже так.",
@@ -7720,7 +7789,7 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
         fav: "Избранное", unfav: "Убрать", favHint: "Долго нажмите на свет, штору или сценарий → «В избранное». Избранное — сверху «Главной», только у вас.",
         myRoom: "Моя комната", myRoomHint: "Ваша комната — первой в «Избранном» на «Главной».",
         seasonAsk: (m, n) => `Точно? Все ${n} кондиционер${n % 10 === 1 && n % 100 !== 11 ? "" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? "а" : "ов"} дома переключатся на ${m === "heat" ? "обогрев" : "охлаждение"}.`,
-        yesWinter: "Да, зима", yesSummer: "Да, лето", cancel: "Отмена",
+        cancel: "Отмена",
         editors: "Кто может менять настройки дома", editorsHint: "Как в Google Home: все взрослые дома равны. Отметьте ребёнка — «Ограниченный (детский) профиль»: он управляет светом, шторами и температурой и принимает аварии, но не меняет автоматизации, сценарии, сезон, «Нет дома», гостевые ссылки, названия и порядок блоков.",
         restricted: "Ограниченный (детский) профиль",
         editorsMe: (ok) => (ok ? "Вы можете менять настройки дома." : "У вас детский профиль: свет, шторы и температура — ваши, настройки дома меняют взрослые."), admin: "администратор", editorsError: "Не сохранилось — проверьте связь с домом.",
@@ -7729,10 +7798,22 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
       en: {
         title: "Settings", close: "Close", theme: "Theme", light: "Light", dark: "Dark", auto: "As the phone",
         themeHint: "Kept for you. «As the phone» follows the phone's light or dark mode.",
-        season: "Season", winter: "Winter", winterSub: "ACs heat", summer: "Summer", summerSub: "ACs cool",
-        now: (m) => `Now: ${m === "heat" ? "winter — the ACs heat" : "summer — the ACs cool"}.`,
+        L: {
+          season: {
+            season: "Season", winter: "Winter", winterSub: "ACs heat", summer: "Summer", summerSub: "ACs cool",
+            now: (m) => `Now: ${m === "heat" ? "winter — the ACs heat" : "summer — the ACs cool"}.`,
+            last: (m) => (m === "heat" ? "winter" : "summer"), to: (m) => (m === "heat" ? "winter" : "summer"), yesWinter: "Yes, winter", yesSummer: "Yes, summer",
+          },
+          mode: {
+            season: "Heating / Cooling", winter: "Heating", winterSub: "ACs heat", summer: "Cooling", summerSub: "ACs cool",
+            now: (m) => `Now: ${m === "heat" ? "heating" : "cooling"}.`,
+            last: (m) => (m === "heat" ? "heating" : "cooling"), to: (m) => (m === "heat" ? "heating" : "cooling"), yesWinter: "Yes, heating", yesSummer: "Yes, cooling",
+          },
+        },
         mixed: (h, c) => `Now mixed: ${h} heating, ${c} cooling.`,
-        allOff: (m) => `The ACs are off.${m ? ` Last chosen: ${m === "heat" ? "winter" : "summer"}.` : ""}`,
+        allOff: (last) => `The ACs are off.${last ? ` Last chosen: ${last}.` : ""}`,
+        suggest: (to, sg) => `Looks like it's time for ${to} — switch? Outside, the daily average has been ${sg.to === "heat" ? "below" : "above"} ${sg.threshold}° for ${sg.days} days in a row.`,
+        suggestYes: "Switch", suggestLater: "Not now",
         seasonHint: (n) => `One tap for all ${n} AC${n === 1 ? "" : "s"} of the house. The ones off stay off. Floor heating and radiators aren't touched.`,
         busy: "Switching…",
         done: (r) => [r.changed.length && `Switched: ${r.changed.length}.`, r.sent.length && `Mode set on the ones off (not switched on): ${r.names(r.sent)}.`, r.skipped.length && `Off, left as they are: ${r.names(r.skipped)} — switch on and pick the mode in the room.`, r.failed.length && `No answer: ${r.names(r.failed)}.`].filter(Boolean).join(" ") || "Already so.",
@@ -7753,7 +7834,7 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
         fav: "Favourites", unfav: "Remove", favHint: "Long-press a light, blind or scene → «Add to favourites». Favourites are on top of «Home», just for you.",
         myRoom: "My room", myRoomHint: "Your room — first among the favourites on «Home».",
         seasonAsk: (m, n) => `Sure? All ${n} AC${n === 1 ? "" : "s"} of the home switch to ${m === "heat" ? "heating" : "cooling"}.`,
-        yesWinter: "Yes, winter", yesSummer: "Yes, summer", cancel: "Cancel",
+        cancel: "Cancel",
         editors: "Who may change the home's settings", editorsHint: "As in Google Home: all adults of the home are equal. Tick a child — «Restricted (child) profile»: they control lights, blinds and temperature and accept alarms, but don't change automations, scenes, the season, «Away», guest links, block titles or order.",
         restricted: "Restricted (child) profile",
         editorsMe: (ok) => (ok ? "You may change the home's settings." : "You have a child profile: lights, blinds and temperature are yours, the adults change the home's settings."), admin: "administrator", editorsError: "Not saved — check the link to the house.",
@@ -7945,17 +8026,22 @@ details.pro{margin-top:22px;border-top:1px solid var(--divider-color,rgba(127,12
         const on = acs.filter((a) => a.state === "heat" || a.state === "cool");
         const heat = on.filter((a) => a.state === "heat").length;
         const cool = on.length - heat;
-        const now = !on.length ? w.allOff(info.chosen ?? info.season) : heat && cool ? w.mixed(heat, cool) : w.now(heat ? "heat" : "cool");
+        const L = w.L[info.labels === "mode" ? "mode" : "season"];
+        const last = info.chosen ?? info.season;
+        const now = !on.length ? w.allOff(last ? L.last(last) : "") : heat && cool ? w.mixed(heat, cool) : L.now(heat ? "heat" : "cool");
         const pr = on.length && !(heat && cool) ? (heat ? "heat" : "cool") : !on.length ? (info.chosen ?? info.season) : null;
         // House-wide: only people allowed to change the house's settings, and always «Точно?» first (family review round 2:
         // a 9-year-old switched every AC to cooling with one tap).
         const ro = !canEdit(hassOf());
         const off = busy || ro ? "disabled" : "";
-        const askHtml = ask && !ro ? `<div class="ask" role="alertdialog"><b>${esc(w.seasonAsk(ask, acs.length))}</b><div class="r2"><button class="yes" data-syes>${esc(ask === "heat" ? w.yesWinter : w.yesSummer)}</button><button data-sno>${esc(w.cancel)}</button></div></div>` : "";
-        return `<div class="caps">${esc(w.season)}</div><p class="now" data-now>${esc(now)}</p>
-<div class="big" role="group" aria-label="${esc(w.season)}">
-<button class="heat" data-season="heat" aria-pressed="${pr === "heat"}" ${off}><b><ha-icon icon="hauflo:snow"></ha-icon>${esc(w.winter)}</b><span>${esc(w.winterSub)}</span></button>
-<button class="cool" data-season="cool" aria-pressed="${pr === "cool"}" ${off}><b><ha-icon icon="hauflo:sun"></ha-icon>${esc(w.summer)}</b><span>${esc(w.summerSub)}</span></button></div>
+        const askHtml = ask && !ro ? `<div class="ask" role="alertdialog"><b>${esc(w.seasonAsk(ask, acs.length))}</b><div class="r2"><button class="yes" data-syes>${esc(ask === "heat" ? L.yesWinter : L.yesSummer)}</button><button data-sno>${esc(w.cancel)}</button></div></div>` : "";
+        // The agent's suggestion from the outdoor temperature (season.py): a line with a button — never a switch by itself.
+        const sg = info.suggestion;
+        const sugHtml = sg && !ask && !ro ? `<div class="ask" role="status" data-suggest style="margin-bottom:12px"><b>${esc(w.suggest(L.to(sg.to), sg))}</b><div class="r2"><button class="yes" data-season="${esc(sg.to)}" ${off}>${esc(w.suggestYes)}</button><button data-slater ${off}>${esc(w.suggestLater)}</button></div></div>` : "";
+        return `<div class="caps">${esc(L.season)}</div><p class="now" data-now>${esc(now)}</p>${sugHtml}
+<div class="big" role="group" aria-label="${esc(L.season)}">
+<button class="heat" data-season="heat" aria-pressed="${pr === "heat"}" ${off}><b><ha-icon icon="hauflo:snow"></ha-icon>${esc(L.winter)}</b><span>${esc(L.winterSub)}</span></button>
+<button class="cool" data-season="cool" aria-pressed="${pr === "cool"}" ${off}><b><ha-icon icon="hauflo:sun"></ha-icon>${esc(L.summer)}</b><span>${esc(L.summerSub)}</span></button></div>
 ${askHtml || (res ? `<div class="ask done"><p class="res" data-res role="status" style="margin:0">${esc(res)}</p></div>` : "")}<p class="hint">${esc(ro ? w.ro : w.seasonHint(acs.length))}</p>
 <details><summary>${esc(w.list)} · ${acs.length}</summary><ul>${acs.map((a) => `<li>${esc(a.name)} — ${esc(w[a.state] ?? a.state)}</li>`).join("")}</ul></details>`;
       };
@@ -8055,6 +8141,20 @@ ${askHtml || (res ? `<div class="ask done"><p class="res" data-res role="status"
           haptic(b, "selection");
           fill("season", "[data-syes]");
         }));
+        const later = sr.querySelector("[data-slater]");
+        if (later)
+          later.onclick = async () => {
+            if (busy || !canEdit(hassOf()) || !info?.agent) return;
+            busy = true;
+            fill("season");
+            try {
+              info = { ...(await hassOf().callApi("POST", "hauflo/season", { snooze: true })), agent: true };
+            } catch (e) {
+              res = w.error;
+            }
+            busy = false;
+            if (sheet) fill("season", '[data-season="heat"]');
+          };
         const no = sr.querySelector("[data-sno]");
         if (no)
           no.onclick = () => {

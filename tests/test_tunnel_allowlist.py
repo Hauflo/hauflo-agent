@@ -3,10 +3,13 @@ Runs without Home Assistant installed: python3 agent/tests/test_tunnel_allowlist
 import ast, contextlib, glob, ipaddress, json, pathlib, re, sys, types
 src = open(pathlib.Path(__file__).parents[1] / "custom_components/hauflo/__init__.py").read()
 tree = ast.parse(src)
-HELPERS = ("_ws_allowed", "_ga_key", "_knx_listens", "_entry_domain", "_flow_handler", "_http_allowed", "_own_entity", "_own_device", "_owned_knx", "_forbidden", "_lan_host", "_flow_input_ok", "_unused_label", "_device_entities_owned", "_protected", "_own_dashboard", "_alice_labels", "_homekit_step_ok", "_hauflo_entity", "_knx_writes", "_foreign_knx_writes", "_knx_config_ok", "_flow_step", "_platform", "_lovelace_ok", "_area_lights_owned", "_image_ok", "_owned_knx_writes", "_label_ok", "_scrub_states", "_scrub_devices", "_scrub_entities", "_phone_ids", "_scrub_monitor", "_scrub_notes", "_ws_changes", "_http_changes", "_owns", "_area_floor_empty", "_foreign_holders", "_scrub_diagnostics", "_overlap_kind", "knx_data", "_knx_store")
+HELPERS = ("_ws_allowed", "_ga_key", "_knx_listens", "_entry_domain", "_flow_handler", "_http_allowed", "_own_entity", "_own_device", "_owned_knx", "_forbidden", "_lan_host", "_flow_input_ok", "_unused_label", "_device_entities_owned", "_protected", "_own_dashboard", "_alice_labels", "_homekit_step_ok", "_hauflo_entity", "_knx_writes", "_foreign_knx_writes", "_knx_config_ok", "_flow_step", "_platform", "_lovelace_ok", "_area_lights_owned", "_image_ok", "_owned_knx_writes", "_label_ok", "_scrub_states", "_scrub_devices", "_scrub_entities", "_phone_ids", "_scrub_monitor", "_scrub_notes", "_ws_changes", "_http_changes", "_owns", "_area_floor_empty", "_foreign_holders", "_scrub_diagnostics", "_overlap_kind", "knx_data", "_knx_store", "_route", "_owned_entry", "_template_entities", "_rule_reads_ok", "_template_step_ok", "_switch_as_x_step_ok")
 keep = [n for n in tree.body if (isinstance(n, ast.Assign) and any(getattr(t, "id", "").startswith("_") for t in n.targets)) or (isinstance(n, ast.FunctionDef) and n.name in HELPERS)]
 import logging
-ns = {"json": json, "re": re, "contextlib": contextlib, "ipaddress": ipaddress, "Any": object, "HomeAssistant": object, "logging": logging, "__name__": "agent", "DOMAIN": "hauflo", "degrade": lambda feature, err: None}
+sys.path.insert(0, str(pathlib.Path(__file__).parents[1] / "custom_components/hauflo"))
+from tunnel import TUNNEL  # noqa: E402 — plain Python, no HA
+from tuning import TUNING  # noqa: E402
+ns = {"TUNNEL": TUNNEL, "TUNING": TUNING, "json": json, "re": re, "contextlib": contextlib, "ipaddress": ipaddress, "Any": object, "HomeAssistant": object, "logging": logging, "__name__": "agent", "DOMAIN": "hauflo", "degrade": lambda feature, err: None}
 # Compiled as the module is (`from __future__ import annotations`): annotations stay strings, so a name used only in
 # a signature (Callable, ConfigEntry…) needs no stub here — Python 3.13 evaluated them and the whole file failed to load.
 import __future__
@@ -27,7 +30,7 @@ entries = {"g1": E("group"), "k1": E("knx"), "y1": E("yandex_smart_home"), "h1":
 hass = types.SimpleNamespace(config_entries=types.SimpleNamespace(async_get_entry=entries.get, async_entries=lambda d: [e for e in entries.values() if e.domain == d], flow=M({"f1": "group", "f2": "mqtt", "fk": "knx", "fh": "homekit", "fhp": "homekit"}), options=M({"o1": "h1", "o1n": "h1", "o1x": "h1", "o1g": "h1", "o1d": "h1", "o1f": "h1", "o1k": "h1", "o2": "z1", "oy": "y1", "ok": "k1"})))
 # Registries: knx entity/device are Hauflo's; zwave's and a lock aren't.
 class _Ent:
-    def __init__(s, platform, domain, uid=None): s.platform, s.domain, s.unique_id = platform, domain, uid
+    def __init__(s, platform, domain, uid=None, entry=None): s.platform, s.domain, s.unique_id, s.config_entry_id = platform, domain, uid, entry
 class _Dev:
     def __init__(s, entries): s.config_entries = entries
 ents_reg = {"light.knx_1": _Ent("knx", "light", "u-hauflo"), "switch.knx_by_hand": _Ent("knx", "switch", "u-hand"), "binary_sensor.smoke_z": _Ent("zwave_js", "binary_sensor"), "scene.hauflo_r1_evening": _Ent("homeassistant", "scene", "hauflo_r1_evening"), "scene.my_evening": _Ent("homeassistant", "scene", "1690000000000"), "cover.knx_blind": _Ent("knx", "cover", "u-blind"), "switch.rele_vorot": _Ent("template", "switch")}
@@ -305,11 +308,15 @@ cases = [
  (W({"type": "lovelace/config/save", "url_path": "dashboard-home", "config": {}}), False),
  (H("DELETE", "/api/hauflo/notify"), False),
  (H("GET", "/api/hauflo/whatever"), False),
- # «Комфортный пол» (0.12.0): its settings read and written, nothing else on that path.
- (H("GET", "/api/hauflo/comfort"), True),
- (H("POST", "/api/hauflo/comfort", {"rooms": []}), True),
- (H("DELETE", "/api/hauflo/comfort"), False),
- (H("POST", "/api/hauflo/comfort/x", {}), False),
+ # «Зима / Лето» (0.17): Hauflo's settings read and written, nothing else on that path; «Комфортный пол» is gone, and
+ # the family's own switch is never the tunnel's.
+ (H("GET", "/api/hauflo/season/config"), True),
+ (H("POST", "/api/hauflo/season/config", {"exclude": []}), True),
+ (H("DELETE", "/api/hauflo/season/config"), False),
+ (H("POST", "/api/hauflo/season/config/x", {}), False),
+ (H("POST", "/api/hauflo/season", {"mode": "heat"}), False),
+ (H("GET", "/api/hauflo/comfort"), False),
+ (H("POST", "/api/hauflo/comfort", {"rooms": []}), False),
  (H("POST", "/api/config/config_entries/flow/fk", {"host": "knxrouter"}), False),
  (H("POST", "/api/config/config_entries/flow/fk", {"gateway": "manual"}), True),
  # Security re-review round 5: the integrator's own groups, bridges and scenes are out of reach.

@@ -55,10 +55,33 @@ def clear_issue(hass: HomeAssistant, issue_id: str) -> None:
     ir.async_delete_issue(hass, DOMAIN, issue_id)
 
 
+# A value rule's own issues (rules.py): «rule_fault_<id>» (its sensor gives no data), «rule_rate_<id>» (too many
+# switches), «rule_paused_<id>» (changed by hand again and again) — one per rule, the text by its kind.
+RULE_KINDS = ("rule_fault", "rule_rate", "rule_paused")
+
+
+@callback
+def raise_rule_issue(hass: HomeAssistant, kind: str, rule_id: str, **placeholders: str) -> None:
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        f"{kind}_{rule_id}",
+        is_fixable=False,
+        is_persistent=False,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key=kind,
+        translation_placeholders={k: str(v) for k, v in placeholders.items()},
+    )
+
+
 @callback
 def clear_all(hass: HomeAssistant) -> None:
     for issue_id in ALL:
         clear_issue(hass, issue_id)
+    reg = ir.async_get(hass)
+    for domain, issue_id in list(reg.issues):
+        if domain == DOMAIN and issue_id.startswith(RULE_KINDS):
+            clear_issue(hass, issue_id)
 
 
 @callback

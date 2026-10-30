@@ -82,10 +82,9 @@ async def test_season_picks_the_acs_that_can_heat_and_cool(hass: HomeAssistant) 
     ac(hass, "both")
     ac(hass, "floor", modes=("heat", "off"))
     ac(hass, "gone", state="unavailable")
-    ac(hass, "ours", platform="hauflo")
     ac(hass, "hidden", disabled=True)
-    assert [s.entity_id for s in season.acs(hass)] == ["climate.both"]
-    sea = season.Season(hass, lambda: None)
+    assert [s.entity_id for s in season.acs(hass, owns=lambda e: True)] == ["climate.both"]
+    sea = season.Season(hass, lambda: None, owns=lambda e: True)
     assert (await sea.answer())["season"] == "heat" and (await sea.answer())["acs"][0]["name"] == "BOTH"
     hass.states.async_set("climate.both", "off", {"hvac_modes": ["heat", "cool", "off"]})
     assert (await sea.answer())["season"] is None
@@ -112,15 +111,9 @@ async def test_season_apply_switches_the_running_ones_and_sends_the_address_once
     hass.services.async_register("knx", "send", send)
     addresses = {"climate.off1": "1/1/1", "climate.off2": "1/1/1", "climate.off3": None}
     with patch.object(season, "heat_cool_address", lambda h, e: addresses.get(e)):
-        out = await season.Season(hass, lambda: None).apply("heat", "Ivan")
+        out = await season.Season(hass, lambda: None, owns=lambda e: True).apply("heat", "Ivan")
     assert calls == ["climate.run"] and out["changed"] == ["climate.run"] and sends == [{"address": "1/1/1", "payload": 1}]
     assert sorted(out["sent"]) == ["climate.off1", "climate.off2"] and out["skipped"] == ["climate.off3"] and out["failed"] == ["climate.bad"]
-    # the room engine takes its own ACs (and the mode with them)
-    set_mode_called = []
-    comfort = NS(rooms=lambda: {"r": {"acs": ["climate.run"]}}, set_mode=AsyncMock(side_effect=lambda m: set_mode_called.append(m)))
-    calls.clear()
-    out = await season.Season(hass, lambda: comfort).apply("cool", None)
-    assert set_mode_called == ["summer"] and "climate.run" in out["changed"] and "climate.run" not in calls
 
 
 def test_heat_cool_address_reads_the_knx_store(hass: HomeAssistant) -> None:
@@ -131,7 +124,7 @@ def test_heat_cool_address_reads_the_knx_store(hass: HomeAssistant) -> None:
 
 
 async def test_season_view(hass: HomeAssistant) -> None:
-    sea = season.Season(hass, lambda: None)
+    sea = season.Season(hass, lambda: None, owns=lambda e: True)
     view = season.SeasonView(lambda: sea)
     gone = season.SeasonView(lambda: None)
     assert (await gone.get(Req(hass))).status == 503 and (await gone.post(Req(hass))).status == 503

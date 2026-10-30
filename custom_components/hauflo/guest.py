@@ -32,24 +32,27 @@ from homeassistant.helpers import area_registry as ar, device_registry as dr, en
 from homeassistant.util import dt as dt_util
 
 from .house import may_edit, refuse
+from .natural import natural_key
 from .storage import HaufloStore
 from . import qr
+from .tuning import TUNING
 
 _LOGGER = logging.getLogger(__name__)
 STORE_KEY = "hauflo.guest"
 DOMAINS = ("light", "cover", "climate")
-MAX_HOURS = 14 * 24
-MAX_ACTIVE = 20
-MAX_DEVICES = 5
-DEFAULT_DEVICES = 3
-MAX_ROOMS = 30
+_T = TUNING["guest"]
+MAX_HOURS = _T["max_hours"]
+MAX_ACTIVE = _T["max_active"]
+MAX_DEVICES = _T["max_devices"]
+DEFAULT_DEVICES = _T["default_devices"]
+MAX_ROOMS = _T["max_rooms"]
 KEEP_ENDED = dt.timedelta(days=7)  # an ended link stays in the list a week («истекла», «закрыта»)
-LOG_DAYS = 30
-LOG_MAX = 300
-TEMP_BAND = (16.0, 28.0)  # a guest's thermostat range, inside the entity's own
-RATE_ACT = 30  # actions a minute per link
-RATE_STATE = 60  # reads a minute per link (the page polls every 10 s)
-RATE_BAD = 20  # wrong tokens a minute for the whole house → every wrong one gets 429
+LOG_DAYS = _T["log_days"]
+LOG_MAX = _T["log_max"]
+TEMP_BAND = tuple(_T["temp_band"])  # a guest's thermostat range, inside the entity's own
+RATE_ACT = _T["rate_act"]  # actions a minute per link
+RATE_STATE = _T["rate_state"]  # reads a minute per link (the page polls every 10 s)
+RATE_BAD = _T["rate_bad"]  # wrong tokens a minute for the whole house → every wrong one gets 429
 _TOKEN = re.compile(r"([A-Za-z0-9_-]{12})\.([A-Za-z0-9_-]{32})")
 _DEVICE = re.compile(r"[A-Za-z0-9_-]{16,64}")
 _ENTITY = re.compile(r"(light|cover|climate)\.[a-z0-9_]{1,128}")
@@ -193,7 +196,7 @@ class GuestAccess:
             ids = [e for e in self.candidates(area.id) if user is None or _may_control(user, e)]
             if ids:
                 out.append({"id": area.id, "name": area.name, "count": len(ids), "kinds": sorted({e.split(".")[0] for e in ids})})
-        return sorted(out, key=lambda r: r["name"].casefold())
+        return sorted(out, key=lambda r: natural_key(r["name"]))
 
     # --- the family's side -------------------------------------------------------------------------------------------
     def _ended_at(self, g: dict[str, Any]) -> dt.datetime | None:
@@ -390,7 +393,8 @@ class GuestAccess:
         names = {a.id: a.name for a in ar.async_get(self.hass).async_list_areas()}
         rooms = []
         for r in grant.get("rooms", []):
-            items = [self._item(e) for e in allowed if self._area(e) == r]
+            # By name, naturally (Штора 2 before Штора 10) — not by entity id.
+            items = sorted((self._item(e) for e in allowed if self._area(e) == r), key=lambda i: natural_key(i["name"]))
             if items:
                 rooms.append({"name": _clean(names.get(r, ""), 60), "items": items})
         # No house name, no people, no other rooms: what the guest may touch and when it ends.
@@ -461,7 +465,7 @@ def _may_control(user: Any, eid: str) -> bool:
         return False
 
 
-ASK_GAP = 600  # «Попросить администратора»: once in 10 minutes per person
+ASK_GAP = _T["ask_gap_s"]  # «Попросить администратора»: once in 10 minutes per person
 
 
 async def ask_admins(hass: HomeAssistant, user: Any, note: str, phones: list[dict[str, Any]]) -> dict[str, Any]:

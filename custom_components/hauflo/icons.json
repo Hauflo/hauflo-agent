@@ -1,22 +1,24 @@
 {
   "entity": {
-    "climate": {
-      "comfort": {
-        "default": "mdi:home-thermometer"
-      }
-    },
     "sensor": {
       "ownership": {
         "default": "mdi:home-import-outline"
+      },
+      "derived": {
+        "default": "mdi:calculator-variant-outline"
       }
     },
-    "select": {
-      "house_mode": {
-        "default": "mdi:sun-snowflake-variant",
+    "binary_sensor": {
+      "rule": {
+        "default": "mdi:thermometer-auto",
         "state": {
-          "winter": "mdi:snowflake",
-          "summer": "mdi:white-balance-sunny"
+          "on": "mdi:thermometer-check"
         }
+      }
+    },
+    "switch": {
+      "rule": {
+        "default": "mdi:auto-mode"
       }
     }
   }

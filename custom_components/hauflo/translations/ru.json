@@ -120,25 +120,22 @@
     "binary_sensor": {
       "link": {
         "name": "Связь"
-      }
-    },
-    "climate": {
-      "comfort": {
-        "name": "Комфорт · {room}"
-      }
-    },
-    "select": {
-      "house_mode": {
-        "name": "Режим дома",
-        "state": {
-          "winter": "Зима",
-          "summer": "Лето"
-        }
+      },
+      "rule": {
+        "name": "Сработало · {name}"
       }
     },
     "sensor": {
       "ownership": {
         "name": "Создано в этом доме"
+      },
+      "derived": {
+        "name": "{name}"
+      }
+    },
+    "switch": {
+      "rule": {
+        "name": "Правило · {name}"
       }
     }
   },
@@ -176,7 +173,7 @@
       },
       "independent": {
         "title": "Сделать дом независимым",
-        "description": "Что произойдёт:\n- Карточки панели Hauflo копируются в /config/www/hauflo и подключаются ресурсами панелей — панель семьи работает без агента.\n- Каждое включённое правило аварии Hauflo становится обычной автоматизацией в automations.yaml: те же датчики и состояния аварии, пуш на те же телефоны с приложением Home Assistant (критичный, если правило критичное), уведомление в HA и кнопка правила. Перед записью делается копия automations.yaml. Сделанные так раньше автоматизации не трогаются.\n- Ничего не удаляется. Hauflo работает, пока вы не удалите интеграцию; до тех пор авария придёт дважды.\n\nЧто перестанет работать после удаления Hauflo:\n- Облачный мониторинг: «агент не на связи», «шина KNX молчит», страница мониторинга и взгляд сервисной компании.\n- Аварии на почту и история аварий в Hauflo; повторы до «Принято».\n- Выкатки и обновления из проекта, гостевые ссылки, имитация присутствия «Нет дома», комфортный пол, голосовые фразы, правка автоматизаций и сцен семьи с панели (уже сделанные продолжают работать).\n\nНажмите «Отправить», чтобы сделать."
+        "description": "Что произойдёт:\n- Карточки панели Hauflo копируются в /config/www/hauflo и подключаются ресурсами панелей — панель семьи работает без агента.\n- Каждое включённое правило аварии Hauflo становится обычной автоматизацией в automations.yaml: те же датчики и состояния аварии, пуш на те же телефоны с приложением Home Assistant (критичный, если правило критичное), уведомление в HA и кнопка правила. Перед записью делается копия automations.yaml. Сделанные так раньше автоматизации не трогаются.\n- Ничего не удаляется. Hauflo работает, пока вы не удалите интеграцию; до тех пор авария придёт дважды.\n\nЧто перестанет работать после удаления Hauflo:\n- Облачный мониторинг: «агент не на связи», «шина KNX молчит», страница мониторинга и взгляд сервисной компании.\n- Аварии на почту и история аварий в Hauflo; повторы до «Принято».\n- Выкатки и обновления из проекта, гостевые ссылки, имитация присутствия «Нет дома», голосовые фразы, правка автоматизаций и сцен семьи с панели (уже сделанные продолжают работать).\n\nНажмите «Отправить», чтобы сделать."
       },
       "independent_done": {
         "title": "Дом независим",
@@ -218,11 +215,470 @@
     "outdated": {
       "title": "Агенту Hauflo нужно обновление",
       "description": "У этого агента версия {version}, а Hauflo нужна не ниже {minimum} (последняя: {latest}). Пока не обновите, выкаты и часть функций могут не работать: HACS → Hauflo → Обновить, затем перезапустите Home Assistant."
+    },
+    "rule_fault": {
+      "title": "Правило «{name}»: датчик не даёт данных",
+      "description": "Правило «{name}» следит за {entity}, но сейчас значения нет ({reason}). Hauflo не действует по старому значению: правило ждёт (правило калорифера его выключает). Проверьте датчик и связь; сообщение уйдёт само, когда датчик ответит. Hauflo помогает — главная защита остаётся за самой установкой."
+    },
+    "rule_rate": {
+      "title": "Правило «{name}»: слишком частые переключения",
+      "description": "{entity} переключался слишком часто за час — правило «{name}» ждёт до конца часа, чтобы беречь оборудование. Обычно порог слишком близко к обычному значению: увеличьте запас (Y) или «дольше N минут» в Hauflo."
+    },
+    "rule_paused": {
+      "title": "Правило «{name}» на паузе",
+      "description": "{entity} несколько раз меняли вручную, пока правило «{name}» держало его, — правило встало на паузу, чтобы не спорить с людьми. Включите правило снова (в Hauflo или его переключателем в Home Assistant), когда разберётесь с причиной."
     }
   },
   "exceptions": {
     "no_backup_location": {
       "message": "В этом Home Assistant нет локального места для резервных копий, поэтому агент не может сделать копию перед изменением."
+    },
+    "rules_bad_object": {
+      "message": "Нужен объект."
+    },
+    "rules_bad_id": {
+      "message": "Код: a-z, 0-9, _ (до {n})."
+    },
+    "rules_bad_name": {
+      "message": "Имя — до {n} печатных символов."
+    },
+    "rules_bad_entity": {
+      "message": "{what}: нужен объект HA (domain.id)."
+    },
+    "rules_bad_attribute": {
+      "message": "Атрибут: a-z и _."
+    },
+    "rules_bad_time": {
+      "message": "Время «дольше»: 0–{n} мин."
+    },
+    "rules_bad_number": {
+      "message": "{what}: нужно число (до ±{n})."
+    },
+    "rules_no_outdoor": {
+      "message": "В Home Assistant нет датчика улицы и прогноза погоды."
+    },
+    "rules_bad_input": {
+      "message": "{entity} — не датчик со значением."
+    },
+    "rules_no_entity": {
+      "message": "Нет такого объекта: {entity}."
+    },
+    "rules_client_input": {
+      "message": "Можно брать только датчики Hauflo."
+    },
+    "rules_bad_condition": {
+      "message": "Условие «{kind}» заполнено неверно."
+    },
+    "rules_bad_action": {
+      "message": "Действие «{do}» не подходит для {entity}."
+    },
+    "rules_bad_action_value": {
+      "message": "Значение «{do}»: {lo}–{hi}."
+    },
+    "rules_bad_mode": {
+      "message": "Режим: один из режимов термостата (off, heat, cool, auto, dry, fan_only, heat_cool)."
+    },
+    "rules_bad_text": {
+      "message": "Текст уведомления — до {n} печатных символов."
+    },
+    "rules_client_action": {
+      "message": "Можно: свет, шторы, сцена, «уведомить меня»."
+    },
+    "rules_target_not_allowed": {
+      "message": "{entity}: только устройства Hauflo; замки, охрана, ворота и открытие крана — никогда."
+    },
+    "rules_bad_purpose": {
+      "message": "Назначение не подходит."
+    },
+    "rules_bad_priority": {
+      "message": "Приоритет: безопасность или комфорт."
+    },
+    "rules_bad_when": {
+      "message": "Когда: ниже / выше / вне / между / вкл / выкл."
+    },
+    "rules_when_kind": {
+      "message": "Вкл / выкл — для контактов; ниже / выше / вне / между — для чисел."
+    },
+    "rules_bad_hysteresis": {
+      "message": "Запас Y: от 0 и меньше диапазона (у контакта запаса нет)."
+    },
+    "rules_bad_range": {
+      "message": "Нижняя граница должна быть меньше верхней."
+    },
+    "rules_limit_conditions": {
+      "message": "Условий — не больше {n}."
+    },
+    "rules_limit_actions": {
+      "message": "Действий: от 1 до {n}."
+    },
+    "rules_limit_rules": {
+      "message": "Правил в доме — не больше {n}."
+    },
+    "rules_limit_derived": {
+      "message": "Вычисляемых значений — не больше {n}."
+    },
+    "rules_bad_back": {
+      "message": "Возврат в норму: обратное, ничего или свои действия."
+    },
+    "rules_bad_interlock": {
+      "message": "Приток проверяется только у правила калорифера."
+    },
+    "rules_loop": {
+      "message": "Петля: {entity} и меняется правилом, и решает его."
+    },
+    "rules_loop_chain": {
+      "message": "Петля через другие правила: {entity} → … → {other}."
+    },
+    "rules_conflict": {
+      "message": "{entity} ({attribute}) уже ведёт правило «{rule}»."
+    },
+    "rules_client_integrator_rule": {
+      "message": "Правило интегратора можно только включать / выключать и двигать порог."
+    },
+    "rules_no_rule": {
+      "message": "Нет такого правила."
+    },
+    "rules_no_threshold": {
+      "message": "У этого правила нет порога."
+    },
+    "rules_tune_not_allowed": {
+      "message": "Интегратор не дал менять этот порог."
+    },
+    "rules_out_of_range": {
+      "message": "Порог — от {lo} до {hi}."
+    },
+    "rules_toggle_not_allowed": {
+      "message": "Интегратор не дал выключать это правило."
+    },
+    "rules_delete_not_allowed": {
+      "message": "Удалить можно только своё правило."
+    },
+    "rules_bad_kind": {
+      "message": "Неизвестный вид: {kind}."
+    },
+    "rules_bad_sources": {
+      "message": "Источники: {lo}–{hi} датчика с числом, без повторов, не другое значение Hauflo."
+    },
+    "rules_no_value": {
+      "message": "Нет такого значения."
+    },
+    "rules_in_use": {
+      "message": "Это значение используют правила: {rules}."
+    },
+    "rules_explain_off": {
+      "message": "Выключено."
+    },
+    "rules_explain_paused": {
+      "message": "На паузе: устройство несколько раз меняли вручную. Включите правило снова."
+    },
+    "rules_explain_fault_off": {
+      "message": "{label}: нет данных ({reason}) — выключено (безопасное состояние)."
+    },
+    "rules_explain_fault_wait": {
+      "message": "{label}: нет данных ({reason}) — правило ждёт, ничего не меняю."
+    },
+    "rules_explain_hold_rate": {
+      "message": "Много переключений — ждёт до {time}."
+    },
+    "rules_explain_hold_manual": {
+      "message": "Вручную — вернётся в {time} или когда {label} придёт в норму."
+    },
+    "rules_explain_waiting": {
+      "message": "{label} {value} · сейчас не действует («только если»)."
+    },
+    "rules_explain_pending_on": {
+      "message": "{label} {value}, {threshold} — сработает через {minutes} мин."
+    },
+    "rules_explain_pending_off": {
+      "message": "{label} {value} — норма, вернётся через {minutes} мин."
+    },
+    "rules_explain_pending": {
+      "message": "{label} {value}, {threshold}."
+    },
+    "rules_explain_active": {
+      "message": "{label} {value} · работает с {time}; вернётся, когда {back}."
+    },
+    "rules_explain_normal": {
+      "message": "{label} {value} — норма (сработает, когда {threshold})."
+    },
+    "rules_thr_below": {
+      "message": "ниже {x}"
+    },
+    "rules_thr_above": {
+      "message": "выше {x}"
+    },
+    "rules_thr_outside": {
+      "message": "вне {lo}…{hi}"
+    },
+    "rules_thr_between": {
+      "message": "между {lo} и {hi}"
+    },
+    "rules_word_on": {
+      "message": "вкл"
+    },
+    "rules_word_off": {
+      "message": "выкл"
+    },
+    "rules_forecast": {
+      "message": "{label} (по прогнозу)"
+    },
+    "rules_reason_no_entity": {
+      "message": "датчика нет"
+    },
+    "rules_reason_unavailable": {
+      "message": "недоступен"
+    },
+    "rules_reason_not_a_number": {
+      "message": "не число"
+    },
+    "rules_reason_unit": {
+      "message": "другая единица"
+    },
+    "rules_reason_stale": {
+      "message": "нет свежих данных"
+    },
+    "rules_logbook_back": {
+      "message": "датчик снова отвечает"
+    },
+    "rules_warn_interlock_off": {
+      "message": "«{name}»: приток выключен — калорифер выключен. Проверьте установку (подсказка Hauflo, не защита)."
+    },
+    "rules_warn_interlock_skip": {
+      "message": "«{name}»: приток выключен — калорифер не включаю. Проверьте установку (подсказка Hauflo, не защита)."
+    },
+    "rules_warn_rate": {
+      "message": "«{name}»: {entity} переключался {n} раз за час — правило ждёт до {time}, чтобы беречь оборудование."
+    },
+    "rules_warn_paused": {
+      "message": "«{name}»: {entity} несколько раз меняли вручную — правило на паузе. Включите его снова, когда разберётесь."
+    },
+    "rules_hint_heater": {
+      "message": "Hauflo помогает, а не защищает: проверьте, что у установки есть своя защита от перегрева калорифера и продувка после выключения. Безопасность — дело самой установки."
+    },
+    "rules_hint_frost": {
+      "message": "Подсказка, не защита: защита от замерзания — дело автоматики установки; Hauflo помогает и сообщает."
+    },
+    "rules_hint_leak": {
+      "message": "Hauflo помогает перекрыть кран и сообщает; аварийная защита — в самой установке."
+    },
+    "rules_preview_fault": {
+      "message": "Сейчас нет данных датчика — правило ждало бы."
+    },
+    "rules_preview_waiting": {
+      "message": "Сейчас «только если» не выполнено — правило не действует."
+    },
+    "rules_preview_now": {
+      "message": "Сейчас {value}, {threshold} — сработает сразу."
+    },
+    "rules_preview_wait": {
+      "message": "Сейчас {value}, {threshold} — сработает, если продержится {minutes} мин."
+    },
+    "rules_preview_normal": {
+      "message": "Сейчас {value} — норма; сработает, когда {threshold}."
+    },
+    "rules_preview_normal_for": {
+      "message": "Сейчас {value} — норма; сработает, когда {threshold} дольше {minutes} мин."
+    },
+    "rules_recipe_heater_outdoor": {
+      "message": "Калорифер по улице"
+    },
+    "rules_recipe_dew_point_airing": {
+      "message": "Осушающее проветривание по точке росы"
+    },
+    "rules_recipe_co2_ventilation": {
+      "message": "Вентиляция по CO₂"
+    },
+    "rules_recipe_humidity_ventilation": {
+      "message": "Вентиляция по влажности"
+    },
+    "rules_recipe_frost_guard": {
+      "message": "Помощь от замерзания"
+    },
+    "rules_recipe_floor_overheat": {
+      "message": "Перегрев пола"
+    },
+    "rules_recipe_leak_valve": {
+      "message": "Протечка → закрыть кран"
+    },
+    "rules_recipe_window_heating": {
+      "message": "Окно открыто → отопление выкл"
+    },
+    "rules_recipe_lux_covers": {
+      "message": "Шторы по освещённости"
+    },
+    "rules_thr_min": {
+      "message": "{x} и выше"
+    },
+    "rules_thr_max": {
+      "message": "{x} и ниже"
+    },
+    "rules_explain_deferred": {
+      "message": "{label} {value}, {threshold} · устройство переключится в {time}: пауза между переключениями (подсказка Hauflo)."
+    },
+    "rules_explain_interlocked": {
+      "message": "{label} {value}, {threshold} · калорифер не включаю: приток выключен (подсказка Hauflo). Включится вместе с притоком."
+    },
+    "season_to_season_heat": {
+      "message": "зиму"
+    },
+    "season_to_season_cool": {
+      "message": "лето"
+    },
+    "season_to_mode_heat": {
+      "message": "обогрев"
+    },
+    "season_to_mode_cool": {
+      "message": "охлаждение"
+    },
+    "season_suggest_title": {
+      "message": "Пора на {to}?"
+    },
+    "season_suggest_message": {
+      "message": "Похоже, пора на {to} — переключить? {why}"
+    },
+    "season_suggest_why_heat": {
+      "message": "На улице среднесуточная температура ниже {threshold}° уже {days} дн. подряд."
+    },
+    "season_suggest_why_cool": {
+      "message": "На улице среднесуточная температура выше {threshold}° уже {days} дн. подряд."
+    },
+    "season_act_switch": {
+      "message": "Переключить"
+    },
+    "season_act_later": {
+      "message": "Не сейчас"
+    },
+    "rules_bad_window": {
+      "message": "Окно: статистика (среднее / минимум / максимум / сумма) и период (час / день / неделя)."
+    },
+    "rules_bad_window_n": {
+      "message": "Периодов подряд: {lo}–{hi}."
+    },
+    "rules_window_no_stats": {
+      "message": "У {entity} нет статистики в Home Assistant (нет state_class) — значение за период взять нельзя. Выберите датчик со статистикой или значение «сейчас»."
+    },
+    "rules_window_stat_kind": {
+      "message": "{entity} ({kind}) не даёт такой статистики: среднее / минимум / максимум — у измерения, сумма — у счётчика (total)."
+    },
+    "rules_window_on_time": {
+      "message": "{entity} — вкл / выкл: только «сумма» (часы работы за период)."
+    },
+    "rules_window_history": {
+      "message": "Это значение берётся из истории HA: всё окно должно уместиться в {n} дней."
+    },
+    "rules_window_when": {
+      "message": "Для значения за период: ниже / выше / вне / между."
+    },
+    "rules_window_threshold": {
+      "message": "Порог для {unit}: от {lo} до {hi}."
+    },
+    "rules_bad_outputs": {
+      "message": "Выходы правила: вкл / выкл (предложение, автодействие)."
+    },
+    "rules_bad_snooze": {
+      "message": "«Не сейчас» — на {lo}–{hi} дней."
+    },
+    "rules_bad_quiet": {
+      "message": "Тихие часы: «с» и «до» в формате ЧЧ:ММ, не одинаковые."
+    },
+    "rules_bad_season": {
+      "message": "Сезон: обогрев (зима) или охлаждение (лето)."
+    },
+    "rules_explain_window_normal": {
+      "message": "{label}, {stat}: {value} · подряд {held} из {n} {threshold}."
+    },
+    "rules_explain_window_active": {
+      "message": "{label}, {stat}: {value} · действует с {time}; вернётся после {n} подряд {back}."
+    },
+    "rules_explain_window_no_data": {
+      "message": "{label}: нет данных за {missing} из последних {n} ({stat}) — правило ждёт и ничего не меняет."
+    },
+    "rules_preview_window_no_data": {
+      "message": "Пока мало статистики за последние {n} ({stat}) — правило ждало бы."
+    },
+    "rules_preview_window_now": {
+      "message": "{stat}: {value}; подряд {held} {threshold} — сработало бы сейчас."
+    },
+    "rules_preview_window_normal": {
+      "message": "{stat}: {value}; подряд {held} из {n} {threshold} — сейчас норма."
+    },
+    "rules_suggest_on": {
+      "message": "{why}. Сделать?"
+    },
+    "rules_suggest_off": {
+      "message": "{why}. Вернуть как было?"
+    },
+    "rules_act_do": {
+      "message": "Сделать"
+    },
+    "rules_act_later": {
+      "message": "Не сейчас"
+    },
+    "rules_recipe_season": {
+      "message": "Зима / лето по улице"
+    },
+    "rules_recipe_heat_wave": {
+      "message": "Жара: закрыть шторы днём"
+    },
+    "rules_recipe_frost_trace_heating": {
+      "message": "Мороз: обогрев водостоков и труб"
+    },
+    "rules_recipe_bath_humidity": {
+      "message": "Сырость в санузле (плесень)"
+    },
+    "rules_recipe_co2_bedroom_night": {
+      "message": "Душно в спальне ночью (CO₂)"
+    },
+    "rules_recipe_setpoint_unreached": {
+      "message": "Комната не догревается до уставки"
+    },
+    "rules_recipe_pump_runtime": {
+      "message": "Насос / котёл работает слишком долго"
+    },
+    "rules_recipe_energy_day": {
+      "message": "Расход энергии за день выше нормы"
+    },
+    "rules_recipe_silent_sensor": {
+      "message": "Молчащий датчик"
+    },
+    "rules_link_silent_sensor": {
+      "message": "Уже есть в подсказках правил на «Проверке»: датчик, который несколько часов ничего не присылает, — по комнатам и для метеостанции. Второй раз здесь не делается."
+    },
+    "rules_window_mean_hour": {
+      "message": "среднее за час"
+    },
+    "rules_window_mean_day": {
+      "message": "среднее за день"
+    },
+    "rules_window_mean_week": {
+      "message": "среднее за неделю"
+    },
+    "rules_window_min_hour": {
+      "message": "минимум за час"
+    },
+    "rules_window_min_day": {
+      "message": "минимум за день"
+    },
+    "rules_window_min_week": {
+      "message": "минимум за неделю"
+    },
+    "rules_window_max_hour": {
+      "message": "максимум за час"
+    },
+    "rules_window_max_day": {
+      "message": "максимум за день"
+    },
+    "rules_window_max_week": {
+      "message": "максимум за неделю"
+    },
+    "rules_window_sum_hour": {
+      "message": "сумма за час"
+    },
+    "rules_window_sum_day": {
+      "message": "сумма за день"
+    },
+    "rules_window_sum_week": {
+      "message": "сумма за неделю"
     }
   }
 }

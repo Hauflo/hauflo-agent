@@ -1,4 +1,4 @@
-"""«Режим дома» (зима / лето) — with the first room of «Комфортный пол» (comfort.py)."""
+"""«Правила по значениям»: one on / off switch per value rule (rules.py)."""
 
 from __future__ import annotations
 
@@ -11,7 +11,9 @@ PARALLEL_UPDATES = 0
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEntitiesCallback) -> None:
-    engine = entry.runtime_data.comfort
-    engine.add_selects = add
-    engine.select = None
+    engine = getattr(entry.runtime_data, "rules", None)
+    if engine is None:
+        return
+    engine.add_switches = add
+    engine.switches.clear()
     engine.sync_entities()

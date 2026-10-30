@@ -20,6 +20,11 @@ PARALLEL_UPDATES = 0
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEntitiesCallback) -> None:
     add([HaufloOwnership(entry)])
+    # Derived values (dew point, absolute humidity, …): real sensors (derived.py, rules.py).
+    if (engine := getattr(entry.runtime_data, "rules", None)) is not None:
+        engine.add_sensors = add
+        engine.sensors.clear()
+        engine.sync_entities()
 
 
 class HaufloOwnership(SensorEntity):

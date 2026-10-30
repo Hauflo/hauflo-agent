@@ -208,14 +208,14 @@ def test_every_issue_has_its_texts_in_both_languages() -> None:
     base = pathlib.Path(hauflo.__file__).parent
     for name in ("strings.json", "translations/en.json", "translations/ru.json"):
         texts = json.loads((base / name).read_text(encoding="utf-8"))["issues"]
-        assert set(texts) == set(issues.ALL), name
+        assert set(texts) == set(issues.ALL) | set(issues.RULE_KINDS), name
         # A fixable issue says its text in its fix flow only (hassfest: description and fix_flow exclude each other).
         assert all(t["title"] and (t.get("description") or t.get("fix_flow")) for t in texts.values())
     en = json.loads((base / "translations/en.json").read_text(encoding="utf-8"))["issues"]
     ru = json.loads((base / "translations/ru.json").read_text(encoding="utf-8"))["issues"]
     import re
 
-    for k in issues.ALL:
+    for k in (*issues.ALL, *issues.RULE_KINDS):
         said = lambda t: (t.get("description") or json.dumps(t.get("fix_flow"), ensure_ascii=False)) + t["title"]  # noqa: E731
         assert set(re.findall(r"\{(\w+)\}", said(en[k]))) == set(re.findall(r"\{(\w+)\}", said(ru[k]))), k
 

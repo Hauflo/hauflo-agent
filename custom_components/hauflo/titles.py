@@ -36,6 +36,11 @@ KINDS = (
     "alarm_sensors",
     "house_lights",
     "house_covers",
+    "heating",
+    "ventilation",
+    "water",
+    "security",
+    "devices",
 )
 _CONTROL = re.compile("[\x00-\x1f\x7f-\x9f\u2028\u2029]+")
 

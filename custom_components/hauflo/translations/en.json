@@ -120,25 +120,22 @@
     "binary_sensor": {
       "link": {
         "name": "Link"
-      }
-    },
-    "climate": {
-      "comfort": {
-        "name": "Comfort · {room}"
-      }
-    },
-    "select": {
-      "house_mode": {
-        "name": "House mode",
-        "state": {
-          "winter": "Winter",
-          "summer": "Summer"
-        }
+      },
+      "rule": {
+        "name": "Rule active · {name}"
       }
     },
     "sensor": {
       "ownership": {
         "name": "Made in this home"
+      },
+      "derived": {
+        "name": "{name}"
+      }
+    },
+    "switch": {
+      "rule": {
+        "name": "Rule · {name}"
       }
     }
   },
@@ -176,7 +173,7 @@
       },
       "independent": {
         "title": "Make the house independent",
-        "description": "What happens:\n- The Hauflo dashboard cards are copied to /config/www/hauflo and added as dashboard resources, so the family's dashboard works without the agent.\n- Every enabled Hauflo alarm rule becomes an ordinary automation in automations.yaml: the same sensors and alarm states, a push to the same Home Assistant app phones (critical where the rule is), a notification in HA and the rule's button. A backup copy of automations.yaml is made first. Automations made earlier this way are left as they are.\n- Nothing is deleted. Hauflo keeps working until you remove the integration; until then an alarm comes twice.\n\nWhat stops working once Hauflo is removed:\n- Cloud monitoring: «agent offline», «KNX bus silent», the monitoring page and the service company's view.\n- E-mail alarms and the alarm history in Hauflo; repeats until «Accept».\n- Deploys and updates from the project, guest links, «Away» presence simulation, the comfort floor, voice sentences, editing the family's automations and scenes on the dashboard (the ones already made keep running).\n\nSubmit to do it."
+        "description": "What happens:\n- The Hauflo dashboard cards are copied to /config/www/hauflo and added as dashboard resources, so the family's dashboard works without the agent.\n- Every enabled Hauflo alarm rule becomes an ordinary automation in automations.yaml: the same sensors and alarm states, a push to the same Home Assistant app phones (critical where the rule is), a notification in HA and the rule's button. A backup copy of automations.yaml is made first. Automations made earlier this way are left as they are.\n- Nothing is deleted. Hauflo keeps working until you remove the integration; until then an alarm comes twice.\n\nWhat stops working once Hauflo is removed:\n- Cloud monitoring: «agent offline», «KNX bus silent», the monitoring page and the service company's view.\n- E-mail alarms and the alarm history in Hauflo; repeats until «Accept».\n- Deploys and updates from the project, guest links, «Away» presence simulation, voice sentences, editing the family's automations and scenes on the dashboard (the ones already made keep running).\n\nSubmit to do it."
       },
       "independent_done": {
         "title": "The house is independent",
@@ -218,11 +215,470 @@
     "outdated": {
       "title": "The Hauflo agent needs an update",
       "description": "This agent is version {version}; Hauflo needs at least {minimum} (latest: {latest}). Deploys and some features may fail until it is updated: HACS → Hauflo → Update, then restart Home Assistant."
+    },
+    "rule_fault": {
+      "title": "Value rule «{name}»: its sensor gives no data",
+      "description": "The rule «{name}» watches {entity}, which gives no usable value now ({reason}). Hauflo doesn't act on an old value: the rule waits (a heater rule switches the heater off). Check the sensor and its connection; this goes by itself once the sensor answers. Hauflo assists — the installation's own protections stay in charge."
+    },
+    "rule_rate": {
+      "title": "Value rule «{name}»: too many switches",
+      "description": "{entity} was switched too often within an hour, so the rule «{name}» waits for the rest of the hour to spare the equipment. Usually the threshold is too close to the normal value: widen the margin (Y) or lengthen «for N minutes» in Hauflo."
+    },
+    "rule_paused": {
+      "title": "Value rule «{name}» is paused",
+      "description": "{entity} was changed by hand several times while the rule «{name}» held it, so the rule paused itself instead of arguing with people. Switch the rule on again (in Hauflo or with its switch in Home Assistant) once the reason is sorted."
     }
   },
   "exceptions": {
     "no_backup_location": {
       "message": "This Home Assistant has no local backup location, so the agent can't make a backup before a change."
+    },
+    "rules_bad_object": {
+      "message": "An object expected."
+    },
+    "rules_bad_id": {
+      "message": "Id: a-z, 0-9, _ (up to {n})."
+    },
+    "rules_bad_name": {
+      "message": "Name: up to {n} printable characters."
+    },
+    "rules_bad_entity": {
+      "message": "{what}: an HA entity (domain.id) expected."
+    },
+    "rules_bad_attribute": {
+      "message": "Attribute: a-z and _."
+    },
+    "rules_bad_time": {
+      "message": "«For» time: 0–{n} min."
+    },
+    "rules_bad_number": {
+      "message": "{what}: a number expected (up to ±{n})."
+    },
+    "rules_no_outdoor": {
+      "message": "No outdoor sensor and no weather forecast in Home Assistant."
+    },
+    "rules_bad_input": {
+      "message": "{entity} is not a sensor with a value."
+    },
+    "rules_no_entity": {
+      "message": "No such entity: {entity}."
+    },
+    "rules_client_input": {
+      "message": "You can use Hauflo's sensors only."
+    },
+    "rules_bad_condition": {
+      "message": "Condition «{kind}» is not filled in right."
+    },
+    "rules_bad_action": {
+      "message": "Action «{do}» doesn't fit {entity}."
+    },
+    "rules_bad_action_value": {
+      "message": "Value of «{do}»: {lo}–{hi}."
+    },
+    "rules_bad_mode": {
+      "message": "Mode: one of the thermostat's modes (off, heat, cool, auto, dry, fan_only, heat_cool)."
+    },
+    "rules_bad_text": {
+      "message": "Notification text: up to {n} printable characters."
+    },
+    "rules_client_action": {
+      "message": "You can use: lights, blinds, a scene, «notify me»."
+    },
+    "rules_target_not_allowed": {
+      "message": "{entity}: Hauflo's devices only; never locks, the alarm, gates or opening a valve."
+    },
+    "rules_bad_purpose": {
+      "message": "This purpose doesn't fit."
+    },
+    "rules_bad_priority": {
+      "message": "Priority: safety or comfort."
+    },
+    "rules_bad_when": {
+      "message": "When: below / above / outside / between / on / off."
+    },
+    "rules_when_kind": {
+      "message": "On / off is for contacts; below / above / outside / between for numbers."
+    },
+    "rules_bad_hysteresis": {
+      "message": "Margin Y: 0 or more and below the span (a contact has none)."
+    },
+    "rules_bad_range": {
+      "message": "The low value must be below the high one."
+    },
+    "rules_limit_conditions": {
+      "message": "At most {n} conditions."
+    },
+    "rules_limit_actions": {
+      "message": "Actions: 1 to {n}."
+    },
+    "rules_limit_rules": {
+      "message": "At most {n} rules in a house."
+    },
+    "rules_limit_derived": {
+      "message": "At most {n} derived values."
+    },
+    "rules_bad_back": {
+      "message": "Back to normal: reverse, nothing or own actions."
+    },
+    "rules_bad_interlock": {
+      "message": "A supply fan interlock is for a heater rule only."
+    },
+    "rules_loop": {
+      "message": "A loop: {entity} is both changed by the rule and decides it."
+    },
+    "rules_loop_chain": {
+      "message": "A loop through other rules: {entity} → … → {other}."
+    },
+    "rules_conflict": {
+      "message": "{entity} ({attribute}) is already driven by the rule «{rule}»."
+    },
+    "rules_client_integrator_rule": {
+      "message": "The integrator's rule can only be switched on / off and its threshold moved."
+    },
+    "rules_no_rule": {
+      "message": "No such rule."
+    },
+    "rules_no_threshold": {
+      "message": "This rule has no threshold."
+    },
+    "rules_tune_not_allowed": {
+      "message": "The integrator doesn't let you change this threshold."
+    },
+    "rules_out_of_range": {
+      "message": "Threshold: from {lo} to {hi}."
+    },
+    "rules_toggle_not_allowed": {
+      "message": "The integrator doesn't let you switch this rule off."
+    },
+    "rules_delete_not_allowed": {
+      "message": "Only your own rule can be deleted."
+    },
+    "rules_bad_kind": {
+      "message": "Unknown kind: {kind}."
+    },
+    "rules_bad_sources": {
+      "message": "Sources: {lo}–{hi} numeric sensors, no repeats, not another Hauflo value."
+    },
+    "rules_no_value": {
+      "message": "No such derived value."
+    },
+    "rules_in_use": {
+      "message": "Rules use this value: {rules}."
+    },
+    "rules_explain_off": {
+      "message": "Switched off."
+    },
+    "rules_explain_paused": {
+      "message": "Paused: the device was changed by hand several times. Switch the rule on again."
+    },
+    "rules_explain_fault_off": {
+      "message": "{label}: no data ({reason}) — switched off (safe state)."
+    },
+    "rules_explain_fault_wait": {
+      "message": "{label}: no data ({reason}) — the rule waits, nothing changed."
+    },
+    "rules_explain_hold_rate": {
+      "message": "Too many switches — waits until {time}."
+    },
+    "rules_explain_hold_manual": {
+      "message": "Manual — back at {time} or when {label} is back to normal."
+    },
+    "rules_explain_waiting": {
+      "message": "{label} {value} · not in effect now («only if»)."
+    },
+    "rules_explain_pending_on": {
+      "message": "{label} {value}, {threshold} — acts in {minutes} min."
+    },
+    "rules_explain_pending_off": {
+      "message": "{label} {value} — normal, back in {minutes} min."
+    },
+    "rules_explain_pending": {
+      "message": "{label} {value}, {threshold}."
+    },
+    "rules_explain_active": {
+      "message": "{label} {value} · working since {time}; back when {back}."
+    },
+    "rules_explain_normal": {
+      "message": "{label} {value} — normal (acts when {threshold})."
+    },
+    "rules_thr_below": {
+      "message": "below {x}"
+    },
+    "rules_thr_above": {
+      "message": "above {x}"
+    },
+    "rules_thr_outside": {
+      "message": "outside {lo}…{hi}"
+    },
+    "rules_thr_between": {
+      "message": "between {lo} and {hi}"
+    },
+    "rules_word_on": {
+      "message": "on"
+    },
+    "rules_word_off": {
+      "message": "off"
+    },
+    "rules_forecast": {
+      "message": "{label} (forecast)"
+    },
+    "rules_reason_no_entity": {
+      "message": "the sensor is gone"
+    },
+    "rules_reason_unavailable": {
+      "message": "unavailable"
+    },
+    "rules_reason_not_a_number": {
+      "message": "not a number"
+    },
+    "rules_reason_unit": {
+      "message": "another unit"
+    },
+    "rules_reason_stale": {
+      "message": "no fresh data"
+    },
+    "rules_logbook_back": {
+      "message": "the sensor answers again"
+    },
+    "rules_warn_interlock_off": {
+      "message": "«{name}»: the supply fan is off — the heater is switched off. Check the unit (a Hauflo hint, not a protection)."
+    },
+    "rules_warn_interlock_skip": {
+      "message": "«{name}»: the supply fan is off — the heater is not switched on. Check the unit (a Hauflo hint, not a protection)."
+    },
+    "rules_warn_rate": {
+      "message": "«{name}»: {entity} switched {n} times in an hour — the rule waits until {time} to spare the equipment."
+    },
+    "rules_warn_paused": {
+      "message": "«{name}»: {entity} was changed by hand several times — the rule is paused. Switch it on again when sorted."
+    },
+    "rules_hint_heater": {
+      "message": "Hauflo assists, it doesn't protect: check that the unit has its own heater overheat protection and fan run-on after switching off. Safety is the installation's job."
+    },
+    "rules_hint_frost": {
+      "message": "A helper, not a protection: frost protection is the unit's own controls' job; Hauflo assists and tells you."
+    },
+    "rules_hint_leak": {
+      "message": "Hauflo helps to shut the valve and tells you; the emergency protection is the installation's own."
+    },
+    "rules_preview_fault": {
+      "message": "No sensor data now — the rule would wait."
+    },
+    "rules_preview_waiting": {
+      "message": "«Only if» isn't met now — the rule wouldn't act."
+    },
+    "rules_preview_now": {
+      "message": "Now {value}, {threshold} — acts at once."
+    },
+    "rules_preview_wait": {
+      "message": "Now {value}, {threshold} — acts if it stays so for {minutes} min."
+    },
+    "rules_preview_normal": {
+      "message": "Now {value} — normal; acts when {threshold}."
+    },
+    "rules_preview_normal_for": {
+      "message": "Now {value} — normal; acts when {threshold} for {minutes} min."
+    },
+    "rules_recipe_heater_outdoor": {
+      "message": "Heater by the outdoor temperature"
+    },
+    "rules_recipe_dew_point_airing": {
+      "message": "Drying ventilation by the dew point"
+    },
+    "rules_recipe_co2_ventilation": {
+      "message": "Ventilation by CO₂"
+    },
+    "rules_recipe_humidity_ventilation": {
+      "message": "Ventilation by humidity"
+    },
+    "rules_recipe_frost_guard": {
+      "message": "Frost helper"
+    },
+    "rules_recipe_floor_overheat": {
+      "message": "Floor overheat helper"
+    },
+    "rules_recipe_leak_valve": {
+      "message": "Leak → shut the valve"
+    },
+    "rules_recipe_window_heating": {
+      "message": "Window open → heating off"
+    },
+    "rules_recipe_lux_covers": {
+      "message": "Blinds by daylight"
+    },
+    "rules_thr_min": {
+      "message": "{x} or more"
+    },
+    "rules_thr_max": {
+      "message": "{x} or less"
+    },
+    "rules_explain_deferred": {
+      "message": "{label} {value}, {threshold} · the device switches at {time}: a pause between switches (a Hauflo helper)."
+    },
+    "rules_explain_interlocked": {
+      "message": "{label} {value}, {threshold} · the heater stays off: the supply fan is off (a Hauflo helper). It comes on with the fan."
+    },
+    "season_to_season_heat": {
+      "message": "winter"
+    },
+    "season_to_season_cool": {
+      "message": "summer"
+    },
+    "season_to_mode_heat": {
+      "message": "heating"
+    },
+    "season_to_mode_cool": {
+      "message": "cooling"
+    },
+    "season_suggest_title": {
+      "message": "Time for {to}?"
+    },
+    "season_suggest_message": {
+      "message": "Looks like it's time for {to} — switch? {why}"
+    },
+    "season_suggest_why_heat": {
+      "message": "Outside, the daily average has been below {threshold}° for {days} days in a row."
+    },
+    "season_suggest_why_cool": {
+      "message": "Outside, the daily average has been above {threshold}° for {days} days in a row."
+    },
+    "season_act_switch": {
+      "message": "Switch"
+    },
+    "season_act_later": {
+      "message": "Not now"
+    },
+    "rules_bad_window": {
+      "message": "Window: a statistic (mean / minimum / maximum / sum) and a period (hour / day / week)."
+    },
+    "rules_bad_window_n": {
+      "message": "Periods in a row: {lo}–{hi}."
+    },
+    "rules_window_no_stats": {
+      "message": "{entity} has no statistics in Home Assistant (no state_class) — a value over a period can't be taken. Pick a sensor with statistics, or the value «now»."
+    },
+    "rules_window_stat_kind": {
+      "message": "{entity} ({kind}) can't give this statistic: mean / minimum / maximum are a measurement's, a sum is a counter's (total)."
+    },
+    "rules_window_on_time": {
+      "message": "{entity} is on / off: only «sum» (hours on in the period)."
+    },
+    "rules_window_history": {
+      "message": "This value is read from HA's history: the whole window must fit into {n} days."
+    },
+    "rules_window_when": {
+      "message": "For a value over a period: below / above / outside / between."
+    },
+    "rules_window_threshold": {
+      "message": "Threshold for {unit}: {lo} to {hi}."
+    },
+    "rules_bad_outputs": {
+      "message": "The rule's outputs: on / off (suggestion, auto action)."
+    },
+    "rules_bad_snooze": {
+      "message": "«Not now» for {lo}–{hi} days."
+    },
+    "rules_bad_quiet": {
+      "message": "Quiet hours: from and to as HH:MM, different from each other."
+    },
+    "rules_bad_season": {
+      "message": "Season: heat (winter) or cool (summer)."
+    },
+    "rules_explain_window_normal": {
+      "message": "{label}, {stat}: {value} · {held} of {n} in a row {threshold}."
+    },
+    "rules_explain_window_active": {
+      "message": "{label}, {stat}: {value} · in effect since {time}; back after {n} in a row {back}."
+    },
+    "rules_explain_window_no_data": {
+      "message": "{label}: no data for {missing} of the last {n} ({stat}) — the rule waits and changes nothing."
+    },
+    "rules_preview_window_no_data": {
+      "message": "Not enough statistics yet for the last {n} ({stat}) — the rule would wait."
+    },
+    "rules_preview_window_now": {
+      "message": "{stat}: {value}; {held} in a row {threshold} — it would act now."
+    },
+    "rules_preview_window_normal": {
+      "message": "{stat}: {value}; {held} of {n} in a row {threshold} — normal now."
+    },
+    "rules_suggest_on": {
+      "message": "{why}. Do it?"
+    },
+    "rules_suggest_off": {
+      "message": "{why}. Put it back?"
+    },
+    "rules_act_do": {
+      "message": "Do it"
+    },
+    "rules_act_later": {
+      "message": "Not now"
+    },
+    "rules_recipe_season": {
+      "message": "Winter / summer by the outdoor temperature"
+    },
+    "rules_recipe_heat_wave": {
+      "message": "Hot days: close the covers in the afternoon"
+    },
+    "rules_recipe_frost_trace_heating": {
+      "message": "Frost: gutter and pipe heating"
+    },
+    "rules_recipe_bath_humidity": {
+      "message": "Damp bathroom (mould)"
+    },
+    "rules_recipe_co2_bedroom_night": {
+      "message": "Stuffy bedroom at night (CO₂)"
+    },
+    "rules_recipe_setpoint_unreached": {
+      "message": "A room doesn't reach its setpoint"
+    },
+    "rules_recipe_pump_runtime": {
+      "message": "A pump / boiler runs too long"
+    },
+    "rules_recipe_energy_day": {
+      "message": "Daily energy above the norm"
+    },
+    "rules_recipe_silent_sensor": {
+      "message": "Silent sensor"
+    },
+    "rules_link_silent_sensor": {
+      "message": "Already in the rule hints on «Review»: a sensor that sends nothing for hours — per room and for the weather station. Not made twice here."
+    },
+    "rules_window_mean_hour": {
+      "message": "mean per hour"
+    },
+    "rules_window_mean_day": {
+      "message": "mean per day"
+    },
+    "rules_window_mean_week": {
+      "message": "mean per week"
+    },
+    "rules_window_min_hour": {
+      "message": "minimum per hour"
+    },
+    "rules_window_min_day": {
+      "message": "minimum per day"
+    },
+    "rules_window_min_week": {
+      "message": "minimum per week"
+    },
+    "rules_window_max_hour": {
+      "message": "maximum per hour"
+    },
+    "rules_window_max_day": {
+      "message": "maximum per day"
+    },
+    "rules_window_max_week": {
+      "message": "maximum per week"
+    },
+    "rules_window_sum_hour": {
+      "message": "sum per hour"
+    },
+    "rules_window_sum_day": {
+      "message": "sum per day"
+    },
+    "rules_window_sum_week": {
+      "message": "sum per week"
     }
   }
 }

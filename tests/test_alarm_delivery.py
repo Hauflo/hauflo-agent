@@ -82,6 +82,15 @@ async def test_a_flapping_house_cant_use_the_day_up(hass: HomeAssistant) -> None
     # A critical alarm still goes.
     await eng._send(_rule("critical"), "t", "leak", tag="x", critical=True, targets=target)
     assert calls[-1] == "leak"
+    # A restart doesn't give the house a fresh hour / day: the push log is kept (active_store).
+    await hass.async_block_till_done()
+    await eng.active_store.async_save(eng._snapshot())
+    again = _engine(hass)
+    await again.async_start()
+    n = len(calls)
+    await again._send(_rule(), "t", "after restart", tag="x", critical=False, targets=target)
+    assert len(calls) == n and again.sent_log[0]["held"] == ["mobile_app_tablet"]
+    again.async_stop()
 
 
 async def test_repeats_slow_down_when_nobody_accepts(hass: HomeAssistant) -> None:

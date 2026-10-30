@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "notify": {
+    "repeat_min": 5,
+    "group_window_s": 3,
+    "nodata_after_s": 900,
+    "chatter_count": 3,
+    "chatter_window_s": 600,
+    "push_hour_max": 20,
+    "push_day_max": 80,
+    "push_day_critical": 200,
+    "repeat_fast": 12,
+    "test_gap_s": 20,
+    "test_per_min": 10,
+    "group_min": 3,
+    "list_max": 8,
+    "critical_classes": ["moisture", "smoke", "gas", "carbon_monoxide", "heat", "problem", "safety"],
+    "alarm_classes": ["connectivity", "moisture", "smoke", "gas", "carbon_monoxide", "problem", "safety", "heat", "cold", "tamper", "door", "window", "opening", "motion", "battery"],
+    "heartbeat_words": "heartbeat|hearbeat|связь|связи|link|alive|online|пульс",
+    "quiet_name_words": "motion|presence|occupan|движен|присутств|(?<![a-z])(door|window|gate|contact|reed)|(?<![а-я])(окн|окон|двер|створк|ворот|калитк|геркон)|(?<![a-z])(okn|okon|dver|stvork|vorot|kalitk|gerkon)",
+    "loud_name_words": "leak|flood|water|smoke|fire|(?<![a-z])gas|протеч|залив|вод[аы]|дым|пожар|(?<![а-я])газ|protech|zaliv|dym"
+  },
+  "backup": {
+    "wait_s": 20,
+    "keep": 3,
+    "keep_day_s": 86400,
+    "keep_week_s": 604800,
+    "reuse_s": 600,
+    "fresh_s": 1800
+  },
+  "season": {
+    "resend_s": 3600,
+    "resend_bounds_s": [600, 86400],
+    "tick_s": 60,
+    "start_delay_s": 60,
+    "suggest_below": 8.0,
+    "suggest_above": 8.0,
+    "suggest_days": 5,
+    "days_bounds": [1, 30],
+    "snooze_days": 3,
+    "snooze_bounds": [1, 30],
+    "threshold_bounds": [0, 25],
+    "max_exclude": 500,
+    "max_include": 500,
+    "log_max": 20
+  },
+  "guest": {
+    "max_hours": 336,
+    "max_active": 20,
+    "max_devices": 5,
+    "default_devices": 3,
+    "max_rooms": 30,
+    "log_days": 30,
+    "log_max": 300,
+    "temp_band": [16.0, 28.0],
+    "rate_act": 30,
+    "rate_state": 60,
+    "rate_bad": 20,
+    "ask_gap_s": 600
+  },
+  "scenes": {
+    "learn_every_s": 5.0,
+    "learn_per_minute": 6
+  },
+  "link": {
+    "reconnect_hint_wait_s": [1.0, 30.0],
+    "lost_issue_after_s": 21600,
+    "big_frame_bytes": 262144
+  },
+  "ownership": {
+    "sync_delay_s": 20
+  },
+  "presence": {
+    "learn_days": 14,
+    "jitter_min": 15,
+    "slot_min": 15,
+    "slots": 96,
+    "evening": [660, 1260],
+    "morning": [0, 480],
+    "afternoon": [480, 1380],
+    "cap_end": 1260,
+    "default_end": 1140,
+    "dark_before_min": 20,
+    "p_min": 0.25,
+    "min_evenings": 3,
+    "max_rooms": 3,
+    "lights_per_room": 2,
+    "sun_brightness": 60,
+    "coalesce_s": 180,
+    "manual_s": 600,
+    "watch_off_s": 1800,
+    "ours_after_s": 180,
+    "max_events": 200,
+    "log_size": 20,
+    "max_until_days": 90,
+    "replan": [0, 5],
+    "max_skip": 200,
+    "max_ours": 3000,
+    "living_words": "гостин|кухн|столов|зал\\b|living|kitchen|lounge|dining"
+  }
+}
