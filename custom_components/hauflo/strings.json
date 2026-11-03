@@ -147,14 +147,12 @@
         "data": {
           "allow_changes": "Allow Hauflo to change this home's setup",
           "ranges": "Allowed addresses (1/1/5, a span 1/1/1-21 or a whole group 1/1; comma-separated or one per line)",
-          "independent": "Make the house independent of Hauflo",
-          "cards_view": "Card style"
+          "independent": "Make the house independent of Hauflo"
         },
         "data_description": {
           "allow_changes": "Off: Hauflo changes nothing in Home Assistant — deploys, dashboards, rooms, KNX entities and backups started by Hauflo are refused. Monitoring, alarms and voice keep working.",
           "ranges": "Remove any Hauflo must not control (a gate, a lock).",
-          "independent": "Next step explains it: the dashboard cards stay in /config/www/hauflo and the alarm rules become ordinary Home Assistant automations. Nothing is deleted.",
-          "cards_view": "The look of Hauflo cards on dashboards. «New» is the redesigned set; «Current» can be restored any time. Open dashboard tabs need a reload."
+          "independent": "Next step explains it: the dashboard cards stay in /config/www/hauflo and the alarm rules become ordinary Home Assistant automations. Nothing is deleted."
         }
       },
       "init_pending": {
@@ -164,15 +162,13 @@
           "allow_changes": "Allow Hauflo to change this home's setup",
           "ranges": "Allowed addresses (1/1/5, a span 1/1/1-21 or a whole group 1/1; comma-separated or one per line)",
           "accept_pending": "Allow these requested addresses",
-          "independent": "Make the house independent of Hauflo",
-          "cards_view": "Card style"
+          "independent": "Make the house independent of Hauflo"
         },
         "data_description": {
           "allow_changes": "Off: Hauflo changes nothing in Home Assistant — deploys, dashboards, rooms, KNX entities and backups started by Hauflo are refused. Monitoring, alarms and voice keep working.",
           "ranges": "Remove any Hauflo must not control (a gate, a lock).",
           "accept_pending": "Tick only your own project's addresses. Check each one: it may be a gate or a lock.",
-          "independent": "Next step explains it: the dashboard cards stay in /config/www/hauflo and the alarm rules become ordinary Home Assistant automations. Nothing is deleted.",
-          "cards_view": "The look of Hauflo cards on dashboards. «New» is the redesigned set; «Current» can be restored any time. Open dashboard tabs need a reload."
+          "independent": "Next step explains it: the dashboard cards stay in /config/www/hauflo and the alarm rules become ordinary Home Assistant automations. Nothing is deleted."
         }
       },
       "independent": {
@@ -697,14 +693,7 @@
       "message": "maximum"
     }
   },
-  "selector": {
-    "cards_view": {
-      "options": {
-        "current": "Current",
-        "new": "New"
-      }
-    }
-  },
+  "selector": {},
   "services": {
     "off_in": {
       "name": "Switch off after a time",

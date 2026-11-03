@@ -701,6 +701,12 @@
   {
    "file": "ha/roomLighting.ts",
    "kind": "ws",
+   "call": "config/entity_registry/get",
+   "params": {}
+  },
+  {
+   "file": "ha/roomLighting.ts",
+   "kind": "ws",
    "call": "config/entity_registry/list",
    "params": {}
   },

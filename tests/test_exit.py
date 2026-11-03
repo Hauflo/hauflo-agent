@@ -93,23 +93,20 @@ async def test_a_resource_of_an_older_agent_is_moved_to_this_version(hass: HomeA
     assert _urls(hass) == sorted([f"/local/hauflo/hauflo-cards.js?v={ASSET_TAG}", f"/local/hauflo/hauflo-icons.js?v={ASSET_TAG}", "/local/theirs.js"])
 
 
-async def test_switching_the_cards_view_leaves_one_cards_file(hass: HomeAssistant, lovelace: Path) -> None:
-    """«Вид карточек» switched: the other file's resource goes (30.10: the old one stayed and loaded beside v5)."""
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
-
-    from custom_components.hauflo.const import CARDS_NEW, CONF_CARDS_VIEW
-
-    MockConfigEntry(domain=DOMAIN, data={CONF_SERVER: "https://app.hauflo.ru", CONF_SECRET: "s"}, options={CONF_CARDS_VIEW: CARDS_NEW}).add_to_hass(hass)
+@pytest.mark.parametrize("old", ["hauflo-cards-v5.js", "hauflo-cards-v3.js"])
+async def test_a_trial_cards_file_goes_after_the_update(hass: HomeAssistant, lovelace: Path, old: str) -> None:
+    """A house that tried «Вид карточек» (0.17–0.18): that file's resource goes, the one cards file loads; the saved
+    option is ignored (the files are gone)."""
+    MockConfigEntry(domain=DOMAIN, data={CONF_SERVER: "https://app.hauflo.ru", CONF_SECRET: "s"}, options={"cards_view": "new"}).add_to_hass(hass)
     res = keep._resources(hass)
     await res.async_get_info()
-    await res.async_create_item({"res_type": "module", "url": "/hauflo_static/hauflo-cards.js?v=0.17.0"})
+    await res.async_create_item({"res_type": "module", "url": f"/hauflo_static/{old}?v=0.18.0"})
     await res.async_create_item({"res_type": "module", "url": "/local/theirs.js"})
     await keep.async_on_start(hass, ASSET_TAG)
-    want = sorted([f"/hauflo_static/hauflo-icons.js?v={ASSET_TAG}", f"/hauflo_static/hauflo-cards-v5.js?v={ASSET_TAG}", "/local/theirs.js"])
-    assert _urls(hass) == want
-    # Independent copies: the same — only the chosen file.
+    assert _urls(hass) == sorted([f"/hauflo_static/hauflo-icons.js?v={ASSET_TAG}", f"/hauflo_static/hauflo-cards.js?v={ASSET_TAG}", "/local/theirs.js"])
+    # Independent copies: the same — the one cards file.
     assert await keep.async_make_independent(hass, ASSET_TAG) == keep.ADDED
-    assert _urls(hass) == sorted([f"/local/hauflo/hauflo-icons.js?v={ASSET_TAG}", f"/local/hauflo/hauflo-cards-v5.js?v={ASSET_TAG}", "/local/theirs.js"])
+    assert _urls(hass) == sorted([f"/local/hauflo/hauflo-icons.js?v={ASSET_TAG}", f"/local/hauflo/hauflo-cards.js?v={ASSET_TAG}", "/local/theirs.js"])
 
 
 async def test_yaml_resources_are_said_not_pretended(hass: HomeAssistant, tmp_path: Path) -> None:

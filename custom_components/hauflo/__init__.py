@@ -2240,7 +2240,6 @@ def relinked(agent: Agent, data: Mapping[str, Any]) -> bool:
 
 
 async def _entry_changed(hass: HomeAssistant, entry: HaufloConfigEntry) -> None:
-    theme.apply_cards_view(hass)  # «Вид карточек» changed: the other cards file from now on
     if relinked(entry.runtime_data, entry.data):
         hass.config_entries.async_schedule_reload(entry.entry_id)
         return

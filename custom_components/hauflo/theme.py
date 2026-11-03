@@ -8,6 +8,7 @@ default (frontend.set_theme) when the integrator asks.
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 
@@ -18,7 +19,7 @@ from homeassistant.components.http import KEY_HASS, HomeAssistantView
 from homeassistant.components import persistent_notification
 from homeassistant.core import CoreState, Event, HomeAssistant, callback
 
-from .const import ASSET_TAG, CARDS_CURRENT, CARDS_FILES, DATA_CARDS_FILE, DATA_CARDS_LOCAL, cards_file, DATA_THEME_DEFAULTS, DATA_THEME_LISTENER, DATA_THEME_FIRING, DATA_WWW
+from .const import ASSET_TAG, CARDS_FILE, DATA_CARDS_FILE, DATA_CARDS_LOCAL, DATA_THEME_DEFAULTS, DATA_THEME_LISTENER, DATA_THEME_FIRING, DATA_WWW
 
 _LOGGER = logging.getLogger(__name__)
 THEME = "Hauflo Atelier"
@@ -29,153 +30,14 @@ OLD_THEMES = ("Hauflo Aura", "Hauflo Atelier", "Hauflo Atelier · светлая
 ICONS_URL = f"/hauflo_static/hauflo-icons.js?v={ASSET_TAG}"
 
 
-CARDS_URL = f"/hauflo_static/{CARDS_FILES[CARDS_CURRENT]}?v={ASSET_TAG}"  # the default view
+CARDS_URL = f"/hauflo_static/{CARDS_FILE}?v={ASSET_TAG}"
 
-
-def cards_url(hass: HomeAssistant) -> str:
-    return f"/hauflo_static/{cards_file(hass)}?v={ASSET_TAG}"
-
-_COMMON = {
-    "ha-card-border-radius": "30px",
-    "ha-card-border-width": "0px",
-    "ha-badge-border-radius": "14px",
-    "ha-dialog-border-radius": "28px",
-    "ha-tile-border-radius": "24px",
-    "eh-radius": "30px",
-    "ha-font-family-body": "Onest, Inter, -apple-system, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif",
-    "ha-font-family-heading": "Onest, Inter, -apple-system, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif",
-    "ha-card-header-font-size": "18px",
-    "ha-view-sections-column-gap": "12px",
-    "ha-section-grid-row-gap": "12px",
-    "ha-section-grid-column-gap": "12px",
-    # The tabs: no grey track, the active tab gets Hauflo's own mark (hauflo-cards.js).
-    "ha-tab-indicator-color": "transparent",
-    "ha-tab-track-color": "transparent",
-}
-
-# Graphite (dark) and paper (light): glass with an edge highlight, deep soft shadows, light as colour.
-DARK = {
-    "eh-mode": "dark",  # read by the v5 cards: a view set to a fixed theme wins over the phone's mode
-    "primary-color": "#5CE0B4",
-    "accent-color": "#5CE0B4",
-    "primary-background-color": "#08090A",
-    # The warm glow low in the corner, fixed: the header bar and the page are one surface (designer review 25.10).
-    "lovelace-background": "radial-gradient(90% 55% at 100% 100%, #1a1712 0%, #08090A 60%) fixed",
-    "secondary-background-color": "#141517",
-    "card-background-color": "#141517",
-    "ha-card-background": "linear-gradient(180deg, rgba(255,255,255,.075), rgba(255,255,255,.03))",
-    "ha-card-box-shadow": "inset 0 1px 0 rgba(255,255,255,.10), inset 0 0 0 1px rgba(255,255,255,.05), 0 12px 24px rgba(0,0,0,.35), 0 40px 80px rgba(0,0,0,.45)",
-    "primary-text-color": "#F4F2EE",
-    "secondary-text-color": "rgba(244,242,238,.64)",
-    "disabled-text-color": "rgba(244,242,238,.55)",
-    "divider-color": "rgba(255,255,255,.08)",
-    "app-header-background-color": "#08090A",
-    "app-header-text-color": "#F4F2EE",
-    "app-header-border-bottom": "none",
-    "sidebar-background-color": "#08090A",
-    "sidebar-text-color": "#F4F2EE",
-    "sidebar-selected-icon-color": "#F4F2EE",
-    "sidebar-selected-text-color": "#F4F2EE",
-    "state-icon-color": "rgba(244,242,238,.64)",
-    "state-active-color": "#FFB25C",
-    "state-light-active-color": "#FFB25C",
-    "state-switch-active-color": "#5CE0B4",
-    "state-cover-active-color": "#8DC2FF",
-    "state-climate-heat-color": "#FFB25C",
-    "state-climate-cool-color": "#8DC2FF",
-    "state-climate-auto-color": "#5CE0B4",
-    "state-binary_sensor-active-color": "#FF5A5F",
-    "error-color": "#FF5A5F",
-    "warning-color": "#FFB25C",
-    "success-color": "#5CE0B4",
-    "info-color": "#8DC2FF",
-    "switch-checked-color": "#5CE0B4",
-    "switch-checked-button-color": "#08090A",
-    "switch-checked-track-color": "#5CE0B4",
-    "input-fill-color": "rgba(255,255,255,.06)",
-    "eh-ink": "#F4F2EE",
-    "eh-ink2": "rgba(244,242,238,.64)",
-    "eh-ink3": "rgba(244,242,238,.55)",
-    "eh-alert-text": "#FF5A5F",
-    "eh-amber-text": "#FFB25C",
-    "eh-mint-text": "#5CE0B4",
-    "eh-line-strong": "rgba(244,242,238,.40)",
-    "eh-hair": "rgba(255,255,255,.08)",
-    "eh-glass": "linear-gradient(180deg, rgba(255,255,255,.075), rgba(255,255,255,.03))",
-    "eh-edge": "inset 0 1px 0 rgba(255,255,255,.10), inset 0 0 0 1px rgba(255,255,255,.05)",
-    "eh-deep": "0 1px 1px rgba(0,0,0,.4), 0 12px 24px rgba(0,0,0,.35), 0 40px 80px rgba(0,0,0,.45)",
-    "eh-amber": "#FFB25C",
-    "eh-amber-glow": "rgba(255,160,70,.55)",
-    "eh-ice": "#8DC2FF",
-    "eh-ice-glow": "rgba(90,160,255,.45)",
-    "eh-alert": "#FF5A5F",
-    "eh-alert-glow": "rgba(255,70,80,.55)",
-    "eh-mint": "#5CE0B4",
-    "eh-dry": "#62D0DE",
-    "eh-fan": "#B4A4FF",
-    "eh-track": "rgba(255,255,255,.08)",
-}
-
-LIGHT = {
-    "eh-mode": "light",
-    "primary-color": "#14946C",
-    "accent-color": "#14946C",
-    "primary-background-color": "#EFECE6",
-    "lovelace-background": "radial-gradient(90% 55% at 100% 100%, #F7EBDD 0%, #EFECE6 60%) fixed",
-    "secondary-background-color": "#E6E2DA",
-    "card-background-color": "#FBFAF8",
-    "ha-card-background": "linear-gradient(180deg, rgba(255,255,255,.92), rgba(255,255,255,.72))",
-    "ha-card-box-shadow": "inset 0 1px 0 #fff, inset 0 0 0 1px rgba(18,18,18,.04), 0 10px 20px rgba(40,30,20,.06), 0 30px 60px rgba(40,30,20,.08)",
-    "primary-text-color": "#121212",
-    "secondary-text-color": "rgba(18,18,18,.64)",
-    "disabled-text-color": "rgba(18,18,18,.58)",
-    "divider-color": "rgba(18,18,18,.08)",
-    "app-header-background-color": "#EFECE6",
-    "app-header-text-color": "#121212",
-    "app-header-border-bottom": "none",
-    "sidebar-background-color": "#EFECE6",
-    "sidebar-text-color": "#121212",
-    "sidebar-selected-icon-color": "#121212",
-    "sidebar-selected-text-color": "#121212",
-    "state-icon-color": "rgba(18,18,18,.64)",
-    "state-active-color": "#E8901F",
-    "state-light-active-color": "#E8901F",
-    "state-switch-active-color": "#14946C",
-    "state-cover-active-color": "#3C82F0",
-    "state-climate-heat-color": "#E8901F",
-    "state-climate-cool-color": "#3C82F0",
-    "state-climate-auto-color": "#14946C",
-    "state-binary_sensor-active-color": "#E5383E",
-    "error-color": "#E5383E",
-    "warning-color": "#E8901F",
-    "success-color": "#14946C",
-    "info-color": "#3C82F0",
-    "switch-checked-color": "#14946C",
-    "switch-checked-button-color": "#FFFFFF",
-    "switch-checked-track-color": "#14946C",
-    "input-fill-color": "rgba(18,18,18,.05)",
-    "eh-ink": "#121212",
-    "eh-ink2": "rgba(18,18,18,.64)",
-    "eh-ink3": "rgba(18,18,18,.58)",
-    "eh-alert-text": "#B3261E",
-    "eh-amber-text": "#9A5B00",
-    "eh-mint-text": "#0B6B4D",
-    "eh-line-strong": "rgba(18,18,18,.42)",
-    "eh-hair": "rgba(18,18,18,.08)",
-    "eh-glass": "linear-gradient(180deg, rgba(255,255,255,.92), rgba(255,255,255,.72))",
-    "eh-edge": "inset 0 1px 0 #fff, inset 0 0 0 1px rgba(18,18,18,.04)",
-    "eh-deep": "0 1px 1px rgba(40,30,20,.05), 0 10px 20px rgba(40,30,20,.06), 0 30px 60px rgba(40,30,20,.08)",
-    "eh-amber": "#E8901F",
-    "eh-amber-glow": "rgba(255,170,80,.55)",
-    "eh-ice": "#3C82F0",
-    "eh-ice-glow": "rgba(90,150,255,.35)",
-    "eh-alert": "#E5383E",
-    "eh-alert-glow": "rgba(255,80,80,.45)",
-    "eh-mint": "#14946C",
-    "eh-dry": "#1E97AA",
-    "eh-fan": "#7B61E0",
-    "eh-track": "rgba(18,18,18,.07)",
-}
+# The theme is data (www/themes/hauflo.json — the same file the cards read their tokens from): HA's variables, common +
+# graphite (dark) + paper (light).
+_DATA = json.loads((Path(__file__).parent / "www" / "themes" / "hauflo.json").read_text(encoding="utf-8"))
+_COMMON: dict[str, str] = _DATA["ha"]["common"]
+DARK: dict[str, str] = _DATA["ha"]["dark"]
+LIGHT: dict[str, str] = _DATA["ha"]["light"]
 
 AURA = {**_COMMON, "modes": {"light": LIGHT, "dark": DARK}}
 # Fixed variants: a dashboard or a view set to one of them stays light / dark whatever the phone says
@@ -282,10 +144,10 @@ async def async_setup(hass: HomeAssistant) -> None:
     if not hass.data.get(DATA_WWW) and await hass.async_add_executor_job(www.is_dir):
         hass.data[DATA_WWW] = True
         hass.http.register_view(StaticView(www))
+        hass.data[DATA_CARDS_FILE] = CARDS_URL
         # An independent house loads them from /config/www/hauflo (keep.py) — not twice.
         if not hass.data.get(DATA_CARDS_LOCAL):
             add_extra_js_url(hass, ICONS_URL)
-            hass.data[DATA_CARDS_FILE] = cards_url(hass)
             add_extra_js_url(hass, hass.data[DATA_CARDS_FILE])
             # Set up while HA runs (just paired): a tab that had already opened a dashboard loads neither the extra JS nor
             # the resources again until a reload (integrator review r2, D2) — HA says so. Gone at the next HA start.
@@ -352,18 +214,3 @@ def async_unload(hass: HomeAssistant) -> None:
         unsub()
     hass.data.pop(DATA_THEME_FIRING, None)
     hass.data.pop(DATA_THEME_DEFAULTS, None)
-
-
-def apply_cards_view(hass: HomeAssistant) -> bool:
-    """The owner changed «Вид карточек»: the other file is the extra JS from now on (open tabs reload to get it)."""
-    old = hass.data.get(DATA_CARDS_FILE)
-    new = cards_url(hass)
-    if old is None or old == new or hass.data.get(DATA_CARDS_LOCAL):
-        return False
-    from homeassistant.components.frontend import remove_extra_js_url
-
-    remove_extra_js_url(hass, old)
-    add_extra_js_url(hass, new)
-    hass.data[DATA_CARDS_FILE] = new
-    _say_reload(hass)
-    return True

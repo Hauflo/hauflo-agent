@@ -7,13 +7,16 @@ from pathlib import Path
 from homeassistant.util.hass_dict import HassKey
 
 DOMAIN = "hauflo"
-VERSION = "0.18.0"
+VERSION = "0.19.0"
 
 
 def _www_hash() -> str:
+    """Every served file, the data ones in subfolders too (themes/, locales/, domains.json): a changed token or word is
+    a new address as well."""
     h = hashlib.sha256()
-    for p in sorted((Path(__file__).parent / "www").glob("*.js")):
-        h.update(p.name.encode() + p.read_bytes())
+    www = Path(__file__).parent / "www"
+    for p in sorted(f for f in www.rglob("*") if f.is_file() and f.suffix in (".js", ".json")):
+        h.update(p.relative_to(www).as_posix().encode() + p.read_bytes())
     return h.hexdigest()[:8]
 
 
@@ -58,11 +61,11 @@ DATA_PENDING_RANGES = "hauflo_pending_ranges"
 # «Allow Hauflo to change this home's setup» (options, on by default): off — the tunnel refuses every config write;
 # reads, monitoring and alarms keep working. Read live from the entry's options: no restart needed.
 CONF_ALLOW_CHANGES = "allow_changes"
-# «Вид карточек»: the current cards file, or the new one (cards v5); the house is switched by the owner in the options.
-CONF_CARDS_VIEW = "cards_view"
-CARDS_CURRENT = "current"
-CARDS_NEW = "new"
-CARDS_FILES = {CARDS_CURRENT: "hauflo-cards.js", CARDS_NEW: "hauflo-cards-v5.js"}
+# The cards file. The trial «Вид карточек» files (0.17–0.18) are gone: a resource left from them is dropped (keep.py),
+# and the option an owner saved then is ignored (config_flow drops it at the next save).
+CARDS_FILE = "hauflo-cards.js"
+OLD_CARDS_FILES = ("hauflo-cards-v3.js", "hauflo-cards-v5.js")
+CONF_CARDS_VIEW_OLD = "cards_view"
 CONF_ACCEPT_PENDING = "accept_pending"
 # «Сделать дом независимым» (independent.py): a tick in the options that leads to its own confirm step.
 CONF_INDEPENDENT = "independent"
@@ -70,9 +73,8 @@ CONF_INDEPENDENT = "independent"
 LOCKED_CODE = "locked_by_owner"
 
 
-def cards_file(hass) -> str:
-    """The cards file this house loads: its option «Вид карточек» (the current one unless the owner chose the new one)."""
-    for entry in hass.config_entries.async_entries(DOMAIN):
-        if entry.options.get(CONF_CARDS_VIEW) == CARDS_NEW:
-            return CARDS_FILES[CARDS_NEW]
-    return CARDS_FILES[CARDS_CURRENT]
+def wants_ru(body: object, hass_language: str | None) -> bool:
+    """The language of an answer to a card: the house's language the card sends (`lang`, from its dashboard), else HA's.
+    The test house's HA was English under a Russian dashboard: errors came in English (03.11)."""
+    lang = body.get("lang") if isinstance(body, dict) else None
+    return str(lang if isinstance(lang, str) and lang.strip() else hass_language or "").lower().startswith("ru")

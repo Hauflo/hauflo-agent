@@ -441,7 +441,7 @@ def test_saved_without_location_is_a_caution_not_an_error() -> None:
     js = (Path(__file__).parents[1] / "custom_components/hauflo/www/hauflo-cards.js").read_text(encoding="utf-8")
     line = next(x for x in js.splitlines() if "w.locWarn" in x and "toList" in x)
     assert "warn: true" in line and "bad: true" not in line
-    assert ".msg.warn{" in js and "eh-amber" in js.split(".msg.warn{", 1)[1].split("}", 1)[0]
+    assert ".msg.warn{" in js and "hf-amber" in js.split(".msg.warn{", 1)[1].split("}", 1)[0]
     assert js.count('this.bad ? "bad" : this.warn ? "warn" : ""') == 2
 
 

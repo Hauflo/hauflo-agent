@@ -44,7 +44,7 @@ from homeassistant.util import dt as dt_util
 
 from .house import refuse
 from .storage import HaufloStore
-from .const import LOCKED_CODE
+from .const import LOCKED_CODE, wants_ru
 from .tuning import TUNING
 
 _LOGGER = logging.getLogger(__name__)
@@ -428,7 +428,7 @@ class ScenesView(HomeAssistantView):
         if not isinstance(body, dict):
             return self.json_message("invalid JSON", 400)
         user = request["hass_user"]
-        ru = str(engine.hass.config.language or "").startswith("ru")
+        ru = wants_ru(body, engine.hass.config.language)
         op = body.get("op")
         # Every op here changes the house's scenes (create, rename, re-learn on the KNX actuators, delete): not a restricted
         # (child) profile (house.py, family review round 3). Running a scene is HA's own scene.turn_on — open to everyone.
@@ -464,7 +464,7 @@ class ScenesView(HomeAssistantView):
         except KeyError:
             return self.json_message("no such scene", 404)
         except LookupError as err:
-            msg = "Нечего запомнить: свет и шторы комнаты не сообщают своё состояние." if ru else str(err)
+            msg = "Нечего запомнить: свет и шторы комнаты не сообщают своё состояние." if ru else "Nothing to remember: the room's lights and blinds don't report their state."
             return self.json({"message": msg, "code": "nothing"}, 409)
         except Exception as err:  # noqa: BLE001 — HA refused the file / reload: said, not a 500 page
             _LOGGER.warning("Hauflo scenes: %s failed: %s", op, err)

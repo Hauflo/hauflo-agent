@@ -138,3 +138,14 @@ async def test_season_view(hass: HomeAssistant) -> None:
     # a person the admin hasn't allowed to change the house's settings is refused
     with patch.object(season, "refuse", AsyncMock(return_value=NS(status=403))):
         assert (await view.post(Req(hass, body={"mode": "heat"}))).status == 403
+
+
+def test_answer_language_follows_the_card():
+    """A card's errors in the house's language (the card's `lang`), not HA's: an English HA under a Russian dashboard."""
+    from custom_components.hauflo.const import wants_ru
+
+    assert wants_ru({"lang": "ru"}, "en") is True
+    assert wants_ru({"lang": "en"}, "ru") is False
+    assert wants_ru({}, "ru") is True
+    assert wants_ru({"lang": " "}, "en") is False
+    assert wants_ru(None, None) is False

@@ -27,19 +27,19 @@ from pathlib import Path
 from homeassistant.components import persistent_notification
 from homeassistant.core import HomeAssistant
 
-from .const import CARDS_CURRENT, CARDS_FILES, cards_file
+from .const import CARDS_FILE, OLD_CARDS_FILES
 from .storage import HaufloStore
 
 _LOGGER = logging.getLogger(__name__)
 LOCAL = "/local/hauflo/"
 SERVED = "/hauflo_static/"  # the agent's own static path (theme.py)
 ICONS = "hauflo-icons.js"
-MODULES = (ICONS, CARDS_FILES[CARDS_CURRENT])  # the default view
+MODULES = (ICONS, CARDS_FILE)
 
 
 def modules(hass: HomeAssistant) -> tuple[str, ...]:
-    """The icons and the cards file this house chose (const.cards_file)."""
-    return (ICONS, cards_file(hass))
+    """The icons and the cards file."""
+    return MODULES
 STORE_KEY = "hauflo.independent"
 NOTE_ID = "hauflo_dashboard_resources"
 # The result of a keep: resources added (or already there), or HA keeps them in YAML (a person adds them).
@@ -73,7 +73,7 @@ async def async_keep_dashboard(hass: HomeAssistant, version: str) -> str:
     await res.async_get_info()
     # The agent's own addresses die with it.
     changed = await _drop(res, SERVED)
-    changed = await _drop_unchosen(hass, res, LOCAL) or changed
+    changed = await _drop_old(hass, res, LOCAL) or changed
     for name in modules(hass):
         url = f"{LOCAL}{name}?v={version}"
         have = [item for item in res.async_items() if str(item.get("url", "")).startswith(LOCAL + name)]
@@ -137,12 +137,10 @@ async def async_on_start(hass: HomeAssistant, version: str) -> bool:
     return False
 
 
-async def _drop_unchosen(hass: HomeAssistant, res, base: str) -> bool:
-    """The other «Вид карточек» file's resource goes: after a switch it stayed under its old address and loaded too
-    (30.10: hauflo-cards.js?v=0.17.0 beside hauflo-cards-v5.js)."""
-    chosen = modules(hass)
+async def _drop_old(hass: HomeAssistant, res, base: str) -> bool:
+    """A trial «Вид карточек» file's resource (0.17–0.18) goes: it stayed under its old address and loaded too."""
     removed = False
-    for name in set(CARDS_FILES.values()) - set(chosen):
+    for name in OLD_CARDS_FILES:
         for item in list(res.async_items()):
             url = str(item.get("url", ""))
             if url == base + name or url.startswith(base + name + "?"):
@@ -169,7 +167,7 @@ async def async_release(hass: HomeAssistant, version: str | None = None) -> None
     await res.async_get_info()
     changed = await _drop(res, LOCAL)
     if version:
-        changed = await _drop_unchosen(hass, res, SERVED) or changed
+        changed = await _drop_old(hass, res, SERVED) or changed
     for name in modules(hass) if version else ():
         url = f"{SERVED}{name}?v={version}"
         have = [item for item in res.async_items() if str(item.get("url", "")).startswith(SERVED + name)]

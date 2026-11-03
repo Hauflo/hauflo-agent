@@ -45,7 +45,7 @@ from homeassistant.util import dt as dt_util
 
 from .house import refuse
 from .natural import natural_key
-from .const import DOMAIN
+from .const import DOMAIN, wants_ru
 from .storage import HaufloStore
 from .tuning import TUNING
 _LOGGER = logging.getLogger(__name__)
@@ -933,7 +933,7 @@ class Automations:
 
         if self.hass.config.config_source == ConfigSource.YAML:
             raise PermissionError("the location is set in configuration.yaml")
-        if set(body) - {"op", "latitude", "longitude", "elevation"}:
+        if set(body) - {"op", "lang", "latitude", "longitude", "elevation"}:
             raise Invalid("only latitude, longitude, elevation")
         lat = _float(body.get("latitude"), -90, 90, "latitude")
         lon = _float(body.get("longitude"), -180, 180, "longitude")
@@ -952,7 +952,7 @@ class Automations:
         if self.hass.config.config_source == ConfigSource.YAML:
             raise PermissionError("the time zone is set in configuration.yaml")
         tz = body.get("time_zone")
-        if set(body) - {"op", "time_zone"} or not isinstance(tz, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+){0,2}", tz) or dt_util.get_time_zone(tz) is None:
+        if set(body) - {"op", "lang", "time_zone"} or not isinstance(tz, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+){0,2}", tz) or dt_util.get_time_zone(tz) is None:
             raise Invalid("time_zone: an IANA zone (Europe/Moscow)")
         await self.hass.config.async_update(time_zone=tz)
         return self.location()
@@ -1039,7 +1039,7 @@ class AutomationsView(HomeAssistantView):
         # A person's own action, as HA's own buttons are; the tunnel can't reach this view (not in its allowlist).
         user = request["hass_user"]
         op = body.get("op")
-        ru = str(engine.hass.config.language or "").startswith("ru")
+        ru = wants_ru(body, engine.hass.config.language)
         if op in ("location", "detect") and not (user is not None and user.is_admin):
             # HA's home location moves zone.home (presence, every sun rule): an administrator's (security review 28.10).
             msg = "Место дома задаёт администратор Home Assistant." if ru else "The home's location is set by the Home Assistant administrator."

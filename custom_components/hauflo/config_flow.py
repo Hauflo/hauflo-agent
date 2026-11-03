@@ -17,7 +17,7 @@ from homeassistant.helpers.selector import BooleanSelector, SelectSelector, Sele
 
 from . import relinked as _relinked, service
 from . import ranges as ranges_mod
-from .const import CARDS_CURRENT, CARDS_NEW, CONF_CARDS_VIEW, CONF_INDEPENDENT, CONF_ACCEPT_PENDING, CONF_ALLOW_CHANGES, CONF_CODE, CONF_CONFIRM_TAKEOVER, CONF_RANGES, CONF_SECRET, CONF_SERVER, DATA_PENDING_RANGES, DATA_UNLINKED, DEFAULT_SERVER, DOMAIN, FALLBACK_SERVER, REGION_SERVERS
+from .const import CONF_CARDS_VIEW_OLD, CONF_INDEPENDENT, CONF_ACCEPT_PENDING, CONF_ALLOW_CHANGES, CONF_CODE, CONF_CONFIRM_TAKEOVER, CONF_RANGES, CONF_SECRET, CONF_SERVER, DATA_PENDING_RANGES, DATA_UNLINKED, DEFAULT_SERVER, DOMAIN, FALLBACK_SERVER, REGION_SERVERS
 from .ranges import parse_ranges
 from .ranges import range_key as _range_key
 
@@ -315,10 +315,9 @@ class HaufloOptionsFlow(OptionsFlow):
                 pending -= set(shown_pending)
                 ranges_mod.sync(self.hass)
             options = {
-                **self.config_entry.options,
+                **{k: v for k, v in self.config_entry.options.items() if k != CONF_CARDS_VIEW_OLD},
                 CONF_ALLOW_CHANGES: user_input.get(CONF_ALLOW_CHANGES) is not False,
                 CONF_RANGES: parse_ranges(ranges + accepted),
-                CONF_CARDS_VIEW: CARDS_NEW if user_input.get(CONF_CARDS_VIEW) == CARDS_NEW else CARDS_CURRENT,
             }
             if user_input.get(CONF_INDEPENDENT) is True:
                 # Its own step: what it does and what stops, then the owner confirms (service review 29.10).
@@ -345,9 +344,6 @@ class HaufloOptionsFlow(OptionsFlow):
                 {
                     vol.Required(CONF_ALLOW_CHANGES, default=self.config_entry.options.get(CONF_ALLOW_CHANGES, True) is True): BooleanSelector(),
                     vol.Optional(CONF_RANGES, default=shown): TextSelector(TextSelectorConfig(multiline=True)),
-                    vol.Optional(CONF_CARDS_VIEW, default=self.config_entry.options.get(CONF_CARDS_VIEW, CARDS_CURRENT)): SelectSelector(
-                        SelectSelectorConfig(options=[CARDS_CURRENT, CARDS_NEW], translation_key=CONF_CARDS_VIEW, mode=SelectSelectorMode.DROPDOWN)
-                    ),
                     **extra,
                     vol.Optional(CONF_INDEPENDENT, default=False): BooleanSelector(),
                 }

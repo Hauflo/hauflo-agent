@@ -109,3 +109,18 @@ async def test_reload_does_not_make_hauflo_default_when_it_never_was(hass: HomeA
     await hass.async_block_till_done()
     assert hass.data["frontend_default_theme"] == "default"
     theme.async_unload(hass)
+
+
+def test_theme_is_one_data_file() -> None:
+    """HA's theme and the cards' tokens are one file (www/themes/hauflo.json): the dicts are read from it, every value a
+    string, and a card token never shadows HA's variable names."""
+    import json
+    from pathlib import Path
+
+    data = json.loads((Path(theme.__file__).parent / "www" / "themes" / "hauflo.json").read_text(encoding="utf-8"))
+    assert theme.DARK == data["ha"]["dark"] and theme.LIGHT == data["ha"]["light"]
+    assert theme.AURA == {**data["ha"]["common"], "modes": {"light": data["ha"]["light"], "dark": data["ha"]["dark"]}}
+    assert set(theme.DARK) == set(theme.LIGHT)
+    for part in (data["ha"]["common"], theme.DARK, theme.LIGHT, data["cards"]):
+        assert all(isinstance(v, str) and v for v in part.values())
+    assert data["cards"] and not any(k.startswith(("hf-", "eh-")) for k in data["cards"])

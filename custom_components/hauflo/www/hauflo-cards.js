@@ -2,6 +2,20 @@
 // Own cards only (no third-party code, nothing loaded from the internet): hauflo-hero, hauflo-room,
 // hauflo-scenes, hauflo-climate, hauflo-sliders, hauflo-alert. Plain web components; HA calls
 // setConfig() once and sets `hass` on every state change.
+// The design is data beside this file, loaded with the same version tag (one cache rule): the theme's tokens
+// (themes/hauflo.json — the agent's HA theme reads the same file).
+const HF_DATA = await (async () => {
+  const get = async (path) => {
+    try {
+      const r = await fetch(new URL(path + new URL(import.meta.url).search, import.meta.url));
+      if (r.ok) return await r.json();
+    } catch (e) {}
+    console.error(`Hauflo cards: ${path} did not load`);
+    return {};
+  };
+  const [theme] = await Promise.all([get("themes/hauflo.json")]);
+  return { theme };
+})();
 (() => {
   // Served by the agent (/hauflo_static) or, after it was removed, from /local/hauflo (keep.py).
   const BASE = new URL(".", import.meta.url).pathname.replace(/\/$/, "");
@@ -81,12 +95,12 @@
       b.id = "hauflo-update-bar";
       b.setAttribute("role", "status");
       b.style.cssText =
-        "position:fixed;top:calc(8px + env(safe-area-inset-top,0px));left:50%;transform:translateX(-50%);z-index:9999;max-width:calc(100% - 32px);display:flex;align-items:center;gap:12px;padding:8px 8px 8px 16px;border-radius:16px;background:var(--card-background-color,#141517);color:var(--primary-text-color,#F4F2EE);box-shadow:0 10px 30px rgba(0,0,0,.35);font:500 13px/1.3 Onest,var(--ha-font-family-body,system-ui),sans-serif";
+        "position:fixed;top:calc(8px + env(safe-area-inset-top,0px));left:50%;transform:translateX(-50%);z-index:9999;max-width:calc(100% - 32px);display:flex;align-items:center;gap:12px;padding:8px 8px 8px 16px;border-radius:16px;background:var(--hf-card-bg-2);color:var(--hf-text);box-shadow:0 10px 30px var(--hf-shade-35);font:500 13px/1.3 Onest,var(--ha-font-family-body,system-ui),sans-serif";
       const t = document.createElement("span");
       t.textContent = ru ? "Панель обновилась — нажмите, чтобы загрузить новую версию" : "The dashboard was updated — tap to load the new version";
       const go = document.createElement("button");
       go.textContent = ru ? "Обновить" : "Reload";
-      go.style.cssText = "flex:0 0 auto;min-height:36px;padding:0 14px;border:0;border-radius:12px;cursor:pointer;font:600 13px Onest,sans-serif;background:var(--primary-color,#5CE0B4);color:var(--text-primary-color,#08090A)";
+      go.style.cssText = "flex:0 0 auto;min-height:36px;padding:0 14px;border:0;border-radius:12px;cursor:pointer;font:600 13px Onest,sans-serif;background:var(--hf-primary);color:var(--hf-on-primary)";
       go.onclick = async () => {
         go.disabled = true;
         await this.purge();
@@ -122,18 +136,54 @@
     document.head.appendChild(s);
   }
 
+  // --- design tokens (themes/hauflo.json → --hf-<name>) -------------------------------------------------------------
+  // On the page (what is drawn outside a card: toasts, bars, HA's header) and on every card's :host — a token made of
+  // HA's or the theme's variables is computed there, so a view's own theme reaches it.
+  const TOKENS = Object.entries(HF_DATA.theme.cards || {});
+  const tokensCss = (all) => TOKENS.filter(([, v]) => all || v.includes("var(")).map(([k, v]) => `--hf-${k}:${v}`).join(";");
+  // Hyphenation only in a long word, 4+ letters each side: «Полотенце-сушитель» still breaks, «Кла-пан» and «Портье-ры» on a
+  // narrow tile no longer do (tester 03.11; Apple Home breaks between words). Inherited: one rule for every card and sheet.
+  const TOKENS_HOST = `:host{${tokensCss(false)};hyphenate-limit-chars:10 4 4;-webkit-hyphenate-limit-before:4;-webkit-hyphenate-limit-after:4}`;
+  if (!document.getElementById("hauflo-tokens")) {
+    const s = document.createElement("style");
+    s.id = "hauflo-tokens";
+    s.textContent = `:root{${tokensCss(true)}}`;
+    document.head.appendChild(s);
+  }
+
+  /** A sheet / dialog lives on document.body — outside the view, so a view's own theme («Hauflo Atelier · тёмная» on a
+   * light profile) never reached it and it opened light on a dark dashboard (owner 03.11). HA puts a theme's variables
+   * inline on the themed element: the nearest ones up from the card that opened it go onto the sheet too. */
+  const carryTheme = (host, from) => {
+    const src = from?.isConnected ? from : [...CARDS].find((c) => c.isConnected);
+    const seen = new Set();
+    for (let el = src; el; el = el.parentNode || el.host) {
+      const css = el.style;
+      if (!css) continue;
+      for (let i = 0; i < css.length; i++) {
+        const k = css[i];
+        if (k.startsWith("--") && !seen.has(k)) {
+          seen.add(k);
+          host.style.setProperty(k, css.getPropertyValue(k));
+        }
+      }
+    }
+    return host;
+  };
+
   // --- shared ------------------------------------------------------------------------------------
   const CSS = `
 :host{container-type:inline-size;display:block;font-family:Onest,var(--ha-font-family-body),system-ui,sans-serif;font-variant-numeric:tabular-nums;color:var(--eh-ink,var(--primary-text-color));
  --ink:var(--eh-ink,var(--primary-text-color));--ink2:var(--eh-ink2,var(--secondary-text-color));--ink3:var(--eh-ink3,var(--disabled-text-color));
- --hair:var(--eh-hair,var(--divider-color));--amber:var(--eh-amber,#FFB25C);--amberGlow:var(--eh-amber-glow,rgba(255,160,70,.5));
- --ice:var(--eh-ice,#8DC2FF);--iceGlow:var(--eh-ice-glow,rgba(90,160,255,.42));--alert:var(--eh-alert,#FF5A5F);--alertGlow:var(--eh-alert-glow,rgba(255,70,80,.5));
- --mint:var(--eh-mint,#5CE0B4);--track:var(--eh-track,rgba(127,127,127,.12));
+ --hair:var(--eh-hair,var(--divider-color));--amber:var(--hf-amber-2);--amberGlow:var(--hf-amber-glow);
+ --ice:var(--hf-ice-2);--iceGlow:var(--hf-ice-glow);--alert:var(--hf-alert);--alertGlow:var(--hf-alert-glow);
+ --mint:var(--hf-mint-2);--track:var(--hf-track);
  --alertT:var(--eh-alert-text,var(--alert));--amberT:var(--eh-amber-text,var(--amber));--mintT:var(--eh-mint-text,var(--mint));--line:var(--eh-line-strong,var(--hair))}
 *{box-sizing:border-box}
 .glass{background:var(--eh-glass,var(--ha-card-background,var(--card-background-color)));box-shadow:var(--eh-edge,none),var(--eh-deep,var(--ha-card-box-shadow,none));border-radius:var(--eh-radius,30px);position:relative;overflow:hidden}
 .caps{font:500 11px/1.2 Onest,var(--ha-font-family-body),sans-serif;letter-spacing:.14em;text-transform:uppercase;color:var(--ink2)}
 .thin{font-weight:200;letter-spacing:-.05em;font-variant-numeric:tabular-nums}
+.ns.ns{display:inline-grid;gap:0;margin:0;padding:0}.ns.ns>*{grid-area:1/1;display:inline;font:inherit;color:inherit;margin:0;padding:0}.ns.ns>.gh{visibility:hidden}
 ha-icon{--mdc-icon-size:18px;display:inline-flex}
 button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;-webkit-tap-highlight-color:transparent}
 .glow{position:absolute;inset:-30%;pointer-events:none;transition:opacity .4s}
@@ -145,11 +195,12 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
 @media (prefers-reduced-motion: reduce){.mv .f,.g.gc.mv{animation:none}}
 .scn{display:flex;flex-wrap:wrap;gap:8px}.scn.grouped{flex-direction:column;align-items:stretch;gap:6px}.scn .scr{display:flex;flex-wrap:wrap;align-items:center;gap:8px}.scn .scl{font:500 12px Onest,sans-serif;color:var(--ink2);min-width:56px;margin-right:2px}.scn button{height:auto;min-height:44px;padding:6px 15px 6px 12px;border-radius:15px;display:flex;align-items:center;gap:8px;flex:0 1 auto;max-width:100%;min-width:0;color:var(--ink);box-shadow:var(--eh-edge,inset 0 0 0 1px var(--line));background:var(--eh-glass,transparent);font:500 13px Onest,sans-serif;transition:background .3s,box-shadow .3s}
 .scn button span{min-width:0;white-space:normal;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-height:1.2;overflow-wrap:break-word;hyphens:auto;text-align:left}.scn button ha-icon{color:var(--sacc);flex:0 0 auto;--mdc-icon-size:17px}
-.scn button.go{background:color-mix(in srgb,var(--sacc) 26%,transparent)}.scn button.lit{background:color-mix(in srgb,var(--sacc) 30%,transparent);box-shadow:inset 0 0 0 2px var(--sacc);transition:background .3s,box-shadow .3s}.scn.light{--sacc:var(--amber)}.scn.cover{--sacc:var(--ink2)}.scn.mixed{--sacc:var(--mint)}
-.scn button.add{box-shadow:inset 0 0 0 1px var(--line);background:transparent;color:var(--ink2);padding:0 14px 0 10px}.scn button.add ha-icon{color:var(--ink2)}
-.scn button{position:relative}.scn button .src{position:absolute;top:3px;right:6px;font:600 8px/1 Onest,sans-serif;font-style:normal;letter-spacing:.04em;color:var(--ink2);opacity:.75;pointer-events:none}
+.scn button.go{background:color-mix(in srgb,var(--sacc) 26%,transparent)}.scn button.lit{background:color-mix(in srgb,var(--sacc) 30%,transparent);box-shadow:inset 0 0 0 2px var(--sacc);transition:background .3s,box-shadow .3s}.scn.light{--sacc:var(--amber)}.scn.cover{--sacc:var(--ice)}.scn.mixed{--sacc:var(--mint)}
+[data-scene-add]:not(button){-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}.scn button.add{box-shadow:inset 0 0 0 1px var(--line);background:transparent;color:var(--ink2);padding:0 14px 0 10px}.scn button.add ha-icon{color:var(--ink2)}
+.scn button{position:relative}.scn button .src{position:absolute;top:3px;right:6px;font:600 9px/1 Onest,sans-serif;font-style:normal;letter-spacing:.04em;color:var(--ink2);opacity:.75;pointer-events:none}
 .sgs .sg+.sg{margin-top:12px}.sg>.caps.ser{display:block;margin:0 0 6px 2px;font-size:10px;opacity:.85}.srow{margin-top:14px}.srow>.caps{display:block;margin-bottom:8px}
-:host button.sent{background:color-mix(in srgb,var(--amber) 16%,transparent);box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--amber) 55%,transparent)}`;
+:host button.sent{background:color-mix(in srgb,var(--amber) 16%,transparent);box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--amber) 55%,transparent)}:host button.sent ha-icon{color:var(--amberT)}.ask>:not(.cur){visibility:hidden}
+.ackx{display:inline-grid;place-items:center}.ackx>*{grid-area:1/1}.ackx>.gh{visibility:hidden}`;
 
   const REDUCED = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
   const st = (hass, id) => (id && hass ? hass.states[id] : undefined);
@@ -341,6 +392,22 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
     }
   };
   const fmt = (v, digits = 0) => (v === undefined ? "—" : LANG === "ru" ? Number(v).toFixed(digits).replace(".", ",") : Number(v).toFixed(digits));
+  // A changing value keeps what follows it in place (step 3: «PM2.5 · мкг/м³» moved 57 px on 4 → 180): the value sits on an
+  // invisible template of its metric's usual digits (`min`, e.g. "00,0" for a room's temperature); a longer value widens
+  // the slot, and a shorter one gets it back only after SLOT_HOLD (a value flapping 9 ↔ 10 doesn't twitch the line).
+  const SLOT_HOLD = 10 * 60e3;
+  const slot = (card, key, txt, min = "") => {
+    const shape = String(txt).replace(/[\d−-]/g, "0");
+    const m = (card._slots ||= new Map());
+    const was = m.get(key);
+    let tpl = shape.length >= min.length ? shape : min;
+    if (was && was.tpl.length > tpl.length && Date.now() < was.until) tpl = was.tpl;
+    else m.set(key, { tpl, until: Date.now() + SLOT_HOLD });
+    // The value itself is its own template when it is as long (a `font` shorthand drops tabular digits: zeros would be wider).
+    return `<span class="ns"><span class="gh" aria-hidden="true">${tpl.length > shape.length ? tpl : txt}</span><span>${txt}</span></span>`;
+  };
+  /** The usual digits of a metric as a slot template: `int` whole digits, `digits` after the decimal sign of the language. */
+  const slotTpl = (int, digits = 0) => "0".repeat(Math.max(0, int - 1)) + fmt(0, digits);
   // What to do now, by the kind of alarm (persona round 5: «опасно ли это и что делать прямо сейчас»); no «call service»
   // when nobody's number is set.
   const TODO = {
@@ -354,7 +421,7 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
   const alarmTodo = (dc, phone, pushed, valve) =>
     TODO[dc]
       ? `${dc === "moisture" && valve ? `Перекройте воду — кнопка «${valve}» ниже (или кран на вводе у счётчика). Потом проверьте место протечки.` : TODO[dc]}${pushed && dc === "moisture" ? " Уведомление отправлено на телефоны (получено ли — неизвестно, пока кто-то не нажмёт «Принято»); «Принято» снимает повторы." : ""}`
-      : `Это неисправность оборудования, людям она не опасна. ${phone ? "Позвоните сервису — кнопка ниже." : "Сообщите тому, кто обслуживает дом."}${pushed ? " Уведомление отправлено на телефоны (получено ли — неизвестно, пока кто-то не нажмёт «Принято»)." : ""}`;
+      : `Это неисправность оборудования, людям она не опасна. ${phone ? "Позвоните сервису — телефон в «Настройках»." : "Сообщите тому, кто обслуживает дом."}${pushed ? " Уведомление отправлено на телефоны (получено ли — неизвестно, пока кто-то не нажмёт «Принято»)." : ""}`;
   // --- English (owner 25.10: Dubai is the main market) ------------------------------------------------
   // The cards are written in Russian; with HA's language not Russian, a rendered card's own words are put into
   // English: whole phrases by the table, phrases with numbers by patterns, then known fragments. Names the
@@ -411,13 +478,13 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
     "Свернуть": "Collapse", "Назад": "Back", "← Назад": "← Back", "Вперёд": "Next", "Выполнено": "Done", "выполнить": "run", "Включить": "Turn on",
     "Перекройте воду: закройте кран на вводе (обычно у счётчика). Потом проверьте место протечки. Уведомление отправлено на телефоны (получено ли — неизвестно, пока кто-то не нажмёт «Принято»); «Принято» снимает повторы.": "Shut the water off: close the main valve (usually by the meter). Then check where it leaks. Sent to the phones (whether it arrived isn't known until someone taps «Accept»); «Accept» stops the repeats.",
     "Перекройте воду: закройте кран на вводе (обычно у счётчика). Потом проверьте место протечки.": "Shut the water off: close the main valve (usually by the meter). Then check where it leaks.",
-    "Это неисправность оборудования, людям она не опасна. Позвоните сервису — кнопка ниже.": "Equipment fault — no danger to people. Call service with the button below.",
+    "Это неисправность оборудования, людям она не опасна. Позвоните сервису — телефон в «Настройках».": "Equipment fault — no danger to people. Call service — the number is in «Settings».",
     "Это неисправность оборудования, людям она не опасна. Сообщите тому, кто обслуживает дом.": "Equipment fault — no danger to people. Tell whoever looks after the house.",
     "Проверьте оборудование или позвоните сервису. Уведомление отправлено на телефоны (получено ли — неизвестно, пока кто-то не нажмёт «Принято»).": "Check the equipment or call service. Sent to the phones (whether it arrived isn't known until someone taps «Accept»).",
     "Если видите дым или огонь — выйдите из дома и звоните 112.": "If you see smoke or fire, leave the house and call emergency services.",
     "Не включайте свет и огонь, откройте окна, выйдите и звоните 112.": "Don't switch lights or flames on; open the windows, get out and call emergency services.",
     "Откройте окна, выйдите на воздух и звоните 112.": "Open the windows, get outside and call emergency services.",
-    "Это неисправность оборудования, людям она не опасна. Позвоните сервису — кнопка ниже. Уведомление отправлено на телефоны (получено ли — неизвестно, пока кто-то не нажмёт «Принято»).": "Equipment fault — no danger to people. Call service with the button below. Sent to the phones (whether it arrived isn't known until someone taps «Accept»).",
+    "Это неисправность оборудования, людям она не опасна. Позвоните сервису — телефон в «Настройках». Уведомление отправлено на телефоны (получено ли — неизвестно, пока кто-то не нажмёт «Принято»).": "Equipment fault — no danger to people. Call service — the number is in «Settings». Sent to the phones (whether it arrived isn't known until someone taps «Accept»).",
     "Это неисправность оборудования, людям она не опасна. Сообщите тому, кто обслуживает дом. Уведомление отправлено на телефоны (получено ли — неизвестно, пока кто-то не нажмёт «Принято»).": "Equipment fault — no danger to people. Tell whoever looks after the house. Sent to the phones (whether it arrived isn't known until someone taps «Accept»).",
     "Погода": "Weather", "Нет погоды": "No weather", "Ясно": "Clear", "Солнечно": "Sunny", "Облачно": "Cloudy", "Переменная облачность": "Partly cloudy", "Дождь": "Rain",
     "Ливень": "Downpour", "Гроза": "Thunderstorm", "Гроза, дождь": "Thunderstorm, rain", "Снег": "Snow", "Мокрый снег": "Sleet", "Град": "Hail", "Туман": "Fog",
@@ -429,7 +496,7 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
     "Инженерные системы": "Building systems", "работает": "running", "ошибка": "error", "остановлен": "stopped", "на связи": "online", "батарея в норме": "battery OK",
     "батарея садится": "battery low", "Охрана": "Security", "Снята": "Disarmed", "Снять": "Disarm", "Под охраной": "Armed", "Под охраной · дома": "Armed · home",
     "Снята с охраны": "Disarmed", "Ставится…": "Arming…", "Снимается…": "Disarming…", "Задержка входа…": "Entry delay…", "ТРЕВОГА": "ALARM", "Позвонить сервису": "Call service", "Позвонить ·": "Call ·", "Написать ·": "Write ·", "Написать сервису": "Write to service", "Тревога · охрана": "Alarm · security", "Звучит сирена": "Siren sounding", "Уйти": "Away",
-    "Ночной режим": "Night", "двери заперты": "doors locked", "заперт": "locked", "не заперт": "unlocked", "есть движение": "motion", "нет движения": "no motion",
+    "Ночной режим": "Night", "двери заперты": "doors locked", "всё закрыто": "all closed", "заперт": "locked", "не заперт": "unlocked", "есть движение": "motion", "нет движения": "no motion",
     "сработал": "triggered", "звучит": "sounding", "ждёт": "idle", "на базе": "docked", "едет на базе": "returning to dock", "убирает": "cleaning", "заклинило": "jammed",
     "Ожидание": "Idle", "Вода": "Water", "Газ": "Gas", "Дым": "Smoke", "Угарный газ": "Carbon monoxide", "Перегрев": "Overheat", "Вскрытие": "Tamper", "Необычно": "Unusual",
     "загрузка…": "loading…", "истории пока нет": "no history yet", "только что": "just now", "Кухня": "Kitchen", "Гостиная зона": "Living area", "Обеденная": "Dining",
@@ -437,7 +504,7 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
     "Принято": "Accept", "тревога останется, пока причина не устранена": "the alarm stays until the cause is gone", "отправлено": "sent", "Нет ответа от дома — команда могла не дойти": "No answer from the house — the command may not have arrived", "Не получилось — ещё раз": "Didn't work — try again",
     "не отправлено — нет связи с домом": "not sent — no link to the house", "Показания": "Readings", "Комната": "Room", "Здесь пока ничего нет — добавьте устройства в проект или свои карточки в Home Assistant": "Nothing here yet — add devices to the project or your own cards in Home Assistant",
     "Тёплые полы": "Floor heating", "цель · обогрев": "target · heating", "цель · охлаждение": "target · cooling", "Сценарии": "Scenes", "Светильник": "Light", "Выключатель": "Switch", "Штора": "Blind", "Датчик": "Sensor", "Сцена": "Scene", "Кран": "Valve", "Замок": "Lock", "Устройство": "Device", "нужная температура ещё не пришла от системы": "no setpoint from the system yet", "нет данных от системы": "no data from the system yet", "нужная температура ещё не пришла": "no setpoint yet", "нет нужной температуры": "no setpoint", "Положение неизвестно": "Position unknown", "Поднять": "Raise", "Опустить": "Lower", "Раздвинуть": "Open", "Задвинуть": "Close",
-    "Новая сцена": "New scene", "Новая сцена света": "New light scene", "Новая сцена штор": "New blind scene", "Название": "Name", "Например, Утро": "e.g. Morning", "Например, Кино": "e.g. Movie night",
+    "Новая сцена": "New scene", "Сцена света": "Light scene", "Сцена штор": "Blind scene", "Новая сцена света": "New light scene", "Новая сцена штор": "New blind scene", "Название": "Name", "Например, Утро": "e.g. Morning", "Например, Кино": "e.g. Movie night",
     "Поставьте шторы как нужно — сцена запомнит их положение.": "Set the blinds the way you want — the scene remembers where they are.",
     "Включите свет как нужно — сцена запомнит, что горит и как ярко.": "Set the lights the way you want — the scene remembers what is on and how bright.",
     "Запомнить как сейчас": "Save as it is now", "Отмена": "Cancel", "Введите название": "Enter a name", "Переименовать": "Rename", "Сохранить": "Save", "Удалить сцену": "Delete scene", "Убрать с панели": "Remove from the dashboard",
@@ -446,7 +513,7 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
     "Сцена — та же, что на настенных выключателях.": "The same scene as on the wall switches.", "Детский профиль: сцены меняют взрослые.": "Child profile: the adults change the scenes.", "Запомнить как сейчас?": "Save as it is now?", "Запомнить": "Save", "Отправлено": "Sent", "Готово": "Done",
     "Сработает, только если в ETS у актуаторов разрешено сохранение сцен. Если сцена не изменилась — спросите интегратора.": "This works only if scene saving is allowed in the actuators' ETS parameters. If the scene didn't change, ask your installer.",
     "Название на панели. Пусто — снова название от интегратора.": "The name on this dashboard. Empty — your installer's name again.",
-    "пол сейчас": "floor now", "пол": "floor", "тёплый пол": "floor heating", "климат": "climate", "Все ждут": "All idle", "Греет": "Heating", "Греет · клапаны открыты": "Heating · valves open", "греет": "heating", "держит": "holding", "поддерживает": "keeping", "Сейчас не греют": "Not heating now", "сейчас": "now", "Пол": "Floor", "В комнате": "Room",
+    "пол сейчас": "floor now", "пол": "floor", "тёплый пол": "floor heating", "климат": "climate", "Все ждут": "All idle", "Греет": "Heating", "Греет · клапаны открыты": "Heating · valves open", "Греет · клапан открыт": "Heating · valve open", "клапан открыт": "valve open", "клапан закрыт": "valve closed", "греет": "heating", "держит": "holding", "поддерживает": "keeping", "Сейчас не греют": "Not heating now", "сейчас": "now", "Пол": "Floor", "В комнате": "Room",
     "Состояние": "Status", "Управление": "Controls", "Настройки": "Settings", "охлаждает": "cooling", "осушает": "drying", "вентилирует": "ventilating", "Электро": "Electric", "Тепловой насос": "Heat pump", "Мощность": "Performance",
   };
   // Phrases with numbers / declensions (whole text node).
@@ -486,6 +553,7 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
     [/^Нет связи · (\d+) устройств[оа]?$/, (m, a) => `Offline · ${a} device${a === "1" ? "" : "s"}`],
     [/^Климат: нет данных$/, "Climate: no data"],
     [/^По одной \((\d+)\)$/, "One by one ($1)"], [/^Каждая отдельно \((\d+)\)$/, "Each on its own ($1)"],
+    [/^(\d+) зон[аы]?$/, (m, a) => `${a} zone${a === "1" ? "" : "s"}`],
     [/^Свет в (\d+) комнат[аеху]*$/, (m, a) => `Lights in ${a} room${a === "1" ? "" : "s"}`],
   ];
   // Fragments inside longer texts (between Cyrillic boundaries), longest first.
@@ -500,8 +568,8 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
     [/^Авария · /, "Alarm · "], [new RegExp(`${B}принял `, "g"), "$1accepted by "], [/^Свет · /, "Lights · "], [new RegExp(`${B}обновлено `, "g"), "$1updated "],
     [/(\d) мин назад/g, "$1 min ago"], [/(\d) мин(?=$|[^А-Яа-яЁё])/g, "$1 min"], [/(\d) ч(?=$|[^А-Яа-яЁё])/g, "$1 h"],
     [new RegExp(`${B}с (?=\\d)`, "g"), "$1since "], [new RegExp(`${B}в (?=\\d)`, "g"), "$1at "], [new RegExp(`${B}до (?=\\d)`, "g"), "$1to "], [new RegExp(`${B}за (?=\\d)`, "g"), "$1in "],
-    [new RegExp(`${B}открыто: `, "g"), "$1open: "], [new RegExp(`${B}не заперто: `, "g"), "$1unlocked: "], [new RegExp(`${B}внимание: `, "g"), "$1attention: "],
-    [/ · вкл$/, " · on"], [/ · выкл$/, " · off"], [/^Яркость · /, "Brightness · "], [/^Нагрев · /, "Heat · "], [/^Охлаждение · /, "Cooling · "],
+    [new RegExp(`${B}открыто: `, "g"), "$1open: "], [new RegExp(`${B}не заперто: `, "g"), "$1unlocked: "], [new RegExp(`${B}ощущается как `, "g"), "$1feels like "], [new RegExp(`${B}замки без связи: `, "g"), "$1locks offline: "], [new RegExp(`${B}нет данных: `, "g"), "$1no data: "], [new RegExp(`${B}внимание: `, "g"), "$1attention: "],
+    [/ · сцена в KNX$/, " · KNX scene"], [/ · сцена в Home Assistant$/, " · Home Assistant scene"], [/ · вкл$/, " · on"], [/ · выкл$/, " · off"], [/^Яркость · /, "Brightness · "], [/^Нагрев · /, "Heat · "], [/^Охлаждение · /, "Cooling · "],
     [new RegExp(`${B}мин (?=-?\\d)`, "g"), "$1min "], [new RegExp(`${B}макс (?=-?\\d)`, "g"), "$1max "], [/^За сутки$/, "Last 24 h"], [/^За (\d+) ч$/, "Last $1 h"], [/^Пол · /, "Floor · "], [/обогрев до (-?[\d,.]+°)/g, "heating to $1"], [/охлаждение от (-?[\d,.]+°)/g, "cooling from $1"],
     [/км\/ч/g, "km/h"], [/м\/с/g, "m/s"], [/мм рт\. ст\./g, "mmHg"], [/гПа/g, "hPa"], [/мбар/g, "mbar"], [/мкг\/м³/g, "µg/m³"], [/(\d) Вт(?=$|[^А-Яа-яЁё])/g, "$1 W"],
   ];
@@ -519,9 +587,11 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
     const dot = /^([^·]+?) · (.+)$/.exec(k);
     if (dot && EN[dot[1]]) return text.replace(k, `${EN[dot[1]]} · ${tr(dot[2])}`);
     // «CO₂ · свежо», «открыто: 1 · двери заперты»: each side on its own, when that leaves no Russian.
+    // A side that is a name (the block's title, a room) stays as typed: «16 ламп в 9 комнатах · Весь свет в доме».
     if (dot) {
-      const both = `${tr(dot[1])} · ${tr(dot[2])}`;
-      if (!/[А-Яа-яЁё]/.test(both)) return text.replace(k, both);
+      const a = tr(dot[1]), b = tr(dot[2]);
+      const done = (t, src) => !/[А-Яа-яЁё]/.test(t) || isOwn(src.trim());
+      if (done(a, dot[1]) && done(b, dot[2])) return text.replace(k, `${a} · ${b}`);
     }
     let out = text;
     for (const [rx, rep] of EN_FRAG) out = out.replace(rx, rep);
@@ -696,7 +766,7 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
   const TZ_BIG_CSS = `h1,h2,.hl,.w,.sub,.nm,.tt,.caps,.lv,.goal,.big .st,.big .sub{hyphens:auto;overflow-wrap:break-word}.rel,.abs,.txt{overflow-wrap:anywhere}.hl{flex-wrap:wrap}.hl>*,.tx{min-width:0}.rel,.abs,.txt{white-space:normal!important}.vl2{flex-wrap:wrap}.vl2 button{white-space:normal;height:auto;min-height:44px;line-height:1.15;padding-top:6px;padding-bottom:6px}.sl:not([data-sl]):not(.bri) span{overflow-wrap:anywhere;min-width:0;white-space:normal!important;line-height:1.1;padding-right:12px!important;text-align:center}.g .hd{flex-wrap:wrap;gap:0 8px}.btns{flex-wrap:wrap}.btns button{flex:1 1 auto;padding:0 10px;white-space:normal}.big>div:not(.t){min-width:0}.sl:not([data-sl]):not(.bri){height:auto!important;min-height:68px;padding:8px 0}.pg button{white-space:normal}.more .mr{flex-wrap:wrap}.more .mr>span{flex:1 1 5em;min-width:5em}@container (max-width:240px){.lst{grid-template-columns:1fr}.big{flex-direction:column;align-items:flex-start;gap:10px}.modes{flex-wrap:wrap}.modes button{flex:1 1 auto;padding:0 10px}}@container (max-width:300px){.sl:not([data-sl]):not(.bri){display:block;padding:0;border-radius:34px 34px 22px 22px}.sl:not([data-sl]):not(.bri) span{display:block;padding:68px 16px 12px!important}}`;
   const TZ = (css, memo = true) => {
     if (memo && TZ_MEMO.has(css)) return TZ_MEMO.get(css);
-    const out = css.replace(TZ_FONT, (m, pre, n, lh, pre2, n2) => (pre2 ? pre2 + tzPx(n2) : pre + tzPx(n) + (lh ? (lh.endsWith("px") ? "/" + tzPx(lh.slice(1, -2)) : lh) : ""))) + (memo && TS_BIG ? TZ_BIG_CSS : "");
+    const out = (memo ? TOKENS_HOST : "") + css.replace(TZ_FONT, (m, pre, n, lh, pre2, n2) => (pre2 ? pre2 + tzPx(n2) : pre + tzPx(n) + (lh ? (lh.endsWith("px") ? "/" + tzPx(lh.slice(1, -2)) : lh) : ""))) + (memo && TS_BIG ? TZ_BIG_CSS : "");
     if (memo) {
       if (TZ_MEMO.size > 40) TZ_MEMO.clear();
       TZ_MEMO.set(css, out);
@@ -723,31 +793,93 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
     const par = b.parentElement ? [...b.parentElement.children].indexOf(b) : 0;
     return [d.scene, "all" in d ? "all" : d.gc, d.g, d.c, b.closest("[data-e]")?.dataset.e, par].join("|");
   };
+  /** The «sent» word is read out, never drawn: one polite live region for the whole page (a card's own shadow root is
+   * rebuilt on every state change and would drop it). */
+  const announce = (msg) => {
+    let r = document.getElementById("hauflo-live");
+    if (!r) {
+      r = document.createElement("div");
+      r.id = "hauflo-live";
+      r.setAttribute("role", "status");
+      r.setAttribute("aria-live", "polite");
+      r.style.cssText = "position:fixed;left:0;top:0;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap";
+      document.body.appendChild(r);
+    }
+    r.textContent = "";
+    setTimeout(() => (r.textContent = msg), 30);
+  };
+  // The button keeps its box (owner 03.11: «Отправлено» made scenes and blind buttons wider, the row jumped): its icon
+  // turns into a check and it gets the «sent» ring; a word-only button shows the check over its own (hidden) label, so
+  // the width is the label's. The word is said to a screen reader (aria-live), not written.
   const ackShow = (b, until) => {
     const ic = b.querySelector("ha-icon");
-    const lab = b.querySelector("span") || (ic ? null : b);
-    b._ack ??= { icon: ic?.getAttribute("icon"), txt: lab?.textContent, aria: b.getAttribute("aria-label"), title: b.getAttribute("title") };
+    const first = !b._ack;
+    b._ack ??= { icon: ic?.getAttribute("icon"), html: ic ? null : b.innerHTML };
     const was = b._ack;
     b.classList.add("go", "sent");
-    ic?.setAttribute("icon", "mdi:check");
-    if (lab) lab.textContent = tr("отправлено");
-    else if (was.aria !== null) {
-      // An icon-only button (▲ ■ ▼) has no room for the word: it is read out and in the tooltip.
-      b.setAttribute("aria-label", tr("отправлено"));
-      b.setAttribute("title", tr("отправлено"));
-    }
+    if (ic) ic.setAttribute("icon", "hauflo:check");
+    else if (first) b.innerHTML = `<span class="ackx"><span class="gh" aria-hidden="true">${was.html}</span><ha-icon icon="hauflo:check"></ha-icon></span>`;
+    if (first) announce(`${tr("Отправлено")}: ${(b.getAttribute("aria-label") || b.textContent || "").trim()}`);
     clearTimeout(b._ackT);
     b._ackT = setTimeout(() => {
       b.classList.remove("go", "sent");
       if (was.icon) ic?.setAttribute("icon", was.icon);
-      if (lab && was.txt !== undefined) lab.textContent = was.txt;
-      if (was.aria !== null && !lab) {
-        b.setAttribute("aria-label", was.aria);
-        was.title === null ? b.removeAttribute("title") : b.setAttribute("title", was.title);
-      }
+      if (was.html !== null) b.innerHTML = was.html;
       b._ack = null;
     }, Math.max(0, until - Date.now()));
   };
+  /** A two-step button (the first tap asks «Точно? …», the second does it) keeps one box: its other texts (`data-ask`,
+   * «|»-separated: the question, then e.g. «Выполнено») are drawn as invisible ghosts in the same grid cell as the label,
+   * so the box is the widest of them and a step only swaps which one is visible (owner 03.11: no button changes size).
+   * `data-gh` («|»-separated): labels the button takes in another state (on ↔ off) — ghosts only, never shown. */
+  const askWrap = (root) =>
+    root.querySelectorAll("[data-ask],[data-gh]").forEach((b) => {
+      if (b.querySelector(".ask")) return;
+      const t = b.querySelector(":scope > ha-icon") ? b.querySelector(":scope > span:last-child") || b : b;
+      const texts = [...(b.dataset.ask ? b.dataset.ask.split("|") : []), ...(b.dataset.gh ? b.dataset.gh.split("|") : [])];
+      const alt = texts.map((a) => `<span data-own aria-hidden="true">${esc(tr(a))}</span>`);
+      t.innerHTML = `<span class="ackx ask"><span class="cur">${t.innerHTML}</span>${alt.join("")}</span>`;
+    });
+  /** Shows text `i` of a `data-ask` button (0 = its label, 1 = the question, …); `arm` marks the waiting second tap. */
+  const askShow = (b, i, arm = i === 1) => {
+    const all = b.querySelectorAll(".ask>span");
+    all.forEach((x, j) => {
+      x.classList.toggle("cur", j === i);
+      x.toggleAttribute("aria-hidden", j !== i);
+    });
+    b.dataset.arm = arm ? "1" : "";
+    b.classList.toggle("arm", arm);
+    if (i > 0 && all[i]) announce(all[i].textContent.trim());
+  };
+  /** What opens the house or the water is never one tap on a tile (tester 03.11; HA's lock tile opens its dialog, Apple
+   * Home asks before it unlocks): the first tap shows «Точно? …» on the tile, a second within 4 s does it. Locking a door
+   * or closing a gate is never asked. The question, or "" when the tap may go at once. */
+  const riskAsk = (s) => {
+    if (!s || nd(s)) return "";
+    const d = s.entity_id.split(".")[0];
+    if (d === "lock") return s.state === "locked" ? "Точно? Отпереть" : "";
+    if (d === "valve") return s.state === "open" ? "Точно? Закрыть" : "Точно? Открыть";
+    if (d === "siren") return s.state === "on" ? "" : "Точно? Включить";
+    if (d === "cover" && ["gate", "garage", "door"].includes(s.attributes.device_class)) return ["closed", "closing"].includes(s.state) ? "Точно? Открыть" : "";
+    return "";
+  };
+  /** True: the tap goes. False: it asked — the card redraws, its tile says `riskWord(card, id)` for 4 s. */
+  const riskTap = (card, id) => {
+    const q = riskAsk(st(card._hass, id));
+    const again = card._risk?.id === id && card._risk.until > Date.now();
+    clearTimeout(card._riskT);
+    if (!q || again) {
+      card._risk = null;
+      return true;
+    }
+    card._risk = { id, q, until: Date.now() + 4000 };
+    announce(tr(q));
+    const redraw = () => ((card._sig = ""), card._update());
+    redraw();
+    card._riskT = setTimeout(() => ((card._risk = null), redraw()), 4000);
+    return false;
+  };
+  const riskWord = (card, id) => (card._risk?.id === id && card._risk.until > Date.now() ? card._risk.q : "");
   /** After a card is rebuilt: the buttons that are still within their «отправлено» get it back. */
   const reAck = (card) => {
     const m = card._acks;
@@ -867,13 +999,13 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
       FOCUS = null;
       const card = hits[0];
       card.scrollIntoView({ block: "center", behavior: REDUCED ? "auto" : "smooth" });
-      const lit = () => card.shadowRoot?.querySelector(".glass")?.animate([{ boxShadow: "0 0 0 3px var(--eh-ice,#3C82F0)" }, { boxShadow: "0 0 0 3px var(--eh-ice,#3C82F0)", offset: 0.6 }, { boxShadow: "0 0 0 0 transparent" }], { duration: 1800, easing: "ease-out" });
+      const lit = () => card.shadowRoot?.querySelector(".glass")?.animate([{ boxShadow: "0 0 0 3px var(--hf-ice)" }, { boxShadow: "0 0 0 3px var(--hf-ice)", offset: 0.6 }, { boxShadow: "0 0 0 0 transparent" }], { duration: 1800, easing: "ease-out" });
       setTimeout(lit, REDUCED ? 0 : 350);
     };
     setTimeout(tick, 120);
   };
   /** A small «Сохранено» over a sheet (iOS / Android settings: a change applies at once, nothing moves). */
-  const TOAST_CSS = `.toast{position:fixed;left:50%;bottom:calc(var(--hf-toast-b,28px) + env(safe-area-inset-bottom));transform:translate(-50%,8px);z-index:2;display:flex;align-items:center;gap:6px;padding:10px 16px;border-radius:20px;background:var(--eh-ink,#1c1c1e);color:var(--card-background-color,#fff);font:500 14px Onest,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,.25);opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;white-space:nowrap}.toast.on{opacity:1;transform:translate(-50%,0)}.toast.bad{background:var(--error-color,#c62828);color:#fff;white-space:normal;max-width:calc(100vw - 32px)}.toast ha-icon{--mdc-icon-size:18px}`;
+  const TOAST_CSS = `.toast{position:fixed;left:50%;bottom:calc(var(--hf-toast-b,28px) + env(safe-area-inset-bottom));transform:translate(-50%,8px);z-index:2;display:flex;align-items:center;gap:6px;padding:10px 16px;border-radius:20px;background:var(--hf-ink);color:var(--hf-card-bg);font:500 14px Onest,sans-serif;box-shadow:0 8px 24px var(--hf-shade-25);opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;white-space:nowrap}.toast.on{opacity:1;transform:translate(-50%,0)}.toast.bad{background:var(--hf-error);color:var(--hf-white);white-space:normal;max-width:calc(100vw - 32px)}.toast ha-icon{--mdc-icon-size:18px}`;
   const sheetToast = (sr, text, bad = false) => {
     let t = sr.querySelector(".toast");
     if (!t) {
@@ -934,7 +1066,8 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
     }, { capture: true, passive: true });
     const ours = (ev) => ev.composedPath().some((n) => typeof n.localName === "string" && (n.localName.startsWith("hauflo-") || (typeof n.className === "string" && /\bhauflo-/.test(n.className))));
     window.addEventListener("click", (ev) => {
-      if (!ev.isTrusted || !ev.detail || GST.type === "mouse" || GST.ok || Date.now() - GST.up > 1000 || !ours(ev)) return;
+      // A mouse click is always a click, except the one that ends a long press (it opened our control).
+      if (!ev.isTrusted || !ev.detail || (GST.type === "mouse" && !GST.lp) || GST.ok || Date.now() - GST.up > 1000 || !ours(ev)) return;
       ev.stopPropagation();
       ev.preventDefault();
     }, { capture: true });
@@ -972,7 +1105,7 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
       if (!p) return;
       const q = p;
       p = null;
-      if (q.go) cb.end?.(ev, ev.type === "pointerup");
+      if (q.go) cb.end?.(ev, ev.type === "pointerup" && !GST.lp); // a long press opened the control: the drag is void
       // A mouse that moved is no click (GST.ok is always true for a mouse).
       else cb.tap?.(ev, ev.type === "pointerup" && GST.ok && (q.touch || Math.hypot(ev.clientX - q.x, ev.clientY - q.y) < 8));
     };
@@ -983,23 +1116,6 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
   // --- the client's own view (owner 28.10: «менять карточку как мне, так и клиенту»): scenes in their blocks or on top,
   // climate and floor heating large or a line. The integrator's choice is each card's config (the default); the person's
   // own choice is kept by HA for him (frontend user data, as his theme) — other people of the house keep theirs.
-  // v5 cards (hauflo-cards-v5.js) read the same stores: tell them on a change, and take theirs (hauflo-house event).
-  const houseChanged = (store) => window.dispatchEvent(new CustomEvent("hauflo-house", { detail: { store } }));
-  window.addEventListener("hauflo-house", (e) => {
-    // a favourite added from a v5 scene sheet: the agent's new house settings come with the event
-    if (e.detail?.from === "v5" && e.detail.store === "house" && e.detail.data) return HOUSE.set(e.detail.data);
-    const k = e.detail?.from === "v5" && { view: VIEW, titles: TITLES, order: ORDER }[e.detail.store];
-    if (!k) return;
-    try {
-      k.data = JSON.parse(localStorage.getItem(`hauflo_${e.detail.store}`) || "null") || {};
-    } catch (err) {
-      return;
-    }
-    for (const c of k.cards) {
-      c._sig = "";
-      c._update();
-    }
-  });
   const VIEW = { data: null, state: "", cards: new Set() };
   const viewRerender = () => {
     // Every card of the dashboard, shown or not: a hidden one (scenes that were in their blocks) may show now.
@@ -1049,7 +1165,6 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
       /* private mode */
     }
     viewRerender();
-    houseChanged("view");
     await h.callWS({ type: "frontend/set_user_data", key: "hauflo_view", value: next });
   };
   // --- the client's names of the blocks (owner 28.10: «как переименовать карточку — кому-то надо так, а кому-то как мне»):
@@ -1093,7 +1208,6 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
       c._sig = "";
       c._update();
     }
-    houseChanged("titles");
   };
   /** A block's title: the client's name (marked `data-own` — kept as typed, not put into English), else the config's,
    * else the card's own word. */
@@ -1173,7 +1287,6 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
     } catch (e) {
       /* private mode */
     }
-    houseChanged("order");
   };
   const orderRedraw = () => {
     for (const c of ORDER.cards) {
@@ -1238,7 +1351,6 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
   };
   /** Ids a card finds itself (an area's entities) in the block's order. */
   const orderIds = (card, ids) => orderSort(ORDER.data?.[orderKey(card)], ids, (x) => x);
-  const orderHas = (card) => !!ORDER.data?.[orderKey(card)]?.length;
   /** The cell of HA's grid a card sits in (a room tile is a card of its own: the tiles are ordered by CSS `order`). */
   const orderCell = (card) => {
     let el = card;
@@ -1264,7 +1376,8 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
       return;
     }
     const head = card.shadowRoot?.querySelector(".caps");
-    if (!head || head._orderPress) return;
+    // A scenes header's hold is «Новая сцена» first, «Порядок» in the same sheet (bindScenes): one hold, one sheet.
+    if (!head || head._orderPress || head.closest("[data-scene-add]")) return;
     head._orderPress = true;
     let t = 0;
     let at = null;
@@ -1378,29 +1491,29 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
     }
     return [...by.values()].sort((a, b) => Number(b.shown) - Number(a.shown) || a.top - b.top);
   };
-  const OCSS = `:host{--hf-toast-b:96px;position:fixed;inset:0;z-index:10000;display:grid;place-items:end center;background:rgba(0,0,0,.42);font-family:Onest,var(--ha-font-family-body),system-ui,sans-serif;color:var(--eh-ink,var(--primary-text-color));-webkit-tap-highlight-color:transparent}
+  const OCSS = `:host{--hf-toast-b:96px;position:fixed;inset:0;z-index:10000;display:grid;place-items:end center;background:var(--hf-shade-42);font-family:Onest,var(--ha-font-family-body),system-ui,sans-serif;color:var(--eh-ink,var(--primary-text-color));-webkit-tap-highlight-color:transparent}
 @media (min-width:600px){:host{place-items:center}}
 *{box-sizing:border-box}
-.sh{width:min(100%,480px);max-height:92vh;overflow:auto;overscroll-behavior:contain;background:var(--card-background-color,#fff);background-image:var(--eh-glass,none);border-radius:28px 28px 0 0;padding:20px 16px calc(16px + env(safe-area-inset-bottom));box-shadow:0 20px 60px rgba(0,0,0,.35)}
+.sh{width:min(100%,480px);max-height:92vh;overflow:auto;overscroll-behavior:contain;background:var(--hf-card-bg);background-image:var(--eh-glass,none);border-radius:28px 28px 0 0;padding:20px 16px calc(16px + env(safe-area-inset-bottom));box-shadow:0 20px 60px var(--hf-shade-35)}
 @media (min-width:600px){.sh{border-radius:28px;padding:20px}}
 .hd{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:4px}.hd h2{font:600 20px/1.2 Onest,sans-serif;margin:0;letter-spacing:-.01em;min-width:0;overflow-wrap:break-word;hyphens:auto}
-.x{width:44px;height:44px;flex:none;border-radius:22px;border:0;background:var(--eh-track,rgba(127,127,127,.12));color:inherit;font-size:22px;cursor:pointer;display:grid;place-items:center}.x ha-icon{--mdc-icon-size:22px}
+.x{width:44px;height:44px;flex:none;border-radius:22px;border:0;background:var(--hf-track);color:inherit;font-size:22px;cursor:pointer;display:grid;place-items:center}.x ha-icon{--mdc-icon-size:22px}
 .hint{font:400 13px/1.45 Onest,sans-serif;color:var(--eh-ink2,var(--secondary-text-color));margin:4px 2px 10px}
 .vl{font:500 11px/1.2 Onest,sans-serif;letter-spacing:.14em;text-transform:uppercase;color:var(--eh-ink2,var(--secondary-text-color));margin:16px 2px 6px}
 ol{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
-li{display:flex;align-items:center;gap:8px;min-height:56px;padding:4px 4px 4px 0;border-radius:16px;background:var(--eh-track,rgba(127,127,127,.10));user-select:none;-webkit-user-select:none;transition:box-shadow .15s,transform .15s}
-li.drag{background:var(--card-background-color,#fff);box-shadow:0 8px 24px rgba(0,0,0,.25),inset 0 0 0 2px var(--eh-ice,#3C82F0);transform:scale(1.02);position:relative;z-index:1}
+li{display:flex;align-items:center;gap:8px;min-height:56px;padding:4px 4px 4px 0;border-radius:16px;background:var(--hf-track-10);user-select:none;-webkit-user-select:none;transition:box-shadow .15s,transform .15s}
+li.drag{background:var(--hf-card-bg);box-shadow:0 8px 24px var(--hf-shade-25),inset 0 0 0 2px var(--hf-ice);transform:scale(1.02);position:relative;z-index:1}
 .gr{flex:none;width:44px;height:48px;display:grid;place-items:center;color:var(--eh-ink2,var(--secondary-text-color));cursor:grab;touch-action:none}.gr:active{cursor:grabbing}
 .ic{--mdc-icon-size:20px;color:var(--eh-ink2,var(--secondary-text-color));flex:none}
 .tx{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}.sb{font:400 13px/1.3 Onest,sans-serif;color:var(--eh-ink2,var(--secondary-text-color));overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .nm{flex:1;min-width:0;font:500 15px/1.3 Onest,sans-serif;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:break-word;hyphens:auto}
-.mv{flex:none;width:44px;height:44px;border:0;border-radius:14px;background:none;color:inherit;font:500 18px Onest,sans-serif;cursor:pointer}.mv:disabled{opacity:.25;cursor:default}.mv:not(:disabled):hover{background:rgba(127,127,127,.14)}
-button:focus-visible{outline:2px solid var(--eh-ice,#3C82F0);outline-offset:1px}
-.res{font:400 13px/1.45 Onest,sans-serif;margin:10px 2px 0;color:var(--error-color,#c62828)}.res:empty{display:none}
-.ft{display:flex;align-items:center;gap:8px;margin:16px -16px 0;position:sticky;bottom:calc(-16px - env(safe-area-inset-bottom));padding:10px 16px calc(4px + env(safe-area-inset-bottom));background:var(--card-background-color,#fff);border-top:1px solid var(--divider-color,rgba(127,127,127,.18))}.ft .sp{flex:1}
+.mv{flex:none;width:44px;height:44px;border:0;border-radius:14px;background:none;color:inherit;font:500 18px Onest,sans-serif;cursor:pointer}.mv:disabled{opacity:.25;cursor:default}.mv:not(:disabled):hover{background:var(--hf-grey-14)}
+button:focus-visible{outline:2px solid var(--hf-ice);outline-offset:1px}
+.res{font:400 13px/1.45 Onest,sans-serif;margin:10px 2px 0;color:var(--hf-error)}.res:empty{display:none}
+.ft{display:flex;align-items:center;gap:8px;margin:16px -16px 0;position:sticky;bottom:calc(-16px - env(safe-area-inset-bottom));padding:10px 16px calc(4px + env(safe-area-inset-bottom));background:var(--hf-card-bg);border-top:1px solid var(--hf-divider)}.ft .sp{flex:1}
 @media (min-width:600px){.ft{margin:16px -20px 0;padding:12px 20px 0;bottom:-20px}}
-.ft button{min-height:44px;padding:0 16px;border:0;border-radius:14px;font:500 14px Onest,sans-serif;color:inherit;cursor:pointer;background:var(--eh-track,rgba(127,127,127,.12))}
-.ft .b1{background:var(--eh-ink,var(--primary-text-color));color:var(--card-background-color,#fff);font-weight:600}.ft .lnk{background:none;padding:0 8px;color:var(--eh-ink2,var(--secondary-text-color));text-decoration:underline;text-underline-offset:3px}
+.ft button{min-height:44px;padding:0 16px;border:0;border-radius:14px;font:500 14px Onest,sans-serif;color:inherit;cursor:pointer;background:var(--hf-track)}
+.ft .b1{background:var(--eh-ink,var(--primary-text-color));color:var(--hf-card-bg);font-weight:600}.ft .lnk{background:none;padding:0 8px;color:var(--eh-ink2,var(--secondary-text-color));text-decoration:underline;text-underline-offset:3px}
 .ft button:disabled{opacity:.5}`;
   let orderOpen = null;
   /** The sheet: the block's items in its order — drag by the handle (pointer events: a finger, a pen, the mouse) or ↑ ↓.
@@ -1548,7 +1661,7 @@ button:focus-visible{outline:2px solid var(--eh-ice,#3C82F0);outline-offset:1px}
     // A tap on the dim backdrop closes — not the click that ends the long press which opened it (it lands on the backdrop).
     const opened = Date.now();
     host.addEventListener("click", (e) => e.composedPath()[0] === host && Date.now() - opened > 700 && done());
-    document.body.appendChild(host);
+    document.body.appendChild(carryTheme(host, card));
     sr.querySelector("[data-done]")?.focus({ preventScroll: true });
   };
   // --- the family's own room scenes (owner 28.10: «сцены, как и сцены света, должны создаваться и редактироваться мной и
@@ -1697,8 +1810,12 @@ button:focus-visible{outline:2px solid var(--eh-ice,#3C82F0);outline-offset:1px}
       .filter((s) => keys.some((r) => String(s.attributes.id).startsWith(`hauflo_fam_${r}_`)))
       .map((s) => s.entity_id);
   };
-  /** Scene buttons of one kind (light amber, blinds neutral, both mint) — the room's top card and the blocks share them.
-   * `room` (the card's `scene_room`): the family's own scenes after the integrator's, and «+ Сцена». */
+  /** Scene buttons of one kind (light amber, blinds ice — as hauflo-scenes' own cover row, owner 03.11 — both mint) — the room's top card and the blocks share them.
+   * `room` (the card's `scene_room`): the family's own scenes after the integrator's. A new scene: hold the block's header or
+   * any scene (owner 03.11: no permanent «+ Сцена»); the button shows only while the row has no scene at all. */
+  const sceneCanAdd = (hass, kind, room) => !!room && kind !== "mixed" && FAM.api === true && canEdit(hass);
+  /** `data-scene-add` on a block's header: holding it opens «Новая сцена» when the family may add one here. */
+  const sceneAddAttr = (hass, kind, room) => (sceneCanAdd(hass, kind, room) ? ` data-scene-add="${kind === "cover" ? "cover" : "light"}"` : "");
   const sceneChips = (hass, list, kind, room, card) => {
     const own = room && hass ? familyScenes(hass, room, kind) : [];
     const hidden = new Set(FAM.hidden || []);
@@ -1717,10 +1834,12 @@ button:focus-visible{outline:2px solid var(--eh-ice,#3C82F0);outline-offset:1px}
         const label = sceneLabel(hass, x);
         const editable = src === "knx" ? FAM.api === true && FAM.knx?.[x.entity] !== undefined : /^hauflo_/.test(String(s.attributes.id || "")) && !!room;
         const tag = admin ? `<i class="src" aria-hidden="true">${src === "knx" ? "KNX" : "HA"}</i>` : "";
+        // The tag's meaning on hover (blind review 03.11: «HA» read as an unknown badge) — admins only.
+        const tip = admin ? `${label} · ${src === "knx" ? "сцена в KNX" : "сцена в Home Assistant"}` : label;
         const lit = card?._sceneLit?.id === x.entity && card._sceneLit.until > Date.now();
-        return `<button data-scene="${esc(x.entity)}" ${lit ? 'class="lit" ' : ""}${editable ? `data-edit="${src === "knx" ? "knx" : "1"}"` : ""} title="${esc(label)}"><ha-icon icon="${esc(x.icon || s.attributes.icon || (kind === "cover" ? "hauflo:blind" : "hauflo:scene"))}"></ha-icon><span${FAM.names?.[x.entity] ? " data-own" : ""}>${esc(shortLab || label)}</span>${tag}</button>`;
+        return `<button data-scene="${esc(x.entity)}" ${lit ? 'class="lit" ' : ""}${editable ? `data-edit="${src === "knx" ? "knx" : "1"}"` : ""} title="${esc(tip)}"><ha-icon icon="${esc(x.icon || s.attributes.icon || (kind === "cover" ? "hauflo:blind" : "hauflo:scene"))}"></ha-icon><span${FAM.names?.[x.entity] ? " data-own" : ""}>${esc(shortLab || label)}</span>${tag}</button>`;
     };
-    const addBtn = room && kind !== "mixed" && FAM.api === true && canEdit(hass) ? `<button class="add" data-scene-add="${kind === "cover" ? "cover" : "light"}" aria-label="Новая сцена" title="Новая сцена"><ha-icon icon="mdi:plus"></ha-icon><span>Сцена</span></button>` : "";
+    if (!all.length) return sceneCanAdd(hass, kind, room) ? `<div class="scn ${kind}"><button class="add" data-scene-add="${kind === "cover" ? "cover" : "light"}" aria-label="Новая сцена" title="Новая сцена"><ha-icon icon="mdi:plus"></ha-icon><span>Сцена</span></button></div>` : "";
     // ≥2 KNX series in the row (`series` on the buttons, set by the generator): a subheader per series; the integrator's HA
     // scenes and the family's own go under «Мои сцены» (Д2+, owner 29.10). One series / none: as before, no subheader.
     if (all.some((x) => x.series)) {
@@ -1729,11 +1848,11 @@ button:focus-visible{outline:2px solid var(--eh-ice,#3C82F0);outline-offset:1px}
       const names = [...new Set(all.filter((x) => x.series).map((x) => x.series))].sort((a, b) => Number(!bare(a)) - Number(!bare(b)));
       const mine = all.filter((x) => !x.series);
       const groups = names.map((n) => [bare(n) ? "" : n, all.filter((x) => x.series === n).map((x) => one(x)).join("")]);
-      if (mine.length || addBtn) groups.push([langOf(hass) === "en" ? "My scenes" : "Мои сцены", mine.map((x) => one(x)).join("") + addBtn]);
+      if (mine.length) groups.push([langOf(hass) === "en" ? "My scenes" : "Мои сцены", mine.map((x) => one(x)).join("")]);
       return `<div class="sgs">${groups.map(([n, h]) => `<div class="sg">${n ? `<span class="caps ser">${esc(n)}</span>` : ""}<div class="scn ${kind}">${h}</div></div>`).join("")}</div>`;
     }
     // Blind scenes of two or more curtain types («Открыть Шторы», «Закрыть Шторы», «Открыть Тюль»…): a labelled row per type,
-    // short action names inside (family test 29.10) — «+ Сцена» ends the last row.
+    // short action names inside (family test 29.10).
     if (kind === "cover") {
       const parsed = all.map((x) => {
         const m = /^(Открыть|Закрыть)\s+(.+)$/i.exec(sceneLabel(hass, x));
@@ -1747,11 +1866,10 @@ button:focus-visible{outline:2px solid var(--eh-ice,#3C82F0);outline-offset:1px}
           return `<div class="scr"><span class="scl">${esc(mine[0].type[0].toUpperCase() + mine[0].type.slice(1))}:</span>${mine.map((p) => one(p.x, p.verb)).join("")}</div>`;
         });
         if (rest.length) rows.unshift(`<div class="scr">${rest.map((x) => one(x)).join("")}</div>`);
-        if (addBtn) rows[rows.length - 1] = rows[rows.length - 1].replace(/<\/div>$/, `${addBtn}</div>`);
         return `<div class="scn ${kind} grouped">${rows.join("")}</div>`;
       }
     }
-    return `<div class="scn ${kind}">${all.map((x) => one(x)).join("")}${addBtn}</div>`;
+    return `<div class="scn ${kind}">${all.map((x) => one(x)).join("")}</div>`;
   };
   /** What «Запомнить как сейчас» takes: the block's own lights / blinds (one by one — never a group, it would move twice). */
   const captureList = (card, kind) => {
@@ -1775,10 +1893,10 @@ button:focus-visible{outline:2px solid var(--eh-ice,#3C82F0);outline-offset:1px}
   // A function: SHEET_CSS (the climate sheet's) is defined further down.
   const sceneSheetCss = () => `${SHEET_CSS}
 *{box-sizing:border-box}.sh{padding:18px 18px calc(18px + env(safe-area-inset-bottom));gap:12px}.t{font:500 17px Onest,sans-serif;color:var(--primary-text-color)}
-.n{font:400 13px/1.4 Onest,sans-serif;color:var(--secondary-text-color)}.e{font:400 13px/1.4 Onest,sans-serif;color:var(--eh-alert,#FF5A5F)}
+.n{font:400 13px/1.4 Onest,sans-serif;color:var(--secondary-text-color)}.e{font:400 13px/1.4 Onest,sans-serif;color:var(--hf-alert)}
 input{height:48px;border-radius:14px;border:1px solid var(--divider-color);padding:0 14px;font:400 16px Onest,sans-serif;background:transparent;color:var(--primary-text-color)}
-.b{height:48px;border-radius:14px;border:0;font:500 15px Onest,sans-serif;cursor:pointer;background:var(--eh-track,rgba(127,127,127,.12));color:var(--primary-text-color)}
-.b.go{background:color-mix(in srgb,var(--eh-amber,#FFB25C) 30%,transparent)}.b.bad{color:var(--eh-alert,#FF5A5F)}.b:disabled{opacity:.5}`;
+.b{height:48px;border-radius:14px;border:0;font:500 15px Onest,sans-serif;cursor:pointer;background:var(--hf-track);color:var(--primary-text-color)}
+.b.go{background:color-mix(in srgb,var(--hf-amber-2) 30%,transparent)}.b.bad{color:var(--hf-alert)}.b:disabled{opacity:.5}`;
   /** A small sheet over the dashboard: the family's scene actions. */
   const sceneSheet = (card, build) => {
     const host = document.createElement("div");
@@ -1795,12 +1913,12 @@ input{height:48px;border-radius:14px;border:1px solid var(--divider-color);paddi
       sr.innerHTML = `<style>${TZ(sceneSheetCss())}</style><div class="sh" role="dialog" aria-modal="true">${html}</div>`;
       if (LANG !== "ru") translate(sr);
     };
-    document.body.appendChild(host);
+    document.body.appendChild(carryTheme(host, card));
     build({ sr, draw, close });
   };
   const famCall = async (card, body) => {
     try {
-      return { ok: await card._hass.callApi("POST", "hauflo/scenes", body) };
+      return { ok: await card._hass.callApi("POST", "hauflo/scenes", { ...body, lang: LANG }) };
     } catch (e) {
       // HA's callApi rejects with the parsed body ({message}) or a plain error.
       const msg = e?.body?.message || e?.message || (typeof e === "string" ? e : "");
@@ -1857,6 +1975,12 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-save>�
     });
   };
   /** A long press on a scene Hauflo made: rename, remember again, delete (the family's) or hide (the integrator's). */
+  const newSceneBtn = (card, kind) => (sceneCanAdd(card._hass, kind, roomOf(card, kind)) ? `<button class="b" data-new>Новая сцена</button>` : "");
+  const bindNewScene = (sr, card, kind, close) =>
+    sr.querySelector("[data-new]")?.addEventListener("click", () => {
+      close();
+      openAddScene(card, kind);
+    });
   const openEditScene = (card, entity, kind) => {
     const s = st(card._hass, entity);
     if (!s) return;
@@ -1866,11 +1990,12 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-save>�
         const may = canEdit(card._hass);
         draw(`<div class="t">${esc(nameOf(s, entity))}</div>
 ${!may ? `<div class="n">${esc(tr("Детский профиль: сцены меняют взрослые."))}</div>` : family ? "" : `<div class="n">Сцену настроил интегратор. Её можно переименовать и перезаписать; убрать — только с этой панели.</div>`}
-${err ? `<div class="e">${esc(err)}</div>` : ""}${may ? `<button class="b" data-rename>Переименовать</button>
-<button class="b go" data-again>Запомнить как сейчас</button>
+${err ? `<div class="e">${esc(err)}</div>` : ""}${may ? `<button class="b go" data-again>Запомнить как сейчас</button>${newSceneBtn(card, kind)}
+<button class="b" data-rename>Переименовать</button>
 <button class="b bad" data-del>${family ? "Удалить сцену" : "Убрать с панели"}</button>` : ""}${favBtn(entity)}<button class="b" data-x>Отмена</button>`);
         sr.querySelector("[data-x]").addEventListener("click", close);
         bindFavBtn(sr, card, entity, close, menu);
+        bindNewScene(sr, card, kind, close);
         sr.querySelector("[data-rename]")?.addEventListener("click", () => rename());
         sr.querySelector("[data-again]")?.addEventListener("click", () => again());
         sr.querySelector("[data-del]")?.addEventListener("click", async () => {
@@ -1932,10 +2057,11 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
         const may = canEdit(card._hass);
         draw(`<div class="t" data-own>${esc(label())}</div>
 <div class="n">${esc(may ? "Сцена — та же, что на настенных выключателях." : tr("Детский профиль: сцены меняют взрослые."))}</div>
-${err ? `<div class="e">${esc(err)}</div>` : ""}${may ? `<button class="b go" data-again>Запомнить как сейчас</button>
+${err ? `<div class="e">${esc(err)}</div>` : ""}${may ? `<button class="b go" data-again>Запомнить как сейчас</button>${newSceneBtn(card, kind)}
 <button class="b" data-rename>Переименовать</button>` : ""}${favBtn(entity)}<button class="b" data-x>Отмена</button>`);
         sr.querySelector("[data-x]").addEventListener("click", close);
         bindFavBtn(sr, card, entity, close, menu);
+        bindNewScene(sr, card, kind, close);
         sr.querySelector("[data-rename]")?.addEventListener("click", () => rename());
         sr.querySelector("[data-again]")?.addEventListener("click", () => ask());
       };
@@ -2031,6 +2157,23 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
         openAddScene(card, b.dataset.sceneAdd);
       }),
     );
+    // Holding a block's header: «Новая сцена» (light / blinds; both on the room's top card → which one first).
+    root.querySelectorAll("[data-scene-add]:not(button)").forEach((el) =>
+      longPress(el, () => {
+        haptic(card, "medium");
+        const kinds = el.dataset.sceneAdd.split(" ");
+        // The block's order is the second line of the same sheet (owner 03.11: a header's hold showed only «Порядок»).
+        const order = ORDER.ok && canEdit(card._hass) && orderSections(card).some((x) => x.items.length > 1);
+        if (kinds.length === 1 && !order) return openAddScene(card, kinds[0]);
+        sceneSheet(card, ({ sr, draw, close }) => {
+          const one = kinds.length === 1;
+          draw(`<div class="t">Новая сцена</div>${kinds.map((k) => `<button class="b" data-k="${k}">${one ? "Новая сцена" : k === "cover" ? "Сцена штор" : "Сцена света"}</button>`).join("")}${order ? `<button class="b" data-order>${esc(OW[langOf(card._hass)].title)}</button>` : ""}<button class="b" data-x>Отмена</button>`);
+          sr.querySelector("[data-x]").addEventListener("click", close);
+          sr.querySelector("[data-order]")?.addEventListener("click", () => (close(), openOrder(card)));
+          sr.querySelectorAll("[data-k]").forEach((b) => b.addEventListener("click", () => (close(), openAddScene(card, b.dataset.k))));
+        });
+      }),
+    );
   };
   const OPENING = ["window", "door", "garage_door", "opening"];
   const FAN = { auto: "Авто", on_low: "Тихо", on_high: "Сильно", auto_low: "Авто ↓", auto_high: "Авто ↑", low: "Тихо", medium: "Средне", middle: "Средне", mid: "Средне", high: "Сильно", top: "Макс", quiet: "Тихо", diffuse: "Мягко", focus: "Фокус", turbo: "Турбо" };
@@ -2104,8 +2247,8 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
   /** Not working this minute (at target, waiting): the same colour, a little softer — never grey. */
   const toneCalm = (tone, now) => !!tone && !["heat", "cool", "dry", "fan"].includes(now);
   /** The mode accents as CSS variables: --ac (fill / line), --acT (text), --acG (glow). */
-  const TONE_CSS = `.m-heat{--ac:var(--amber);--acT:var(--amberT);--acG:var(--amberGlow)}.m-cool{--ac:var(--ice);--acT:color-mix(in srgb,var(--ice) 78%,var(--ink));--acG:var(--iceGlow)}.m-auto{--ac:var(--mint);--acT:var(--mintT);--acG:color-mix(in srgb,var(--mint) 45%,transparent)}.m-dry{--ac:var(--eh-dry,#2AA5B8);--acT:color-mix(in srgb,var(--eh-dry,#2AA5B8) 78%,var(--ink));--acG:color-mix(in srgb,var(--eh-dry,#2AA5B8) 45%,transparent)}.m-fan{--ac:var(--eh-fan,#8B74E8);--acT:color-mix(in srgb,var(--eh-fan,#8B74E8) 78%,var(--ink));--acG:color-mix(in srgb,var(--eh-fan,#8B74E8) 45%,transparent)}
-.modes button.on.mk{background:var(--ac);color:#141414;font-weight:600;box-shadow:0 2px 12px -4px var(--acG)}`;
+  const TONE_CSS = `.m-heat{--ac:var(--amber);--acT:var(--amberT);--acG:var(--amberGlow)}.m-cool{--ac:var(--ice);--acT:color-mix(in srgb,var(--ice) 78%,var(--ink));--acG:var(--iceGlow)}.m-auto{--ac:var(--mint);--acT:var(--mintT);--acG:color-mix(in srgb,var(--mint) 45%,transparent)}.m-dry{--ac:var(--hf-dry);--acT:color-mix(in srgb,var(--hf-dry) 78%,var(--ink));--acG:color-mix(in srgb,var(--hf-dry) 45%,transparent)}.m-fan{--ac:var(--hf-fan);--acT:color-mix(in srgb,var(--hf-fan) 78%,var(--ink));--acG:color-mix(in srgb,var(--hf-fan) 45%,transparent)}
+.modes button.on.mk{background:var(--ac);color:var(--hf-on-accent);font-weight:600;box-shadow:0 2px 12px -4px var(--acG)}`;
   /** The mode as small print only when it says something the action doesn't («режим: авто»). */
   const modeDiff = (state, now) => {
     const m = modeSmall(state);
@@ -2123,8 +2266,8 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
     el.id = "hf-undo";
     el.className = "hf-ok";
     el.setAttribute("role", "status");
-    el.style.cssText = "position:fixed;left:50%;transform:translateX(-50%);bottom:calc(20px + env(safe-area-inset-bottom));z-index:2147483000;display:flex;align-items:center;gap:10px;max-width:calc(100vw - 32px);min-height:48px;padding:10px 18px 10px 14px;border-radius:16px;background:#1F1E1C;color:#fff;font:500 calc(15px*var(--hf-ts,1)) Onest,sans-serif;line-height:1.3;box-shadow:0 8px 28px rgba(0,0,0,.28)";
-    el.innerHTML = `<span aria-hidden="true" style="color:#5CE0B4;font-size:18px">✓</span><span>${esc(text)}</span>`;
+    el.style.cssText = "position:fixed;left:50%;transform:translateX(-50%);bottom:calc(20px + env(safe-area-inset-bottom));z-index:2147483000;display:flex;align-items:center;gap:10px;max-width:calc(100vw - 32px);min-height:48px;padding:10px 18px 10px 14px;border-radius:16px;background:var(--hf-charcoal);color:var(--hf-white);font:500 calc(15px*var(--hf-ts,1)) Onest,sans-serif;line-height:1.3;box-shadow:0 8px 28px var(--hf-shade-28)";
+    el.innerHTML = `<span aria-hidden="true" style="color:var(--hf-toast-ok);font-size:18px">✓</span><span>${esc(text)}</span>`;
     document.body.appendChild(el);
     TOAST_T = setTimeout(() => el.remove(), 3000);
   };
@@ -2135,8 +2278,8 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
     const el = document.createElement("div");
     el.id = "hf-undo";
     el.setAttribute("role", "status");
-    el.style.cssText = "position:fixed;left:50%;transform:translateX(-50%);bottom:calc(20px + env(safe-area-inset-bottom));z-index:2147483000;display:flex;align-items:center;gap:8px;max-width:calc(100vw - 32px);padding:4px 4px 4px 16px;border-radius:16px;background:#1d1d1f;color:#fff;font:500 14px Onest,sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.35)";
-    el.innerHTML = `<span>${esc(tr(text))}</span><button type="button" style="min-height:44px;min-width:44px;padding:0 14px;border-radius:12px;border:0;background:transparent;color:#FFC070;font:600 14px Onest,sans-serif;cursor:pointer">${esc(tr("Отменить"))}</button>`;
+    el.style.cssText = "position:fixed;left:50%;transform:translateX(-50%);bottom:calc(20px + env(safe-area-inset-bottom));z-index:2147483000;display:flex;align-items:center;gap:8px;max-width:calc(100vw - 32px);padding:4px 4px 4px 16px;border-radius:16px;background:var(--hf-toast-bg);color:var(--hf-white);font:500 14px Onest,sans-serif;box-shadow:0 8px 30px var(--hf-shade-35)";
+    el.innerHTML = `<span>${esc(tr(text))}</span><button type="button" style="min-height:44px;min-width:44px;padding:0 14px;border-radius:12px;border:0;background:transparent;color:var(--hf-toast-action);font:600 14px Onest,sans-serif;cursor:pointer">${esc(tr("Отменить"))}</button>`;
     el.querySelector("button").addEventListener("click", () => {
       clearTimeout(TOAST_T);
       el.remove();
@@ -2158,15 +2301,22 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
   Object.assign(EN, { "Включить всё": "Turn all on", "Выключить всё": "Turn all off", "Часы": "Hours", "Минуты": "Minutes", "Защита от замерзания": "Frost protection", "Авария": "Fault" });
   Object.assign(EN, { "Свет у меня": "My light", "Потеплее": "Warmer", "Моя комната ›": "My room ›" });
   EN_RX.push([/^задано (-?[\d.,]+°) · сейчас (-?[\d.,]+°)$/, "set $1 · now $2"], [/^вкл · (\d+) из (\d+)$/, "on · $1 of $2"]);
-  Object.assign(EN, { "Точно? Защита": "Sure? Protection", "Выключить климат": "Turn off climate", "Выключить тёплые полы": "Turn off floor heating", "Каждая отдельно": "Each on its own", "Отменить": "Undo", "Выключено": "Off", "Не охлаждает": "Not cooling", "Охлаждение": "Cooling", "В норме": "At target", "Вентиляция": "Ventilation", "Осушение": "Drying", "клапаны закрыты": "valves closed", "Климат выключен": "Climate turned off", "Свет выключен": "Lights turned off", "Режим": "Mode", "Вентилятор": "Fan", "теплее": "warmer", "прохладнее": "cooler", "Точно? Выключить": "Sure? Turn off", "Выключить весь свет": "Turn off all lights", "Включить весь свет": "Turn on all lights", "Все держат нужную температуру": "At target", "обогрев до": "heating to", "охлаждение от": "cooling from" });
+  Object.assign(EN, { "Точно? Защита": "Sure? Protection", "Точно? Отпереть": "Sure? Unlock", "Точно? Открыть": "Sure? Open", "Точно? Закрыть": "Sure? Close", "Точно? Включить": "Sure? Turn on", "сцена в KNX": "KNX scene", "сцена в Home Assistant": "Home Assistant scene", "Выключить климат": "Turn off climate", "Выключить тёплые полы": "Turn off floor heating", "Каждая отдельно": "Each on its own", "Отменить": "Undo", "Выключено": "Off", "Не охлаждает": "Not cooling", "Охлаждение": "Cooling", "В норме": "At target", "Вентиляция": "Ventilation", "Осушение": "Drying", "клапаны закрыты": "valves closed", "Климат выключен": "Climate turned off", "Свет выключен": "Lights turned off", "Режим": "Mode", "Вентилятор": "Fan", "теплее": "warmer", "прохладнее": "cooler", "Точно? Выключить": "Sure? Turn off", "Выключить весь свет": "Turn off all lights", "Включить весь свет": "Turn on all lights", "Все держат нужную температуру": "At target", "обогрев до": "heating to", "охлаждение от": "cooling from" });
   EN_RX.push([/^Нагрев: (\d+)$/, "Heating: $1"], [/^Охлаждение: (\d+)$/, "Cooling: $1"], [/^клапаны открыты · (\d+)$/, "valves open · $1"], [/^задано (.+)$/, "set $1"], [/^Греет — станет (.+)$/, "Heating — will reach $1"], [/^Охлаждает — станет (.+)$/, "Cooling — will reach $1"], [/^(Тепло, не греет|Не охлаждает) \(держим (.+)\)$/, (m, a, b) => `${a === "Не охлаждает" ? "Not cooling" : "Warm, not heating"} (holding ${b})`], [/^шаг (.+)$/, "step $1"], [/^(Теплее|Холоднее) на (.+)$/, (m, a, b) => `${a === "Теплее" ? "Warmer" : "Cooler"} by ${b}`], [/^режим: (.+)$/, "mode: $1"]);
   const acting = (k) => k === "heat" || k === "cool" || k === "dry" || k === "fan";
-  /** One icon per valve of the zone, open lit (Д13). */
-  const valveIcons = (h, ids) => {
+  /** The zone's valves, open lit (Д13) — one valve too (owner 03.11): its own status sensor, or — a floor zone whose only
+   * valve output is the thermostat's ga_active (objectClimate: no separate sensor then) — the thermostat's hvac_action. */
+  const valveIcons = (h, ids, floor) => {
     const list = (ids || []).filter((id) => st(h, id));
+    const act = floor?.attributes?.hvac_action;
+    // A thermostat turned off drops hvac_action on some integrations: still «клапан закрыт», so the row never jumps.
+    if (!list.length && floor && (["heating", "idle", "off"].includes(act) || floor.state === "off")) {
+      return `<span class="vwrap"><span class="vch${act === "heating" ? " on" : ""}"><span class="vt">${act === "heating" ? "клапан открыт" : "клапан закрыт"}</span></span></span>`;
+    }
     if (!list.length) return "";
     const open = list.filter((id) => st(h, id).state === "on").length;
-    return `<span class="vwrap"><button class="vch${open ? " on" : ""}" data-vch aria-expanded="false">${open ? `клапаны открыты · ${open}` : "клапаны закрыты"}</button><span class="vpop" hidden>${list.slice(0, 24).map((id, i) => `<span>Клапан ${i + 1}: ${st(h, id).state === "on" ? "открыт" : "закрыт"}</span>`).join("")}</span></span>`;
+    if (list.length === 1) return `<span class="vwrap"><span class="vch${open ? " on" : ""}"><span class="vt">${open ? "клапан открыт" : "клапан закрыт"}</span></span></span>`;
+    return `<span class="vwrap"><button class="vch${open ? " on" : ""}" data-vch aria-expanded="false"><span class="vt">${open ? `клапаны открыты · ${open}` : "клапаны закрыты"}</span></button><span class="vpop" hidden>${list.slice(0, 24).map((id, i) => `<span>Клапан ${i + 1}: ${st(h, id).state === "on" ? "открыт" : "закрыт"}</span>`).join("")}</span></span>`;
   };
   const VALVE_CSS = `.vwrap{display:inline-flex;flex-direction:column;vertical-align:middle}.vch{display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:0 4px;font:500 12px Onest,sans-serif;color:var(--ink2)}.vch::before{content:"";width:6px;height:6px;border-radius:3px;background:var(--ink3)}.vch.on::before{background:var(--amber)}.vpop{display:flex;flex-direction:column;gap:2px;padding:8px 12px;border-radius:12px;background:var(--track);font:400 12px/1.4 Onest,sans-serif;color:var(--ink2)}.vpop[hidden]{display:none}`;
   // Units in Russian; a value outside what's physically plausible is «—», not «33424 гПа» (designer review 25.10).
@@ -2363,12 +2513,12 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
 <div class="tpl" style="height:${H}px"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">${ticksY.map((v) => `<line class="gr" x1="0" x2="${W}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" vector-effect="non-scaling-stroke"/>`).join("")}<path class="ar" d="${area}"/>${sp.length ? `<path class="sp" d="${spLine}" vector-effect="non-scaling-stroke"/>` : ""}<path class="cu" d="${line}" vector-effect="non-scaling-stroke"/></svg>${ends}${ticksY.map((v) => `<span class="ty" style="top:${((y(v) / H) * 100).toFixed(1)}%">${fmt(v, digits)}°</span>`).join("")}</div>
 <div class="tx">${ticksX.map((t) => `<span style="left:${(((t - t0) / span) * 100).toFixed(1)}%">${hm(t)}</span>`).join("")}<span class="now">сейчас</span></div>`);
   };
-  const TCHART_CSS = `.tch{position:relative;margin-top:14px;--tc:var(--ink2);--tsp:var(--ink2)}.tch.heat{--tc:var(--amber)}.tch.cool{--tc:var(--ice)}.tch.auto{--tc:var(--mint)}.tch.dry{--tc:var(--eh-dry,#2AA5B8)}.tch.fan{--tc:var(--eh-fan,#8B74E8)}.tch:is(.heat,.cool,.auto,.dry,.fan){--tsp:var(--tc)}.tch.calm .cu{opacity:.78}.tch.calm .ar{opacity:.07}.tch.calm .sp{opacity:.6}
+  const TCHART_CSS = `.tch{position:relative;margin-top:14px;--tc:var(--ink2);--tsp:var(--ink2)}.tch.heat{--tc:var(--amber)}.tch.cool{--tc:var(--ice)}.tch.auto{--tc:var(--mint)}.tch.dry{--tc:var(--hf-dry)}.tch.fan{--tc:var(--hf-fan)}.tch:is(.heat,.cool,.auto,.dry,.fan){--tsp:var(--tc)}.tch.calm .cu{opacity:.78}.tch.calm .ar{opacity:.07}.tch.calm .sp{opacity:.6}
 .tlg{display:flex;align-items:center;gap:14px;height:16px;margin-bottom:6px;font:400 11px Onest,sans-serif;color:var(--ink3);white-space:nowrap}.tlg .per{margin-left:auto;margin-right:34px}
 .tlg i{display:inline-block;width:14px;border-top:2px solid var(--tc);vertical-align:middle;margin:-2px 6px 0 0}.tlg .ds{border-top:2px dashed var(--ink2);opacity:.8}.tlg span:first-child{color:var(--ink2)}
 .tpl{position:relative;margin-right:34px}.tpl svg{display:block;width:100%;height:100%;overflow:visible}
 .tpl .gr{stroke:var(--hair);stroke-width:1}.tpl .cu{fill:none;stroke:var(--tc);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}.tpl .ar{fill:var(--tc);opacity:.10;stroke:none}
-.tpl .el{position:absolute;right:2px;font:500 11px Onest,sans-serif;white-space:nowrap;font-variant-numeric:tabular-nums;pointer-events:none;padding:1px 5px;border-radius:7px;background:var(--eh-glass,var(--ha-card-background,var(--card-background-color,#fff)))}.tpl .el.cl{color:var(--tc)}.tpl .el.sl{color:color-mix(in srgb,var(--tsp) 70%,var(--ink2))}
+.tpl .el{position:absolute;right:8px;font:500 11px Onest,sans-serif;white-space:nowrap;font-variant-numeric:tabular-nums;pointer-events:none;padding:1px 5px;border-radius:7px;background:var(--hf-glass)}.tpl .el.cl{color:var(--tc)}.tpl .el.sl{color:color-mix(in srgb,var(--tsp) 70%,var(--ink2))}
 .tpl .sp{fill:none;stroke:var(--tsp);stroke-width:1.25;stroke-dasharray:5 4;opacity:.8}
 .ty{position:absolute;left:calc(100% + 6px);transform:translateY(-50%);font:400 11px Onest,sans-serif;color:var(--ink3);white-space:nowrap;font-variant-numeric:tabular-nums}
 .tx{position:relative;height:16px;margin:6px 34px 0 0;font:400 11px Onest,sans-serif;color:var(--ink3);font-variant-numeric:tabular-nums}.tx span{position:absolute;top:0;transform:translateX(-50%);white-space:nowrap}.tx .now{left:auto;right:-34px;transform:none}
@@ -2473,6 +2623,7 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
       if (h) this.style.minHeight = `${h}px`;
       this.shadowRoot.innerHTML = html;
       if (h) requestAnimationFrame(() => (this.style.minHeight = ""));
+      askWrap(this.shadowRoot);
       translate(this.shadowRoot);
       this.bind && this.bind();
       orderAfter(this);
@@ -2513,7 +2664,9 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
       if (!c.scenes?.length && !room) return "";
       const where = sceneWhere(this, this.kind === "cover" ? "cover" : "light");
       if (where !== "blocks") return "";
-      return `<div class="srow"><span class="caps">${blockTitle(this, this.kind === "cover" ? "Сценарии штор" : "Сценарии света", this.kind === "cover" ? "cover_scenes" : "light_scenes")}</span>${sceneChips(this._hass, c.scenes || [], this.kind === "cover" ? "cover" : "light", room, this)}</div>`;
+      const chips = sceneChips(this._hass, c.scenes || [], this.kind === "cover" ? "cover" : "light", room, this);
+      if (!chips) return "";
+      return `<div class="srow"><span class="caps"${sceneAddAttr(this._hass, this.kind === "cover" ? "cover" : "light", room)}>${blockTitle(this, this.kind === "cover" ? "Сценарии штор" : "Сценарии света", this.kind === "cover" ? "cover_scenes" : "light_scenes")}</span>${chips}</div>`;
     }
   }
 
@@ -2590,11 +2743,9 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
 .out{display:inline-flex;align-items:center;gap:8px;max-width:100%;padding:6px 12px 6px 8px;border-radius:16px;background:var(--track);font:400 13px Onest,sans-serif;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}.out>span:last-child{overflow:hidden;text-overflow:ellipsis}
 .out ha-icon{--mdc-icon-size:20px;color:var(--amberT)}.out b{font:500 15px Onest,sans-serif;color:var(--ink)}
 .lab{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0}.away{display:inline-flex;align-items:center;gap:6px;padding:4px 10px 4px 8px;border-radius:12px;background:color-mix(in srgb,var(--amber) 20%,transparent);color:var(--ink);font:500 12px Onest,sans-serif;white-space:nowrap;cursor:pointer}.away ha-icon{--mdc-icon-size:15px;color:var(--amberT)}.away.part{background:transparent;box-shadow:inset 0 0 0 1.5px var(--amber)}
-.hl{font:300 34px/1.1 Onest,sans-serif;letter-spacing:-.03em;margin-top:10px;display:flex;align-items:center;gap:12px}.hl.bad{color:var(--alertT)}.hl .dot{width:10px;height:10px;border-radius:5px;flex:0 0 auto}
+.hl[data-chk]{cursor:pointer}.hl{font:300 34px/1.1 Onest,sans-serif;letter-spacing:-.03em;margin-top:10px;display:flex;align-items:center;gap:12px}.hl.bad{color:var(--alertT)}.hl .dot{width:10px;height:10px;border-radius:5px;flex:0 0 auto}
 .hl2{font:400 13px Onest,sans-serif;color:var(--ink2);margin-top:6px;display:flex;align-items:center;gap:0}.hl2[data-svc]{cursor:pointer;min-height:32px}
 .hl.good{font-weight:400}.todo2{font:500 14px Onest,sans-serif;line-height:1.45;color:var(--ink);margin-top:10px;max-width:560px}
-.call{display:flex;align-items:center;gap:10px;min-height:52px;margin-top:12px;padding:0 16px;border-radius:16px;text-decoration:none;color:var(--ink);background:color-mix(in srgb,var(--alert) 12%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--alert) 40%,transparent);font:600 15px Onest,sans-serif;max-width:420px}
-.call ha-icon{--mdc-icon-size:22px;color:var(--alertT)}.call .cl{flex:1;min-width:0;display:flex;flex-direction:column;padding:8px 0}.call .cl span{white-space:normal;overflow-wrap:break-word;hyphens:auto}.call b{font:400 13px Onest,sans-serif;color:var(--ink2)}
 .h{padding:6px 8px 4px}.t{font-size:112px;line-height:.9;margin-top:4px}.t sup{font:300 34px Onest,sans-serif;vertical-align:top;position:relative;top:10px;margin-left:4px;letter-spacing:0;color:var(--ink2)}
 .none{font:300 30px/1.2 Onest,sans-serif;letter-spacing:-.02em;color:var(--ink2);margin:14px 0 6px}
 .f{display:flex;gap:20px;margin-top:16px;flex-wrap:wrap}.f div{display:flex;flex-direction:column;gap:5px}.f b{font:400 17px Onest,sans-serif;letter-spacing:-.01em}
@@ -2656,8 +2807,8 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
       // instead of a big card.
       const w = st(h, c.weather);
       const wt = w ? num(w.attributes.temperature) : undefined;
-      const [wword, wicon] = w ? WEATHER[w.state] || [w.state, "mdi:weather-partly-cloudy"] : [];
-      const outside = w && wt !== undefined && wt > -70 && wt < 65 ? `<span class="out" data-w="1"><ha-icon icon="${wicon}"></ha-icon><span>на улице</span><b>${Math.round(wt)}°</b><span>· ${esc(String(wword).toLowerCase())}</span></span>` : "";
+      const [wword, wicon] = w ? WEATHER[w.state] || [haState(w), "mdi:weather-partly-cloudy"] : [];
+      const outside = w && wt !== undefined && wt > -70 && wt < 65 ? `<span class="out" data-w="1"><ha-icon icon="${wicon}"></ha-icon><span>на улице</span><b>${slot(this, "out", fmt(Math.round(wt)))}°</b><span>· ${esc(String(wword).toLowerCase())}</span></span>` : "";
       // The house's state is the headline, not an average temperature (owner 2026-10-25: «в среднем по комнатам —
       // глупо, зато на пол-экрана»). The rooms' temperatures as a range, small.
       const temps = (c.temperature || []).map((id) => tempOf(st(h, id))).filter((v) => v !== undefined);
@@ -2681,7 +2832,7 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
       const wetOther = this.home() || c.all_alarms ? Object.values(h.states).filter((x) => x.entity_id.startsWith("binary_sensor.") && x.attributes?.device_class === "moisture" && x.state === "on" && !h.entities?.[x.entity_id]?.hidden && !(c.alarms || []).includes(x.entity_id)) : [];
       const quiet = (txt, dot = "var(--ink2)", link = false) => `<div class="hl2"${link ? ' role="link" tabindex="0" data-svc' : ""}><span class="dot" style="background:${dot}"></span>${txt}${link ? `<span aria-hidden="true">&nbsp;›</span>` : ""}</div>`;
       const headline = !alarms.length && !loud.length && wetOther.length
-        ? `<div class="hl bad"><span class="dot" style="background:var(--alert);box-shadow:0 0 12px var(--alert)"></span>Протечка: ${esc(alarmName(h, wetOther[0], wetOther[0].entity_id).name)}${areaName(h, wetOther[0].entity_id) ? ` · ${esc(areaName(h, wetOther[0].entity_id))}` : ""}</div><div class="todo2">${esc(TODO.moisture)}</div>${callLink(svc)}`
+        ? `<div class="hl bad"><span class="dot" style="background:var(--alert);box-shadow:0 0 12px var(--alert)"></span>Протечка: ${esc(alarmName(h, wetOther[0], wetOther[0].entity_id).name)}${areaName(h, wetOther[0].entity_id) ? ` · ${esc(areaName(h, wetOther[0].entity_id))}` : ""}</div><div class="todo2">${esc(TODO.moisture)}</div>`
         : ok && deafOnly.length
         ? `<div class="hl"><span class="dot" style="background:var(--amber);box-shadow:0 0 12px var(--amberGlow)"></span>Нет связи · ${deafOnly.length} ${sensorsWord(deafOnly.length)}</div>${otherOff.length ? quiet(`Нет связи · ${otherOff.length} ${devWord(otherOff.length)}`, "var(--amber)", true) : ""}`
         : ok
@@ -2697,17 +2848,25 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
               : ""
           }`
         : !alarms.length
-        ? `<div class="hl bad"><span class="dot" style="background:var(--alert);box-shadow:0 0 12px var(--alert)"></span>${loud.some((s) => s.entity_id.startsWith("alarm_control_panel.")) ? "Тревога · охрана" : "Звучит сирена"}</div>${callLink(svc)}`
+        ? `<div class="hl bad"><span class="dot" style="background:var(--alert);box-shadow:0 0 12px var(--alert)"></span>${loud.some((s) => s.entity_id.startsWith("alarm_control_panel.")) ? "Тревога · охрана" : "Звучит сирена"}</div>`
         : `<div class="hl bad"${critical ? "" : ' style="color:var(--amberT)"'}><span class="dot" style="background:${critical ? "var(--alert)" : "var(--amber)"};box-shadow:0 0 12px ${critical ? "var(--alert)" : "var(--amber)"}"></span>${esc(alarms.length === 1 ? `Авария: ${topName}` : pending ? `${pending} ${pluralAlarms(pending)}` : `Приняты · ${alarms.length} ${pluralAlarms(alarms.length)}`)}</div>${
             alarms.length > 1 && pending ? `<div class="hl2">${esc(`Первая: ${topName}`)}</div>` : ""
-          }${alertShown(this) ? "" : `<div class="todo2">${esc(alarmTodo(topS?.attributes?.device_class, !!svc?.phone, false))}</div>${callLink(svc)}`}`;
+          }${alertShown(this) ? "" : `<div class="todo2">${esc(alarmTodo(topS?.attributes?.device_class, !!svc?.phone, false))}</div>`}`;
       const pres = PRES.get(this);
       const away = pres?.enabled;
+      // What the headline was decided from, in its order — the «Что проверяется» sheet (owner 03.11) reads this, never its own sums.
+      this._chk = {
+        alarms: c.alarms || [], open: openList.map((a) => a.entity), deaf,
+        loud: loud.map((x) => x.entity_id), sirens: Object.keys(h.states).filter((id) => id.startsWith("siren.") || id.startsWith("alarm_control_panel.")),
+        other: this.home() || c.all_alarms ? Object.values(h.states).filter((x) => x.entity_id.startsWith("binary_sensor.") && x.attributes?.device_class === "moisture" && !h.entities?.[x.entity_id]?.hidden && !(c.alarms || []).includes(x.entity_id)).map((x) => x.entity_id) : null,
+        wet: wetOther.map((x) => x.entity_id), devices: c.devices || [], off: otherOff, climates, waiting, lights: lightIds, lightsDeaf: lightIds.filter(longNd),
+      };
+      if (this._chkDraw) this._chkDraw();
       // Working only in part: said on the chip too, amber outline (final review 28.10).
       const part = away ? presPartial(pres) : null;
       const awayWord = !part ? "Нет дома · имитация" : part.kind === "covers" ? "Нет дома · только шторы" : part.kind === "lights" ? "Нет дома · только свет" : "Нет дома · сегодня ничего";
       return `<div class="h"><div class="top"><span class="lab"><span class="caps">${esc(c.label || "Дома")}</span>${away ? `<span class="away${part ? " part" : ""}" role="link" tabindex="0" data-away><ha-icon icon="${part ? "mdi:alert-outline" : "mdi:home-export-outline"}"></ha-icon>${awayWord}</span>` : ""}</span>${outside}</div>
-${headline}${this.favHtml()}
+${headline.replace(/<div class="hl( [a-z]+)?"/, (m) => `${m} role="button" tabindex="0" data-chk aria-haspopup="dialog"`)}${this.favHtml()}
 <div class="f">${tmin !== undefined ? `<div><span class="caps">В комнатах</span><b>${tmin === tmax ? `${fmt(tmin)}°` : `${fmt(Math.floor(tmin))}–${fmt(Math.ceil(tmax))}°`}</b></div>` : ""}
 ${hum !== undefined ? `<div><span class="caps">Влажность</span><b>${fmt(hum)} %</b></div>` : ""}
 <div><span class="caps">Свет</span><b>${lightsUnknown ? (lightsFresh ? "обновляется…" : "нет данных") : litRooms ? `${lamps} ${lamps % 10 === 1 && lamps % 100 !== 11 ? "лампа" : [2, 3, 4].includes(lamps % 10) && ![12, 13, 14].includes(lamps % 100) ? "лампы" : "ламп"} в ${litRooms} ${litRooms === 1 ? "комнате" : "комнатах"}${outerOn.length ? ` · ${esc(nameOf(st(h, outerOn[0]), outerOn[0]))}${outerOn.length > 1 ? ` +${outerOn.length - 1}` : ""}` : ""}` : outerOn.length ? `включён: ${esc(nameOf(st(h, outerOn[0]), outerOn[0]))}${outerOn.length > 1 ? ` +${outerOn.length - 1}` : ""}` : lightsDeaf ? (lightsFresh ? "выключен · обновляется…" : `выключен · ${lightsDeaf} без данных`) : "выключен"}</b></div>
@@ -2719,7 +2878,39 @@ ${(c.alarms || []).length && ok ? `<div><span class="caps">Датчики</span>
     }
   }
 
+  /** «Что проверяется»: the headline's checks, in the order the hero decides, with live values (owner 03.11). */
+  const openChecks = (card) =>
+    sceneSheet(card, ({ sr, draw, close }) => {
+      const h = () => card._hass;
+      const nm = (id) => `<span data-own>${esc(alarmName(h(), st(h(), id), id).name)}</span>`;
+      const few = (ids) => (ids.length ? `<div class="n">${ids.slice(0, 5).map(nm).join(", ")}${ids.length > 5 ? ` ${LL("и ещё", "and")} ${ids.length - 5}` : ""}</div>` : "");
+      const row = (bad, title, value, ids = []) => `<div class="ck"><span class="dt ${bad === null ? "na" : bad ? "bad" : "ok"}"></span><div><div class="t2">${esc(title)}</div><div class="n">${esc(value)}</div>${few(ids)}</div></div>`;
+      const paint = () => {
+        if (!host.isConnected) return (card._chkDraw = null);
+        const k = card._chk;
+        if (!k) return;
+        const n = (a, ru, en) => `${a.length} ${LL(ru, en)}`;
+        draw(`<div class="t">${LL("Что проверяется", "What is checked")}</div>
+<div class="n">${LL("Заголовок решается по этим проверкам сверху вниз: первая с проблемой — и есть заголовок.", "The headline comes from these checks, top to bottom: the first one with a problem is the headline.")}</div>
+${row(k.open.length ? true : !k.alarms.length ? null : false, LL("Аварийные датчики", "Alarm sensors"), !k.alarms.length ? LL("не выбраны интегратором", "none chosen by the integrator") : k.open.length ? `${LL("тревога", "alarm")}: ${k.open.length} ${LL("из", "of")} ${k.alarms.length}` : `${LL("в норме", "all clear")} · ${n(k.alarms, "шт.", "in total")}`, k.open)}
+${row(k.loud.length ? true : !k.sirens.length ? null : false, LL("Сирены и охрана", "Sirens and security"), !k.sirens.length ? LL("в доме нет", "none in the house") : k.loud.length ? `${LL("звучит", "sounding")}: ${k.loud.length} ${LL("из", "of")} ${k.sirens.length}` : `${LL("тихо", "quiet")} · ${n(k.sirens, "шт. (все siren.* и alarm_control_panel.*)", "in total (every siren.* and alarm_control_panel.*)")}`, k.loud)}
+${k.other ? row(k.wet.length ? true : !k.other.length ? null : false, LL("Протечка — другие датчики", "Leaks — other sensors"), !k.other.length ? LL("нет", "none") : k.wet.length ? `${LL("мокро", "wet")}: ${k.wet.length} ${LL("из", "of")} ${k.other.length}` : `${LL("сухо", "dry")} · ${n(k.other, "шт. (влага, не в аварийных)", "in total (moisture, not alarm sensors)")}`, k.wet) : ""}
+${row(k.deaf.length ? true : !k.alarms.length ? null : false, LL("Связь с аварийными датчиками", "Alarm sensors' link"), !k.alarms.length ? "—" : k.deaf.length ? `${LL("без связи", "no link")}: ${k.deaf.length}` : LL("все на связи", "all linked"), k.deaf)}
+${row(k.off.length ? true : !k.devices.length ? null : false, LL("Устройства на связи", "Devices linked"), !k.devices.length ? "—" : k.off.length ? `${LL("без связи", "no link")}: ${k.off.length} ${LL("из", "of")} ${k.devices.length}` : `${LL("все на связи", "all linked")} · ${k.devices.length}`, k.off)}
+${row(k.waiting.length ? true : !k.climates.length ? null : false, LL("Термостаты", "Thermostats"), !k.climates.length ? "—" : k.waiting.length ? `${LL("уставка не получена", "no setpoint yet")}: ${k.waiting.length} ${LL("из", "of")} ${k.climates.length}` : `${LL("в норме", "fine")} · ${k.climates.length}`, k.waiting)}
+${row(k.lightsDeaf.length ? true : !k.lights.length ? null : false, LL("Свет", "Lights"), !k.lights.length ? "—" : k.lightsDeaf.length ? `${LL("молчат дольше 10 мин", "silent over 10 min")}: ${k.lightsDeaf.length} ${LL("из", "of")} ${k.lights.length}` : `${LL("на связи", "linked")} · ${k.lights.length}`, k.lightsDeaf)}
+<button class="b" data-x>${LL("Закрыть", "Close")}</button>`);
+        sr.querySelector("[data-x]").addEventListener("click", close);
+        if (!sr.querySelector("style[data-ck]")) sr.querySelector(".sh").insertAdjacentHTML("beforebegin", `<style data-ck>.ck{display:flex;gap:12px;align-items:flex-start}.dt{flex:none;width:10px;height:10px;border-radius:5px;margin-top:6px;background:var(--hf-mint-2)}.dt.bad{background:var(--hf-alert)}.dt.na{background:var(--hf-track)}.t2{font:500 15px Onest,sans-serif;color:var(--primary-text-color)}</style>`);
+      };
+      const host = sr.host;
+      card._chkDraw = paint;
+      paint();
+    });
   Hero.prototype.bind = function () {
+    const chk = this.shadowRoot.querySelector("[data-chk]");
+    chk?.addEventListener("click", () => openChecks(this));
+    chk?.addEventListener("keydown", (e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), openChecks(this)));
     this.shadowRoot.querySelector("[data-w]")?.addEventListener("click", () => moreInfo(this, this._config.weather));
     // Favourites: a tap does the obvious (a light toggles, a blind goes / stops, a scene runs, the room opens); a long press —
     // the control sheet (brightness, «Убрать из избранного»).
@@ -2813,7 +3004,7 @@ ${(c.alarms || []).length && ok ? `<div><span class="caps">Датчики</span>
 .lit .ri{background:color-mix(in srgb,var(--amber) 22%,transparent);color:var(--amberT)}.cold .ri{background:color-mix(in srgb,var(--ice) 22%,transparent);color:var(--ice)}
 .alarm .ri{background:color-mix(in srgb,var(--alert) 18%,transparent);color:var(--alertT)}
 .t{font-size:40px;line-height:1}.t small{font:300 15px Onest,sans-serif;color:var(--ink2);letter-spacing:0;margin-left:2px}
-.tt{display:flex;flex-direction:column;align-items:flex-end;min-width:0}.t2+.t2{margin-top:1px}.t2{font:400 12px Onest,sans-serif;color:var(--ink2);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}.pic .t2{color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.55)}
+.tt{display:flex;flex-direction:column;align-items:flex-end;min-width:0}.t2+.t2{margin-top:1px}.t2{font:400 12px Onest,sans-serif;color:var(--ink2);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}.pic .t2{color:var(--hf-white);text-shadow:0 1px 2px var(--hf-shade-55)}
 .s{font:400 13px Onest,sans-serif;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .chips{display:flex;gap:10px;margin-top:5px;font:500 12px Onest,sans-serif;color:var(--ink2);white-space:nowrap;overflow:hidden}
 .chips span{display:inline-flex;align-items:center;gap:3px}:host{container-type:inline-size}@container (max-width:200px){.chips span:nth-child(n+3){display:none}}.chips ha-icon{--mdc-icon-size:14px}.chips .on{color:var(--amberT)}.chips .op{color:var(--ice)}
@@ -2825,10 +3016,10 @@ ${(c.alarms || []).length && ok ? `<div><span class="caps">Датчики</span>
 .alarm .s{color:var(--alertT);font-weight:600}
 .alarm.warn{--alert:var(--amber);--alertGlow:var(--amberGlow)}
 .ph{position:absolute;inset:0;background-size:cover;background-position:center}
-.ph::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.42) 0%,rgba(0,0,0,.3) 45%,rgba(0,0,0,.64) 100%)}
-.pic,.pic .top,.pic .s,.pic .chips,.pic .t small,.pic .caps,.pic .chips .on,.pic .chips .op{color:#fff}
-.pic .caps,.pic .s,.pic .chips{text-shadow:0 1px 2px rgba(0,0,0,.55),0 0 14px rgba(0,0,0,.45)}.pic .t{text-shadow:0 1px 12px rgba(0,0,0,.5),0 0 2px rgba(0,0,0,.35)}
-.pic .ri,.pic.lit .ri,.pic.cold .ri{background:rgba(255,255,255,.2);color:#fff;-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}
+.ph::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,var(--hf-shade-42) 0%,var(--hf-shade-30) 45%,var(--hf-shade-64) 100%)}
+.pic,.pic .top,.pic .s,.pic .chips,.pic .t small,.pic .caps,.pic .chips .on,.pic .chips .op{color:var(--hf-white)}
+.pic .caps,.pic .s,.pic .chips{text-shadow:0 1px 2px var(--hf-shade-55),0 0 14px var(--hf-shade-45)}.pic .t{text-shadow:0 1px 12px var(--hf-shade-50),0 0 2px var(--hf-shade-35)}
+.pic .ri,.pic.lit .ri,.pic.cold .ri{background:var(--hf-white-20);color:var(--hf-white);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}
 .pic .glow{opacity:.45}.pic .ph{filter:brightness(1.08)}`;
     }
     state() {
@@ -2858,7 +3049,7 @@ ${(c.alarms || []).length && ok ? `<div><span class="caps">Датчики</span>
       }
       if (cooling) return { kind: "cold", text: `Охлаждает${target !== undefined ? ` до ${fmt(target)}°` : ""}` };
       // Warmer than the goal while a valve is open (the integrator's KNX logic heats the room): «Греет · клапаны открыты», not «до 24°».
-      if (now === "heat") { const rc = num(clim.attributes.current_temperature); return { kind: "", text: target !== undefined && !(rc >= target) ? `Греет до ${fmt(target)}°` : c.activity?.valves?.length ? "Греет · клапаны открыты" : "Греет" }; }
+      if (now === "heat") { const rc = num(clim.attributes.current_temperature); return { kind: "", text: target !== undefined && !(rc >= target) ? `Греет до ${fmt(target)}°` : c.activity?.valves?.length ? (c.activity.valves.length === 1 ? "Греет · клапан открыт" : "Греет · клапаны открыты") : "Греет" }; }
       const lights = (c.lights || []).map((id) => st(h, id));
       const watched = [...lights, ...(c.climate ? [clim] : [])];
       if (watched.length && watched.every(nd)) return { kind: "", text: updating(this, watched) ? "Обновляется…" : "Нет данных" };
@@ -2970,7 +3161,7 @@ ${(c.alarms || []).length && ok ? `<div><span class="caps">Датчики</span>
 .row button span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.row button ha-icon{color:var(--acc);flex:0 0 auto}
 .row button:active{transform:scale(.97)}
 .row button.go{background:color-mix(in srgb,var(--acc) 26%,transparent);box-shadow:0 0 22px color-mix(in srgb,var(--accGlow) 60%,transparent)}
-.light{--acc:var(--amber);--accGlow:var(--amberGlow)}.cover{--acc:var(--ice);--accGlow:var(--iceGlow)}.mixed{--acc:var(--mint);--accGlow:rgba(92,224,180,.4)}
+.light{--acc:var(--amber);--accGlow:var(--amberGlow)}.cover{--acc:var(--ice);--accGlow:var(--iceGlow)}.mixed{--acc:var(--mint);--accGlow:var(--hf-mint-glow-mixed)}
 .rows{--acc:var(--amber);--accGlow:var(--amberGlow)}.rows .rw+.rw{margin-top:12px}.rows .caps.sub{display:block;margin:0 0 8px 2px;font-size:10px}.rows .hd{margin-bottom:8px}`;
     }
     render() {
@@ -2981,8 +3172,9 @@ ${(c.alarms || []).length && ok ? `<div><span class="caps">Датчики</span>
         const rows = c.rows.filter((r) => (r.always || sceneWhere(this, r.kind === "cover" ? "cover" : "light") === "top") && (r.scenes || []).some((x) => st(this._hass, x.entity)));
         this.hideCard(!rows.length);
         if (!rows.length) return "";
-        return `<div class="glass m rows"><div class="hd"><span class="ic"><ha-icon icon="hauflo:scene"></ha-icon></span><span class="caps">${blockTitle(this, "Сценарии")}</span></div>
-${rows.map((r) => `<div class="rw"><span class="caps sub">${esc(r.title || (r.kind === "cover" ? "Шторы" : "Свет"))}</span>${sceneChips(this._hass, r.scenes, r.kind === "cover" ? "cover" : r.kind === "mixed" ? "mixed" : "light", r.kind === "mixed" ? undefined : rowRoom(this, r.kind), this)}</div>`).join("")}</div>`;
+        const adds = rows.filter((r) => r.kind !== "mixed" && sceneCanAdd(this._hass, r.kind === "cover" ? "cover" : "light", rowRoom(this, r.kind))).map((r) => (r.kind === "cover" ? "cover" : "light"));
+        return `<div class="glass m rows"><div class="hd"${adds.length ? ` data-scene-add="${[...new Set(adds)].join(" ")}"` : ""}><span class="ic"><ha-icon icon="hauflo:scene"></ha-icon></span><span class="caps">${blockTitle(this, "Сценарии")}</span></div>
+${rows.map((r) => `<div class="rw"><span class="caps sub"${r.kind === "mixed" ? "" : sceneAddAttr(this._hass, r.kind === "cover" ? "cover" : "light", rowRoom(this, r.kind))}>${esc(r.title || (r.kind === "cover" ? "Шторы" : "Свет"))}</span>${sceneChips(this._hass, r.scenes, r.kind === "cover" ? "cover" : r.kind === "mixed" ? "mixed" : "light", r.kind === "mixed" ? undefined : rowRoom(this, r.kind), this)}</div>`).join("")}</div>`;
       }
       const list = (c.scenes || []).map((x) => ({ ...x, st: st(this._hass, x.entity) })).filter((x) => x.st);
       const kind = c.kind === "cover" ? "cover" : c.kind === "mixed" ? "mixed" : "light";
@@ -3029,12 +3221,12 @@ ${rows.map((r) => `<div class="rw"><span class="caps sub">${esc(r.title || (r.ki
 
   /** A compact thermostat line opens its large card (chart, scale, modes) in a sheet (owner 28.10: «по нажатию, если что,
    * открывать большой»). */
-  const SHEET_CSS = `:host{position:fixed;inset:0;z-index:9998;display:grid;place-items:end center;background:rgba(0,0,0,.42);-webkit-tap-highlight-color:transparent}
+  const SHEET_CSS = `:host{position:fixed;inset:0;z-index:9998;display:grid;place-items:end center;background:var(--hf-shade-42);-webkit-tap-highlight-color:transparent}
 @media (min-width:600px){:host{place-items:center}}
-.sh{width:min(100%,520px);max-height:94vh;overflow:auto;padding:12px 12px calc(12px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:8px;background:var(--lovelace-background,var(--primary-background-color,#f4f4f4));border-radius:28px 28px 0 0;box-shadow:0 20px 60px rgba(0,0,0,.35)}
+.sh{width:min(100%,520px);max-height:94vh;overflow:auto;padding:12px 12px calc(12px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:8px;background:var(--hf-view-bg);border-radius:28px 28px 0 0;box-shadow:0 20px 60px var(--hf-shade-35)}
 @media (min-width:600px){.sh{border-radius:28px}}
-.x{align-self:flex-end;width:44px;height:44px;border-radius:22px;border:0;background:var(--eh-track,rgba(127,127,127,.12));color:var(--primary-text-color);font-size:22px;cursor:pointer;display:grid;place-items:center}.x ha-icon{--mdc-icon-size:22px}
-.go{display:flex;align-items:center;justify-content:center;gap:6px;min-height:48px;margin:2px 0 0;padding:0 16px;border:0;border-radius:16px;background:var(--eh-track,rgba(127,127,127,.12));color:var(--primary-text-color);font:500 15px Onest,sans-serif;cursor:pointer}.go ha-icon{--mdc-icon-size:20px;opacity:.7}`;
+.x{align-self:flex-end;width:44px;height:44px;border-radius:22px;border:0;background:var(--hf-track);color:var(--primary-text-color);font-size:22px;cursor:pointer;display:grid;place-items:center}.x ha-icon{--mdc-icon-size:22px}
+.go{display:flex;align-items:center;justify-content:center;gap:6px;min-height:48px;margin:2px 0 0;padding:0 16px;border:0;border-radius:16px;background:var(--hf-track);color:var(--primary-text-color);font:500 15px Onest,sans-serif;cursor:pointer}.go ha-icon{--mdc-icon-size:20px;opacity:.7}`;
   /** A thermostat's control sheet over the page: its large card (the room's own config when given) — and, from a list of
    * the house (`room`), «Открыть в комнате» to its card on the room page. */
   const openClimateSheet = (card, cfg = card._config, room = "") => {
@@ -3075,7 +3267,7 @@ ${rows.map((r) => `<div class="rw"><span class="caps sub">${esc(r.title || (r.ki
     sr.querySelector(".x").addEventListener("click", close);
     host.addEventListener("click", (e) => e.composedPath()[0] === host && close());
     if (LANG !== "ru") translate(sr);
-    document.body.appendChild(host);
+    document.body.appendChild(carryTheme(host, card));
     el.hass = card._hass;
     card._pop = el;
   };
@@ -3174,7 +3366,7 @@ ${rows.map((r) => `<div class="rw"><span class="caps sub">${esc(r.title || (r.ki
       return tchart(data, { cur, sp: frost ? undefined : num(a.temperature) }, { H, label, tone });
     }
     css() {
-      return `${TCHART_CSS}${VALVE_CSS}${TONE_CSS}.sub .act{margin-right:6px}.c{padding:20px 22px}.nr{display:flex;justify-content:space-between;align-items:flex-end;gap:12px}.st{flex:none}.act.k-idle i{background:var(--mint);box-shadow:0 0 8px var(--mint)}
+      return `${TCHART_CSS}${VALVE_CSS}${TONE_CSS}.sub .act{margin-right:6px}.sub.one{display:flex;align-items:center;gap:6px;white-space:nowrap;min-width:0}.sub.one>*{flex:none}.sub.one .act{margin:0}.sub.one>.hm,.sub.one>.vwrap,.sub.one .vch{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}.sub.one .vwrap{position:relative;overflow:visible}.sub.one .vt{min-width:0;overflow:hidden;text-overflow:ellipsis}.sub.one .vpop{position:absolute;top:100%;left:0;z-index:2;white-space:nowrap;background:var(--hf-card-bg);box-shadow:0 8px 24px rgba(0,0,0,.25)}.c{padding:20px 22px}.nr{display:flex;justify-content:space-between;align-items:flex-end;gap:12px}.st{flex:none}.act.k-idle i{background:var(--mint);box-shadow:0 0 8px var(--mint)}
 .t{font-size:76px;line-height:.9}.t sup{font:300 20px Onest,sans-serif;vertical-align:top;position:relative;top:8px;color:var(--ink2);margin-left:2px}
 .sub{font:400 13px Onest,sans-serif;color:var(--ink2);margin-top:8px}.st{display:flex;flex-direction:column;gap:8px}
 .none{font:300 20px/1.2 Onest,sans-serif;color:var(--ink2);margin:6px 0}
@@ -3204,7 +3396,7 @@ ${rows.map((r) => `<div class="rw"><span class="caps sub">${esc(r.title || (r.ki
 .modes .on{color:var(--ink);background:var(--track);box-shadow:none}.modes .arm{color:var(--alertT);background:color-mix(in srgb,var(--alert) 14%,transparent);box-shadow:inset 0 0 0 1.5px var(--alert)}
 .toned .glow{background:radial-gradient(50% 50% at 20% 10%,var(--acG),transparent 70%);opacity:.6}.toned.calm .glow{opacity:.32}
 .cc{padding:14px 14px 14px 18px}.ccrow{display:flex;align-items:center;gap:12px;position:relative}.ccn{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}
-.ccn .caps{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ccn .sub{margin:0}
+.ccn .caps{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:break-word}.ccn .sub{margin:0}
 .cct{font-size:40px;line-height:1}.cct small{font:300 15px Onest,sans-serif;color:var(--ink2);margin-left:1px}
 .cct .tgc{display:block;margin-top:4px;text-align:right;font:400 12px/1.2 Onest,sans-serif;color:var(--ink2);letter-spacing:0}
 .sens{display:flex;gap:6px;margin-top:2px;flex-wrap:wrap}.sens b{font:500 12px Onest,sans-serif;padding:3px 7px;border-radius:8px;background:var(--track);color:var(--ink2);white-space:nowrap}.sens i{font-style:normal;color:var(--ink3);margin-right:5px}.c .sens{margin-top:8px}
@@ -3254,7 +3446,8 @@ ${rows.map((r) => `<div class="rw"><span class="caps sub">${esc(r.title || (r.ki
       const goalShown = goalOf !== undefined && !(now === "heat" && cur >= goalOf) ? goalOf : undefined;
       const frost = frostOf(s);
       const fault = faultOf(this, this._config.entity, !!this._config.floor);
-      const doing = fault ? "Авария" : !known ? "" : frost ? "Защита от замерзания" : climateLine(now, goalShown);
+      // The big number is the goal already (Nest / Apple Home: «Нагрев» beside it): «до 26,5°» only when the goal is another.
+      const doing = fault ? "Авария" : !known ? "" : frost ? "Защита от замерзания" : climateLine(now, goalShown === target ? undefined : goalShown);
       const modeTxt = known && now ? modeDiff(s.state, now) : "";
       const n = 31;
       const at = (v) => Math.round(((v - min) / (max - min || 1)) * (n - 1));
@@ -3295,10 +3488,10 @@ ${rows.map((r) => `<div class="rw"><span class="caps sub">${esc(r.title || (r.ki
       return `<div class="glass c ${cls}"><div class="glow"></div><div style="position:relative">
 <div class="top"><span class="caps">${esc(this._config.label || "Климат")}</span></div>
 <div class="nr">${bigTgt}${stBtns}</div>${noTarget}
-<div class="sub">${small ? `${esc(small)} ` : ""}${doing ? `<span class="act${fault ? " bad" : frost ? " frost" : now ? ` k-${now}` : ""}"><i></i>${doing}</span>` : ""}${valveIcons(this._hass, this._config.activity?.valves)}${hum !== undefined ? ` · влажность ${fmt(hum)} %` : ""}</div>${readings.length ? this.readingsRow(readings) : ""}${pairRow}
+<div class="sub one">${small ? `<span class="sm">${esc(small)}</span>` : ""}${doing ? `<span class="act${fault ? " bad" : frost ? " frost" : now ? ` k-${now}` : ""}"><i></i>${doing}</span>` : ""}${valveIcons(this._hass, this._config.activity?.valves, this._config.floor && s)}${hum !== undefined ? `<span class="hm">· влажность ${fmt(hum)} %</span>` : ""}</div>${readings.length ? this.readingsRow(readings) : ""}${pairRow}
 ${chart}
 ${fixed || frost ? "" : `<div class="scale" data-min="${min}" data-max="${max}" data-step="${step}"${pair ? ` data-pair="1"` : ""}><div class="ticks">${ticks}</div><div class="ends"><span>${fmt(min)}°</span><span>проведите, чтобы изменить</span><span>${fmt(max)}°</span></div></div>`}
-${opts.length ? `<div class="mh">Режим</div><div class="modes">${opts.slice(0, 5).map(([k, l, on]) => `<button class="${!on ? "" : useModes ? (climateTone(null, now, k) ? `on mk m-${climateTone(null, now, k)}` : "on") : tone ? "on mk" : "on"}" data-${useModes ? "m" : "p"}="${esc(k)}" aria-pressed="${!!on}">${esc(l)}</button>`).join("")}</div>` : ""}
+${opts.length ? `<div class="mh">Режим</div><div class="modes">${opts.slice(0, 5).map(([k, l, on]) => `<button class="${!on ? "" : useModes ? (climateTone(null, now, k) ? `on mk m-${climateTone(null, now, k)}` : "on") : tone ? "on mk" : "on"}" data-${useModes ? "m" : "p"}="${esc(k)}"${!useModes && k === "building_protection" ? ` data-ask="Точно? Защита"` : ""} aria-pressed="${!!on}">${esc(l)}</button>`).join("")}</div>` : ""}
 ${fans.length > 1 || swing ? `<div class="mh">Вентилятор</div><div class="modes fan"><span class="fl"><ha-icon icon="hauflo:fan"></ha-icon></span>${fans.slice(0, 5).map((f) => `<button class="${known && a.fan_mode === f ? (tone ? "on mk" : "on") : ""}" data-f="${esc(f)}" aria-pressed="${known && a.fan_mode === f}">${esc(FAN[f] || f)}</button>`).join("")}${swing ? `<button class="${known && a.swing_mode && a.swing_mode !== "off" ? (tone ? "on mk" : "on") : ""}" data-sw="${esc(a.swing_mode && a.swing_mode !== "off" ? "off" : swing)}">Обдув</button>` : ""}</div>` : ""}</div></div>`;
     }
     /** Floor-heating zones of one room in one card: a line each — name, now, setpoint, ± (persona review 25.10). */
@@ -3314,7 +3507,7 @@ ${fans.length > 1 || swing ? `<div class="mh">Вентилятор</div><div cla
         const heating = nowZ === "heat";
         const zt = cur === undefined && target === undefined ? "" : climateTone(s, nowZ);
         const zWord = s && faultOf(this, z.entity, true) ? "Авария" : frostOf(s) ? "Защита от замерзания" : "";
-        return `<div class="zr ${heating ? "heat" : ""}${i === zi ? " sel" : ""}${zt ? ` m-${zt} toned${toneCalm(zt, nowZ) ? " calm" : ""}` : ""}"><div class="ccn" data-z="${i}"><span class="zn">${esc(z.name || nameOf(s, z.entity))}</span><span class="sub">${!s || ["unavailable", "unknown"].includes(s.state) ? "нет связи" : cur === undefined ? "нет данных" : zWord || climateLine(nowZ, target) || "пол сейчас"}${s &&!["unavailable", "unknown"].includes(s.state) && target === undefined ? " · нужная температура ещё не пришла" : ""}</span>${valveIcons(this._hass, z.activity?.valves)}</div>
+        return `<div class="zr ${heating ? "heat" : ""}${i === zi ? " sel" : ""}${zt ? ` m-${zt} toned${toneCalm(zt, nowZ) ? " calm" : ""}` : ""}"><div class="ccn" data-z="${i}"><span class="zn">${esc(z.name || nameOf(s, z.entity))}</span><span class="sub">${!s || ["unavailable", "unknown"].includes(s.state) ? "нет связи" : cur === undefined ? "нет данных" : zWord || climateLine(nowZ, target) || "пол сейчас"}${s &&!["unavailable", "unknown"].includes(s.state) && target === undefined ? " · нужная температура ещё не пришла" : ""}</span>${valveIcons(this._hass, z.activity?.valves, s)}</div>
 ${this.cct(cur, target, step, z.entity)}
 <div class="st row2"><button data-e="${esc(z.entity)}" data-d="${-step}" aria-label="Холоднее на ${fmt(step, step % 1 ? 1 : 0)}°"${target === undefined ? " disabled" : ""}>−</button><button data-e="${esc(z.entity)}" data-d="${step}" aria-label="Теплее на ${fmt(step, step % 1 ? 1 : 0)}°"${target === undefined ? " disabled" : ""}>+</button></div></div>`;
       });
@@ -3355,7 +3548,7 @@ ${this.cct(cur, target, step, z.entity)}
       const sensors = this.readings();
       // The line is always there (no data says so): a card that grows and shrinks with the state moves the page.
       return `<div class="glass cc${ct ? ` m-${ct} toned${toneCalm(ct, nowC) ? " calm" : ""}` : ""}"><div class="glow"></div><div class="ccrow">
-<div class="ccn" data-open="1" role="button" tabindex="0"><span class="caps">${esc(this._config.label || nameOf(s, this._config.entity))}</span><span class="sub">${cur === undefined ? "нет данных" : cWord || climateLine(nowC, target) || (this._config.floor ? "пол сейчас" : "сейчас")}${target === undefined && !["unavailable", "unknown"].includes(s.state) ? " · нужная температура ещё не пришла" : ""}</span>${valveIcons(this._hass, this._config.activity?.valves)}${pair ? `<span class="pair2">${["heat", "cool"].filter((k) => pair[k] !== undefined).map((k) => `${k === "heat" ? "обогрев до" : "охлаждение от"} ${fmt(pair[k])}°`).join(" · ")}</span>` : ""}${sensors.length > 1 ? this.readingsRow(sensors) : ""}</div>
+<div class="ccn" data-open="1" role="button" tabindex="0"><span class="caps">${esc(this._config.label || nameOf(s, this._config.entity))}</span><span class="sub">${cur === undefined ? "нет данных" : cWord || climateLine(nowC, target) || (this._config.floor ? "пол сейчас" : "сейчас")}${target === undefined && !["unavailable", "unknown"].includes(s.state) ? " · нужная температура ещё не пришла" : ""}</span>${valveIcons(this._hass, this._config.activity?.valves, this._config.floor && s)}${pair ? `<span class="pair2">${["heat", "cool"].filter((k) => pair[k] !== undefined).map((k) => `${k === "heat" ? "обогрев до" : "охлаждение от"} ${fmt(pair[k])}°`).join(" · ")}</span>` : ""}${sensors.length > 1 ? this.readingsRow(sensors) : ""}</div>
 ${this.cct(cur, target, step, this._config.entity)}
 <div class="st row2"><button data-d="${-step}" aria-label="Холоднее на ${fmt(step, step % 1 ? 1 : 0)}°"${target === undefined ? " disabled" : ""}>−</button><button data-d="${step}" aria-label="Теплее на ${fmt(step, step % 1 ? 1 : 0)}°"${target === undefined ? " disabled" : ""}>+</button></div></div>${this.chart(this._config.entity, this._config.floor ? "Пол" : "Температура", ctc, 56)}</div>`;
     }
@@ -3470,17 +3663,10 @@ ${this.cct(cur, target, step, this._config.entity)}
       this.shadowRoot.querySelectorAll("button[data-p]").forEach((b) =>
         b.addEventListener("click", () => {
           if (b.dataset.p === "building_protection" && st(this._hass, id)?.attributes?.preset_mode !== "building_protection" && b.dataset.arm !== "1") {
-            b.dataset.arm = "1";
-            b.dataset.lbl = b.textContent;
-            b.textContent = tr("Точно? Защита");
-            b.classList.add("arm");
+            askShow(b, 1);
             this._busy = true;
             setTimeout(() => {
-              if (b.isConnected && b.dataset.arm === "1") {
-                b.dataset.arm = "";
-                b.textContent = b.dataset.lbl;
-                b.classList.remove("arm");
-              }
+              if (b.isConnected && b.dataset.arm === "1") askShow(b, 0);
               this._busy = false;
             }, 4000);
             return;
@@ -3495,8 +3681,9 @@ ${this.cct(cur, target, step, this._config.entity)}
       this.shadowRoot.querySelectorAll("button[data-sw]").forEach((b) => b.addEventListener("click", () => call(this._hass, "climate", "set_swing_mode", { entity_id: id, swing_mode: b.dataset.sw })));
       const head = this.shadowRoot.querySelector(".c") && this.shadowRoot.querySelector(".caps");
       if (head) {
-        head.addEventListener("click", () => moreInfo(this, id));
-        head.addEventListener("contextmenu", (ev) => (ev.preventDefault(), moreInfo(this, id))); // the right button as everywhere
+        // A tap: HA's history; a hold (finger, mouse, right button): our climate sheet, never HA's more-info.
+        head.addEventListener("click", () => !GST.lp && moreInfo(this, id));
+        longPress(head, () => openClimateSheet(this));
       }
       this.shadowRoot.querySelectorAll("[data-pk]").forEach((b) =>
         b.addEventListener("click", () => {
@@ -3507,7 +3694,8 @@ ${this.cct(cur, target, step, this._config.entity)}
         }),
       );
       this.shadowRoot.querySelectorAll("[data-open]").forEach((el) => {
-        el.addEventListener("click", () => openClimateSheet(this));
+        el.addEventListener("click", () => !GST.lp && openClimateSheet(this));
+        longPress(el, () => openClimateSheet(this)); // a hold is our big control too, never HA's more-info
         el.addEventListener("keydown", (e) => (e.key === "Enter" || e.key === " ") && openClimateSheet(this));
       });
       this.shadowRoot.querySelectorAll("[data-z]").forEach((el) =>
@@ -3526,6 +3714,12 @@ ${this.cct(cur, target, step, this._config.entity)}
   }
 
   // --- hauflo-sliders: tall sliders for lights, blinds, switches ---------------------------------
+  /** The slider tile's tone per domain — ONE fill recipe (.v .lvl), only the tone token differs (owner 03.11): light amber,
+   * blinds ice, switches / sockets / players mint, fans violet (as climate's fan mode), valves / humidifiers / dampers teal
+   * (as climate's dry mode). Every domain model() returns is here — scripts/check-hardcode.mjs fails on a missing one. */
+  const SL_TONE = { light: "light", cover: "cover", switch: "switch", media_player: "switch", fan: "fan", valve: "dry", humidifier: "dry", number: "dry", input_number: "dry" };
+  // A tile's number carries its unit, small, as the canon «66 %» (a word — «Выкл», «Откр.» — has none).
+  const NUM_LABEL = /^-?\d+(?:[.,]\d+)?$/;
   class Sliders extends EHCard {
     watched() {
       return (this._config.entities || []).map((e) => (typeof e === "string" ? e : e.entity));
@@ -3533,18 +3727,22 @@ ${this.cct(cur, target, step, this._config.entity)}
     items() {
       return (this._config.entities || []).map((e) => (typeof e === "string" ? { entity: e } : e)).filter((e) => st(this._hass, e.entity));
     }
+    // A narrow tile (four in a row on a phone) — step 3: «Откр.» ran past the tile, names cut at two lines of ~6 letters, the
+    // blind's three buttons squeezed into 13 px dots with the third one clipped: a word state steps down to the «off» size,
+    // a name gets a third line, the buttons share the tile's width.
     css() {
       return `.wrap{display:grid;grid-template-columns:repeat(var(--cols),1fr);gap:12px}
 .v{height:216px;padding:14px;display:flex;flex-direction:column;justify-content:space-between;touch-action:pan-y;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;cursor:pointer}
-.v.grab{transform:scale(1.03);box-shadow:0 0 0 2px color-mix(in srgb,var(--ink) 60%,transparent),0 14px 40px rgba(0,0,0,.28)}
+.v.grab{transform:scale(1.03);box-shadow:0 0 0 2px color-mix(in srgb,var(--ink) 60%,transparent),0 14px 40px var(--hf-shade-28)}
 .v>*{position:relative}.lvl{position:absolute !important;left:0;right:0;bottom:0;transition:height .25s}
-.light .lvl{background:linear-gradient(0deg,color-mix(in srgb,var(--amber) 85%,transparent),color-mix(in srgb,var(--amber) 50%,transparent));box-shadow:0 -10px 40px var(--amberGlow)}
-.cover .lvl{background:linear-gradient(0deg,color-mix(in srgb,var(--ice) 70%,transparent),color-mix(in srgb,var(--ice) 35%,transparent));box-shadow:0 -10px 40px var(--iceGlow)}
-.switch .lvl{background:linear-gradient(0deg,color-mix(in srgb,var(--mint) 70%,transparent),color-mix(in srgb,var(--mint) 35%,transparent))}
-.dragging .lvl{transition:none}.p{font-size:30px;line-height:1}.off .p{font:300 20px Onest,sans-serif;color:var(--ink3);letter-spacing:0}
-.n{font:500 12px Onest,sans-serif;line-height:1.25;white-space:normal;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:break-word;hyphens:auto;margin-top:4px}
+.v .lvl{background:linear-gradient(0deg,color-mix(in srgb,var(--tn) var(--tnA,70%),transparent),color-mix(in srgb,var(--tn) var(--tnB,35%),transparent));box-shadow:var(--tnS,none)}
+.v.light{--tn:var(--amber);--tnA:85%;--tnB:50%;--tnS:0 -10px 40px var(--amberGlow)}.v.cover{--tn:var(--ice);--tnS:0 -10px 40px var(--iceGlow)}.v.switch{--tn:var(--mint)}
+.v.fan{--tn:var(--hf-fan);--tnS:0 -10px 40px color-mix(in srgb,var(--hf-fan) 45%,transparent)}.v.dry{--tn:var(--hf-dry);--tnS:0 -10px 40px color-mix(in srgb,var(--hf-dry) 45%,transparent)}
+.dragging .lvl{transition:none}.p{font-size:30px;line-height:1}.p:not(.w)::after{content:"\\202F" attr(data-u);font-size:.5em;color:var(--ink2)}.off .p{font:300 20px Onest,sans-serif;color:var(--ink3);letter-spacing:0}
+.n{font:500 12px Onest,sans-serif;line-height:1.25;white-space:normal;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:break-word;hyphens:auto;margin-top:4px;min-height:2.5em}
 .ic{color:var(--ink2)}.unavail{opacity:.45}
-.sc{padding:2px 16px 16px;margin-bottom:12px;border-radius:24px}.ud3{display:flex;gap:6px;margin-top:10px}.ud3 button{flex:1;height:44px;border-radius:13px;display:grid;place-items:center;color:var(--ink);box-shadow:inset 0 0 0 1px var(--line);background:var(--eh-glass,transparent)}.ud3 button ha-icon{--mdc-icon-size:20px}`;
+.sc{padding:2px 16px 16px;margin-bottom:12px;border-radius:24px}.ud3{display:flex;gap:6px;margin-top:10px}.ud3 button{flex:1;height:44px;border-radius:13px;display:grid;place-items:center;color:var(--ink);box-shadow:inset 0 0 0 1px var(--line);background:var(--eh-glass,transparent)}.ud3 button ha-icon{--mdc-icon-size:20px}.ud3 button{min-width:0}
+.v{container-type:inline-size}@container (max-width:100px){.p.w{font-size:20px}.n{-webkit-line-clamp:3;min-height:3.75em;font-size:11px;letter-spacing:-.01em}.ud3{gap:2px;margin-inline:-8px}.ud3 button ha-icon{--mdc-icon-size:16px}}`;
     }
     model(e) {
       const s = st(this._hass, e.entity);
@@ -3560,7 +3758,7 @@ ${this.cct(cur, target, step, this._config.entity)}
         const real = coverHasPosition(e, s);
         const pos = real ? num(s.attributes.current_position) : undefined;
         const known = !["unknown", "unavailable"].includes(s.state);
-        return { dom: "cover", name, pct: pos ?? (known && s.state !== "closed" ? 100 : 0), on: known && s.state !== "closed", known, dimmable: real, icon: e.icon || "hauflo:blind", s };
+        return { dom: "cover", name, pct: pos ?? (known && s.state !== "closed" ? 100 : 0), on: known && s.state !== "closed", known, dimmable: real, icon: e.icon || coverIcon({ ...e, s }, this._config), s };
       }
       // Any other integration's fan / player: speed and volume are the level where the entity has them (feature bits:
       // fan SET_SPEED 1, media_player VOLUME_SET 4), else a plain tile. A playing player is «on».
@@ -3568,6 +3766,25 @@ ${this.cct(cur, target, step, this._config.entity)}
       if (dom === "fan") {
         const p = num(s.attributes.percentage);
         return { dom: "fan", name, pct: s.state === "on" ? p ?? 100 : 0, on: s.state === "on", dimmable: (sf & 1) !== 0 && p !== undefined, icon: e.icon || "hauflo:fan", s };
+      }
+      // A valve (its position where SET_POSITION 4 is there), a humidifier (its target humidity), a number (a damper's
+      // 0–100 %, any range by HA's slider rule): the level the entity has, else a plain tile.
+      if (dom === "valve") {
+        const p = num(s.attributes.current_position);
+        const on = ["open", "opening"].includes(s.state);
+        return { dom, name, pct: p ?? (on ? 100 : 0), on, dimmable: (sf & 4) !== 0 && p !== undefined, icon: e.icon || "hauflo:valve", s };
+      }
+      if (dom === "humidifier") {
+        const t = num(s.attributes.humidity);
+        return { dom, name, pct: s.state === "on" ? t ?? 100 : 0, on: s.state === "on", dimmable: t !== undefined, icon: e.icon || "hauflo:humidity", s };
+      }
+      if (dom === "number" || dom === "input_number") {
+        const [mn, mx, v] = [num(s.attributes.min), num(s.attributes.max), num(s.state)];
+        const ok = mn !== undefined && mx !== undefined && mx > mn && v !== undefined;
+        const step = num(s.attributes.step) || 1;
+        const pct = ok ? Math.round(((v - mn) / (mx - mn)) * 100) : 0;
+        const val = (p) => Math.round((mn + (p / 100) * (mx - mn)) / step) * step;
+        return { dom, name, pct, on: pct > 0, dimmable: ok && s.attributes.mode !== "box", icon: e.icon || "hauflo:cv-damper", s, val, unit: s.attributes.unit_of_measurement ?? (mn === 0 && mx === 100 ? "%" : ""), label: (p) => (mn === 0 && mx === 100 ? `${p}` : fmt(val(p), String(step).includes(".") ? String(step).split(".")[1].length : 0)) };
       }
       if (dom === "media_player") {
         const v = num(s.attributes.volume_level);
@@ -3586,10 +3803,10 @@ ${this.cct(cur, target, step, this._config.entity)}
         .map(({ e, m }) => {
           const unavailable = m.s.state === "unavailable";
           const moving = m.dom === "cover" && ["opening", "closing"].includes(m.s.state);
-          const label = m.dom === "cover" ? (!m.known ? "—" : moving ? (m.s.state === "opening" ? "Откр…" : "Закр…") : m.dimmable && num(m.s.attributes.current_position) !== undefined ? `${m.pct}` : m.on ? "Откр." : "Закр.") : m.on ? (m.dimmable ? `${m.pct}` : "Вкл") : "Выкл";
-          return `<div class="glass v ${m.dom === "fan" || m.dom === "media_player" ? "switch" : m.dom} ${m.on ? "" : "off"} ${moving ? "mv" : ""} ${unavailable ? "unavail" : ""}" data-e="${esc(e.entity)}" role="slider" aria-label="${esc(m.name)}" aria-valuenow="${m.pct}" tabindex="0">
-<div class="lvl" style="height:${m.on || m.dom === "cover" ? m.pct : 0}%"></div><ha-icon class="ic" icon="${esc(m.icon)}"></ha-icon>
-<div><div class="p thin">${esc(label)}</div><div class="n">${esc(m.name)}</div>
+          const label = m.dom === "cover" ? (!m.known ? "—" : moving ? (m.s.state === "opening" ? "Откр…" : "Закр…") : m.dimmable && num(m.s.attributes.current_position) !== undefined ? `${m.pct}` : m.on ? "Откр." : "Закр.") : nd(m.s) ? "—" : m.label && m.dimmable ? m.label(m.pct) : m.on ? (m.dimmable ? `${m.pct}` : "Вкл") : "Выкл";
+          return `<div class="glass v ${SL_TONE[m.dom]} ${m.on ? "" : "off"} ${moving ? "mv" : ""} ${unavailable ? "unavail" : ""}" data-e="${esc(e.entity)}" role="slider" aria-label="${esc(m.name)}" aria-valuenow="${m.pct}" tabindex="0">
+<div class="lvl" style="height:${m.on || m.dom === "cover" || m.label ? m.pct : 0}%"></div><ha-icon class="ic" icon="${esc(m.icon)}"></ha-icon>
+<div><div class="p thin${NUM_LABEL.test(label) ? "" : " w"}" data-u="${esc(m.unit ?? "%")}">${esc(label)}</div><div class="n">${esc(riskWord(this, e.entity) || m.name)}</div>
 ${m.dom === "cover" && !m.dimmable ? `<div class="ud3">${coverButtons(coverDir({ ...e, s: m.s }, this._config), "data-c")}</div>` : ""}</div></div>`;
         })
         .join("")}</div>`;
@@ -3636,7 +3853,9 @@ ${m.dom === "cover" && !m.dimmable ? `<div class="ud3">${coverButtons(coverDir({
         const show = (v) => {
           pct = v;
           lvl.style.height = `${pct}%`;
-          p.textContent = String(pct);
+          const m = model();
+          p.textContent = m.label ? m.label(pct) : String(pct);
+          p.classList.toggle("w", !NUM_LABEL.test(p.textContent));
         };
         el.addEventListener("pointerdown", (ev) => {
           if (ev.target.closest("button")) return;
@@ -3649,7 +3868,20 @@ ${m.dom === "cover" && !m.dimmable ? `<div class="ud3">${coverButtons(coverDir({
           held = false;
           touch = ev.pointerType !== "mouse";
           clearTimeout(timer);
-          if (!touch) return el.setPointerCapture(pid);
+          if (!touch) {
+            // The left button held still 500 ms (HA's hold): our control sheet; the release then sets nothing.
+            timer = setTimeout(() => {
+              if (start === null || moved) return;
+              start = null;
+              GST.lp = true;
+              GST.ok = false;
+              try {
+                el.releasePointerCapture(pid);
+              } catch {}
+              openTile(this, id);
+            }, 500);
+            return el.setPointerCapture(pid);
+          }
           timer = setTimeout(() => {
             const m = model();
             if (start === null) return;
@@ -3674,6 +3906,7 @@ ${m.dom === "cover" && !m.dimmable ? `<div class="ud3">${coverButtons(coverDir({
         el.addEventListener("touchmove", (ev) => grabbed && ev.cancelable && ev.preventDefault(), { passive: false });
         el.addEventListener("pointermove", (ev) => {
           if (start === null) return;
+          if (!touch && Math.hypot(ev.clientX - x0, ev.clientY - start) > 8) clearTimeout(timer); // a mouse drag: no hold
           if (touch) {
             if (!grabbed) {
               if (Math.hypot(ev.clientX - x0, ev.clientY - start) > 8) {
@@ -3730,6 +3963,13 @@ ${m.dom === "cover" && !m.dimmable ? `<div class="ud3">${coverButtons(coverDir({
             else if (m.dom === "cover") call(this._hass, "cover", "set_cover_position", { entity_id: id, position: pct });
             else if (m.dom === "fan") call(this._hass, "fan", pct ? "set_percentage" : "turn_off", pct ? { entity_id: id, percentage: Math.max(1, pct) } : { entity_id: id });
             else if (m.dom === "media_player") call(this._hass, "media_player", "volume_set", { entity_id: id, volume_level: pct / 100 });
+            else if (m.dom === "valve") call(this._hass, "valve", "set_valve_position", { entity_id: id, position: pct });
+            else if (m.dom === "humidifier") call(this._hass, "humidifier", "set_humidity", { entity_id: id, humidity: Math.min(num(m.s.attributes.max_humidity) ?? 100, Math.max(num(m.s.attributes.min_humidity) ?? 0, pct)) });
+            else if (m.val) call(this._hass, m.dom, "set_value", { entity_id: id, value: m.val(pct) });
+          } else if (!riskTap(this, id)) {
+            // a gate / garage / valve asked «Точно? …»: the next tap goes
+          } else if (m.val) {
+            openTile(this, id); // a number has no on / off: a tap opens its control
           } else if (m.dom === "media_player") {
             const f = num(m.s.attributes.supported_features) || 0;
             if (!m.on) call(this._hass, "media_player", "turn_on", { entity_id: id });
@@ -3770,16 +4010,14 @@ ${m.dom === "cover" && !m.dimmable ? `<div class="ud3">${coverButtons(coverDir({
 .a .glow{background:radial-gradient(60% 50% at 20% 0%,var(--alertGlow),transparent 75%);opacity:.9}
 .tag{display:inline-flex;align-items:center;gap:8px;font:500 12px Onest,sans-serif;letter-spacing:.18em;text-transform:uppercase;color:var(--alertT)}
 .tag i{width:8px;height:8px;border-radius:4px;background:var(--alert);box-shadow:0 0 14px var(--alert)}
-.call{display:flex;align-items:center;gap:10px;min-height:48px;margin-top:10px;padding:0 16px;border-radius:16px;text-decoration:none;color:var(--ink);background:color-mix(in srgb,var(--alert) 10%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--alert) 35%,transparent);font:500 14px Onest,sans-serif}
-.call ha-icon{--mdc-icon-size:20px;color:var(--alertT)}.call .cl{flex:1;min-width:0;display:flex;flex-direction:column;padding:8px 0}.call .cl span{white-space:normal;overflow-wrap:break-word;hyphens:auto}.call b{font:400 13px Onest,sans-serif;color:var(--ink2);white-space:normal}.call:active{transform:scale(.98)}
 h2{font:300 30px/1.1 Onest,sans-serif;letter-spacing:-.03em;margin:14px 0 0}
 .w{font:400 15px/1.5 Onest,sans-serif;color:var(--ink2);margin-top:12px}.todo{font:500 13px/1.45 Onest,sans-serif;color:var(--ink);margin-top:8px;padding:10px 12px;border-radius:14px;background:var(--track)}
 .sl{margin-top:22px;height:68px;border-radius:34px;position:relative;display:flex;align-items:center;justify-content:center;font:500 15px Onest,sans-serif;color:var(--ink2);box-shadow:var(--eh-edge,inset 0 0 0 1px var(--hair));background:var(--eh-glass,transparent);touch-action:pan-y;user-select:none;-webkit-user-select:none;overflow:hidden}
-.sl span{padding-left:56px}.k{position:absolute;left:5px;top:5px;width:58px;height:58px;border-radius:29px;background:var(--alert);display:grid;place-items:center;color:#fff;box-shadow:0 0 30px var(--alertGlow);cursor:grab}
+.sl span{padding-left:56px}.k{position:absolute;left:5px;top:5px;width:58px;height:58px;border-radius:29px;background:var(--alert);display:grid;place-items:center;color:var(--hf-white);box-shadow:0 0 30px var(--alertGlow);cursor:grab}
 .k ha-icon{--mdc-icon-size:24px}.done{color:var(--ink)}
 .ok{display:flex;align-items:center;gap:10px;font:500 15px Onest,sans-serif;color:var(--ink2)}
-.ack,.act{margin-top:12px;align-self:stretch;min-height:48px;padding:6px 18px;border-radius:14px;font:500 15px Onest,sans-serif;background:var(--track);color:var(--ink);box-shadow:inset 0 0 0 1px var(--eh-line-strong,var(--hair))}.act{margin-top:10px;color:var(--eh-alert-text,var(--alert));box-shadow:inset 0 0 0 1.5px currentColor}.act.arm{background:var(--alert);color:#fff;box-shadow:none}.act:disabled{opacity:.6}
-.ackh{font:400 12px/1.35 Onest,sans-serif;color:var(--ink2);margin-top:6px}.ack.all{background:var(--ink);color:var(--eh-bg,var(--card-background-color,#fff));box-shadow:none}
+.ack,.act{margin-top:12px;align-self:stretch;min-height:48px;padding:6px 18px;border-radius:14px;font:500 15px Onest,sans-serif;background:var(--track);color:var(--ink);box-shadow:inset 0 0 0 1px var(--eh-line-strong,var(--hair))}.act{margin-top:10px;color:var(--eh-alert-text,var(--alert));box-shadow:inset 0 0 0 1.5px currentColor}.act.arm{background:var(--alert);color:var(--hf-white);box-shadow:none}.act:disabled{opacity:.6}
+.ackh{font:400 12px/1.35 Onest,sans-serif;color:var(--ink2);margin-top:6px}.ack.all{background:var(--ink);color:var(--hf-bg);box-shadow:none}
 .more .mr{display:flex;align-items:center;gap:8px;justify-content:space-between}.more .mr span{min-width:0;overflow-wrap:break-word;hyphens:auto}.ack1{flex:none;min-height:36px;padding:0 12px;border-radius:12px;font:500 12px Onest,sans-serif;background:var(--track);color:var(--ink);box-shadow:inset 0 0 0 1px var(--eh-line-strong,var(--hair))}
 .more{margin-top:12px;display:flex;flex-direction:column;gap:6px;font:400 13px/1.4 Onest,sans-serif;color:var(--ink2)}.more [data-e]{cursor:pointer}
 .nrm{--alert:var(--amber);--alertGlow:var(--amberGlow)}.nrm .tag{color:var(--amberT)}.nrm .tag i{background:var(--amber);box-shadow:0 0 14px var(--amberGlow)}.nrm .glow{background:radial-gradient(60% 50% at 20% 0%,var(--amberGlow),transparent 75%)}`;
@@ -3798,14 +4036,16 @@ h2{font:300 30px/1.1 Onest,sans-serif;letter-spacing:-.03em;margin:14px 0 0}
         const deaf = (c.alarms || []).filter((id) => nd(st(h, id))).length;
         // A room's / floor's alert card is there only while there's something to say — the card decides by the
         // agent's alarms, not HA's «state on» (a link rule's alarm is «off»).
+        // Hidden the HA way (hideCard): `display:none` alone left HA's grid slot and its row gap — the next block in the
+        // column started 12 px below the other columns' first blocks (owner 03.11: «верхние блоки разной высоты»).
         if (c.hide_ok && !deaf) {
-          this.style.display = "none";
+          this.hideCard(true);
           return "";
         }
-        this.style.display = "";
+        this.hideCard(false);
         return `<div class="glass a" style="min-height:0;padding:16px"><div class="ok"><ha-icon icon="hauflo:shield" style="color:var(--ink2)"></ha-icon>${deaf ? `Нет связи · ${deaf} ${sensorsWord(deaf)}` : "Аварий нет"}</div></div>`;
       }
-      this.style.display = "";
+      this.hideCard(false);
       const s = on[0];
       const top = open[0];
       const word = ALARM_WORD[s.attributes.device_class] || "Авария";
@@ -3837,9 +4077,8 @@ h2{font:300 30px/1.1 Onest,sans-serif;letter-spacing:-.03em;margin:14px 0 0}
 <div class="w">${LL("с", "since")} ${when}${top.returned ? ` · ${LL("в норме с", "back to normal at")} ${houseClock(h, top.returned).hhmm} — ${LL("подтвердите, что видели", "confirm you've seen it")}` : ""}${top.ackedBy ? ` · принял ${esc(top.ackedBy)}` : ""}</div>
 ${rest.length ? `<div class="more">${rest.map((a) => `<div class="mr"><span data-e="${esc(a.entity)}">${a.critical === false ? "○" : "●"} ${esc(alarmName(h, st(h, a.entity), a.entity).name)}${alarmRoom(c, h, a.entity) ? ` · ${esc(alarmRoom(c, h, a.entity))}` : ""}${a.ackedBy ? ` · принял ${esc(a.ackedBy)}` : ""}</span>${a.key && !a.ackedBy ? `<button class="ack1" data-ack="${esc(a.key)}">Принято</button>` : ""}</div>`).join("")}${open.length > 5 ? `<div>ещё ${open.length - 5} ${pluralAlarms(open.length - 5)}</div>` : ""}</div>` : ""}
 <div class="todo">${esc(c.todo || alarmTodo(s.attributes.device_class, !!svc?.phone, !!AGENT.data?._pushed?.includes(s.entity_id), s.attributes.device_class === "moisture" ? valve : ""))}</div>
-${act ? `<button class="act" data-act="1">${esc(c.action.title || LL("Выполнить", "Run"))}</button>` : ""}
+${act ? `<button class="act" data-act="1" data-ask="${esc(`${LL("Точно?", "Sure?")} ${c.action.title || LL("Выполнить", "Run")}`)}|${LL("Выполнено", "Done")}">${esc(c.action.title || LL("Выполнить", "Run"))}</button>` : ""}
 ${act ? `<div class="sl"><div class="k"><ha-icon icon="${esc(c.action.icon || "hauflo:valve")}"></ha-icon></div><span>${LL("Сдвиньте", "Slide")} — ${esc((c.action.title || LL("выполнить", "run")).toLowerCase())}</span></div>` : ""}
-${callLink(svc)}
 ${top.key && !top.ackedBy ? `<button class="ack" data-ack="${esc(top.key)}">Принято: <span data-own>${esc(an.name)}</span></button>` : ""}${faults.length > 1 ? `<button class="ack all" data-ackall="${esc(faults.map((a) => a.key).join("\n"))}">Принять все неисправности · ${faults.length}</button>` : ""}${(top.key && !top.ackedBy) || faults.length > 1 ? `<div class="ackh">тревога останется, пока причина не устранена; видно, кто принял</div>` : ""}</div></div>`;
     }
     bind() {
@@ -3866,7 +4105,9 @@ ${top.key && !top.ackedBy ? `<button class="ack" data-ack="${esc(top.key)}">Пр
           items.forEach((a) => (a.ackedBy = null));
           for (const c of AGENT.cards) (c._sig = ""), c._update();
           const again = this.shadowRoot.querySelector("[data-ackall]");
-          if (again) again.textContent = tr("Не получилось — ещё раз");
+          if (again) again.focus();
+          // The label stays (no button changes size, owner 03.11): the failure is HA's own toast, read out too.
+          this.dispatchEvent(new CustomEvent("hass-notification", { bubbles: true, composed: true, detail: { message: tr("Не получилось — ещё раз") } }));
           return;
         }
         AGENT.at = 0;
@@ -3888,7 +4129,9 @@ ${top.key && !top.ackedBy ? `<button class="ack" data-ack="${esc(top.key)}">Пр
           if (item) item.ackedBy = was;
           for (const c of AGENT.cards) (c._sig = ""), c._update();
           const again = this.shadowRoot.querySelector(`[data-ack="${window.CSS.escape(b.dataset.ack)}"]`);
-          if (again) again.textContent = tr("Не получилось — ещё раз");
+          if (again) again.focus();
+          // The label stays (no button changes size, owner 03.11): the failure is HA's own toast, read out too.
+          this.dispatchEvent(new CustomEvent("hass-notification", { bubbles: true, composed: true, detail: { message: tr("Не получилось — ещё раз") } }));
           return;
         }
         AGENT.at = 0;
@@ -3907,29 +4150,21 @@ ${top.key && !top.ackedBy ? `<button class="ack" data-ack="${esc(top.key)}">Пр
       };
       const ab = this.shadowRoot.querySelector("button.act");
       if (ab) {
-        const lbl = ab.textContent;
         ab.addEventListener("click", (ev) => {
           ev.stopPropagation();
           if (ab.dataset.arm !== "1") {
-            ab.dataset.arm = "1";
-            ab.classList.add("arm");
-            ab.textContent = tr(`Точно? ${lbl}`);
+            askShow(ab, 1);
             this._busy = true;
             setTimeout(() => {
-              if (ab.isConnected && ab.dataset.arm === "1") {
-                ab.dataset.arm = "";
-                ab.classList.remove("arm");
-                ab.textContent = lbl;
-              }
+              if (ab.isConnected && ab.dataset.arm === "1") askShow(ab, 0);
               this._busy = false;
             }, 5000);
             return;
           }
           haptic(this, "success");
           if (runAction()) {
-            ab.textContent = tr("Выполнено");
+            askShow(ab, 2);
             ab.disabled = true;
-            ab.classList.remove("arm");
           }
         });
       }
@@ -3994,10 +4229,34 @@ ${top.key && !top.ackedBy ? `<button class="ack" data-ack="${esc(top.key)}">Пр
   // «штора», «тюль», «портьера» to the side.
   // The curtain type the integrator set in the step «Сцены» is HA's device class (owner 28.10: рулонные, тюль, портьеры…):
   // a curtain to the side, a shade / blind / shutter / awning up and down.
+  /** A command for several covers — an HA group (its `entity_id` list) or a KNX central command of the block (`members`:
+   * the block's covers it names) — follows its members: «Все вместе» moves the same curtains as the rows under it, so it
+   * looks and moves like them (owner 03.11). */
+  const coverMembers = (e) => {
+    const ids = e.s?.attributes?.entity_id;
+    return Array.isArray(ids) && ids.length ? ids.map((id) => ({ entity: id, s: st(AGENT.hass, id) })).filter((m) => m.s) : e.members || [];
+  };
+  // The way most covers move — one rule for the block's master arrows and a group row.
+  const coverMajority = (list, cfg) => (list.length && list.filter((m) => coverDir(m, cfg) === "horizontal").length * 2 >= list.length ? "horizontal" : "vertical");
+  // A cover's type (HA device class); a group's: the commonest class among the members that move its way, so its icon
+  // never contradicts its arrows.
+  const coverClass = (e) => {
+    const ms = coverMembers(e);
+    if (!ms.length) return e.s?.attributes?.device_class;
+    const dir = coverMajority(ms, {});
+    const n = {};
+    for (const m of ms) {
+      const c = m.s?.attributes?.device_class;
+      if (c && coverDir(m, {}) === dir) n[c] = (n[c] || 0) + 1;
+    }
+    return Object.entries(n).sort((a, b) => b[1] - a[1])[0]?.[0] || e.s?.attributes?.device_class;
+  };
   const coverDir = (e, cfg) => {
     const d = e.direction || cfg.direction;
     if (d === "horizontal" || d === "vertical") return d;
-    const dc = e.s?.attributes?.device_class;
+    const ms = coverMembers(e);
+    if (ms.length) return coverMajority(ms, cfg);
+    const dc = coverClass(e);
     if (dc === "curtain") return "horizontal";
     if (["shade", "blind", "shutter", "awning"].includes(dc)) return "vertical";
     const n = String(e.name || nameOf(e.s, e.entity) || "").toLowerCase();
@@ -4013,14 +4272,22 @@ ${top.key && !top.ackedBy ? `<button class="ack" data-ack="${esc(top.key)}">Пр
   // A blind with no position status says nothing until it moves: no «нет данных» on every row (owner, Горького 3, 28.10) —
   // the block's header says «положение неизвестно» once; a lost link is still said per blind.
   const coverWord = (s) => (s.state === "unavailable" ? "нет связи" : s.state === "unknown" ? "" : s.state === "opening" ? "открывается…" : s.state === "closing" ? "закрывается…" : s.state === "closed" ? "закрыта" : "открыта");
-  /** The cover's own icon by its type (device class), else by the way it moves. */
-  const COVER_ICON = { curtain: "hauflo:curtain", shade: "mdi:roller-shade", blind: "mdi:blinds-horizontal", shutter: "mdi:window-shutter", awning: "mdi:awning-outline" };
-  const coverIcon = (e, cfg) => COVER_ICON[e.s?.attributes?.device_class] || (coverDir(e, cfg) === "horizontal" ? "hauflo:curtain" : "hauflo:blind");
-  // Sideways: «Раздвинуть / Задвинуть»; up and down: «Поднять / Опустить» (owner 28.10).
-  const COVER_BTN = {
-    vertical: [["open_cover", "mdi:chevron-up", "Поднять"], ["stop_cover", "mdi:stop", "Стоп"], ["close_cover", "mdi:chevron-down", "Опустить"]],
-    horizontal: [["open_cover", "mdi:curtains", "Раздвинуть"], ["stop_cover", "mdi:stop", "Стоп"], ["close_cover", "mdi:curtains-closed", "Задвинуть"]],
+  /** The cover's own icon by its type, in this order (owner 03.11): the integrator's choice (the card's `icon`, or its
+   * `kind` + `opening`), then HA's device class (the integrator's «Show as», or what
+   * Hauflo wrote for it), then the way it moves: sideways — a curtain, else a roller blind. Icons: the cv-* canon set. */
+  const COVER_KIND = { roller: "roller", roman: "roman", pleated: "pleated", venetian: "venetian", vertical: "vertical", curtain: "curtain", tulle: "tulle", shutter: "shutter", awning: "awning", window: "window", skylight: "skylight", damper: "damper", gate_slide: "gate-slide", gate_swing: "gate-swing", garage: "garage", door: "door" };
+  const COVER_BY_CLASS = { shade: "roller", blind: "venetian", curtain: "curtain", shutter: "shutter", awning: "awning", window: "window", damper: "damper", gate: "gate_slide", garage: "garage", door: "door" };
+  const coverIcon = (e, cfg) => {
+    const k = (COVER_KIND[e.kind] && e.kind) || COVER_BY_CLASS[coverClass(e)] || (coverDir(e, cfg || {}) === "horizontal" ? "curtain" : "roller");
+    return k === "curtain" ? `hauflo:cv-curtain-${["left", "right"].includes(e.opening) ? e.opening : "center"}` : `hauflo:cv-${COVER_KIND[k]}`;
   };
+  // Icons only on the cards, one fixed size; the words «Открыть / Стоп / Закрыть» are the buttons' names (aria, title)
+  // and are written only in the big sheet (owner 03.11). Up/down for a blind, apart/together for a curtain.
+  const COVER_BTN = {
+    vertical: [["open_cover", "hauflo:cv-up", "Открыть"], ["stop_cover", "mdi:stop", "Стоп"], ["close_cover", "hauflo:cv-down", "Закрыть"]],
+    horizontal: [["open_cover", "hauflo:cv-open-h", "Открыть"], ["stop_cover", "mdi:stop", "Стоп"], ["close_cover", "hauflo:cv-close-h", "Закрыть"]],
+  };
+  const coverBtnIcon = (s, svc) => (COVER_BTN[coverDir({ entity: s.entity_id, s }, {})].find(([x]) => x === svc) || [])[1];
   const coverButtons = (dir, attr, id, only) =>
     COVER_BTN[dir]
       .filter(([svc]) => !only || only.includes(svc))
@@ -4053,12 +4320,12 @@ ${top.key && !top.ackedBy ? `<button class="ack" data-ack="${esc(top.key)}">Пр
 .g span{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;hyphens:auto;overflow-wrap:break-word;line-height:1.25}.g.on{background:var(--track);box-shadow:none}.g.on.lt{background:color-mix(in srgb,var(--amber) 22%,transparent)}
 .g button{width:44px;height:44px;border-radius:14px;display:grid;place-items:center;color:var(--ink);box-shadow:inset 0 0 0 1px var(--line);background:var(--eh-glass,transparent);flex:0 0 auto}.g button ha-icon{--mdc-icon-size:20px}.g button:active,.ud button:active{transform:scale(.92)}
 .g.lt{padding:0 16px;height:44px;cursor:pointer}
-.g.gc{display:grid;grid-template-columns:1fr repeat(3,44px);gap:6px;width:100%;padding:5px 5px 5px 16px;font:500 13px Onest,sans-serif}
+/* A group row is a cover row (.pill + .ud) with a group's name: same edge, height, icon and buttons (owner 03.11). */.g.gc{display:grid;grid-template-columns:18px 1fr repeat(3,44px);column-gap:6px;width:100%;min-height:56px;padding:6px 12px;border-radius:18px;box-shadow:inset 0 0 0 1px var(--hair);font:500 13px Onest,sans-serif}.g.gc .gi{color:var(--ink3);--mdc-icon-size:18px;width:18px}.g.gc>span{margin-left:4px}.g.gc button ha-icon{color:var(--ink3);--mdc-icon-size:19px}
 .g.gc span{min-width:0;overflow:hidden;white-space:normal;line-height:1.25;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;align-self:center;overflow-wrap:break-word;hyphens:auto}.g.gc small{font:400 12px Onest,sans-serif;color:var(--ice)}
 .g.gc.mv{background:color-mix(in srgb,var(--ice) 14%,transparent);box-shadow:none}.hd .caps{display:block;margin-bottom:4px}
 .mst{min-height:44px;border-radius:22px;display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:0 6px}
 .mst button{height:auto;min-height:44px;min-width:44px;padding:6px 16px;line-height:1.2;border-radius:22px;font:500 13px Onest,sans-serif;color:var(--ink);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--ink) 22%,transparent)}
-.mst button.arm{background:color-mix(in srgb,var(--alert) 14%,transparent);box-shadow:inset 0 0 0 1.5px var(--alert);color:var(--alert-text,var(--ink))}.mst button.lbl{width:auto;display:inline-flex;align-items:center;gap:6px;padding:0 14px 0 10px;border-radius:22px}.mst button.lbl ha-icon{--mdc-icon-size:21px}
+.mst button.arm{background:color-mix(in srgb,var(--alert) 14%,transparent);box-shadow:inset 0 0 0 1.5px var(--alert);color:var(--alert-text,var(--ink))}
 .mst button.on{background:color-mix(in srgb,var(--amber) 16%,transparent);color:var(--amberT);box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--amber) 70%,transparent)}
 .mst button:active,.pill:active{transform:scale(.97)}
 .bar{margin-top:14px;height:40px;border-radius:14px;background:var(--track);position:relative;overflow:hidden;touch-action:pan-y;cursor:ew-resize}
@@ -4069,14 +4336,14 @@ ${top.key && !top.ackedBy ? `<button class="ack" data-ack="${esc(top.key)}">Пр
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px}
 .chips button{flex:0 0 auto;min-height:44px;padding:0 15px;display:inline-flex;align-items:center;border-radius:14px;font:500 12px Onest,sans-serif;color:var(--ink2);box-shadow:inset 0 0 0 1px var(--line)}
 .chips button.on{color:var(--ink);background:var(--track);box-shadow:none}.chips em{font-style:normal;color:var(--amberT);margin-left:5px}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}.grid:empty{display:none}
 .pill{position:relative;min-height:56px;padding-top:7px;padding-bottom:7px;border-radius:18px;overflow:hidden;display:flex;align-items:center;gap:10px;padding:0 12px;box-shadow:inset 0 0 0 1px var(--hair);touch-action:pan-y;user-select:none;-webkit-user-select:none;cursor:pointer}
 .pill .f{position:absolute;left:0;top:0;bottom:0;transition:width .25s}
 .pill.dragging .f{transition:none}.pill>*:not(.f){position:relative}
 .pill ha-icon{color:var(--ink3);--mdc-icon-size:18px}.pill .tx{min-width:0;flex:1}
 .pill .nm{font:500 13px Onest,sans-serif;line-height:1.25;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:break-word;hyphens:auto}
 .pill .lv{font:400 13px Onest,sans-serif;line-height:1.25;color:var(--ink2);white-space:normal;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:break-word;hyphens:auto}
-.ud .bl{display:none}@container (min-width:560px){.pill.wide .ud button{width:auto;min-width:44px;padding:0 12px;display:flex;align-items:center;gap:6px;font:500 12px Onest,sans-serif}.pill.wide .ud .bl{display:inline}}
+
 .pill.on{box-shadow:none;background:var(--track)}.pill.on>ha-icon{color:var(--accentC)}
 .light .pill.on .f{background:linear-gradient(90deg,color-mix(in srgb,var(--amber) 42%,transparent),color-mix(in srgb,var(--amber) 22%,transparent))}
 .cover .pill.on .f{background:linear-gradient(90deg,color-mix(in srgb,var(--ice) 36%,transparent),color-mix(in srgb,var(--ice) 18%,transparent))}
@@ -4154,13 +4421,14 @@ ${top.key && !top.ackedBy ? `<button class="ack" data-ack="${esc(top.key)}">Пр
       const unknownAll = counted.every((e) => !known(e));
       const summary = unknownAll && total ? (isCover ? "Положение неизвестно" : "Нет данных") : isCover ? (n ? `${n} из ${total} открыто` : "Все закрыты") : shownN ? `${shownN} из ${shownTotal}${lvl !== undefined ? ` · ${lvl}\u00a0%` : ""}` : "Выключен";
       const master = isCover
-        ? coverButtons(all.length && all.filter((e) => coverDir(e, this._config) === "horizontal").length * 2 >= all.length ? "horizontal" : "vertical", "data-all")
+        ? coverButtons(coverMajority(all, this._config), "data-all")
             .replace(/<button /g, '<button class="ico" ')
-            .replace(/<button class="ico" ([^>]*aria-label="([^"]+)"[^>]*>)<ha-icon([^>]*)><\/ha-icon>/g, (m, a, lab, ic) => (/stop_cover/.test(a) ? m : `<button class="lbl" ${a}<ha-icon${ic}></ha-icon><span>${lab}</span>`))
         : (() => {
             // Only lights are «весь свет»: sockets and other relays in the block make it «всё» (family review round 3).
             const lightsOnly = counted.every((e) => e.entity.startsWith("light."));
-            return `<button data-all="${n ? "turn_off" : "turn_on"}" class="${n ? "on" : ""}">${n ? (lightsOnly ? "Выключить весь свет" : "Выключить всё") : lightsOnly ? "Включить весь свет" : "Включить всё"}</button>`;
+            // Both labels hold the box (tester 03.11: «Выключить» ↔ «Включить весь свет» moved the button by 9px).
+            const [offL, onL] = lightsOnly ? ["Выключить весь свет", "Включить весь свет"] : ["Выключить всё", "Включить всё"];
+            return `<button data-all="${n ? "turn_off" : "turn_on"}" class="${n ? "on" : ""}"${n ? ` data-ask="Точно? Выключить"` : ""} data-gh="${n ? onL : offL}">${n ? offL : onL}</button>`;
           })();
       const dimmables = shown.filter((e) => this.settable(e));
       const pill = (e) => {
@@ -4175,11 +4443,11 @@ ${top.key && !top.ackedBy ? `<button class="ack" data-ack="${esc(top.key)}">Пр
           const pos = settable ? num(e.s.attributes.current_position) : undefined;
           const open = isOpenOn(e);
           // Without a position the pill has ▲ ■ ▼ — full width, the name stays readable.
-          const state = open && !["opening", "closing"].includes(e.s.state) && pos !== undefined ? `${pos} %` : coverWord(e.s);
+          const state = riskWord(this, e.entity) || (open && !["opening", "closing"].includes(e.s.state) && pos !== undefined ? `${pos} %` : coverWord(e.s));
           const moving = ["opening", "closing"].includes(e.s.state);
           return `<div class="pill ${open ? "on" : ""} ${moving ? "mv" : ""} ${settable ? "" : "wide"} ${unavailable ? "unavail" : ""}" data-e="${esc(e.entity)}" data-set="${settable ? 1 : 0}"><div class="f" style="width:${moving ? 100 : open ? pos ?? 100 : 0}%"></div>
 <ha-icon icon="${esc(e.icon || coverIcon(e, this._config))}"></ha-icon><div class="tx"><div class="nm">${esc(name)}</div>${state || zoneTagAll ? `<div class="lv">${esc(state ? zoneTagAll : zoneTagAll.replace(/ · $/, ""))}${state}</div>` : ""}</div>
-${settable ? "" : `<div class="ud">${coverButtons(coverDir(e, this._config), "data-c").replace(/aria-label="([^"]+)"([^>]*)><ha-icon([^>]*)><\/ha-icon>/g, (m, lab, rest, ic) => `aria-label="${lab}"${rest}><ha-icon${ic}></ha-icon><span class="bl">${lab}</span>`)}</div>`}</div>`;
+${settable ? "" : `<div class="ud">${coverButtons(coverDir(e, this._config), "data-c")}</div>`}</div>`;
         }
         const on = isOpenOn(e);
         const pct = brightnessPct(e.s);
@@ -4210,10 +4478,17 @@ ${hidden ? `<button class="more" data-more="1">${coversFolded ? `Каждая о
         .filter((g) => g.s && !(Array.isArray(g.s.attributes.entity_id) && g.s.attributes.entity_id.length < 2));
       if (!gs.length) return "";
       const label = (g) => nameOf(g.s, g.id).replace(/\s*\((вс[яеё]|весь|all)\)\s*$/i, "");
+      // A KNX central command's members: the block's covers its name lists («Шторы Справа, Центральная»), else all of them.
+      const own = this.kind === "cover" ? this.items() : [];
+      const membersOf = (g) => {
+        const n = label(g).toLowerCase();
+        const named = own.filter((e) => { const w = String(e.name || nameOf(e.s, e.entity) || "").toLowerCase(); return w && n.includes(w); });
+        return named.length ? named : own;
+      };
       return `<div class="grp"><span class="caps">Все вместе</span><div class="grow">${gs
         .map((g) =>
           g.id.startsWith("cover.")
-            ? `<div class="g gc ${["opening", "closing"].includes(g.s.state) ? "mv" : ""}"><span>${esc(label(g))}${["opening", "closing"].includes(g.s.state) ? `<small>${g.s.state === "opening" ? "открывается…" : "закрывается…"}</small>` : ""}</span>${coverButtons(coverDir({ entity: g.id, s: g.s }, this._config), "data-gc", g.id)}</div>`
+            ? `<div class="g gc ${["opening", "closing"].includes(g.s.state) ? "mv" : ""}"><ha-icon class="gi" icon="${esc(coverIcon({ entity: g.id, s: g.s, members: membersOf(g) }, this._config))}"></ha-icon><span>${esc(label(g))}${["opening", "closing"].includes(g.s.state) ? `<small>${g.s.state === "opening" ? "открывается…" : "закрывается…"}</small>` : ""}</span>${coverButtons(coverDir({ entity: g.id, s: g.s, members: membersOf(g) }, this._config), "data-gc", g.id)}</div>`
             : `<div class="g lt ${g.s.state === "on" ? "on" : ""}" data-gt="${esc(g.id)}" role="button"><span>${esc(label(g))}</span></div>`,
         )
         .join("")}</div></div>`;
@@ -4257,18 +4532,9 @@ ${hidden ? `<button class="more" data-more="1">${coversFolded ? `Каждая о
           let snap = [];
           if (!isCover && b.dataset.all === "turn_off") {
             if (b.dataset.arm !== "1") {
-              b.dataset.arm = "1";
-              b.dataset.lbl = b.textContent;
-              b.textContent = tr("Точно? Выключить");
-              b.classList.add("arm");
+              askShow(b, 1);
               clearTimeout(this._armT);
-              this._armT = setTimeout(() => {
-                if (b.isConnected && b.dataset.arm === "1") {
-                  b.dataset.arm = "";
-                  b.textContent = b.dataset.lbl;
-                  b.classList.remove("arm");
-                }
-              }, 4000);
+              this._armT = setTimeout(() => b.isConnected && b.dataset.arm === "1" && askShow(b, 0), 4000);
               return;
             }
             snap = [...new Set([...shownIds(), ...lampIds()])].map((eid) => st(this._hass, eid)).filter((s) => s && s.state === "on");
@@ -4381,6 +4647,7 @@ ${hidden ? `<button class="more" data-more="1">${coversFolded ? `Каждая о
           },
           () => {
             const s = st(this._hass, id);
+            if (!riskTap(this, id)) return;
             // A moving blind stops on a tap (it reversed before — integrator run 24.10).
             if (isCover) call(this._hass, "cover", s.state === "opening" || s.state === "closing" ? "stop_cover" : s.state === "closed" ? "open_cover" : "close_cover", { entity_id: id });
             else call(this._hass, id.startsWith("light.") ? "light" : "homeassistant", "toggle", { entity_id: id });
@@ -4432,7 +4699,8 @@ ${hidden ? `<button class="more" data-more="1">${coversFolded ? `Каждая о
     const items = favHas(id) ? cur.items.filter((x) => x !== id) : [...cur.items, id];
     return favSave(h, { ...cur, items });
   };
-  /** A press-and-hold on `el` (touch, pen or mouse, finger still ≥ 500 ms): `fn()`; the tap that ends it does nothing. */
+  /** A press-and-hold on `el` (touch, pen or the mouse's left button held still ≥ 500 ms, as HA's own tiles; or the right
+   * button): `fn()`; the tap / click that ends it does nothing (owner 03.11: the desktop browser holds with the mouse). */
   const longPress = (el, fn, ms = 500) => {
     let t = 0;
     let at = null;
@@ -4441,7 +4709,7 @@ ${hidden ? `<button class="more" data-more="1">${coversFolded ? `Каждая о
       at = null;
     };
     el.addEventListener("pointerdown", (ev) => {
-      if (ev.pointerType === "mouse") return; // a mouse: the right button (contextmenu) — its press drags
+      if (ev.pointerType === "mouse" && ev.button !== 0) return; // the right button is contextmenu's
       if (ev.target.closest?.("button") && ev.target.closest("button") !== el) return;
       at = [ev.clientX, ev.clientY];
       clearTimeout(t);
@@ -4455,34 +4723,37 @@ ${hidden ? `<button class="more" data-more="1">${coversFolded ? `Каждая о
     el.addEventListener("pointermove", (ev) => at && Math.hypot(ev.clientX - at[0], ev.clientY - at[1]) > 8 && stop());
     el.addEventListener("pointerup", stop);
     el.addEventListener("pointercancel", stop);
+    el.addEventListener("pointerleave", stop);
     el.addEventListener("contextmenu", (ev) => {
       ev.preventDefault();
-      if (GST.type !== "mouse") return; // a finger's long press is the timer's
+      if (GST.type !== "mouse" || GST.lp) return; // a finger's long press (or a held left button) is the timer's
       stop();
       fn();
     });
   };
-  const TILE_CSS = `:host{position:fixed;inset:0;z-index:9998;display:grid;place-items:end center;background:rgba(0,0,0,.42);font-family:Onest,var(--ha-font-family-body),system-ui,sans-serif;color:var(--eh-ink,var(--primary-text-color));-webkit-tap-highlight-color:transparent}
+  const TILE_CSS = `:host{position:fixed;inset:0;z-index:9998;display:grid;place-items:end center;background:var(--hf-shade-42);font-family:Onest,var(--ha-font-family-body),system-ui,sans-serif;color:var(--eh-ink,var(--primary-text-color));-webkit-tap-highlight-color:transparent}
 @media (min-width:600px){:host{place-items:center}}
 *{box-sizing:border-box}
-.sh{width:min(100%,420px);max-height:94vh;overflow:auto;padding:18px 18px calc(18px + env(safe-area-inset-bottom));display:flex;flex-direction:column;align-items:stretch;gap:12px;background:var(--card-background-color,#fff);background-image:var(--eh-glass,none);border-radius:28px 28px 0 0;box-shadow:0 20px 60px rgba(0,0,0,.35)}
+.sh{width:min(100%,420px);max-height:94vh;overflow:auto;padding:18px 18px calc(18px + env(safe-area-inset-bottom));display:flex;flex-direction:column;align-items:stretch;gap:12px;background:var(--hf-card-bg);background-image:var(--eh-glass,none);border-radius:28px 28px 0 0;box-shadow:0 20px 60px var(--hf-shade-35)}
 @media (min-width:600px){.sh{border-radius:28px}}
 .hd{display:flex;align-items:flex-start;gap:12px}.hd b{flex:1;min-width:0;font:600 20px Onest,sans-serif;line-height:1.25;overflow-wrap:break-word;hyphens:auto}.hd small{display:block;font:400 14px Onest,sans-serif;color:var(--eh-ink2,var(--secondary-text-color));margin-top:2px}
-.x{width:44px;height:44px;flex:none;border-radius:22px;border:0;background:var(--eh-track,rgba(127,127,127,.12));color:inherit;cursor:pointer;display:grid;place-items:center}.x ha-icon{--mdc-icon-size:22px}
-.sl{align-self:center;width:132px;height:300px;border-radius:36px;background:var(--eh-track,rgba(127,127,127,.14));position:relative;overflow:hidden;touch-action:none;cursor:ns-resize;user-select:none;-webkit-user-select:none}
-.sl i{position:absolute;left:0;right:0;bottom:0;background:linear-gradient(0deg,var(--eh-amber,#FFB25C),color-mix(in srgb,var(--eh-amber,#FFB25C) 65%,transparent))}.sl.cv i{background:linear-gradient(0deg,var(--eh-ice,#8DC2FF),color-mix(in srgb,var(--eh-ice,#8DC2FF) 60%,transparent))}
+.x{width:44px;height:44px;flex:none;border-radius:22px;border:0;background:var(--hf-track);color:inherit;cursor:pointer;display:grid;place-items:center}.x ha-icon{--mdc-icon-size:22px}
+.sl{align-self:center;width:132px;height:300px;border-radius:36px;background:var(--hf-track-14);position:relative;overflow:hidden;touch-action:none;cursor:ns-resize;user-select:none;-webkit-user-select:none}
+.sl i{position:absolute;left:0;right:0;bottom:0;background:linear-gradient(0deg,var(--hf-amber-2),color-mix(in srgb,var(--hf-amber-2) 65%,transparent))}.sl.cv i{background:linear-gradient(0deg,var(--hf-ice-2),color-mix(in srgb,var(--hf-ice-2) 60%,transparent))}
 .sl span{position:absolute;left:0;right:0;top:18px;text-align:center;font:300 34px Onest,sans-serif;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
-.msg{display:flex;align-items:center;gap:12px;padding:14px;border-radius:18px;background:var(--eh-track,rgba(127,127,127,.12));font:500 15px Onest,sans-serif;line-height:1.4}.msg ha-icon{--mdc-icon-size:26px;color:var(--eh-amber,#E8901F);flex:none}
-.b{display:flex;align-items:center;justify-content:center;gap:8px;min-height:52px;padding:0 16px;border:0;border-radius:16px;background:var(--eh-track,rgba(127,127,127,.12));color:inherit;font:600 16px Onest,sans-serif;cursor:pointer}.b ha-icon{--mdc-icon-size:22px}
-.b.on{background:color-mix(in srgb,var(--eh-amber,#FFB25C) 30%,transparent)}.b.fav[aria-pressed="true"] ha-icon{color:var(--eh-amber,#E8901F)}.b.lnk{background:none;min-height:44px;font-weight:500;color:var(--eh-ink2,var(--secondary-text-color))}
+.msg{display:flex;align-items:center;gap:12px;padding:14px;border-radius:18px;background:var(--hf-track);font:500 15px Onest,sans-serif;line-height:1.4}.msg ha-icon{--mdc-icon-size:26px;color:var(--hf-amber);flex:none}
+.b{display:flex;align-items:center;justify-content:center;gap:8px;min-height:52px;padding:0 16px;border:0;border-radius:16px;background:var(--hf-track);color:inherit;font:600 16px Onest,sans-serif;cursor:pointer}.b ha-icon{--mdc-icon-size:22px}
+.b.on{background:color-mix(in srgb,var(--hf-amber-2) 30%,transparent)}.b.fav[aria-pressed="true"] ha-icon{color:var(--hf-amber)}.b.lnk{background:none;min-height:44px;font-weight:500;color:var(--eh-ink2,var(--secondary-text-color))}
 .r3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.r3 .b{flex-direction:column;gap:2px;min-height:68px;font-size:13px}`;
+  // The tile's controls (CTL) in the sheet: the cards' colour aliases on `.ctl`, the big vertical slider's rules undone.
+  const TILE_CTL_CSS = () => `${CSS.match(/:host\{[^}]*\}/)[0].replace(":host", ".ctl")}${CTL_CSS}.ctl .sl{width:auto;height:44px;align-self:auto;border-radius:15px;background:var(--track);cursor:ew-resize}.ctl .sl span{right:auto;top:50%;text-align:left}`;
   let TILE = null;
-  /** The control sheet of one light / blind / scene, over the page. */
+  /** The control sheet of one entity over the page: a light / blind / scene's own; any other domain's tile controls. */
   const openTile = (card, id) => {
     if (TILE) return;
-    if (window.__haufloRemote?.(card._hass, id)) return; // «Вид карточек: новый» (hauflo-cards-v5.js) draws this type's remote
     const h0 = card._hass;
     if (!st(h0, id)) return;
+    if (id.startsWith("climate.")) return openClimateSheet(card, { entity: id }); // a thermostat's big control is its own sheet
     haptic(card, "medium");
     HOUSE.get(card);
     const host = document.createElement("div");
@@ -4526,10 +4797,15 @@ ${hidden ? `<button class="more" data-more="1">${coversFolded ? `Каждая о
         state = "сценарий";
         body = `<button class="b on" data-run><ha-icon icon="hauflo:play"></ha-icon><span>Включить</span></button>`;
       } else {
-        body = `<button class="b" data-tg><span>${on ? "Выключить" : "Включить"}</span></button>`;
+        // Any other domain: the same controls as its Hauflo tile (CTL), in the sheet; a plain toggle where it only switches;
+        // a reading shows its value (hold = our control everywhere, owner 03.11 — never HA's more-info first).
+        const k = kindOf(s);
+        state = nd(s) ? "нет связи" : k?.word ? k.word(s) : "";
+        const ctl = CTL[dom] && !nd(s) ? CTL[dom](s, card).trim() : "";
+        body = ctl ? `<div class="ctl" style="--acc:${(TONE[k?.tone] || TONE.mint)[0]}">${ctl}</div>` : k?.tap ? `<button class="b" data-tg><span>${on ? "Выключить" : "Включить"}</span></button>` : "";
       }
       const fav = !HOUSE.off;
-      sr.innerHTML = `<style>${TZ(TILE_CSS)}</style><div class="sh" role="dialog" aria-modal="true" aria-label="${esc(name)}">
+      sr.innerHTML = `<style>${TZ(TILE_CSS)}${body.includes('class="ctl"') ? TILE_CTL_CSS() : ""}</style><div class="sh" role="dialog" aria-modal="true" aria-label="${esc(name)}">
 <div class="hd"><b><span data-own>${esc(name)}</span>${state ? `<small>${esc(state)}</small>` : ""}</b><button class="x" data-x aria-label="Закрыть"><ha-icon icon="mdi:close"></ha-icon></button></div>
 ${body}
 ${fav ? `<button class="b fav" data-fav aria-pressed="${favHas(id)}"><ha-icon icon="${favHas(id) ? "mdi:star" : "mdi:star-outline"}"></ha-icon><span>${favHas(id) ? "Убрать из избранного" : "В избранное"}</span></button>` : ""}
@@ -4570,6 +4846,8 @@ ${fav ? `<button class="b fav" data-fav aria-pressed="${favHas(id)}"><ha-icon ic
           }
           draw();
         };
+      const ctl = sr.querySelector(".ctl");
+      if (ctl) Entity.prototype.bindControls.call(card, ctl, id);
       const sl = sr.querySelector("[data-sl]");
       if (!sl) return;
       const cover = id.startsWith("cover.");
@@ -4614,7 +4892,7 @@ ${fav ? `<button class="b fav" data-fav aria-pressed="${favHas(id)}"><ha-icon ic
       }
     }, 400);
     draw();
-    document.body.appendChild(host);
+    document.body.appendChild(carryTheme(host, card));
     sr.querySelector("[data-x]")?.focus({ preventScroll: true });
   };
   Object.assign(EN, { "Этот светильник только включается и выключается": "This light only switches on and off", "В избранное": "Add to favourites", "Убрать из избранного": "Remove from favourites", "Подробнее": "More details", "Включить": "Turn on", "Выключить": "Turn off", "сценарий": "scene", "Положение": "Position", "Не сохранилось — проверьте связь с домом": "Not saved — check the link to the house", "Избранное": "Favourites", "Моя комната": "My room",
@@ -4682,7 +4960,7 @@ ${fav ? `<button class="b fav" data-fav aria-pressed="${favHas(id)}"><ha-icon ic
       return `.w{padding:18px 20px}.top{display:flex;justify-content:space-between;align-items:flex-start}
 .t{font-size:64px;line-height:.95}.t sup{font:300 20px Onest,sans-serif;vertical-align:top;position:relative;top:8px;color:var(--ink2)}
 .ic{--mdc-icon-size:46px;color:var(--amberT);filter:drop-shadow(0 0 16px var(--amberGlow))}.cond{font:400 15px Onest,sans-serif;margin-top:6px}
-.meta{display:flex;gap:14px;margin-top:8px;font:400 13px Onest,sans-serif;color:var(--ink2);flex-wrap:wrap}.meta span{display:inline-flex;align-items:center;gap:4px}.meta ha-icon{--mdc-icon-size:14px}
+.meta{display:flex;gap:14px;margin-top:8px;font:400 13px Onest,sans-serif;color:var(--ink2);flex-wrap:wrap}.meta>span{display:inline-flex;align-items:center;gap:4px}.meta ha-icon{--mdc-icon-size:14px}
 .fc{display:grid;grid-template-columns:repeat(var(--n),1fr);gap:4px;margin-top:16px;padding-top:14px;border-top:1px solid var(--hair)}
 .fc div{display:flex;flex-direction:column;align-items:center;gap:6px;font:400 12px Onest,sans-serif}.fc .d{color:var(--ink2)}.fc ha-icon{--mdc-icon-size:22px;color:var(--ink2)}
 .fc b{font:500 13px Onest,sans-serif}.fc small{color:var(--ink3)}
@@ -4692,12 +4970,12 @@ ${fav ? `<button class="b fav" data-fav aria-pressed="${favHas(id)}"><ha-icon ic
       const s = st(this._hass, this._config.entity);
       if (!s) return `<div class="glass w"><span class="caps">Нет погоды</span></div>`;
       const a = s.attributes;
-      const [word, icon] = nd(s) ? ["Нет данных", "mdi:weather-cloudy-alert"] : WEATHER[s.state] || [s.state, "mdi:weather-partly-cloudy"];
+      const [word, icon] = nd(s) ? ["Нет данных", "mdi:weather-cloudy-alert"] : WEATHER[s.state] || [haState(s), "mdi:weather-partly-cloudy"];
       const t = sane(num(a.temperature), -70, 65);
       const fc = (this._fc || []).slice(0, this._config.days || 5);
       return `<div class="glass w"><div class="glow"></div><div style="position:relative">
-<div class="top"><div><span class="caps">${esc(this._config.name || "Погода")}</span><div class="t thin">${t === undefined ? "—" : Math.round(t)}<sup>°C</sup></div><div class="cond">${esc(word)}${num(a.apparent_temperature) !== undefined ? ` · ощущается как ${Math.round(a.apparent_temperature)}°` : ""}</div></div><ha-icon class="ic" icon="${icon}"></ha-icon></div>
-<div class="meta">${num(a.humidity) !== undefined ? `<span><ha-icon icon="hauflo:humidity"></ha-icon>${fmt(a.humidity)} %</span>` : ""}${num(a.wind_speed) !== undefined ? `<span><ha-icon icon="mdi:weather-windy"></ha-icon>${fmt(a.wind_speed)} ${esc(ru(a.wind_speed_unit || "km/h"))}</span>` : ""}${["hPa", "mbar", undefined].includes(a.pressure_unit) && sane(num(a.pressure), 870, 1085) !== undefined ? `<span><ha-icon icon="mdi:gauge"></ha-icon>${fmt(a.pressure)} ${esc(ru(a.pressure_unit || "hPa"))}</span>` : a.pressure_unit === "mmHg" && sane(num(a.pressure), 650, 815) !== undefined ? `<span><ha-icon icon="mdi:gauge"></ha-icon>${fmt(a.pressure)} мм рт. ст.</span>` : ""}</div>
+<div class="top"><div><span class="caps">${esc(this._config.name || "Погода")}</span><div class="t thin">${t === undefined ? "—" : slot(this, "t", fmt(Math.round(t)))}<sup>°C</sup></div><div class="cond">${esc(word)}${num(a.apparent_temperature) !== undefined ? ` · ощущается как ${Math.round(a.apparent_temperature)}°` : ""}</div></div><ha-icon class="ic" icon="${icon}"></ha-icon></div>
+<div class="meta">${num(a.humidity) !== undefined ? `<span><ha-icon icon="hauflo:humidity"></ha-icon>${slot(this, "hum", fmt(a.humidity), slotTpl(2))} %</span>` : ""}${num(a.wind_speed) !== undefined ? `<span><ha-icon icon="mdi:weather-windy"></ha-icon>${slot(this, "wind", fmt(a.wind_speed))} ${esc(ru(a.wind_speed_unit || "km/h"))}</span>` : ""}${["hPa", "mbar", undefined].includes(a.pressure_unit) && sane(num(a.pressure), 870, 1085) !== undefined ? `<span><ha-icon icon="mdi:gauge"></ha-icon>${slot(this, "p", fmt(a.pressure))} ${esc(ru(a.pressure_unit || "hPa"))}</span>` : a.pressure_unit === "mmHg" && sane(num(a.pressure), 650, 815) !== undefined ? `<span><ha-icon icon="mdi:gauge"></ha-icon>${slot(this, "p", fmt(a.pressure))} мм рт. ст.</span>` : ""}</div>
 ${fc.length ? `<div class="fc" style="--n:${fc.length}">${fc
         .map((f) => {
           const d = new Date(f.datetime);
@@ -4736,9 +5014,9 @@ ${fc.length ? `<div class="fc" style="--n:${fc.length}">${fc
 .sc{position:relative;display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin:16px 0 6px}.sc b{height:6px;border-radius:3px;opacity:.55}
 .sc b:nth-child(1){background:var(--mint)}.sc b:nth-child(2){background:var(--amber);opacity:.4}.sc b:nth-child(3){background:var(--amber)}.sc b:nth-child(4){background:var(--alert)}
 .sc b.on{opacity:1;box-shadow:0 0 12px currentColor}
-.sc i{position:absolute;top:-5px;width:16px;height:16px;border-radius:8px;background:var(--primary-background-color,#fff);box-shadow:0 0 0 2px var(--ink),0 2px 8px rgba(0,0,0,.2);transform:translateX(-50%)}
-.vals{display:grid;grid-template-columns:repeat(auto-fit,minmax(76px,1fr));gap:8px;margin-top:14px}
-.vals div{padding:10px 12px;border-radius:14px;background:var(--track)}.vals b{display:block;font:400 20px Onest,sans-serif}.vals span{font:400 13px Onest,sans-serif;color:var(--ink2)}`;
+.sc i{position:absolute;top:-5px;width:16px;height:16px;border-radius:8px;background:var(--hf-page-bg);box-shadow:0 0 0 2px var(--ink),0 2px 8px var(--hf-shade-20);transform:translateX(-50%)}
+.vals{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:8px;margin-top:14px}
+.vals div{min-width:0;padding:10px 12px;border-radius:14px;background:var(--track)}.vals b,.vals>div>span{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vals b{font:400 20px Onest,sans-serif}.vals b small{font-size:11px;color:var(--ink2)}.vals>div>span{font:400 13px Onest,sans-serif;color:var(--ink2)}`;
     }
     render() {
       const v = this.vals();
@@ -4749,12 +5027,12 @@ ${fc.length ? `<div class="fc" style="--n:${fc.length}">${fc
       const k = Math.max(0, step);
       const pos = v.pm25 === undefined ? 0 : Math.min(100, ((k + Math.min(1, (v.pm25 - edges[k]) / (edges[k + 1] - edges[k]))) / 4) * 100);
       const co2Word = v.co2 === undefined ? "" : v.co2 < 800 ? "свежо" : v.co2 < 1200 ? "проветрить" : "душно";
-      const cell = (val, label, unit, d = 0) => (val === undefined ? "" : `<div><b>${fmt(val, d)}${unit ? ` <small style="font-size:11px;color:var(--ink2)">${unit}</small>` : ""}</b><span>${label}</span></div>`);
+      const cell = (key, val, label, unit, d = 0, min = "") => (val === undefined ? "" : `<div><b>${slot(this, key, fmt(val, d), min)}${unit === "°" ? "°" : unit ? ` <small>${unit}</small>` : ""}</b><span>${label}</span></div>`);
       return `<div class="glass a" style="--c:${lvl ? lvl[2] : "var(--ink3)"}"><span class="caps">${esc(this._config.name || "Качество воздуха")}</span>
-<div class="big"><div class="t thin">${v.pm25 === undefined ? "—" : fmt(v.pm25)}</div><div class="u">PM2.5 · мкг/м³</div></div>
+<div class="big"><div class="t thin">${v.pm25 === undefined ? "—" : slot(this, "pm25", fmt(v.pm25))}</div><div class="u">PM2.5 · мкг/м³</div></div>
 <div class="lv" style="color:${lvl ? lvl[2] : "var(--ink2)"}">${lvl ? lvl[1] : "нет данных о частицах"}</div>
 ${v.pm25 === undefined ? "" : `<div class="sc">${[0, 1, 2, 3].map((k) => `<b class="${step === k ? "on" : ""}"></b>`).join("")}<i style="left:${pos}%"></i></div>`}
-<div class="vals">${cell(v.pm10, "PM10", "мкг/м³")}${cell(v.co2, `CO₂ · ${co2Word}`, "ppm")}${cell(v.voc, "Летучие в-ва", "ppb")}${cell(v.hum, "Влажность", "%")}${cell(v.t, "Температура", "°", 1)}</div></div>`;
+<div class="vals">${cell("pm10", v.pm10, "PM10", "мкг/м³")}${cell("co2", v.co2, `CO₂ · ${co2Word}`, "ppm")}${cell("voc", v.voc, "Летучие в-ва", "ppb")}${cell("hum", v.hum, "Влажность", "%", 0, slotTpl(2))}${cell("t", v.t, "Температура", "°", 1, slotTpl(2, 1))}</div></div>`;
     }
     getGridOptions() {
       return { columns: 12, rows: "auto" };
@@ -4768,22 +5046,25 @@ ${v.pm25 === undefined ? "" : `<div class="sc">${[0, 1, 2, 3].map((k) => `<b cla
     }
     css() {
       return `.p{padding:16px;min-height:150px}.bg{position:absolute;inset:0;background-size:cover;background-position:center;filter:blur(28px) saturate(1.3);opacity:.45;transform:scale(1.2)}
-.row{display:flex;gap:14px;align-items:center;position:relative}.art{width:76px;height:76px;border-radius:18px;background:var(--track) center/cover;flex:0 0 auto;display:grid;place-items:center;color:var(--ink3);box-shadow:0 8px 24px rgba(0,0,0,.25)}
+.row{display:flex;gap:14px;align-items:center;position:relative}.art{width:76px;height:76px;border-radius:18px;background:var(--track) center/cover;flex:0 0 auto;display:grid;place-items:center;color:var(--ink3);box-shadow:0 8px 24px var(--hf-shade-25)}
 .art ha-icon{--mdc-icon-size:30px}.tx{min-width:0;flex:1}.tt{font:500 15px Onest,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ar{font:400 13px Onest,sans-serif;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
 .ctl{display:flex;align-items:center;justify-content:center;gap:14px;margin-top:14px;position:relative}
 .ctl button{width:46px;height:46px;border-radius:23px;display:grid;place-items:center;color:var(--ink)}.ctl button ha-icon{--mdc-icon-size:26px}
-.ctl button.pp{width:58px;height:58px;border-radius:29px;background:var(--ink);color:var(--eh-glass-solid,#fff)}.ctl button.pp ha-icon{--mdc-icon-size:30px;color:var(--primary-background-color,#fff)}
+.ctl button.pp{width:58px;height:58px;border-radius:29px;background:var(--ink);color:var(--hf-glass-solid)}.ctl button.pp ha-icon{--mdc-icon-size:30px;color:var(--hf-page-bg)}
 .vol{margin-top:12px;height:44px;border-radius:12px;background:var(--track);position:relative;overflow:hidden;touch-action:pan-y;cursor:ew-resize}
 .vol i{position:absolute;left:0;top:0;bottom:0;background:color-mix(in srgb,var(--ink) 18%,transparent)}.vol span{position:absolute;left:14px;top:13px;font:500 12px Onest,sans-serif;display:flex;gap:6px;align-items:center}.vol ha-icon{--mdc-icon-size:15px}
-.off{display:flex;align-items:center;justify-content:space-between;position:relative}.pw{width:46px;height:46px;border-radius:23px;display:grid;place-items:center;box-shadow:inset 0 0 0 1px var(--line)}`;
+.ctl button.pw{width:58px;height:58px;border-radius:29px;box-shadow:inset 0 0 0 1px var(--line)}.p.ofs .tt{color:var(--ink2)}.vq{margin-top:12px;height:44px;border-radius:12px;background:var(--track);opacity:.5}`;
     }
     render() {
       const s = st(this._hass, this._config.entity);
       if (!s) return `<div class="glass p"><span class="caps">Нет плеера</span></div>`;
       const a = s.attributes;
       const name = this._config.name || nameOf(s, s.entity_id);
+      // Off keeps the playing card's size (step 3: it shrank 236 → 78 px when the TV went off and everything below jumped):
+      // the same cover, controls and volume rows, quiet — the middle button switches it on.
       if (["off", "unavailable", "standby"].includes(s.state))
-        return `<div class="glass p" style="min-height:0"><div class="off"><div><span class="caps">${esc(name)}</span><div class="ar">${s.state === "unavailable" ? "нет связи" : "выключен"}</div></div><button class="pw" data-s="turn_on" aria-label="Включить"><ha-icon icon="hauflo:power"></ha-icon></button></div></div>`;
+        return `<div class="glass p ofs"><div class="row"><div class="art"><ha-icon icon="hauflo:speaker"></ha-icon></div><div class="tx"><span class="caps">${esc(name)}</span><div class="tt">${s.state === "unavailable" ? "Нет связи" : "Выключен"}</div><div class="ar"></div></div></div>
+<div class="ctl"><button class="pw" data-s="turn_on" aria-label="Включить"><ha-icon icon="hauflo:power"></ha-icon></button></div>${a.supported_features & 4 || num(a.volume_level) !== undefined ? `<div class="vq"></div>` : ""}</div>`;
       const pic = a.entity_picture;
       const vol = num(a.volume_level);
       const playing = s.state === "playing";
@@ -4905,7 +5186,7 @@ ${sp ? `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><defs><linearGra
 .tx{flex:1;min-width:0}.nm{font:500 13px Onest,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.lt{font:400 13px Onest,sans-serif;color:var(--ink2);margin-top:2px}
 .run{height:44px;padding:0 16px;border-radius:14px;font:500 12px Onest,sans-serif;box-shadow:inset 0 0 0 1px var(--line)}.run.go{background:color-mix(in srgb,var(--mint) 25%,transparent)}
 .sw{width:50px;height:30px;border-radius:15px;background:var(--track);position:relative;flex:0 0 auto}.sw::before{content:"";position:absolute;inset:-8px -6px}.sw i{position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:12px;background:var(--ink3);transition:all .2s}
-.on .sw{background:var(--ink)}.on .sw i{left:23px;background:var(--primary-background-color,#fff)}`;
+.on .sw{background:var(--ink)}.on .sw i{left:23px;background:var(--hf-page-bg)}`;
     }
     render() {
       const rows = (this._config.entities || [])
@@ -4966,7 +5247,7 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
         // What it does («греет · 23,4°»), not its mode (owner 28.10, Д16); the mode only when nothing says what it does.
         const k = climateNow(null, s);
         const cur = num(s.attributes.current_temperature) !== undefined ? ` · ${fmt(s.attributes.current_temperature, 1)}°` : "";
-        return [k === "off" ? "Выключено" : k === "mode" ? `${modeSmall(s.state) || HVAC[s.state] || s.state}${cur}` : `${climateLine(k, num(s.attributes.temperature)) || s.state}${cur}`, k === "off" ? "stop" : acting(k) ? "run" : "val"];
+        return [k === "off" ? "Выключено" : k === "mode" ? `${modeSmall(s.state) || HVAC[s.state] || haState(s)}${cur}` : `${climateLine(k, num(s.attributes.temperature)) || haState(s)}${cur}`, k === "off" ? "stop" : acting(k) ? "run" : "val"];
       }
       if (d === "water_heater") return [`${s.state === "off" ? "выключен" : "работает"}${num(s.attributes.current_temperature) !== undefined ? ` · ${fmt(s.attributes.current_temperature)}°` : ""}`, s.state === "off" ? "stop" : "run"];
       if (d === "valve") return [s.state === "open" ? "открыт" : s.state === "closed" ? "закрыт" : s.state, s.state === "open" ? "run" : "stop"];
@@ -5144,7 +5425,7 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
 .empty{font:400 14px/1.5 Onest,sans-serif;color:var(--ink2);margin:6px 2px 2px}.hint{font:400 13px/1.45 Onest,sans-serif;color:var(--ink3);margin:8px 2px 0}.hint b{font-weight:500;color:var(--ink2)}.r{min-height:56px}
 .cl{display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px solid var(--hair)}.sub+.cl,.cl:first-of-type{border-top:0}
 .cl .ccn{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;cursor:pointer}.cl .zn{font:500 15px/1.25 Onest,sans-serif;color:var(--ink);overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
-.cl .cs{font:400 13px Onest,sans-serif;color:var(--ink2)}.cl.heat .zn::after{content:"";display:inline-block;width:6px;height:6px;border-radius:3px;background:var(--amber);margin-left:7px;vertical-align:middle;box-shadow:0 0 8px var(--amber)}
+.cl .cs{font:400 13px Onest,sans-serif;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.cl.heat .zn::after{content:"";display:inline-block;width:6px;height:6px;border-radius:3px;background:var(--amber);margin-left:7px;vertical-align:middle;box-shadow:0 0 8px var(--amber)}
 .cct{font-size:34px;line-height:1;text-align:right;white-space:nowrap}.cct small{font:300 14px Onest,sans-serif;color:var(--ink2);margin-left:1px}.cct .tgc{display:block;margin-top:4px;font:400 12px/1.2 Onest,sans-serif;color:var(--ink2);letter-spacing:0}.cl.off .cct{color:var(--ink3)}
 .pm{display:flex;gap:6px;flex:0 0 auto}.pm button{width:44px;height:44px;border-radius:22px;display:grid;place-items:center;box-shadow:var(--eh-edge,inset 0 0 0 1px var(--line));background:var(--eh-glass,transparent);font:300 22px Onest,sans-serif}.pm button:disabled{opacity:.35;pointer-events:none}
 .modes{display:flex;flex-wrap:wrap;gap:6px;margin:-4px 0 6px}.modes button{min-height:36px;padding:0 12px;border-radius:12px;font:500 12px Onest,sans-serif;color:var(--ink2);box-shadow:inset 0 0 0 1px var(--line)}.modes .on{color:var(--ink);background:var(--track);box-shadow:none}
@@ -5155,7 +5436,7 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
 .v select{width:100%;min-height:40px;border-radius:12px;border:0;padding:0 10px;font:500 14px Onest,sans-serif;color:var(--ink);background:var(--eh-glass,var(--card-background-color));box-shadow:inset 0 0 0 1px var(--hair)}
 .vals.tgs{grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}.vals.sets{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}.tg{display:flex;align-items:center;gap:12px;padding:10px 12px;min-height:56px;border-radius:18px;box-shadow:inset 0 0 0 1px var(--hair);min-width:0}.tg .tx{flex:1;min-width:0;cursor:pointer}.tg.on{background:color-mix(in srgb,var(--amber) 12%,transparent);box-shadow:none}
 .tg>ha-icon{--mdc-icon-size:20px;color:var(--ink3);flex:0 0 auto}.tg.on>ha-icon{color:var(--amberT)}
-.sw{width:50px;height:30px;border-radius:15px;background:var(--track);position:relative;flex:0 0 auto}.sw::before{content:"";position:absolute;inset:-8px -6px}.sw i{position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:12px;background:var(--ink3);transition:all .2s}.on .sw{background:var(--amber)}.on .sw i{left:23px;background:#fff}.sw:disabled{opacity:.35}
+.sw{width:50px;height:30px;border-radius:15px;background:var(--track);position:relative;flex:0 0 auto}.sw::before{content:"";position:absolute;inset:-8px -6px}.sw i{position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:12px;background:var(--ink3);transition:all .2s}.on .sw{background:var(--amber)}.on .sw i{left:23px;background:var(--hf-white)}.sw:disabled{opacity:.35}
 .cv{display:flex;gap:4px;flex:0 0 auto}.cv button{width:40px;height:40px;border-radius:14px;box-shadow:inset 0 0 0 1px var(--line);display:grid;place-items:center}.cv ha-icon{--mdc-icon-size:18px;color:var(--ink2)}
 .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}.chip{display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:14px;box-shadow:inset 0 0 0 1px var(--line);cursor:pointer;min-width:0;max-width:100%}.chip .nm{-webkit-line-clamp:1}.chip .w{white-space:nowrap}
 .chip i{width:8px;height:8px;border-radius:4px;flex:0 0 auto}.chip.fault{box-shadow:none}.chip.warn{box-shadow:none}
@@ -5176,9 +5457,9 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
       const nowC = wh ? null : climateNow(this._hass, s, null);
       const action = wh ? a.hvac_action : { heat: "heating", cool: "cooling", idle: "idle", dry: "drying", fan: "fan" }[nowC];
       const heating = nowC === "heat" || (wh && !off && cur !== undefined && target !== undefined && cur < target - 1);
-      const mode = nd(s) ? (s.state === "unavailable" ? "нет связи" : "нет данных") : off ? "выключен" : wh ? (WH_MODE[a.operation_mode] ?? a.operation_mode ?? s.state) : modeSmall(s.state) || HVAC[s.state] || s.state;
-      // Each part its own text (each is put into English on its own).
-      const sub = [wh ? (action && !off ? { heating: "греет", cooling: "охлаждает", idle: "", drying: "осушает", fan: "вентилирует", off: "" }[action] ?? "" : "") : !off && nowC ? climateLine(nowC, target, activeMode(s)) : "", wh || off || nd(s) ? mode : modeDiff(s.state, nowC)]
+      const mode = nd(s) ? (s.state === "unavailable" ? "нет связи" : "нет данных") : off ? "выключен" : wh ? (WH_MODE[a.operation_mode] ?? a.operation_mode ?? haState(s)) : modeSmall(s.state) || HVAC[s.state] || haState(s);
+      // Each part its own text (each is put into English on its own). The mode buttons below show the mode: no «режим: X» repeat (it wrapped the line, the card jumped).
+      const sub = [wh ? (action && !off ? { heating: "греет", cooling: "охлаждает", idle: "", drying: "осушает", fan: "вентилирует", off: "" }[action] ?? "" : "") : !off && nowC ? climateLine(nowC, target, activeMode(s)) : "", wh || off || nd(s) ? mode : (a.hvac_modes || []).length > 1 ? "" : modeDiff(s.state, nowC)]
         .filter(Boolean)
         .map((x) => `<span>${esc(x)}</span>`)
         .join(" · ");
@@ -5206,7 +5487,7 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
       const icon = s.attributes.icon || SENSOR_ICON[dc] || AREA_ICON.sensor;
       const unit = unitOf(s);
       const digits = v === undefined ? 0 : Math.abs(v) < 10 && v % 1 ? (Math.abs(v * 10) % 1 ? 2 : 1) : v % 1 ? 1 : 0;
-      const val = nd(s) ? `<span class="vv">—</span>` : v === undefined ? `<span class="vt">${esc(s.state)}</span>` : `<span class="vv thin">${fmt(v, Math.min(digits, 2))}${unit ? `<small>${esc(unit)}</small>` : ""}</span>`;
+      const val = nd(s) ? `<span class="vv">—</span>` : v === undefined ? `<span class="vt">${esc(haState(s))}</span>` : `<span class="vv thin">${fmt(v, Math.min(digits, 2))}${unit ? `<small>${esc(unit)}</small>` : ""}</span>`;
       return `<div class="v${nd(s) ? " nolink" : ""}" data-info="${esc(id)}" role="button" tabindex="0"><span class="vh"><ha-icon icon="${esc(icon)}"></ha-icon><span class="vn">${esc(this.label(id))}</span></span>${val}</div>`;
     }
     /** A number (± by its step, inside its range) or a list (its options). */
@@ -5234,7 +5515,7 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
       if (d === "cover") {
         const f = s.attributes.supported_features || 0;
         const b = (svc, ic, label) => `<button data-cover="${esc(id)}" data-svc="${svc}" aria-label="${label}"${nd(s) ? " disabled" : ""}><ha-icon icon="${ic}"></ha-icon></button>`;
-        return `<div class="tg${s.state === "open" ? " on" : ""}"><ha-icon icon="${esc(icon)}"></ha-icon><div class="tx" data-info="${esc(id)}"><div class="nm">${esc(this.label(id))}</div><div class="w">${esc(w)}</div></div><div class="cv">${f & 1 ? b("open_cover", "mdi:arrow-up", "Открыть") : ""}${f & 8 ? b("stop_cover", "mdi:stop", "Стоп") : ""}${f & 2 ? b("close_cover", "mdi:arrow-down", "Закрыть") : ""}</div></div>`;
+        return `<div class="tg${s.state === "open" ? " on" : ""}"><ha-icon icon="${esc(s.attributes.icon || coverIcon({ entity: id, s }))}"></ha-icon><div class="tx" data-info="${esc(id)}"><div class="nm">${esc(this.label(id))}</div><div class="w">${esc(w)}</div></div><div class="cv">${f & 1 ? b("open_cover", coverBtnIcon(s, "open_cover"), "Открыть") : ""}${f & 8 ? b("stop_cover", "mdi:stop", "Стоп") : ""}${f & 2 ? b("close_cover", coverBtnIcon(s, "close_cover"), "Закрыть") : ""}</div></div>`;
       }
       const on = s.state === "on";
       return `<div class="tg${on ? " on" : ""}"><ha-icon icon="${esc(icon)}"></ha-icon><div class="tx" data-info="${esc(id)}"><div class="nm">${esc(this.label(id))}</div><div class="w">${esc(nd(s) ? this.word(s)[0] : w)}</div></div><button class="sw" data-tog="${esc(id)}" aria-label="Вкл/выкл"${nd(s) ? " disabled" : ""}><i></i></button></div>`;
@@ -5273,7 +5554,7 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
       if (by.settings.length) parts.push(block("Настройки", `<div class="vals sets">${by.settings.map((id) => this.settingTile(id)).join("")}</div>`));
       if (by.values.length) parts.push(block("Показания", `<div class="vals">${by.values.map((id) => this.valueTile(id)).join("")}</div>`));
       if (by.buttons.length)
-        parts.push(block("Кнопки", `<div class="btns">${by.buttons.map((id) => `<button data-press="${esc(id)}"><ha-icon icon="${esc(h.states[id].attributes.icon || "hauflo:play")}"></ha-icon><span>${esc(this.label(id))}</span></button>`).join("")}</div>`));
+        parts.push(block("Кнопки", `<div class="btns">${by.buttons.map((id) => `<button data-press="${esc(id)}" data-ask="${esc(LL(`${this.label(id)} — ещё раз`, `${this.label(id)} — tap again`))}"><ha-icon icon="${esc(h.states[id].attributes.icon || "hauflo:play")}"></ha-icon><span>${esc(this.label(id))}</span></button>`).join("")}</div>`));
       if (by.other.length)
         parts.push(
           block(
@@ -5297,8 +5578,8 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
     bind() {
       const root = this.shadowRoot;
       const h = () => this._hass;
-      // A light / blind / scene row: a long press opens its sheet («В избранное», brightness) — every light, every blind.
-      root.querySelectorAll(".tg .tx[data-info]").forEach((el) => /^(light|switch|cover|scene|script)\./.test(el.dataset.info) && longPress(el, () => openTile(this, el.dataset.info)));
+      // Any row: a long press opens our sheet («В избранное», its controls) — never HA's more-info (owner 03.11).
+      root.querySelectorAll("[data-info]").forEach((el) => longPress(el, () => openTile(this, el.dataset.info)));
       root.querySelectorAll("[data-info]").forEach((el) => el.addEventListener("click", () => !GST.lp && moreInfo(this, el.dataset.info)));
       root.querySelectorAll("button[data-d][data-e]").forEach((b) =>
         b.addEventListener("click", () => {
@@ -5369,15 +5650,11 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
           const d = id.split(".")[0];
           if (!this._owned?.has(id) && this._armed !== id) {
             this._armed = id;
-            b.classList.add("arm");
-            const label = b.querySelector("span");
-            const was = label.textContent;
-            label.textContent = LL(`${was} — ещё раз`, `${was} — tap again`);
+            askShow(b, 1);
             clearTimeout(this._armT);
             this._armT = setTimeout(() => {
               this._armed = null;
-              b.classList.remove("arm");
-              label.textContent = was;
+              askShow(b, 0);
             }, 4000);
             return;
           }
@@ -5404,8 +5681,8 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
     }
     css() {
       return `.s{padding:18px 20px}.big{display:flex;align-items:center;gap:14px;margin-top:8px}.sh{width:56px;height:56px;border-radius:20px;display:grid;place-items:center}.sh ha-icon{--mdc-icon-size:28px}
-.ok .sh{background:var(--track);color:var(--ink2)}.arm .sh{background:color-mix(in srgb,var(--mint) 22%,transparent);color:var(--mintT)}.alarm .sh{background:var(--alert);color:#fff;box-shadow:0 0 30px var(--alertGlow)}.wait .sh{background:color-mix(in srgb,var(--amber) 22%,transparent);color:var(--amberT)}
-.st{font:300 24px Onest,sans-serif;letter-spacing:-.02em}.sub{font:400 13px Onest,sans-serif;color:var(--ink2);margin-top:2px}
+.ok .sh{background:var(--track);color:var(--ink2)}.arm .sh{background:color-mix(in srgb,var(--mint) 22%,transparent);color:var(--mintT)}.alarm .sh{background:var(--alert);color:var(--hf-white);box-shadow:0 0 30px var(--alertGlow)}.wait .sh{background:color-mix(in srgb,var(--amber) 22%,transparent);color:var(--amberT)}
+.big>div{flex:1;min-width:0}.st{font:300 24px Onest,sans-serif;letter-spacing:-.02em}.sub{font:400 13px Onest,sans-serif;color:var(--ink2);margin-top:2px}
 .btns{display:flex;gap:6px;margin-top:14px}.btns button{flex:1;height:44px;border-radius:14px;font:500 13px Onest,sans-serif;box-shadow:inset 0 0 0 1px var(--line)}.btns button.on{background:var(--track);box-shadow:none}
 .lst{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}.it{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:14px;background:var(--track);cursor:pointer;min-width:0}
 .it .nm{font:500 13px Onest,sans-serif;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;hyphens:auto;overflow-wrap:break-word;line-height:1.25}.it .w{font:400 13px Onest,sans-serif;color:var(--ink2)}.it.bad{background:color-mix(in srgb,var(--amber) 18%,transparent)}.it.bad ha-icon{color:var(--amberT)}
@@ -5414,7 +5691,7 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
     render() {
       const c = this._config;
       const p = st(this._hass, c.entity);
-      const [word, k] = !p ? ["", "ok"] : nd(p) ? ["Нет связи", "ok"] : ALARM_STATE[p.state] || [p.state, "ok"];
+      const [word, k] = !p ? ["", "ok"] : nd(p) ? ["Нет связи", "ok"] : ALARM_STATE[p.state] || [haState(p), "ok"];
       const obj = (e) => (typeof e === "string" ? { id: e } : { id: e.entity, name: e.name });
       const locks = (c.locks || []).map(obj).map((x) => ({ ...x, s: st(this._hass, x.id) })).filter((x) => x.s);
       const opens = (c.openings || []).map(obj).map((x) => ({ ...x, s: st(this._hass, x.id) })).filter((x) => x.s);
@@ -5424,10 +5701,10 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
       const lockND = locks.filter((x) => nd(x.s)).length;
       const unlocked = locks.filter((x) => !nd(x.s) && x.s.state !== "locked").length;
       return `<div class="glass s ${k}"><div class="glow"></div><div style="position:relative"><span class="caps">${esc(c.name || "Охрана")}</span>
-${p ? `<div class="big"><span class="sh"><ha-icon icon="${k === "ok" ? "hauflo:shield" : k === "alarm" ? "hauflo:shield-alert" : "hauflo:shield"}"></ha-icon></span><div><div class="st">${esc(word)}</div><div class="sub">${openN ? `открыто: ${openN}` : openND ? `нет данных: ${openND}` : "всё закрыто"}${locks.length ? ` · ${unlocked ? `не заперто: ${unlocked}` : lockND ? `замки без связи: ${lockND}` : "двери заперты"}` : ""}</div></div></div>
+${p ? `<div class="big"><span class="sh"><ha-icon icon="${k === "ok" ? "hauflo:shield" : k === "alarm" ? "hauflo:shield-alert" : "hauflo:shield"}"></ha-icon></span><div><div class="st">${esc(word)}</div><div class="sub">${[opens.length ? (openN ? `открыто: ${openN}` : openND ? `нет данных: ${openND}` : "всё закрыто") : "", locks.length ? (unlocked ? `не заперто: ${unlocked}` : lockND ? `замки без связи: ${lockND}` : "двери заперты") : ""].filter(Boolean).join(" · ")}</div></div></div>
 <div class="btns"><button data-a="alarm_disarm" class="${p.state === "disarmed" ? "on" : ""}">${p.state === "disarmed" ? "Снята" : "Снять"}</button><button data-a="alarm_arm_home" class="${p.state === "armed_home" ? "on" : ""}">Дома</button><button data-a="alarm_arm_away" class="${p.state === "armed_away" ? "on" : ""}">${p.state === "armed_away" ? "Под охраной" : "Уйти"}</button>${p.attributes.supported_features & 4 ? `<button data-a="alarm_arm_night" class="${p.state === "armed_night" ? "on" : ""}">Ночь</button>` : ""}</div>` : ""}
 ${locks.length || opens.length ? `<div class="lst">${locks
-        .map((x) => `<div class="it ${!nd(x.s) && x.s.state !== "locked" ? "bad" : ""}" data-lock="${esc(x.id)}"><ha-icon icon="${x.s.state === "locked" ? "hauflo:lock" : "hauflo:unlock"}"></ha-icon><div style="min-width:0"><div class="nm">${esc(x.name || nameOf(x.s, x.id))}</div><div class="w">${nd(x.s) ? "нет связи" : x.s.state === "locked" ? "заперт" : x.s.state === "jammed" ? "заклинило" : x.s.state === "open" ? "открыт" : "не заперт"}</div></div></div>`)
+        .map((x) => `<div class="it ${!nd(x.s) && x.s.state !== "locked" ? "bad" : ""}" data-lock="${esc(x.id)}"><ha-icon icon="${x.s.state === "locked" ? "hauflo:lock" : "hauflo:unlock"}"></ha-icon><div style="min-width:0"><div class="nm">${esc(x.name || nameOf(x.s, x.id))}</div><div class="w">${riskWord(this, x.id) ? esc(riskWord(this, x.id)) : nd(x.s) ? "нет связи" : x.s.state === "locked" ? "заперт" : x.s.state === "jammed" ? "заклинило" : x.s.state === "open" ? "открыт" : "не заперт"}</div></div></div>`)
         .join("")}${opens
         .map((x) => `<div class="it ${x.s.state === "on" ? "bad" : ""}" data-info="${esc(x.id)}"><ha-icon icon="${x.s.attributes.device_class === "window" ? "hauflo:window" : ["motion", "occupancy", "presence"].includes(x.s.attributes.device_class) ? "hauflo:motion" : "hauflo:door"}"></ha-icon><div style="min-width:0"><div class="nm">${esc(x.name || nameOf(x.s, x.id))}</div><div class="w">${nd(x.s) ? "нет данных" : x.s.attributes.device_class === "motion" || x.s.attributes.device_class === "occupancy" ? (x.s.state === "on" ? "есть движение" : "нет движения") : x.s.state === "on" ? "открыто" : "закрыто"}</div></div></div>`)
         .join("")}</div>` : ""}</div></div>`;
@@ -5445,17 +5722,22 @@ ${locks.length || opens.length ? `<div class="lst">${locks
       this.shadowRoot.querySelectorAll("[data-lock]").forEach((el) =>
         el.addEventListener("click", () => {
           const s = st(this._hass, el.dataset.lock);
+          if (!s || nd(s) || !riskTap(this, el.dataset.lock)) return;
           haptic(this);
           call(this._hass, "lock", s.state === "locked" ? "unlock" : "lock", { entity_id: el.dataset.lock });
         }),
       );
-      this.shadowRoot.querySelectorAll("[data-info]").forEach((el) => el.addEventListener("click", () => moreInfo(this, el.dataset.info)));
+      this.shadowRoot.querySelectorAll("[data-info]").forEach((el) => (longPress(el, () => openTile(this, el.dataset.info)), el.addEventListener("click", () => !GST.lp && moreInfo(this, el.dataset.info))));
     }
     getGridOptions() {
       return { columns: 12, rows: "auto" };
     }
   }
 
+  /** Every word a valve's state line can show: drawn as ghosts in one grid cell, so the line is as tall as the longest
+   * one in every state (owner 03.11: nothing jumps when the valve is opened or shut). */
+  const VW = () => ({ nd: LL("нет связи", "no signal"), opening: LL("открывается…", "opening…"), closing: LL("закрывается…", "closing…"), closed: LL("вода перекрыта", "water is off"), open: LL("вода идёт", "water is on") });
+  const VALVE_WORDS = () => Object.values(VW());
   // --- hauflo-leaks: «Защита от протечек» (Н3) — leak sensors + a water valve of ANY integration (Neptun, Aqara, Zigbee…).
   // The owner connects the integration himself; the card only reads and says «всё в порядке» / «протечка: где». It decides
   // nothing: the valve closes (or opens) only by its own button, on a second tap within 4 s. `area` picks every moisture
@@ -5488,11 +5770,11 @@ ${locks.length || opens.length ? `<div class="lst">${locks
     }
     css() {
       return `.k{padding:18px 20px}.big{display:flex;align-items:center;gap:14px;margin-top:8px}.sh{width:56px;height:56px;border-radius:20px;display:grid;place-items:center;flex:0 0 auto;background:color-mix(in srgb,var(--mint) 22%,transparent);color:var(--mintT)}.sh ha-icon{--mdc-icon-size:28px}
-.wet .sh{background:var(--alert);color:#fff;box-shadow:0 0 30px var(--alertGlow)}.nolink .sh{background:var(--track);color:var(--ink2)}.empty .sh{background:var(--track);color:var(--ink3)}
+.wet .sh{background:var(--alert);color:var(--hf-white);box-shadow:0 0 30px var(--alertGlow)}.nolink .sh{background:var(--track);color:var(--ink2)}.empty .sh{background:var(--track);color:var(--ink3)}
 .st{font:300 24px Onest,sans-serif;letter-spacing:-.02em}.wet .st{color:var(--alertT);font-weight:500}.sub{font:400 13px Onest,sans-serif;color:var(--ink2);margin-top:2px}
 .wet .glow{background:radial-gradient(60% 60% at 15% 10%,var(--alertGlow),transparent 70%)}
 .lst{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-top:12px}.it{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:14px;background:var(--track);cursor:pointer;min-width:0}
-.it .rm,.vl2 .rm{font:400 11px/1.3 Onest,sans-serif;color:var(--ink3)}.it .nm{font:500 13px/1.25 Onest,sans-serif;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:break-word}.it .w{font:400 13px Onest,sans-serif;color:var(--ink2)}
+.it .rm,.vl2 .rm{font:400 11px/1.3 Onest,sans-serif;color:var(--ink3)}.it .nm{font:500 13px/1.25 Onest,sans-serif;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:break-word}.it .w{font:400 13px Onest,sans-serif;color:var(--ink2)}.w>.ackx{place-items:start}.vl2 button.vh{visibility:hidden}
 .it.bad{background:color-mix(in srgb,var(--alert) 18%,transparent)}.it.bad .w{color:var(--alertT);font-weight:600}.it.deaf{opacity:.6}
 .vl2{display:flex;align-items:center;gap:10px;margin-top:12px;padding:10px 12px;border-radius:14px;box-shadow:inset 0 0 0 1px var(--hair)}.vl2 .tx{flex:1;min-width:0}
 .vl2 button{height:44px;padding:0 16px;border-radius:14px;font:500 13px Onest,sans-serif;box-shadow:inset 0 0 0 1px var(--line);color:var(--ink);white-space:nowrap}
@@ -5502,10 +5784,11 @@ ${locks.length || opens.length ? `<div class="lst">${locks
     valveWord(s) {
       const closed = s.state === "closed" || s.state === "off";
       const open = s.state === "open" || s.state === "on";
-      if (nd(s)) return [LL("нет связи", "no signal"), "nd"];
-      if (s.state === "opening") return [LL("открывается…", "opening…"), "mv"];
-      if (s.state === "closing") return [LL("закрывается…", "closing…"), "mv"];
-      return closed ? [LL("вода перекрыта", "water is off"), "closed"] : open ? [LL("вода идёт", "water is on"), "open"] : [s.state, "x"];
+      const w = VW();
+      if (nd(s)) return [w.nd, "nd"];
+      if (s.state === "opening") return [w.opening, "mv"];
+      if (s.state === "closing") return [w.closing, "mv"];
+      return closed ? [w.closed, "closed"] : open ? [w.open, "open"] : [s.state, "x"];
     }
     render() {
       const h = this._hass;
@@ -5528,27 +5811,23 @@ ${locks.length || opens.length ? `<div class="lst">${locks
       return `<div class="glass k ${kind}"><div class="glow"></div><div style="position:relative"><span class="caps" data-own>${esc(this._config.title || LL("Защита от протечек", "Leak protection"))}</span>
 <div class="big"><span class="sh"><ha-icon icon="${icon}"></ha-icon></span><div><div class="st" data-own>${esc(word)}</div><div class="sub" data-own>${esc(sub)}</div></div></div>
 ${ss.length ? `<div class="lst">${ss.map((x) => `<div class="it ${x.s.state === "on" ? "bad" : nd(x.s) ? "deaf" : ""}" data-info="${esc(x.id)}"><ha-icon icon="${x.s.state === "on" ? "mdi:water-alert" : "mdi:water-outline"}"></ha-icon><div style="min-width:0"><div class="nm">${esc(name(x))}</div>${roomLine(this._hass, x.id, name(x))}<div class="w" data-own>${nd(x.s) ? LL("нет связи", "no signal") : x.s.state === "on" ? LL("протечка", "leak") : LL("сухо", "dry")}</div></div></div>`).join("")}</div>` : ""}
-${vs.map((x) => { const [w, k] = this.valveWord(x.s); return `<div class="vl2"><ha-icon icon="${k === "closed" ? "mdi:valve-closed" : "mdi:valve-open"}" style="color:var(--${k === "closed" ? "ice" : "mint"})"></ha-icon><div class="tx" data-info="${esc(x.id)}"><div class="nm">${esc(name(x))}</div>${roomLine(this._hass, x.id, name(x))}<div class="w" data-own>${esc(w)}</div></div>${k === "nd" || k === "mv" ? "" : `<button data-valve="${esc(x.id)}" data-k="${k}"><span data-own>${k === "closed" ? LL("Открыть воду", "Open the water") : LL("Перекрыть воду", "Shut off the water")}</span></button>`}</div>`; }).join("")}
+${vs.map((x) => { const [w, k] = this.valveWord(x.s); return `<div class="vl2"><ha-icon icon="${k === "closed" ? "mdi:valve-closed" : "mdi:valve-open"}" style="color:var(--${k === "closed" ? "ice" : "mint"})"></ha-icon><div class="tx" data-info="${esc(x.id)}"><div class="nm">${esc(name(x))}</div>${roomLine(this._hass, x.id, name(x))}<div class="w" data-own><span class="ackx">${[...new Set([w, ...VALVE_WORDS()])].map((v) => `<span${v === w ? "" : ' class="gh" aria-hidden="true"'}>${esc(v)}</span>`).join("")}</span></div></div>${`<button data-valve="${esc(x.id)}" data-k="${k}"${k === "nd" || k === "mv" ? ' class="vh" disabled aria-hidden="true" tabindex="-1"' : ""} data-ask="${esc(`${LL("Точно?", "Sure?")}|${k === "closed" ? LL("Перекрыть воду", "Shut off the water") : LL("Открыть воду", "Open the water")}`)}"><span data-own>${k === "closed" ? LL("Открыть воду", "Open the water") : LL("Перекрыть воду", "Shut off the water")}</span></button>`}</div>`; }).join("")}
 ${!vs.length && ss.length ? `<div class="hint" data-own>${LL("Кран не найден: укажите его в карточке (valves) или отнесите к этой комнате в Home Assistant.", "No valve found: name it in the card (valves) or put it into this area in Home Assistant.")}</div>` : ""}
 </div></div>`;
     }
     bind() {
-      this.shadowRoot.querySelectorAll("[data-info]").forEach((el) => el.addEventListener("click", () => moreInfo(this, el.dataset.info)));
+      this.shadowRoot.querySelectorAll("[data-info]").forEach((el) => (longPress(el, () => openTile(this, el.dataset.info)), el.addEventListener("click", () => !GST.lp && moreInfo(this, el.dataset.info))));
       // Closing the water is by hand only, and on a second tap within 4 s (the first one says so).
       this.shadowRoot.querySelectorAll("button[data-valve]").forEach((b) =>
         b.addEventListener("click", () => {
           const id = b.dataset.valve;
-          const span = b.querySelector("span");
           if (this._armed !== id) {
             this._armed = id;
-            b.classList.add("arm");
-            const was = span.textContent;
-            span.textContent = b.dataset.k === "closed" ? LL("Ещё раз — открыть", "Tap again — open") : LL("Ещё раз — перекрыть", "Tap again — shut off");
+            askShow(b, 1);
             clearTimeout(this._armT);
             this._armT = setTimeout(() => {
               this._armed = null;
-              b.classList.remove("arm");
-              span.textContent = was;
+              askShow(b, 0);
             }, 4000);
             return;
           }
@@ -5584,9 +5863,9 @@ ${!vs.length && ss.length ? `<div class="hint" data-own>${LL("Кран не на
       clearInterval(this._t);
     }
     css() {
-      return `.c{aspect-ratio:16/10;background:#111 center/cover;cursor:pointer}.c::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.35),transparent 35%,transparent 65%,rgba(0,0,0,.5))}
-.l{position:absolute;left:16px;top:14px;z-index:1;color:#fff;font:500 13px Onest,sans-serif;display:flex;align-items:center;gap:8px}.l i{width:8px;height:8px;border-radius:4px;background:#ff3b30;box-shadow:0 0 10px #ff3b30}
-.b{position:absolute;left:16px;bottom:12px;z-index:1;color:rgba(255,255,255,.85);font:400 12px Onest,sans-serif}`;
+      return `.c{aspect-ratio:16/10;background:var(--hf-camera-bg) center/cover;cursor:pointer}.c::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,var(--hf-shade-35),transparent 35%,transparent 65%,var(--hf-shade-50))}
+.l{position:absolute;left:16px;top:14px;z-index:1;color:var(--hf-white);font:500 13px Onest,sans-serif;display:flex;align-items:center;gap:8px}.l i{width:8px;height:8px;border-radius:4px;background:var(--hf-live);box-shadow:0 0 10px var(--hf-live)}
+.b{position:absolute;left:16px;bottom:12px;z-index:1;color:var(--hf-white-85);font:400 12px Onest,sans-serif}`;
     }
     render() {
       const s = st(this._hass, this._config.entity);
@@ -5603,11 +5882,22 @@ ${!vs.length && ss.length ? `<div class="hint" data-own>${LL("Кран не на
   }
 
   // --- hauflo-devices: any other device as a pill — fans, valves, locks, vacuums, humidifiers, boilers…
+  /** A state word we have no word for (another integration's state, a select's option): HA's own translation when HA
+   * speaks the card's language, else the state as it is (step 3: raw «locking», «not_home», «eco» on a Russian card). */
+  const haState = (s) => {
+    const h = AGENT.hass;
+    try {
+      if (h?.formatEntityState && userLang(h) === LANG) return h.formatEntityState(s);
+    } catch (e) {
+      /* an older HA: the state as it is */
+    }
+    return s.state;
+  };
   const DEV = {
     fan: { icon: "hauflo:fan", word: (s) => (s.state === "on" ? (num(s.attributes.percentage) !== undefined ? `${s.attributes.percentage} %` : "вкл") : "выкл"), tap: ["fan", "toggle"] },
-    valve: { icon: "hauflo:valve", word: (s) => ({ open: "открыт", closed: "закрыт", opening: "открывается…", closing: "закрывается…" })[s.state] || s.state, tap: (s) => ["valve", s.state === "open" ? "close_valve" : "open_valve"], on: (s) => s.state === "open" },
-    lock: { icon: "hauflo:lock", word: (s) => (nd(s) ? "нет связи" : ({ locked: "заперт", unlocked: "не заперт", jammed: "заклинило", open: "открыт" })[s.state] || s.state), tap: (s) => ["lock", s.state === "locked" ? "unlock" : "lock"], tone: (s) => (s.state === "jammed" ? "alarm" : s.state === "locked" ? "" : "warn") },
-    vacuum: { icon: "mdi:robot-vacuum", word: (s) => ({ cleaning: "убирает", docked: "на базе", returning: "едет на базу", idle: "ждёт", paused: "пауза", error: "ошибка" })[s.state] || s.state, tap: (s) => ["vacuum", s.state === "cleaning" ? "return_to_base" : "start"], on: (s) => s.state === "cleaning", tone: (s) => (s.state === "error" ? "alarm" : "") },
+    valve: { icon: "hauflo:valve", word: (s) => ({ open: "открыт", closed: "закрыт", opening: "открывается…", closing: "закрывается…" })[s.state] || haState(s), tap: (s) => ["valve", s.state === "open" ? "close_valve" : "open_valve"], on: (s) => s.state === "open" },
+    lock: { icon: "hauflo:lock", word: (s) => (nd(s) ? "нет связи" : ({ locked: "заперт", unlocked: "не заперт", jammed: "заклинило", open: "открыт", locking: "запирается…", unlocking: "отпирается…", opening: "открывается…" })[s.state] || haState(s)), tap: (s) => ["lock", s.state === "locked" ? "unlock" : "lock"], tone: (s) => (s.state === "jammed" ? "alarm" : s.state === "locked" ? "" : "warn") },
+    vacuum: { icon: "mdi:robot-vacuum", word: (s) => ({ cleaning: "убирает", docked: "на базе", returning: "едет на базу", idle: "ждёт", paused: "пауза", error: "ошибка" })[s.state] || haState(s), tap: (s) => ["vacuum", s.state === "cleaning" ? "return_to_base" : "start"], on: (s) => s.state === "cleaning", tone: (s) => (s.state === "error" ? "alarm" : "") },
     humidifier: { icon: "hauflo:humidity", word: (s) => (s.state === "on" ? (num(s.attributes.humidity) !== undefined ? `${fmt(num(s.attributes.humidity))} %` : "вкл") : "выкл"), tap: ["humidifier", "toggle"] },
     water_heater: { icon: "hauflo:boiler", word: (s) => (s.state === "off" ? "выкл" : `${fmt(num(s.attributes.temperature))}°`), tap: null, on: (s) => s.state !== "off" },
     siren: { icon: "hauflo:bell", word: (s) => (s.state === "on" ? "звучит" : "выключена"), tap: ["siren", "toggle"], tone: (s) => (s.state === "on" ? "alarm" : "") },
@@ -5615,16 +5905,17 @@ ${!vs.length && ss.length ? `<div class="hint" data-own>${LL("Кран не на
     // More domains of other integrations (MU): none of them needs a model — the state in words, a tap where the domain has one.
     remote: { icon: "mdi:remote", word: (s) => (s.state === "on" ? "вкл" : "выкл"), tap: ["remote", "toggle"] },
     update: { icon: "mdi:package-up", word: (s) => (s.state === "on" ? "есть обновление" : "актуально"), tap: null, on: (s) => s.state === "on", tone: (s) => (s.state === "on" ? "warn" : "") },
-    lawn_mower: { icon: "mdi:robot-mower", word: (s) => ({ mowing: "косит", docked: "на базе", returning: "едет на базу", paused: "пауза", error: "ошибка" })[s.state] || s.state, tap: (s) => ["lawn_mower", s.state === "mowing" ? "dock" : "start_mowing"], on: (s) => s.state === "mowing", tone: (s) => (s.state === "error" ? "alarm" : "") },
-    select: { icon: "mdi:format-list-bulleted", word: (s) => s.state, tap: null, on: () => false },
-    input_select: { icon: "mdi:format-list-bulleted", word: (s) => s.state, tap: null, on: () => false },
-    text: { icon: "mdi:form-textbox", word: (s) => s.state, tap: null, on: () => false },
-    device_tracker: { icon: "hauflo:user", word: (s) => (s.state === "home" ? "дома" : s.state === "not_home" ? "не дома" : s.state), tap: null, on: (s) => s.state === "home" },
+    lawn_mower: { icon: "mdi:robot-mower", word: (s) => ({ mowing: "косит", docked: "на базе", returning: "едет на базу", paused: "пауза", error: "ошибка" })[s.state] || haState(s), tap: (s) => ["lawn_mower", s.state === "mowing" ? "dock" : "start_mowing"], on: (s) => s.state === "mowing", tone: (s) => (s.state === "error" ? "alarm" : "") },
+    select: { icon: "mdi:format-list-bulleted", word: haState, tap: null, on: () => false },
+    input_select: { icon: "mdi:format-list-bulleted", word: haState, tap: null, on: () => false },
+    text: { icon: "mdi:form-textbox", word: haState, tap: null, on: () => false },
+    device_tracker: { icon: "hauflo:user", word: (s) => (s.state === "home" ? "дома" : s.state === "not_home" ? "не дома" : haState(s)), tap: null, on: (s) => s.state === "home" },
+    person: { icon: "hauflo:user", word: (s) => (s.state === "home" ? "дома" : s.state === "not_home" ? "не дома" : haState(s)), tap: null, on: (s) => s.state === "home" },
     input_boolean: { icon: "hauflo:switch", word: (s) => (s.state === "on" ? "вкл" : "выкл"), tap: ["input_boolean", "toggle"] },
     button: { icon: "mdi:gesture-tap-button", word: (s, name = "") => (/звон|bell/i.test(name) ? "позвонить" : /калит|ворот|двер|замок|gate|door/i.test(name) ? "открыть" : "нажать"), tap: ["button", "press"], on: () => false, action: true },
     binary_sensor: { icon: "hauflo:info", word: (s) => (OPENING.includes(s.attributes.device_class) ? (s.state === "on" ? "открыто" : "закрыто") : s.state === "on" ? "сработал" : "в норме"), tap: null, tone: (s) => (s.state === "on" && ["moisture", "smoke", "gas", "problem", "safety", "carbon_monoxide"].includes(s.attributes.device_class) ? "alarm" : ""), on: (s) => s.state === "on" && !["moisture", "smoke", "gas", "problem", "safety", "carbon_monoxide"].includes(s.attributes.device_class) },
     number: { icon: "hauflo:info", word: (s) => (num(s.state) === undefined ? "нет данных" : `${fmt(num(s.state), num(s.state) % 1 ? 1 : 0)} ${unitOf(s) || (num(s.attributes.max) === 100 && num(s.attributes.min) === 0 ? "%" : "")}`.trim()), tap: null, on: () => false },
-    sensor: { icon: "hauflo:info", word: (s) => (num(s.state) === undefined ? s.state : `${fmt(num(s.state), num(s.state) % 1 ? 1 : 0)} ${unitOf(s)}`.trim()), tap: null, on: () => false, tone: (s) => (s.attributes.device_class === "battery" && num(s.state) !== undefined && num(s.state) < 20 ? "warn" : "") },
+    sensor: { icon: "hauflo:info", word: (s) => (num(s.state) === undefined ? haState(s) : `${fmt(num(s.state), num(s.state) % 1 ? 1 : 0)} ${unitOf(s)}`.trim()), tap: null, on: () => false, tone: (s) => (s.attributes.device_class === "battery" && num(s.state) !== undefined && num(s.state) < 20 ? "warn" : "") },
   };
   // --- hauflo-acs: every AC of the house in one card (persona round 3, Dubai: 14 rooms, «turn off every AC») ---
   // `kind: "floor_heating"` — the same stack for the floor heating (owner 27.10: «тёплые полы так же, стопкой,
@@ -5647,9 +5938,9 @@ ${!vs.length && ss.length ? `<div class="hint" data-own>${LL("Кран не на
     }
     css() {
       return `${TONE_CSS}.k{padding:16px}.hd{display:flex;align-items:center;gap:10px}.hd .caps{flex:1}.sum{font:400 13px Onest,sans-serif;color:var(--ink2);margin-top:2px}
-.off{min-height:40px;padding:0 14px;border-radius:20px;font:500 13px Onest,sans-serif;color:var(--ink2);box-shadow:inset 0 0 0 1px var(--line)}
+button.off{min-height:40px;padding:0 14px;border-radius:20px;font:500 13px Onest,sans-serif;color:var(--ink2);box-shadow:inset 0 0 0 1px var(--line)}
 .rows{margin-top:10px;display:flex;flex-direction:column}.r{display:flex;align-items:center;gap:12px;min-height:52px;border-top:1px solid var(--hair);cursor:pointer}.r:first-child,.fl+.r{border-top:0}
-.r ha-icon{--mdc-icon-size:20px;color:var(--ink3)}.r.toned ha-icon{color:var(--acT)}.r.toned.calm ha-icon{opacity:.8}.r .nm{flex:1;min-width:0;font:500 14px/1.25 Onest,sans-serif;white-space:normal;overflow-wrap:break-word;hyphens:auto}
+.r ha-icon{--mdc-icon-size:20px;color:var(--ink3)}.r.toned ha-icon{color:var(--acT)}.r.toned.calm ha-icon{opacity:.8}.r .nm{flex:1;min-width:0;font:500 14px/1.25 Onest,sans-serif;white-space:normal;overflow-wrap:break-word;hyphens:auto}.r .nm .n{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
 .r .w{font:400 13px Onest,sans-serif;color:var(--ink2);white-space:nowrap}.r .t{display:flex;flex-direction:column;align-items:flex-end;justify-content:center;font:300 22px Onest,sans-serif;min-width:52px;text-align:right}.r .t b{font:300 22px/1.05 Onest,sans-serif}.r .t small{font:400 12px/1.2 Onest,sans-serif;color:var(--ink2);white-space:nowrap}.r.un{opacity:.5}.r .nm small .hot{color:var(--amberT)}.sw::before{content:"";display:inline-block;width:6px;height:6px;border-radius:3px;margin-right:6px;vertical-align:middle;background:var(--ink3)}.sw.heat::before{background:var(--amber)}.sw.cool::before{background:var(--ice)}.sw.idle::before{background:var(--mint)}.sw.dry::before,.sw.fan::before{background:var(--ac,var(--ink3))}.r .nm small .sw.cool.hot{color:var(--acT,var(--ice))}.r .nm small .sw:is(.dry,.fan).hot{color:var(--acT,var(--ink2))}
 .r button.t{min-height:44px;padding:0 6px;margin-right:-6px;border-radius:14px;color:var(--ink);font-variant-numeric:tabular-nums}.r button.t{position:relative}.r button.t.hint::after{content:"±";position:absolute;top:3px;right:-1px;font:500 11px Onest,sans-serif;color:var(--ink3)}.r button.t:hover{background:var(--track)}.r .t.pend{color:var(--acT,var(--ink2))}
 .r .ed{display:flex;align-items:center;gap:2px;margin-right:-6px}.r .ed button{width:44px;height:44px;border-radius:22px;background:var(--track);color:var(--ink);font:400 22px/1 Onest,sans-serif;display:grid;place-items:center}
@@ -5762,7 +6053,7 @@ ${!vs.length && ss.length ? `<div class="hint" data-own>${LL("Кран не на
           : target === undefined || e.s.state === "off" || !sp || frost
             ? `<div class="t"><b>${curTxt}</b>${frost ? `<small>${esc("сейчас")}</small>` : ""}</div>`
             : `<button class="t${pend ? " pend" : ""}${hint ? " hint" : ""}" data-t="${esc(e.entity)}" aria-label="Изменить нужную температуру"><b>${digits(target)}°</b><small>Сейчас ${curTxt}</small></button>`;
-        return `${head}<div class="r ${lit ? "on" : ""}${nw === "idle" ? " idle" : ""}${fault ? " fault" : ""} ${known(e.s) ? "" : "un"}${tcls}" data-i="${esc(e.entity)}"${e.path ? ` data-p="${esc(e.path)}"` : ""}><ha-icon icon="hauflo:${fh ? "floor-heat" : !fh && activeMode(e.s) === "heat" ? "radiator" : "ac"}"></ha-icon><div class="nm">${esc(name)}${sub}</div>${tail}</div>`;
+        return `${head}<div class="r ${lit ? "on" : ""}${nw === "idle" ? " idle" : ""}${fault ? " fault" : ""} ${known(e.s) ? "" : "un"}${tcls}" data-i="${esc(e.entity)}"${e.path ? ` data-p="${esc(e.path)}"` : ""}><ha-icon icon="hauflo:${fh ? "floor-heat" : !fh && activeMode(e.s) === "heat" ? "radiator" : "ac"}"></ha-icon><div class="nm"><span class="n">${esc(name)}</span>${sub}</div>${tail}</div>`;
       });
       // The header says what is going on, not how many have a mode on (Д16): «Греют: 2 · Охлаждают: 1» / «Все ждут» /
       // «Все выключены»; «Включено: N из M» only when nothing says what they do.
@@ -5779,7 +6070,7 @@ ${!vs.length && ss.length ? `<div class="hint" data-own>${LL("Кран не на
             : kinds.includes("idle")
               ? "В норме"
               : "Все выключены";
-      return `<div class="glass k${fh ? " fh" : ""}"><div class="hd"><div><span class="caps">${blockTitle(this, this.defaultTitle(fh, items))}</span><div class="sum">${sum}</div></div>${offable.length ? `<button class="off" data-off="1">${fh ? "Выключить тёплые полы" : "Выключить климат"}</button>` : ""}</div><div class="rows">${rows.join("")}</div></div>`;
+      return `<div class="glass k${fh ? " fh" : ""}"><div class="hd"><div><span class="caps">${blockTitle(this, this.defaultTitle(fh, items))}</span><div class="sum">${sum}</div></div>${offable.length ? `<button class="off" data-off="1" data-ask="Точно? Выключить">${fh ? "Выключить тёплые полы" : "Выключить климат"}</button>` : ""}</div><div class="rows">${rows.join("")}</div></div>`;
     }
     redraw() {
       this._sig = "";
@@ -5822,8 +6113,11 @@ ${!vs.length && ss.length ? `<div class="hint" data-own>${LL("Кран не на
     bind() {
       // A row opens THAT thermostat's control sheet over the page — the card its room shows, «Открыть в комнате» under it
       // (owner 29.10: a zone's row opened the top of its room, the floor heating below the fold). Apple Home's way.
-      this.shadowRoot.querySelectorAll("[data-i]").forEach((r) =>
+      // A hold opens the same sheet (owner 03.11: a hold is always our big control); its ± keep their own press.
+      this.shadowRoot.querySelectorAll("[data-i]").forEach((r) => {
+        longPress(r, () => r.click());
         r.addEventListener("click", (ev) => {
+          if (ev.isTrusted && GST.lp) return;
           if (ev.composedPath().some((n) => n.dataset && (n.dataset.t || n.dataset.ed))) return;
           this.closeEdit();
           const id = r.dataset.i;
@@ -5835,8 +6129,8 @@ ${!vs.length && ss.length ? `<div class="hint" data-own>${LL("Кран не на
           if (row.name) cfg.label = fh && !/пол|floor/i.test(row.name) ? `${LANG === "ru" ? "Тёплый пол" : "Floor heating"} · ${row.name}` : row.name;
           haptic(this);
           openClimateSheet(this, cfg, row.path || found?.view || "");
-        }),
-      );
+        });
+      });
       this.shadowRoot.querySelectorAll("button[data-t]").forEach((b) =>
         b.addEventListener("click", (ev) => {
           ev.stopPropagation();
@@ -5887,18 +6181,9 @@ ${!vs.length && ss.length ? `<div class="hint" data-own>${LL("Кран не на
       this.shadowRoot.querySelector("[data-off]")?.addEventListener("click", (ev) => {
         const ob = ev.currentTarget;
         if (ob.dataset.arm !== "1") {
-          ob.dataset.arm = "1";
-          ob.dataset.lbl = ob.textContent;
-          ob.textContent = tr("Точно? Выключить");
-          ob.classList.add("arm");
+          askShow(ob, 1);
           clearTimeout(this._armT);
-          this._armT = setTimeout(() => {
-            if (ob.isConnected && ob.dataset.arm === "1") {
-              ob.dataset.arm = "";
-              ob.textContent = ob.dataset.lbl;
-              ob.classList.remove("arm");
-            }
-          }, 4000);
+          this._armT = setTimeout(() => ob.isConnected && ob.dataset.arm === "1" && askShow(ob, 0), 4000);
           return;
         }
         ob.dataset.arm = "";
@@ -5928,25 +6213,21 @@ ${!vs.length && ss.length ? `<div class="hint" data-own>${LL("Кран не на
 .p.alarm{background:color-mix(in srgb,var(--alert) 16%,transparent);box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--alert) 55%,transparent)}.p.alarm ha-icon,.p.alarm .w{color:var(--alertT);font-weight:600}.p:active{transform:scale(.97)}.un{opacity:.45}`;
     }
     render() {
-      // What needs attention first: alarm → warning → working → resting (designer review 25.10); the list order otherwise.
-      const rank = (e) => {
-        const d = DEV[e.entity.split(".")[0]] || {};
-        const tone = d.tone ? d.tone(e.s) : "";
-        return tone === "alarm" ? 0 : tone === "warn" ? 1 : (d.on ? d.on(e.s) : e.s.state === "on") ? 2 : 3;
-      };
-      const items = (this._config.entities || []).map((e) => (typeof e === "string" ? { entity: e } : e)).map((e, i) => ({ ...e, s: st(this._hass, e.entity), i })).filter((e) => e.s).sort((a, b) => (orderHas(this) ? 0 : rank(a) - rank(b)) || a.i - b.i); // the house's own order wins
+      // The list's own order, always (step 3: sorting by state — alarm → warning → on → rest, designer review 25.10 — moved a
+      // tile 74 px under the finger when a device changed; the tile's colour already says what needs attention).
+      const items = (this._config.entities || []).map((e) => (typeof e === "string" ? { entity: e } : e)).map((e) => ({ ...e, s: st(this._hass, e.entity) })).filter((e) => e.s);
       this.hideCard(!items.length);
       if (!items.length) return "";
       return `<div class="glass k">${this._config.title ? `<span class="caps">${esc(this._config.title)}</span>` : ""}<div class="grid">${items
         .map((e) => {
-          const d = DEV[e.entity.split(".")[0]] || { icon: "hauflo:info", word: (s) => s.state, tap: null };
+          const d = DEV[e.entity.split(".")[0]] || { icon: "hauflo:info", word: haState, tap: null };
           const tone = d.tone ? d.tone(e.s) : "";
           const on = !tone && (d.on ? d.on(e.s) : e.s.state === "on");
           // A button / scene / script has no on-off state: «unknown» = never pressed yet, not offline (owner 28.10:
           // damper presets read «нет связи» until pressed). Only «unavailable» is offline; a press flashes «отправлено».
           const un = d.action ? e.s.state === "unavailable" : nd(e.s);
           const sent = d.action && (this._sent?.[e.entity] || 0) > Date.now();
-          return `<div class="p ${on ? "on" : ""} ${tone} ${d.action ? "act" : ""} ${sent ? "sent" : ""} ${un ? "un" : ""}" data-e="${esc(e.entity)}"><ha-icon icon="${esc(e.icon || (/звон|bell/i.test(e.name || nameOf(e.s, e.entity)) ? "hauflo:doorbell" : sent ? "hauflo:check" : d.icon))}"></ha-icon><div class="tx"><div class="nm">${esc(e.name || nameOf(e.s, e.entity))}</div><div class="w">${esc(un ? "нет связи" : sent ? "отправлено" : d.word(e.s, e.name || nameOf(e.s, e.entity)))}</div></div></div>`;
+          return `<div class="p ${on ? "on" : ""} ${tone} ${d.action ? "act" : ""} ${sent ? "sent" : ""} ${un ? "un" : ""}" data-e="${esc(e.entity)}"><ha-icon icon="${esc(e.icon || (/звон|bell/i.test(e.name || nameOf(e.s, e.entity)) ? "hauflo:doorbell" : sent ? "hauflo:check" : d.icon))}"></ha-icon><div class="tx"><div class="nm">${esc(e.name || nameOf(e.s, e.entity))}</div><div class="w">${esc(riskWord(this, e.entity) || (un ? "нет связи" : d.word(e.s, e.name || nameOf(e.s, e.entity))))}</div></div></div>`;
         })
         .join("")}</div></div>`;
     }
@@ -5961,7 +6242,7 @@ ${!vs.length && ss.length ? `<div class="hint" data-own>${LL("Кран не на
           at = [ev.clientX, ev.clientY];
           t = setTimeout(() => {
             held = true;
-            moreInfo(this, id);
+            openTile(this, id);
           }, 500);
         });
         el.addEventListener("pointermove", (ev) => at && Math.hypot(ev.clientX - at[0], ev.clientY - at[1]) > 8 && (clearTimeout(t), (at = null)));
@@ -5973,7 +6254,7 @@ ${!vs.length && ss.length ? `<div class="hint" data-own>${LL("Кран не на
           clearTimeout(t);
           at = null;
           held = true;
-          moreInfo(this, id);
+          openTile(this, id);
         });
         el.addEventListener("pointerup", () => {
           clearTimeout(t);
@@ -5984,10 +6265,12 @@ ${!vs.length && ss.length ? `<div class="hint" data-own>${LL("Кран не на
           const d = DEV[id.split(".")[0]];
           const tap = d && (typeof d.tap === "function" ? d.tap(s) : d.tap);
           if (!tap) return moreInfo(this, id);
+          if (!riskTap(this, id)) return;
           haptic(this);
           call(this._hass, tap[0], tap[1], { entity_id: id });
           if (d.action) {
             (this._sent ??= {})[id] = Date.now() + 1500;
+            announce(`${tr("Отправлено")}: ${nameOf(s, id)}`);
             this._sig = "";
             this._update();
             setTimeout(() => ((this._sig = ""), this._update()), 1600);
@@ -6028,14 +6311,14 @@ ${!vs.length && ss.length ? `<div class="hint" data-own>${LL("Кран не на
   // (owner 2026-10-25: «Вилла Юг · тёмная» had a light header).
   (() => {
     const HEAD = {
-      dark: ".header,.toolbar{background:#08090A!important;color:#F4F2EE!important}ha-tab-group,ha-tab-group-tab,ha-icon-button,ha-menu-button{color:#F4F2EE!important;--primary-text-color:#F4F2EE;--secondary-text-color:rgba(244,242,238,.64)}",
-      light: ".header,.toolbar{background:#EFECE6!important;color:#121212!important}ha-tab-group,ha-tab-group-tab,ha-icon-button,ha-menu-button{color:#121212!important;--primary-text-color:#121212;--secondary-text-color:rgba(18,18,18,.64)}",
+      dark: ".header,.toolbar{background:var(--hf-head-dark-bg)!important;color:var(--hf-head-dark-ink)!important}ha-tab-group,ha-tab-group-tab,ha-icon-button,ha-menu-button{color:var(--hf-head-dark-ink)!important;--primary-text-color:var(--hf-head-dark-ink);--secondary-text-color:var(--hf-head-dark-ink2)}",
+      light: ".header,.toolbar{background:var(--hf-head-light-bg)!important;color:var(--hf-head-light-ink)!important}ha-tab-group,ha-tab-group-tab,ha-icon-button,ha-menu-button{color:var(--hf-head-light-ink)!important;--primary-text-color:var(--hf-head-light-ink);--secondary-text-color:var(--hf-head-light-ink2)}",
     };
     // The floor tabs in Atelier's type: quiet, the active one ink with a short warm mark (owner 2026-10-25: «меню
     // переключений не в тему»). Only on dashboards whose theme is Atelier.
     const TABS = `ha-tab-group-tab{font:500 15px Onest,var(--ha-font-family-body),sans-serif!important;letter-spacing:-.01em;color:var(--eh-ink2,var(--secondary-text-color))!important;position:relative}
 ha-tab-group-tab[active]{color:var(--eh-ink,var(--primary-text-color))!important}
-ha-tab-group-tab[active]::after{content:"";position:absolute;left:50%;bottom:7px;width:18px;height:3px;border-radius:2px;background:var(--eh-amber,#E8901F);transform:translateX(-50%);box-shadow:0 0 10px var(--eh-amber-glow,transparent)}
+ha-tab-group-tab[active]::after{content:"";position:absolute;left:50%;bottom:7px;width:18px;height:3px;border-radius:2px;background:var(--hf-amber);transform:translateX(-50%);box-shadow:0 0 10px var(--eh-amber-glow,transparent)}
 ha-tab-group{--ha-tab-indicator-color:transparent;--ha-tab-track-color:transparent;--wa-color-neutral-on-quiet:var(--eh-ink,var(--primary-text-color))!important}
 ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--primary-text-color))!important}`;
     setInterval(() => {
@@ -6063,9 +6346,9 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
           sb.appendChild(se);
         }
         const side = mode === "dark"
-          ? ":host{--sidebar-background-color:#08090A;--sidebar-text-color:#F4F2EE;--sidebar-icon-color:rgba(244,242,238,.64);--sidebar-selected-text-color:#F4F2EE;--sidebar-selected-icon-color:#F4F2EE;--primary-text-color:#F4F2EE;--secondary-text-color:rgba(244,242,238,.64);--divider-color:rgba(255,255,255,.08);background:#08090A!important;color:#F4F2EE}"
+          ? ":host{--sidebar-background-color:var(--hf-head-dark-bg);--sidebar-text-color:var(--hf-head-dark-ink);--sidebar-icon-color:var(--hf-head-dark-ink2);--sidebar-selected-text-color:var(--hf-head-dark-ink);--sidebar-selected-icon-color:var(--hf-head-dark-ink);--primary-text-color:var(--hf-head-dark-ink);--secondary-text-color:var(--hf-head-dark-ink2);--divider-color:var(--hf-white-08);background:var(--hf-head-dark-bg)!important;color:var(--hf-head-dark-ink)}"
           : mode === "light"
-            ? ":host{--sidebar-background-color:#EFECE6;--sidebar-text-color:#121212;--sidebar-icon-color:rgba(18,18,18,.64);--sidebar-selected-text-color:#121212;--sidebar-selected-icon-color:#121212;background:#EFECE6!important}"
+            ? ":host{--sidebar-background-color:var(--hf-head-light-bg);--sidebar-text-color:var(--hf-head-light-ink);--sidebar-icon-color:var(--hf-head-light-ink2);--sidebar-selected-text-color:var(--hf-head-light-ink);--sidebar-selected-icon-color:var(--hf-head-light-ink);background:var(--hf-head-light-bg)!important}"
             : "";
         if (se.textContent !== side) se.textContent = side;
       }
@@ -6077,7 +6360,7 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
       // the tab's inner label takes HA's own hover colour (black under a light user theme on a dark board — owner 03.11):
       // it follows the tab's colour set here instead, in every state
       const part = atelier || mode ? "ha-tab-group-tab::part(base),ha-tab-group-tab:hover::part(base),ha-tab-group-tab:focus-visible::part(base){color:inherit!important}" : "";
-      const css = hf + part + (atelier ? TABS : "") + (mode ? HEAD[mode].replace("ha-tab-group,ha-tab-group-tab,", "") + (mode === "dark" ? "ha-tab-group{--wa-color-neutral-on-quiet:#F4F2EE!important}ha-tab-group-tab{color:rgba(244,242,238,.64)!important}ha-tab-group-tab[active],ha-tab-group-tab:hover{color:#F4F2EE!important}" : "ha-tab-group{--wa-color-neutral-on-quiet:#121212!important}ha-tab-group-tab{color:rgba(18,18,18,.64)!important}ha-tab-group-tab[active],ha-tab-group-tab:hover{color:#121212!important}") : "");
+      const css = hf + part + (atelier ? TABS : "") + (mode ? HEAD[mode].replace("ha-tab-group,ha-tab-group-tab,", "") + (mode === "dark" ? "ha-tab-group{--wa-color-neutral-on-quiet:var(--hf-head-dark-ink)!important}ha-tab-group-tab{color:var(--hf-head-dark-ink2)!important}ha-tab-group-tab[active],ha-tab-group-tab:hover{color:var(--hf-head-dark-ink)!important}" : "ha-tab-group{--wa-color-neutral-on-quiet:var(--hf-head-light-ink)!important}ha-tab-group-tab{color:var(--hf-head-light-ink2)!important}ha-tab-group-tab[active],ha-tab-group-tab:hover{color:var(--hf-head-light-ink)!important}") : "");
       if (el.textContent !== css) el.textContent = css;
     }, 400);
   })();
@@ -6088,7 +6371,7 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
   const AUTO = (() => {
     const W = {
       ru: {
-        title: "Автоматизации", close: "Закрыть", svc: "Обслуживает дом", ro: "Детский профиль: настройки дома меняют взрослые. Свет, шторы и температура — ваши.",
+        title: "Автоматизации", close: "Закрыть", ro: "Детский профиль: настройки дома меняют взрослые. Свет, шторы и температура — ваши.",
         sub: "Шторы и свет сами — по солнцу, по времени, по будильнику. Работают в Home Assistant дома, даже без интернета.",
         upcoming: "Дальше",
         sunLine: (r, s) => `Следующий рассвет — ${r}, закат — ${s}.`,
@@ -6245,7 +6528,7 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
         },
       },
       en: {
-        title: "Automations", close: "Close", svc: "Looks after the house", ro: "Child profile: the home's settings are changed by the adults. Lights, blinds and temperature are yours.",
+        title: "Automations", close: "Close", ro: "Child profile: the home's settings are changed by the adults. Lights, blinds and temperature are yours.",
         sub: "Blinds and lights by themselves — by the sun, by the clock, by your alarm. They run in Home Assistant at home, even offline.",
         upcoming: "Next",
         sunLine: (r, s) => `Next sunrise — ${r}, sunset — ${s}.`,
@@ -6442,83 +6725,83 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
       }
     })();
     const HALL = /коридор|холл|прихож|hall|corridor|entrance|lobby/i;
-    const CSS3 = `.svcl{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;margin:-6px 0 14px;font:400 14px/1.4 Onest,sans-serif;color:var(--eh-ink2,var(--secondary-text-color))}.svcl ha-icon{--mdc-icon-size:18px;color:var(--eh-mint-text,#1F7A57)}.svcl a{color:var(--eh-ink,var(--primary-text-color));font-weight:600;text-decoration:none;min-height:32px;display:inline-flex;align-items:center}
+    const CSS3 = `.ackx{display:inline-grid;place-items:center}.ackx>*{grid-area:1/1}.ask>:not(.cur){visibility:hidden}
 :host{display:block;font-family:Onest,var(--ha-font-family-body),system-ui,sans-serif;color:var(--eh-ink,var(--primary-text-color));-webkit-tap-highlight-color:transparent}
 *{box-sizing:border-box}
 .pg{max-width:760px;margin:0 auto;padding:8px 12px 40px}
 .map.dk img{filter:invert(1) hue-rotate(180deg) brightness(.85) contrast(.9)}
 h1{font:600 26px/1.15 Onest,sans-serif;letter-spacing:-.02em;margin:6px 0 4px}h2{font:600 18px/1.2 Onest,sans-serif;margin:0}
 .sub,.hint,.muted{font:400 13px/1.45 Onest,sans-serif;color:var(--eh-ink2,var(--secondary-text-color))}.sub{margin:0 0 14px}
-.box{background:var(--eh-glass,var(--ha-card-background,var(--card-background-color,#fff)));box-shadow:var(--eh-edge,none),var(--eh-deep,var(--ha-card-box-shadow,0 1px 3px rgba(0,0,0,.12)));border-radius:24px;padding:16px;margin:0 0 14px}
+.box{background:var(--hf-glass);box-shadow:var(--eh-edge,none),var(--eh-deep,var(--ha-card-box-shadow,0 1px 3px var(--hf-shade-12)));border-radius:24px;padding:16px;margin:0 0 14px}
 .caps{font:500 11px/1.2 Onest,sans-serif;letter-spacing:.14em;text-transform:uppercase;color:var(--eh-ink2,var(--secondary-text-color));margin:0 0 10px}
-.sunl{display:flex;gap:10px;align-items:flex-start;font:500 14px/1.4 Onest,sans-serif;margin:0 0 10px}.sunl ha-icon{color:var(--eh-amber,#E8901F);flex:none}
-.tl{list-style:none;margin:0;padding:0}.tl li{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;padding:10px 0;border-top:1px solid var(--eh-hair,var(--divider-color,rgba(127,127,127,.2)))}
+.sunl{display:flex;gap:10px;align-items:flex-start;font:500 14px/1.4 Onest,sans-serif;margin:0 0 10px}.sunl ha-icon{color:var(--hf-amber);flex:none}
+.tl{list-style:none;margin:0;padding:0}.tl li{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;padding:10px 0;border-top:1px solid var(--hf-hair)}
 .tl .rel{font:600 15px/1.3 Onest,sans-serif;white-space:nowrap;font-variant-numeric:tabular-nums}.tl .txt{font:400 14px/1.4 Onest,sans-serif;min-width:0}.tl .abs{color:var(--eh-ink2,var(--secondary-text-color))}
 .tl li.dis{opacity:.5}.tl li.dis .rel{font-weight:500}
 @container (max-width:520px){.tl li{grid-template-columns:1fr}}
 .pg{container-type:inline-size}
 .sg{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
-.card{display:flex;flex-direction:column;gap:6px;padding:14px;border-radius:20px;background:var(--eh-track,rgba(127,127,127,.1));min-height:112px}
+.card{display:flex;flex-direction:column;gap:6px;padding:14px;border-radius:20px;background:var(--hf-track-10);min-height:112px}
 .card b{font:600 15px/1.3 Onest,sans-serif}.card .muted{flex:1}
-.btn{font:500 14px Onest,sans-serif;color:inherit;border:0;border-radius:14px;min-height:44px;padding:8px 16px;background:var(--eh-track,rgba(127,127,127,.14));cursor:pointer}
-.btn.pri{background:var(--eh-ink,var(--primary-color));color:var(--card-background-color,#fff)}.btn.sm{min-height:44px;padding:6px 14px;font-size:13px;border-radius:12px;align-self:flex-start}
-.btn.dan{color:var(--eh-alert-text,var(--eh-alert,#B3261E))}.btn:disabled{opacity:.5;cursor:default}
+.btn{font:500 14px Onest,sans-serif;color:inherit;border:0;border-radius:14px;min-height:44px;padding:8px 16px;background:var(--hf-track-14);cursor:pointer}
+.btn.pri{background:var(--eh-ink,var(--primary-color));color:var(--hf-card-bg)}.btn.sm{min-height:44px;padding:6px 14px;font-size:13px;border-radius:12px;align-self:flex-start}
+.btn.dan{color:var(--hf-alert-text)}.btn:disabled{opacity:.5;cursor:default}
 .lnk{font:500 14px Onest,sans-serif;color:var(--eh-ink,var(--primary-color));background:none;border:0;padding:8px 0;cursor:pointer;text-decoration:underline;text-underline-offset:3px;min-height:44px}
-.rl{list-style:none;margin:0;padding:0}.rl li{display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px solid var(--eh-hair,var(--divider-color,rgba(127,127,127,.2)))}
-.rl li:first-child{border-top:0}.rl .ic{width:40px;height:40px;border-radius:20px;display:grid;place-items:center;background:var(--eh-track,rgba(127,127,127,.12));flex:none}
+.rl{list-style:none;margin:0;padding:0}.rl li{display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px solid var(--hf-hair)}
+.rl li:first-child{border-top:0}.rl .ic{width:40px;height:40px;border-radius:20px;display:grid;place-items:center;background:var(--hf-track);flex:none}
 .rl .bd{flex:1;min-width:0;text-align:left;background:none;border:0;color:inherit;padding:0;cursor:pointer;font:inherit}.rl .nm{font:600 15px/1.3 Onest,sans-serif}.rl .ds{font:400 13px/1.4 Onest,sans-serif;color:var(--eh-ink2,var(--secondary-text-color));overflow-wrap:break-word;hyphens:auto}
 .rl li.dis .bd{opacity:.55}
-.sw{position:relative;width:52px;height:44px;border-radius:16px;border:0;background:none;cursor:pointer;flex:none}.sw::before{content:"";position:absolute;left:0;top:6px;width:52px;height:32px;border-radius:16px;background:var(--eh-line-strong,rgba(127,127,127,.5));transition:background .2s}.sw::after{content:"";position:absolute;top:10px;left:4px;width:24px;height:24px;border-radius:12px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .2s}
-.sw[aria-checked="true"]::before{background:var(--eh-mint,#2FB383)}.sw[aria-checked="true"]::after{left:24px}
-.seg{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:4px;padding:4px;border-radius:16px;background:var(--eh-track,rgba(127,127,127,.12))}
+.sw{position:relative;width:52px;height:44px;border-radius:16px;border:0;background:none;cursor:pointer;flex:none}.sw::before{content:"";position:absolute;left:0;top:6px;width:52px;height:32px;border-radius:16px;background:var(--hf-line-strong);transition:background .2s}.sw::after{content:"";position:absolute;top:10px;left:4px;width:24px;height:24px;border-radius:12px;background:var(--hf-white);box-shadow:0 1px 3px var(--hf-shade-30);transition:left .2s}
+.sw[aria-checked="true"]::before{background:var(--hf-mint-3)}.sw[aria-checked="true"]::after{left:24px}
+.seg{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:4px;padding:4px;border-radius:16px;background:var(--hf-track)}
 .seg button{font:500 14px Onest,sans-serif;color:inherit;border:0;border-radius:12px;min-height:44px;padding:6px 4px;background:none;cursor:pointer}
-.seg button[aria-pressed="true"]{background:var(--card-background-color,#fff);box-shadow:0 1px 3px rgba(0,0,0,.18);font-weight:600}
+.seg button[aria-pressed="true"]{background:var(--hf-card-bg);box-shadow:0 1px 3px var(--hf-shade-18);font-weight:600}
 .fld{margin:16px 0 0}.fld>.caps{margin-bottom:8px}
-.step{display:flex;align-items:center;gap:10px}.step button{width:44px;height:44px;border-radius:22px;border:0;background:var(--eh-track,rgba(127,127,127,.14));color:inherit;font:500 20px Onest,sans-serif;cursor:pointer;flex:none}
+.step{display:flex;align-items:center;gap:10px}.step button{width:44px;height:44px;border-radius:22px;border:0;background:var(--hf-track-14);color:inherit;font:500 20px Onest,sans-serif;cursor:pointer;flex:none}
 .step span{flex:1;text-align:center;font:500 15px/1.3 Onest,sans-serif}
-.chips{display:flex;flex-wrap:wrap;gap:6px}.chips button{min-width:44px;min-height:44px;border-radius:20px;border:0;background:var(--eh-track,rgba(127,127,127,.12));color:inherit;font:500 14px Onest,sans-serif;cursor:pointer;padding:0 12px}
-.chips button[aria-pressed="true"]{background:var(--eh-ink,var(--primary-color));color:var(--card-background-color,#fff)}
-.act{padding:12px;border-radius:18px;background:var(--eh-track,rgba(127,127,127,.08));margin:0 0 8px;display:grid;gap:8px}.act .top{display:flex;align-items:center;gap:8px}.act .top b{flex:1;font:600 14px/1.3 Onest,sans-serif;min-width:0}
+.chips{display:flex;flex-wrap:wrap;gap:6px}.chips button{min-width:44px;min-height:44px;border-radius:20px;border:0;background:var(--hf-track);color:inherit;font:500 14px Onest,sans-serif;cursor:pointer;padding:0 12px}
+.chips button[aria-pressed="true"]{background:var(--eh-ink,var(--primary-color));color:var(--hf-card-bg)}
+.act{padding:12px;border-radius:18px;background:var(--hf-track-08);margin:0 0 8px;display:grid;gap:8px}.act .top{display:flex;align-items:center;gap:8px}.act .top b{flex:1;font:600 14px/1.3 Onest,sans-serif;min-width:0}
 .x{width:44px;height:44px;border-radius:22px;border:0;background:none;color:inherit;font-size:20px;cursor:pointer;flex:none;display:grid;place-items:center}.x ha-icon{--mdc-icon-size:22px}
-input::placeholder{color:var(--eh-ink3,#757575);opacity:1;font-weight:400}
-select,input{font:400 15px Onest,sans-serif;color:inherit;background:var(--card-background-color,#fff);border:1px solid var(--eh-line-strong,var(--divider-color,rgba(127,127,127,.5)));border-radius:12px;min-height:44px;padding:8px 12px;width:100%;max-width:100%}
+input::placeholder{color:var(--hf-ink3);opacity:1;font-weight:400}
+select,input{font:400 15px Onest,sans-serif;color:inherit;background:var(--hf-card-bg);border:1px solid var(--hf-line-strong-50);border-radius:12px;min-height:44px;padding:8px 12px;width:100%;max-width:100%}
 input[type=time]{width:auto;min-width:140px}
 .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.row.end{justify-content:flex-end}.grow{flex:1}
 .fld.tm{display:flex;align-items:center;gap:6px}.fld.tm select{width:auto;min-width:76px;font:500 20px Onest,sans-serif;text-align:center}.fld.tm b{font:500 20px Onest,sans-serif}
-.msg{font:500 14px/1.4 Onest,sans-serif;margin:10px 0 0}.msg.bad{color:var(--eh-alert-text,var(--eh-alert,#B3261E))}.msg.ok{color:var(--eh-mint-text,var(--eh-ink,inherit))}.msg.warn{padding:10px 12px;border-radius:14px;background:color-mix(in srgb,var(--eh-amber,#E8901F) 12%,transparent)}
-.ask{margin:12px 0 0;padding:12px;border-radius:16px;background:color-mix(in srgb,var(--eh-amber,#E8901F) 14%,transparent)}
-.map{position:relative;height:180px;border-radius:18px;overflow:hidden;margin:10px 0;background:var(--eh-track,rgba(127,127,127,.12))}.map img{position:absolute;width:256px;height:256px;max-width:none}
-.pin{position:absolute;left:50%;top:50%;width:22px;height:22px;margin:-22px 0 0 -11px;border-radius:11px 11px 11px 0;transform:rotate(-45deg);background:var(--eh-alert,#E5484D);box-shadow:0 2px 6px rgba(0,0,0,.4)}
-.attr{position:absolute;right:6px;bottom:4px;font:400 10px Onest,sans-serif;background:rgba(255,255,255,.7);color:#333;padding:1px 4px;border-radius:4px}
-ol{margin:6px 0 0;padding:0 0 0 20px;font:400 14px/1.5 Onest,sans-serif}ol li{margin:4px 0}code{font:500 14px ui-monospace,monospace;background:var(--eh-track,rgba(127,127,127,.14));padding:2px 6px;border-radius:6px;overflow-wrap:break-word;hyphens:auto}
+.msg{font:500 14px/1.4 Onest,sans-serif;margin:10px 0 0}.msg.bad{color:var(--hf-alert-text)}.msg.ok{color:var(--eh-mint-text,var(--eh-ink,inherit))}.msg.warn{padding:10px 12px;border-radius:14px;background:color-mix(in srgb,var(--hf-amber) 12%,transparent)}
+.ask{margin:12px 0 0;padding:12px;border-radius:16px;background:color-mix(in srgb,var(--hf-amber) 14%,transparent)}
+.map{position:relative;height:180px;border-radius:18px;overflow:hidden;margin:10px 0;background:var(--hf-track)}.map img{position:absolute;width:256px;height:256px;max-width:none}
+.pin{position:absolute;left:50%;top:50%;width:22px;height:22px;margin:-22px 0 0 -11px;border-radius:11px 11px 11px 0;transform:rotate(-45deg);background:var(--hf-alert-2);box-shadow:0 2px 6px var(--hf-shade-40)}
+.attr{position:absolute;right:6px;bottom:4px;font:400 10px Onest,sans-serif;background:var(--hf-white-70);color:var(--hf-chip-ink);padding:1px 4px;border-radius:4px}
+ol{margin:6px 0 0;padding:0 0 0 20px;font:400 14px/1.5 Onest,sans-serif}ol li{margin:4px 0}code{font:500 14px ui-monospace,monospace;background:var(--hf-track-14);padding:2px 6px;border-radius:6px;overflow-wrap:break-word;hyphens:auto}
 .hd{display:flex;align-items:center;gap:8px;margin:0 0 6px}.hd h2{flex:1}
 ol.steps{list-style:none;padding:0;margin:8px 0 10px;display:grid;gap:10px}ol.steps li{display:flex;gap:12px;align-items:flex-start;margin:0}
-.sti{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;flex:none;background:var(--eh-track,rgba(127,127,127,.12));color:var(--eh-ink,var(--primary-text-color))}
+.sti{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;flex:none;background:var(--hf-track);color:var(--eh-ink,var(--primary-text-color))}
 .stt{font:400 14px/1.45 Onest,sans-serif;min-width:0}.stt .row{margin-top:6px}
 .rl li.bye{animation:eh-bye .38s ease forwards;overflow:hidden}@keyframes eh-bye{from{max-height:120px;opacity:1}to{max-height:0;opacity:0;padding-top:0;padding-bottom:0;border-top-width:0}}
 .alt{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0 0}.alt input{flex:1;min-width:180px}
-.hits{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:6px}.hits button{width:100%;text-align:left;font:400 14px/1.35 Onest,sans-serif;color:inherit;border:0;border-radius:12px;min-height:44px;padding:8px 12px;background:var(--eh-track,rgba(127,127,127,.1));cursor:pointer}
+.hits{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:6px}.hits button{width:100%;text-align:left;font:400 14px/1.35 Onest,sans-serif;color:inherit;border:0;border-radius:12px;min-height:44px;padding:8px 12px;background:var(--hf-track-10);cursor:pointer}
 details.man{margin:12px 0 0}details.man summary{font:500 14px Onest,sans-serif;cursor:pointer;min-height:44px;display:flex;align-items:center;color:var(--eh-ink2,var(--secondary-text-color))}
-.pres .hd{gap:12px}.pres .pic{width:40px;height:40px;border-radius:20px;display:grid;place-items:center;background:var(--eh-track,rgba(127,127,127,.12));flex:none}
-.pres.on .pic{background:color-mix(in srgb,var(--eh-amber,#E8901F) 22%,transparent);color:var(--eh-amber,#E8901F)}.pres .sub{margin:4px 0 8px}
-.tn{font:400 14px/1.5 Onest,sans-serif;margin:10px 0 0;padding:10px 12px;border-radius:14px;background:color-mix(in srgb,var(--eh-amber,#E8901F) 12%,transparent)}
-.pres .chips button:disabled{opacity:.45;cursor:default}
-.dt{position:relative;display:inline-flex;align-items:center;gap:8px;min-height:44px;min-width:170px;padding:0 14px;border-radius:14px;box-shadow:inset 0 0 0 1px var(--divider-color,rgba(127,127,127,.35));font:500 14px Onest,sans-serif;cursor:pointer}.dt span{flex:1}.dt ha-icon{--mdc-icon-size:20px;opacity:.7}.dt.off{opacity:.5;cursor:default}
+.pres .hd{gap:12px}.pres .pic{width:40px;height:40px;border-radius:20px;display:grid;place-items:center;background:var(--hf-track);flex:none}
+.pres.on .pic{background:color-mix(in srgb,var(--hf-amber) 22%,transparent);color:var(--hf-amber)}.pres .sub{margin:4px 0 8px}
+.tn{font:400 14px/1.5 Onest,sans-serif;margin:10px 0 0;padding:10px 12px;border-radius:14px;background:color-mix(in srgb,var(--hf-amber) 12%,transparent)}
+.pres .chips button:disabled{opacity:.45;cursor:default}.pres .chips button[aria-pressed="true"]:disabled{opacity:.75}
+.dt{position:relative;display:inline-flex;align-items:center;gap:8px;min-height:44px;min-width:170px;padding:0 14px;border-radius:14px;box-shadow:inset 0 0 0 1px var(--hf-divider-35);font:500 14px Onest,sans-serif;cursor:pointer}.dt span{flex:1}.dt ha-icon{--mdc-icon-size:20px;opacity:.7}.dt.off{opacity:.5;cursor:default}
 .dt input[type=date]{position:absolute;inset:0;width:100%;height:100%;min-width:0;opacity:0;cursor:pointer;border:0;padding:0}
-.pres.pp .sw[aria-checked="true"]::before{background:var(--eh-amber,#E8901F)}
-.pwarn{display:flex;flex-direction:column;align-items:flex-start;gap:6px;margin:8px 0 10px;padding:10px 12px;border-radius:14px;background:color-mix(in srgb,var(--eh-amber,#E8901F) 14%,transparent);box-shadow:inset 3px 0 0 var(--eh-amber,#E8901F)}
-.pwarn b{font:600 14px/1.35 Onest,sans-serif;color:color-mix(in srgb,var(--eh-amber,#E8901F) 70%,var(--eh-ink,var(--primary-text-color)))}.pwarn span{font:400 14px/1.45 Onest,sans-serif}
-.opt{font:500 13px Onest,sans-serif;min-height:44px;padding:0 14px;border-radius:12px;border:0;cursor:pointer;color:inherit;background:transparent;box-shadow:inset 0 0 0 1px var(--eh-hair,var(--divider-color,rgba(127,127,127,.35)))}
-.opt[aria-pressed="true"]{background:var(--eh-ink,var(--primary-color));color:var(--card-background-color,#fff);box-shadow:none}
+.pres.pp .sw[aria-checked="true"]::before{background:var(--hf-amber)}
+.pwarn{display:flex;flex-direction:column;align-items:flex-start;gap:6px;margin:8px 0 10px;padding:10px 12px;border-radius:14px;background:color-mix(in srgb,var(--hf-amber) 14%,transparent);box-shadow:inset 3px 0 0 var(--hf-amber)}
+.pwarn b{font:600 14px/1.35 Onest,sans-serif;color:color-mix(in srgb,var(--hf-amber) 70%,var(--eh-ink,var(--primary-text-color)))}.pwarn span{font:400 14px/1.45 Onest,sans-serif}
+.opt{font:500 13px Onest,sans-serif;min-height:44px;padding:0 14px;border-radius:12px;border:0;cursor:pointer;color:inherit;background:transparent;box-shadow:inset 0 0 0 1px var(--hf-hair-35)}
+.opt[aria-pressed="true"]{background:var(--eh-ink,var(--primary-color));color:var(--hf-card-bg);box-shadow:none}
 .tl.pl li{grid-template-columns:auto 1fr}.tl.pl .rel{font-size:14px;font-weight:500}.tl.pl ha-icon{--mdc-icon-size:16px;vertical-align:-2px;color:var(--eh-ink2,var(--secondary-text-color))}
-.guest .hd{gap:12px}.guest .pic{width:40px;height:40px;border-radius:20px;display:grid;place-items:center;background:var(--eh-track,rgba(127,127,127,.12));flex:none}
-.gnew{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start;margin:4px 0 14px;padding:14px;border-radius:18px;background:color-mix(in srgb,var(--eh-amber,#E8901F) 10%,transparent)}
-.gnew .qr{width:184px;max-width:100%;flex:none;border-radius:12px;overflow:hidden;background:#fff}.gnew .qr svg{display:block;width:100%;height:auto}
+.guest .hd{gap:12px}.guest .pic{width:40px;height:40px;border-radius:20px;display:grid;place-items:center;background:var(--hf-track);flex:none}
+.gnew{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start;margin:4px 0 14px;padding:14px;border-radius:18px;background:color-mix(in srgb,var(--hf-amber) 10%,transparent)}
+.gnew .qr{width:184px;max-width:100%;flex:none;border-radius:12px;overflow:hidden;background:var(--hf-white)}.gnew .qr svg{display:block;width:100%;height:auto}
 .gnl{flex:1;min-width:200px;display:flex;flex-direction:column;gap:6px}.gnl b{font:600 15px Onest,sans-serif}.gnl input{width:100%;font-size:13px;height:40px}.gnl .row{display:flex;flex-wrap:wrap;gap:8px}
-.gls{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:6px}.gls li{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:14px;background:var(--eh-track,rgba(127,127,127,.08))}
+.gls{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:6px}.gls li{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:14px;background:var(--hf-track-08)}
 .gls li.dis{opacity:.6}.gtx{flex:1;min-width:0;display:flex;flex-direction:column}.gtx b{font:600 14px/1.3 Onest,sans-serif;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.gls .btn.sm{align-self:center}
 .guest .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.guest .fld+.row{margin-top:16px}.guest input[data-glabel]{width:100%}
-.pick{padding:12px;border-radius:18px;margin:0 0 8px;box-shadow:inset 0 0 0 1px var(--eh-hair,var(--divider-color,rgba(127,127,127,.35)));display:grid;gap:10px}
+.pick{padding:12px;border-radius:18px;margin:0 0 8px;box-shadow:inset 0 0 0 1px var(--hf-hair-35);display:grid;gap:10px}
 .prm .caps{margin:0 0 6px}.chips button:disabled{opacity:.45;cursor:default}.chips button small{font:400 12px Onest,sans-serif;opacity:.75;margin-left:4px}
 .vbox{display:grid;gap:8px;margin:10px 0 0}.fld .chips+.vbox,.act .vbox{margin-top:4px}
 ha-icon{--mdc-icon-size:20px}`;
@@ -6569,7 +6852,7 @@ ha-icon{--mdc-icon-size:20px}`;
         return W[this.lang || "ru"];
       }
       async api(method, body) {
-        return this._hass.callApi(method, "hauflo/automations", body);
+        return this._hass.callApi(method, "hauflo/automations", method === "POST" && body ? { ...body, lang: this.lang || LANG } : body);
       }
       isAdmin() {
         return this._hass?.user?.is_admin === true;
@@ -6635,7 +6918,7 @@ ha-icon{--mdc-icon-size:20px}`;
           for (let x = 0; x < n; x++) if (row[x] === "1") d += `M${x + 4} ${y + 4}h1v1h-1z`;
         });
         // Always dark on white with a quiet zone: a phone camera reads it in the dark theme too.
-        return `<svg viewBox="0 0 ${n + 8} ${n + 8}" role="img" aria-label="QR" shape-rendering="crispEdges"><rect width="${n + 8}" height="${n + 8}" fill="#fff"/><path d="${d}" fill="#1F1E1C"/></svg>`;
+        return `<svg viewBox="0 0 ${n + 8} ${n + 8}" role="img" aria-label="QR" shape-rendering="crispEdges"><rect width="${n + 8}" height="${n + 8}" fill="var(--hf-white)"/><path d="${d}" fill="var(--hf-charcoal)"/></svg>`;
       }
       guestHtml() {
         const gs = this.gst;
@@ -6668,7 +6951,7 @@ ha-icon{--mdc-icon-size:20px}`;
         const grantRow = (x, live) =>
           `<li class="${live ? "" : "dis"}"><div class="gtx"><b>${esc(x.label || g.guest)}</b><span class="muted">${esc([roomNames(x), live ? g.until(date(x.expires)) : g[x.status] || x.status, live ? g.devices(x.devices, x.max_devices) : ""].filter(Boolean).join(" · "))}</span></div>${live ? `<button class="btn sm" data-grevoke="${esc(x.id)}" ${dis}>${esc(g.close)}</button>` : ""}</li>`;
         const list = active.length
-          ? `<div class="fld"><div class="caps">${esc(g.active)}</div><ul class="gls">${active.map((x) => grantRow(x, true)).join("")}</ul>${active.length > 1 ? `<button class="lnk" data-grevall ${dis}>${esc(g.closeAll)}</button>` : ""}</div>`
+          ? `<div class="fld"><div class="caps">${esc(g.active)}</div><ul class="gls">${active.map((x) => grantRow(x, true)).join("")}</ul>${active.length > 1 ? `<button class="lnk" data-grevall data-ask="${esc(g.closeAllAsk)}" ${dis}>${esc(g.closeAll)}</button>` : ""}</div>`
           : `<p class="muted">${esc(g.none)}</p>`;
         const endedHtml = ended.length ? `<div class="fld"><div class="caps">${esc(g.ended)}</div><ul class="gls">${ended.map((x) => grantRow(x, false)).join("")}</ul></div>` : "";
         const when = (iso) => {
@@ -6774,7 +7057,7 @@ ${fresh}${form}${list}${endedHtml}${logHtml}</section>`;
         return `<section class="box pres${on ? " on" : ""}${part ? " pp" : ""}${ro ? " ro" : ""}" aria-label="${esc(p.title)}"><div class="hd"><span class="pic"><ha-icon icon="mdi:home-export-outline"></ha-icon></span><h2>${esc(p.title)}</h2><button class="sw" role="switch" aria-checked="${on}" aria-label="${esc(p.title)}" data-psw ${lock}></button></div>
 ${ask}${ro ? `<p class="hint">${esc(w.ro)}</p>` : ""}${why}<p class="sub">${esc(p.sub)}</p>${state}
 ${this.pMsg ? `<p class="msg bad" role="status">${esc(this.pMsg)}</p>` : ""}
-<div class="fld"><div class="caps">${esc(p.what)}</div><div class="chips"><button aria-pressed="${pr.lights}" data-pk="lights" ${pr.devices?.lights && !ro ? "" : "disabled"}>${esc(p.lights)}${pr.devices?.lights ? ` · ${pr.devices.lights}` : ""}</button><button aria-pressed="${pr.covers}" data-pk="covers" ${pr.devices?.covers && !ro ? "" : "disabled"}>${esc(p.covers)}${pr.devices?.covers ? ` · ${pr.devices.covers}` : ""}</button></div></div>
+<div class="fld"><div class="caps">${esc(p.what)}</div><div class="chips">${["lights", "covers"].map((k) => `<button aria-pressed="${!!(pr[k] && pr.devices?.[k])}" data-pk="${k}" ${pr.devices?.[k] && !ro ? "" : "disabled"}>${esc(p[k])} · ${pr.devices?.[k] || 0}</button>`).join("")}</div></div>
 ${roomList}
 <div class="fld"><div class="caps">${esc(p.mode)}</div><div class="seg"><button aria-pressed="${pr.mode === "learned"}" data-pmode="learned" ${ro ? "disabled" : ""}>${esc(p.learned)}</button><button aria-pressed="${pr.mode === "sun"}" data-pmode="sun" ${ro ? "disabled" : ""}>${esc(p.sun)}</button></div><p class="hint">${esc(pr.mode === "sun" ? p.sunHow : p.how(pr.max_rooms || 3, pr.jitter_min || 15))}</p></div>
 <div class="fld"><div class="caps">${esc(p.until)}</div><div class="row"><label class="dt${ro ? " off" : ""}"><span>${esc(pr.until ? date(pr.until) : p.pick)}</span><ha-icon icon="mdi:calendar-month-outline"></ha-icon><input type="date" lang="${esc(hl)}" data-puntil min="${today}" max="${max}" value="${esc(pr.until || "")}" aria-label="${esc(p.until)}" ${ro ? "disabled" : ""}></label><button class="opt" data-puclear aria-pressed="${!pr.until}" ${ro ? "disabled" : ""}>${esc(p.noDate)}</button></div></div>
@@ -7042,6 +7325,7 @@ ${logHtml}</section>`;
         const body = this.view === "edit" ? this.editHtml() : this.view === "loc" ? this.locHtml() : this.listHtml();
         sr.innerHTML = `<style>${TZ(CSS3)}</style><div class="pg">${this._config?.overlay ? `<div class="row end"><button class="btn sm" data-close>${esc(w.close)}</button></div>` : ""}${body}</div>`;
         sr.querySelector("[data-close]")?.addEventListener("click", () => this.dispatchEvent(new CustomEvent("hauflo-close", { bubbles: true, composed: true })));
+        askWrap(sr);
         this.bind();
         done();
       }
@@ -7067,10 +7351,8 @@ ${logHtml}</section>`;
           .join("");
         const sugg = this.suggestions();
         const loc = d.location;
-        // «Кто обслуживает дом» as one small line (family review round 2) — the house's contact from the deploy.
-        const svc = serviceOf(this);
-        const svcLine = svc && (svc.phone || svc.email) ? `<p class="svcl"><ha-icon icon="mdi:phone"></ha-icon><span>${esc(w.svc)}:</span><span data-own>${esc(svc.company || svc.name || "")}</span>${svc.phone ? `<a href="tel:${esc(telOf(svc.phone))}">${esc(svc.phone)}</a>` : `<a href="mailto:${esc(svc.email)}">${esc(svc.email)}</a>`}</p>` : "";
-        return `<h1>${esc(w.title)}</h1><p class="sub">${esc(w.sub)}</p>${svcLine}
+        // The service contact lives only in «Настройки» (owner 03.11: no phone on the dashboard pages).
+                return `<h1>${esc(w.title)}</h1><p class="sub">${esc(w.sub)}</p>
 ${!loc.set ? this.locCard() : ""}
 <section class="box" aria-label="${esc(w.upcoming)}"><div class="caps">${esc(w.upcoming)}</div>
 <p class="sunl"><ha-icon icon="mdi:weather-sunset"></ha-icon><span>${rise && set ? esc(w.sunLine(this.when(rise), this.when(set))) : esc(w.noSun)}</span></p>
@@ -7471,14 +7753,8 @@ ${k === "w" ? `<div class="caps">${esc(w.hold)}</div><div class="step"><button d
         on("[data-grevoke]", (el) => this.guestDo({ op: "revoke", id: el.dataset.grevoke }));
         on("[data-grevall]", (el) => {
           if (el.dataset.arm !== "1") {
-            el.dataset.arm = "1";
-            el.textContent = this.w.g.closeAllAsk;
-            setTimeout(() => {
-              if (el.isConnected && el.dataset.arm === "1") {
-                el.dataset.arm = "";
-                el.textContent = this.w.g.closeAll;
-              }
-            }, 4000);
+            askShow(el, 1);
+            setTimeout(() => el.isConnected && el.dataset.arm === "1" && askShow(el, 0), 4000);
             return;
           }
           this.guestDo({ op: "revoke_all" });
@@ -8051,7 +8327,7 @@ ${k === "w" ? `<div class="caps">${esc(w.hold)}</div><div class="step"><button d
                 const ru = langOf(AGENT.hass) === "ru";
                 const box = document.createElement("div");
                 box.className = "hauflo-fail";
-                box.style.cssText = "padding:16px;border-radius:20px;background:var(--ha-card-background,var(--card-background-color,#fff));font:500 15px/1.4 system-ui,sans-serif;display:flex;gap:12px;align-items:center;flex-wrap:wrap";
+                box.style.cssText = "padding:16px;border-radius:20px;background:var(--hf-ha-card-bg);font:500 15px/1.4 system-ui,sans-serif;display:flex;gap:12px;align-items:center;flex-wrap:wrap";
                 box.innerHTML = `<span style="flex:1;min-width:200px">${ru ? "Не загрузилось — обновите страницу." : "Didn't load — refresh the page."}</span><button style="font:inherit;border:0;border-radius:12px;min-height:44px;padding:8px 16px;cursor:pointer">${ru ? "Обновить" : "Refresh"}</button>`;
                 box.querySelector("button").addEventListener("click", () => location.reload());
                 el.style.display = "none";
@@ -8098,7 +8374,7 @@ ${k === "w" ? `<div class="caps">${esc(w.hold)}</div><div class="step"><button d
         return;
       }
       const wrap = document.createElement("div");
-      wrap.style.cssText = "position:fixed;inset:0;z-index:9999;overflow:auto;background:var(--primary-background-color,#f4f2ee);padding:12px 16px calc(24px + env(safe-area-inset-bottom))";
+      wrap.style.cssText = "position:fixed;inset:0;z-index:9999;overflow:auto;background:var(--hf-page-bg-2);padding:12px 16px calc(24px + env(safe-area-inset-bottom))";
       const el = document.createElement("hauflo-automations");
       el.setConfig({ overlay: true });
       el.hass = hass;
@@ -8115,7 +8391,7 @@ ${k === "w" ? `<div class="caps">${esc(w.hold)}</div><div class="step"><button d
       document.addEventListener("keydown", onKey);
       el.addEventListener("hauflo-close", close);
       wrap.appendChild(el);
-      document.body.appendChild(wrap);
+      document.body.appendChild(carryTheme(wrap));
     };
     return { open, Automations };
   })();
@@ -8258,23 +8534,23 @@ ${k === "w" ? `<div class="caps">${esc(w.hold)}</div><div class="step"><button d
       }
       return r;
     };
-    const CSS2 = `:host{position:fixed;inset:0;z-index:9999;display:grid;place-items:end center;background:rgba(0,0,0,.42);font-family:Onest,var(--ha-font-family-body),system-ui,sans-serif;color:var(--eh-ink,var(--primary-text-color));-webkit-tap-highlight-color:transparent}
+    const CSS2 = `:host{position:fixed;inset:0;z-index:9999;display:grid;place-items:end center;background:var(--hf-shade-42);font-family:Onest,var(--ha-font-family-body),system-ui,sans-serif;color:var(--eh-ink,var(--primary-text-color));-webkit-tap-highlight-color:transparent}
 @media (min-width:600px){:host{place-items:center}}
 *{box-sizing:border-box}
-.sh{width:min(100%,460px);max-height:92vh;overflow:auto;background:var(--card-background-color,#fff);background-image:var(--eh-glass,none);border-radius:28px 28px 0 0;padding:20px 20px calc(20px + env(safe-area-inset-bottom));box-shadow:0 20px 60px rgba(0,0,0,.35)}
+.sh{width:min(100%,460px);max-height:92vh;overflow:auto;background:var(--hf-card-bg);background-image:var(--eh-glass,none);border-radius:28px 28px 0 0;padding:20px 20px calc(20px + env(safe-area-inset-bottom));box-shadow:0 20px 60px var(--hf-shade-35)}
 @media (min-width:600px){.sh{border-radius:28px}}
 .hd{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}.hd h2{font:600 20px/1.2 Onest,sans-serif;margin:0;letter-spacing:-.01em}
-.x{width:44px;height:44px;border-radius:22px;border:0;background:var(--eh-track,rgba(127,127,127,.12));color:inherit;font-size:22px;cursor:pointer;display:grid;place-items:center}.x ha-icon{--mdc-icon-size:22px}
+.x{width:44px;height:44px;border-radius:22px;border:0;background:var(--hf-track);color:inherit;font-size:22px;cursor:pointer;display:grid;place-items:center}.x ha-icon{--mdc-icon-size:22px}
 .caps{font:500 11px/1.2 Onest,sans-serif;letter-spacing:.14em;text-transform:uppercase;color:var(--eh-ink2,var(--secondary-text-color));margin:18px 0 8px}
-.seg{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;padding:4px;border-radius:18px;background:var(--eh-track,rgba(127,127,127,.12))}
+.seg{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;padding:4px;border-radius:18px;background:var(--hf-track)}
 .seg button,.big button{font:500 14px Onest,sans-serif;color:inherit;border:0;border-radius:14px;min-height:44px;padding:8px;background:none;cursor:pointer}
-.seg button[aria-pressed="true"]{background:var(--card-background-color,#fff);box-shadow:0 1px 3px rgba(0,0,0,.18);font-weight:600}
+.seg button[aria-pressed="true"]{background:var(--hf-card-bg);box-shadow:0 1px 3px var(--hf-shade-18);font-weight:600}
 .hint{font:400 13px/1.45 Onest,sans-serif;color:var(--eh-ink2,var(--secondary-text-color));margin:8px 2px 0}
 .big{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.big button{display:flex;flex-direction:column;align-items:flex-start;gap:4px;padding:14px;border-radius:20px;background:var(--eh-track,rgba(127,127,127,.12));text-align:left;min-height:84px}
+.big button{display:flex;flex-direction:column;align-items:flex-start;gap:4px;padding:14px;border-radius:20px;background:var(--hf-track);text-align:left;min-height:84px}
 .big button b{display:flex;align-items:center;gap:8px;font:600 17px Onest,sans-serif}.big button span{font:400 12px Onest,sans-serif;color:var(--eh-ink2,var(--secondary-text-color))}
-.big button[aria-pressed="true"].heat{background:color-mix(in srgb,var(--eh-amber,#E8901F) 22%,transparent);box-shadow:inset 0 0 0 2px var(--eh-amber,#E8901F)}
-.big button[aria-pressed="true"].cool{background:color-mix(in srgb,var(--eh-ice,#3C82F0) 22%,transparent);box-shadow:inset 0 0 0 2px var(--eh-ice,#3C82F0)}
+.big button[aria-pressed="true"].heat{background:color-mix(in srgb,var(--hf-amber) 22%,transparent);box-shadow:inset 0 0 0 2px var(--hf-amber)}
+.big button[aria-pressed="true"].cool{background:color-mix(in srgb,var(--hf-ice) 22%,transparent);box-shadow:inset 0 0 0 2px var(--hf-ice)}
 .big button:disabled{opacity:.55;cursor:default}
 ha-icon{--mdc-icon-size:20px}
 .now{font:500 14px/1.4 Onest,sans-serif;margin:0 2px 10px}.res{font:400 13px/1.45 Onest,sans-serif;margin:10px 2px 0}
@@ -8282,19 +8558,19 @@ details{margin-top:10px;font:400 13px Onest,sans-serif;color:var(--eh-ink2,var(-
 ul{margin:4px 0 0;padding:0 0 0 18px}li{margin:2px 0}
 .seg.two{grid-template-columns:1fr 1fr}.seg.ts button:first-child{grid-column:span 2}.vl{font:500 13px Onest,sans-serif;margin:12px 2px 6px}
 .nm{display:flex;flex-direction:column;gap:8px}.nm label{display:flex;flex-direction:column;gap:4px;font:400 12px Onest,sans-serif;color:var(--eh-ink2,var(--secondary-text-color))}
-.nm input{min-height:44px;padding:0 12px;border-radius:14px;border:1px solid var(--divider-color,rgba(127,127,127,.3));background:var(--eh-track,rgba(127,127,127,.08));color:inherit;font:500 15px Onest,sans-serif;width:100%}
-.nm input:focus{outline:2px solid var(--eh-ice,#3C82F0);outline-offset:1px}
-.reset{margin-top:10px;min-height:40px;padding:0 14px;border:0;border-radius:14px;background:var(--eh-track,rgba(127,127,127,.12));color:inherit;font:500 13px Onest,sans-serif;cursor:pointer}.reset:disabled{opacity:.45;cursor:default}
-.go{display:flex;align-items:center;gap:12px;width:100%;margin:18px 0 0;padding:14px;border:0;border-radius:20px;background:var(--eh-track,rgba(127,127,127,.12));color:inherit;text-align:left;cursor:pointer;min-height:64px}
+.nm input{min-height:44px;padding:0 12px;border-radius:14px;border:1px solid var(--hf-divider-30);background:var(--hf-track-08);color:inherit;font:500 15px Onest,sans-serif;width:100%}
+.nm input:focus{outline:2px solid var(--hf-ice);outline-offset:1px}
+.reset{margin-top:10px;min-height:40px;padding:0 14px;border:0;border-radius:14px;background:var(--hf-track);color:inherit;font:500 13px Onest,sans-serif;cursor:pointer}.reset:disabled{opacity:.45;cursor:default}
+.go{display:flex;align-items:center;gap:12px;width:100%;margin:18px 0 0;padding:14px;border:0;border-radius:20px;background:var(--hf-track);color:inherit;text-align:left;cursor:pointer;min-height:64px}
 .go.ord{margin-top:8px;min-height:56px}.go.ord ha-icon{color:var(--eh-ink2,var(--secondary-text-color))}
-.call{display:flex;align-items:center;gap:12px;min-height:56px;padding:8px 16px;border-radius:18px;text-decoration:none;color:inherit;background:color-mix(in srgb,var(--eh-mint,#2FA67A) 16%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--eh-mint,#2FA67A) 45%,transparent);font:600 15px Onest,sans-serif}.call ha-icon{--mdc-icon-size:22px;color:var(--eh-mint-text,#1F7A57)}.call .cl{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}.call .cl span{overflow-wrap:break-word;hyphens:auto}.call b{font:400 14px Onest,sans-serif;color:var(--eh-ink2,var(--secondary-text-color))}
-.ask{margin-top:10px;min-height:120px;padding:12px;border-radius:16px;background:color-mix(in srgb,var(--eh-amber,#E8901F) 16%,transparent);box-shadow:inset 3px 0 0 var(--eh-amber,#E8901F)}.ask b{display:block;font:600 14px Onest,sans-serif;line-height:1.4}.ask .r2{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}.ask button{min-height:44px;padding:0 16px;border:0;border-radius:14px;font:600 14px Onest,sans-serif;cursor:pointer;background:var(--eh-track,rgba(127,127,127,.12));color:inherit}.ask button.yes{background:var(--eh-ink,#1c1c1e);color:var(--card-background-color,#fff)}
-.fl{display:flex;flex-direction:column;gap:6px}.fi{display:flex;align-items:center;gap:8px;min-height:48px;padding:0 4px 0 14px;border-radius:14px;background:var(--eh-track,rgba(127,127,127,.08));font:500 15px Onest,sans-serif}.fi span{flex:1;min-width:0;overflow-wrap:break-word;hyphens:auto}.fi button{width:44px;height:44px;border:0;border-radius:12px;background:none;color:inherit;cursor:pointer;display:grid;place-items:center}
-.rch{display:flex;flex-wrap:wrap;gap:6px}.rch button{min-height:44px;padding:0 14px;border:0;border-radius:14px;background:var(--eh-track,rgba(127,127,127,.12));color:inherit;font:500 14px Onest,sans-serif;cursor:pointer}.rch button[aria-pressed="true"]{background:var(--eh-ink,#1c1c1e);color:var(--card-background-color,#fff)}
-details.pro{margin-top:22px;border-top:1px solid var(--divider-color,rgba(127,127,127,.25));padding-top:6px}details.pro>summary{font:600 15px Onest,sans-serif;color:var(--eh-ink,var(--primary-text-color));min-height:48px;list-style-position:inside}
-.ed{display:flex;flex-direction:column;gap:6px}.ed label{display:flex;align-items:center;gap:12px;min-height:48px;padding:6px 12px;border-radius:14px;background:var(--eh-track,rgba(127,127,127,.08));font:500 15px Onest,sans-serif;cursor:pointer}.ed input{width:22px;height:22px;flex:none;accent-color:var(--eh-ink,#1c1c1e);margin-left:auto}.ed .en{display:flex;flex-direction:column;min-width:0}.ed small{color:var(--eh-ink2,var(--secondary-text-color));font:400 max(13px,.85em) Onest,sans-serif}
+.call{display:flex;align-items:center;gap:12px;min-height:56px;padding:8px 16px;border-radius:18px;text-decoration:none;color:inherit;background:color-mix(in srgb,var(--hf-mint) 16%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--hf-mint) 45%,transparent);font:600 15px Onest,sans-serif}.call ha-icon{--mdc-icon-size:22px;color:var(--hf-mint-text)}.call .cl{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}.call .cl span{overflow-wrap:break-word;hyphens:auto}.call b{font:400 14px Onest,sans-serif;color:var(--eh-ink2,var(--secondary-text-color))}
+.ask{margin-top:10px;min-height:120px;padding:12px;border-radius:16px;background:color-mix(in srgb,var(--hf-amber) 16%,transparent);box-shadow:inset 3px 0 0 var(--hf-amber)}.ask b{display:block;font:600 14px Onest,sans-serif;line-height:1.4}.ask .r2{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}.ask button{min-height:44px;padding:0 16px;border:0;border-radius:14px;font:600 14px Onest,sans-serif;cursor:pointer;background:var(--hf-track);color:inherit}.ask button.yes{background:var(--hf-ink);color:var(--hf-card-bg)}
+.fl{display:flex;flex-direction:column;gap:6px}.fi{display:flex;align-items:center;gap:8px;min-height:48px;padding:0 4px 0 14px;border-radius:14px;background:var(--hf-track-08);font:500 15px Onest,sans-serif}.fi span{flex:1;min-width:0;overflow-wrap:break-word;hyphens:auto}.fi button{width:44px;height:44px;border:0;border-radius:12px;background:none;color:inherit;cursor:pointer;display:grid;place-items:center}
+.rch{display:flex;flex-wrap:wrap;gap:6px}.rch button{min-height:44px;padding:0 14px;border:0;border-radius:14px;background:var(--hf-track);color:inherit;font:500 14px Onest,sans-serif;cursor:pointer}.rch button[aria-pressed="true"]{background:var(--hf-ink);color:var(--hf-card-bg)}
+details.pro{margin-top:22px;border-top:1px solid var(--hf-divider-25);padding-top:6px}details.pro>summary{font:600 15px Onest,sans-serif;color:var(--eh-ink,var(--primary-text-color));min-height:48px;list-style-position:inside}
+.ed{display:flex;flex-direction:column;gap:6px}.ed label{display:flex;align-items:center;gap:12px;min-height:48px;padding:6px 12px;border-radius:14px;background:var(--hf-track-08);font:500 15px Onest,sans-serif;cursor:pointer}.ed input{width:22px;height:22px;flex:none;accent-color:var(--hf-ink);margin-left:auto}.ed .en{display:flex;flex-direction:column;min-width:0}.ed small{color:var(--eh-ink2,var(--secondary-text-color));font:400 max(13px,.85em) Onest,sans-serif}
 .nm input:disabled,.go:disabled{opacity:.55;cursor:default}
-.go span{flex:1;display:flex;flex-direction:column;gap:2px}.go b{font:600 15px Onest,sans-serif}.go small{font:400 12px/1.35 Onest,sans-serif;color:var(--eh-ink2,var(--secondary-text-color))}.go i{font-style:normal;font-size:22px;opacity:.6}.go ha-icon{color:var(--eh-amber,#E8901F)}
+.go span{flex:1;display:flex;flex-direction:column;gap:2px}.go b{font:600 15px Onest,sans-serif}.go small{font:400 12px/1.35 Onest,sans-serif;color:var(--eh-ink2,var(--secondary-text-color))}.go i{font-style:normal;font-size:22px;opacity:.6}.go ha-icon{color:var(--hf-amber)}
 `;
     /** What this dashboard shows that the client may switch, and the integrator's choice for each. */
     const viewDefaults = async (h) => {
@@ -8388,8 +8664,7 @@ details.pro{margin-top:22px;border-top:1px solid var(--divider-color,rgba(127,12
        * this page, each opens its sheet (order of the block, for the whole house) over this one. */
       let blocksHere = [];
       const orderMenu = () => {
-        // v5 cards keep their own list (hauflo-cards-v5.js): {name, n, shown, top, open}
-        blocksHere = ORDER.ok ? [...orderBlocksHere(), ...(window.__haufloOrderV5?.blocks?.() || [])].sort((a, b) => Number(b.shown) - Number(a.shown) || a.top - b.top) : [];
+        blocksHere = ORDER.ok ? [...orderBlocksHere()].sort((a, b) => Number(b.shown) - Number(a.shown) || a.top - b.top) : [];
         if (!blocksHere.length) return "";
         const ow = OW[langOf(h)];
         const ro = !canEdit(h);
@@ -8508,7 +8783,7 @@ ${askHtml || (res ? `<div class="ask done"><p class="res" data-res role="status"
       const bindOrder = () =>
         sr.querySelectorAll("[data-order]").forEach((b) => (b.onclick = () => {
           const it = blocksHere[Number(b.dataset.order)];
-          if (it) it.open ? it.open() : openOrder(it.card);
+          if (it) openOrder(it.card);
         }));
       let ask = null;
       const bindSeason = () => {
@@ -8686,7 +8961,7 @@ ${askHtml || (res ? `<div class="ask done"><p class="res" data-res role="status"
       }));
       // A tap on the dim backdrop closes; inside the sheet (a shadow root — retargeted to the host) it doesn't.
       sheet.addEventListener("click", (e) => e.composedPath()[0] === sheet && close());
-      document.body.appendChild(sheet);
+      document.body.appendChild(carryTheme(sheet));
       sr.querySelector("[data-x]")?.focus({ preventScroll: true });
       const ordered = loadOrder(h);
       if (ordered) ordered.then(() => sheet && fill("order"));
@@ -8717,7 +8992,7 @@ ${askHtml || (res ? `<div class="ask done"><p class="res" data-res role="status"
       info = await loadSeason(h);
       if (sheet) fill("season");
     };
-    const GEAR = ".hauflo-gear{display:inline-flex;align-items:center;justify-content:center;width:48px;height:48px;margin:0 2px;border:0;border-radius:24px;background:none;color:inherit;cursor:pointer;flex:none;-webkit-tap-highlight-color:transparent}.hauflo-gear:hover{background:rgba(127,127,127,.12)}.hauflo-gear ha-icon{--mdc-icon-size:calc(22px*min(var(--hf-ts,1),1.3))}";
+    const GEAR = ".hauflo-gear{display:inline-flex;align-items:center;justify-content:center;width:48px;height:48px;margin:0 2px;border:0;border-radius:24px;background:none;color:inherit;cursor:pointer;flex:none;-webkit-tap-highlight-color:transparent}.hauflo-gear:hover{background:var(--hf-grey-12)}.hauflo-gear ha-icon{--mdc-icon-size:calc(22px*min(var(--hf-ts,1),1.3))}";
     let deep = (() => {
       try {
         return new URLSearchParams(location.search).get("hauflo") === "editors" ? "editors" : null;
@@ -8805,7 +9080,7 @@ ${askHtml || (res ? `<div class="ask done"><p class="res" data-res role="status"
       if (!dusk && document.body) {
         dusk = document.createElement("div");
         dusk.id = "hauflo-dusk";
-        dusk.setAttribute("style", "position:fixed;inset:0;z-index:9998;pointer-events:none;background:linear-gradient(180deg,rgba(40,20,0,.10),rgba(20,10,0,.16));mix-blend-mode:multiply;opacity:0;transition:opacity 2s ease");
+        dusk.setAttribute("style", "position:fixed;inset:0;z-index:9998;pointer-events:none;background:linear-gradient(180deg,var(--hf-dusk-top),var(--hf-dusk-bottom));mix-blend-mode:multiply;opacity:0;transition:opacity 2s ease");
         document.body.appendChild(dusk);
       }
       if (dusk) dusk.style.opacity = evening ? "1" : "0";
@@ -8827,7 +9102,7 @@ ${askHtml || (res ? `<div class="ask done"><p class="res" data-res role="status"
       if (!bar) {
         bar = document.createElement("div");
         bar.id = "hauflo-nav";
-        bar.setAttribute("style", "position:fixed;left:50%;bottom:calc(16px + env(safe-area-inset-bottom));transform:translateX(-50%);z-index:9000;display:flex;gap:4px;padding:5px;border-radius:26px;background:var(--card-background-color,#fff);box-shadow:0 8px 30px rgba(0,0,0,.18),inset 0 0 0 1px rgba(127,127,127,.15);font:500 13px Onest,sans-serif;max-width:calc(100vw - 24px);overflow-x:auto;scrollbar-width:none");
+        bar.setAttribute("style", "position:fixed;left:50%;bottom:calc(16px + env(safe-area-inset-bottom));transform:translateX(-50%);z-index:9000;display:flex;gap:4px;padding:5px;border-radius:26px;background:var(--hf-card-bg);box-shadow:0 8px 30px var(--hf-shade-18),inset 0 0 0 1px var(--hf-grey-15);font:500 13px Onest,sans-serif;max-width:calc(100vw - 24px);overflow-x:auto;scrollbar-width:none");
         document.body.appendChild(bar);
       }
       const go = (path) => {
@@ -8836,11 +9111,11 @@ ${askHtml || (res ? `<div class="ask done"><p class="res" data-res role="status"
       };
       // A phone: short labels («1», «2», «Здание») and tighter buttons; the bar scrolls sideways if still too wide.
       const narrow = window.innerWidth < 600;
-      const btn = `border:0;background:none;color:var(--primary-text-color,#111);height:42px;padding:0 ${narrow ? 12 : 16}px;border-radius:21px;font:inherit;white-space:nowrap;cursor:pointer;flex:0 0 auto`;
+      const btn = `border:0;background:none;color:var(--hf-text-2);height:42px;padding:0 ${narrow ? 12 : 16}px;border-radius:21px;font:inherit;white-space:nowrap;cursor:pointer;flex:0 0 auto`;
       const short = (t) => (narrow ? String(t || "").replace(/^(этаж|floor)\s*/i, "").replace(/\s*(этаж|floor)$/i, "").replace(/^Всё здание$/, "Здание") : t || "");
       const items = view?.subview
         ? [`<button data-p="${esc(view.back_path || `/${dash}`)}" style="${btn}">← Назад</button>`]
-        : views.filter((v) => !v.subview).map((v, i) => `<button data-p="/${dash}/${esc(v.path ?? String(i))}" style="${btn}${v === view ? ";background:rgba(127,127,127,.16)" : ""}">${esc(short(v.title))}</button>`);
+        : views.filter((v) => !v.subview).map((v, i) => `<button data-p="/${dash}/${esc(v.path ?? String(i))}" style="${btn}${v === view ? ";background:var(--hf-grey-16)" : ""}">${esc(short(v.title))}</button>`);
       bar.innerHTML = items.join("");
       bar.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => go(b.dataset.p)));
     };
@@ -8884,12 +9159,12 @@ ${askHtml || (res ? `<div class="ask done"><p class="res" data-res role="status"
       const m = now.getMinutes();
       face.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;transform:translate(${((m * 7) % 13) - 6}px,${((m * 11) % 13) - 6}px)"><div style="font:200 min(24vw,180px)/1 Onest,sans-serif;letter-spacing:-.05em;font-variant-numeric:tabular-nums">${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}</div>
 <div style="font:300 22px Onest,sans-serif;margin-top:18px;opacity:.6">${now.toLocaleDateString("ru-RU", { weekday: "long", day: "numeric", month: "long" })}${w && w.attributes.temperature !== undefined ? ` · ${Math.round(w.attributes.temperature)}° на улице` : ""}</div>
-${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;color:#FF5A5F">● ${alarms.map((a) => esc((a.attributes.friendly_name || a.entity_id) + (roomOf(a.entity_id) ? ` (${roomOf(a.entity_id)})` : ""))).slice(0, 3).join(" · ")}</div>` : ""}</div>`;
+${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;color:var(--hf-alarm)">● ${alarms.map((a) => esc((a.attributes.friendly_name || a.entity_id) + (roomOf(a.entity_id) ? ` (${roomOf(a.entity_id)})` : ""))).slice(0, 3).join(" · ")}</div>` : ""}</div>`;
     };
     setInterval(() => {
       if (!face && Date.now() - last > idleMin * 60000) {
         face = document.createElement("div");
-        face.setAttribute("style", "position:fixed;inset:-16px;z-index:9999;background:#000;color:rgba(255,236,210,.74);display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:none;opacity:0;transition:opacity .6s ease");
+        face.setAttribute("style", "position:fixed;inset:-16px;z-index:9999;background:var(--hf-black);color:var(--hf-night-ink);display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:none;opacity:0;transition:opacity .6s ease");
         document.body.appendChild(face);
         requestAnimationFrame(() => (face.style.opacity = "1"));
       }
@@ -8925,33 +9200,35 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
   // --- hauflo-entity: any one entity of any integration as a Hauflo tile (owner 28.10: «как у Mushroom — на все
   // возможные типы»). Icon / picture, name, state; tap does what the domain does (switch, run, lock…) or the action set
   // in the editor; hold — the entity's dialog. hauflo-title: a section heading in the same type.
-  Object.assign(EN, { "включён": "on", "едет на базу": "returning to dock", "косит": "mowing", "есть обновление": "update available", "актуально": "up to date", "пауза": "paused", "не дома": "away", "выполнить": "run", "нажать": "press", "позвонить": "call", "открыть": "open", "идёт": "playing", "на паузе": "paused", "включено": "on" });
+  Object.assign(EN, { "включён": "on", "едет на базу": "returning to dock", "косит": "mowing", "есть обновление": "update available", "актуально": "up to date", "пауза": "paused", "не дома": "away", "дома": "home", "запирается…": "locking…", "отпирается…": "unlocking…", "выполнить": "run", "нажать": "press", "позвонить": "call", "открыть": "open", "идёт": "playing", "на паузе": "paused", "включено": "on" });
   // The graph's own title («За 24 ч») before the fragments make it «За 24 h» (seen on the demo HA, 28.10).
   EN_RX.unshift([/^За (\d+) ч$/, "Last $1 h"]);
   Object.assign(EN, { "без протечек": "no leaks", "датчик: нет связи": "sensor: no signal" });
   EN_RX.unshift([/^Протечка: (.+?)( и ещё (\d+))?$/, (m, a, b, n) => `Leak: ${a}${n ? ` and ${n} more` : ""}`]);
-  const TONE = { amber: ["var(--amber)", "var(--amberGlow)"], ice: ["var(--ice)", "var(--iceGlow)"], mint: ["var(--mint)", "color-mix(in srgb,var(--mint) 50%,transparent)"], alert: ["var(--alert)", "var(--alertGlow)"] };
+  const TONE = { amber: ["var(--amber)", "var(--amberGlow)"], ice: ["var(--ice)", "var(--iceGlow)"], mint: ["var(--mint)", "color-mix(in srgb,var(--mint) 50%,transparent)"], alert: ["var(--alert)", "var(--alertGlow)"], fan: ["var(--hf-fan)", "color-mix(in srgb,var(--hf-fan) 45%,transparent)"], dry: ["var(--hf-dry)", "color-mix(in srgb,var(--hf-dry) 45%,transparent)"] };
+  /** A domain's tone is the slider tile's (SL_TONE): a fan is violet, a valve / humidifier / damper teal on every card. */
+  const domTone = (d) => ({ light: "amber", cover: "ice", fan: "fan", dry: "dry" })[SL_TONE[d]] || "mint";
   const ONE = {
     light: { icon: (s) => (s.state === "on" ? "hauflo:bulb-on" : "hauflo:bulb"), tone: "amber", word: (s) => (s.state === "on" ? (num(s.attributes.brightness) !== undefined ? `${Math.round((num(s.attributes.brightness) / 255) * 100)} %` : "вкл") : "выкл"), level: (s) => (s.state === "on" ? (num(s.attributes.brightness) ?? 255) / 255 : 0), tap: ["light", "toggle"] },
-    cover: { icon: () => "hauflo:blind", tone: "ice", word: (s) => (num(s.attributes.current_position) !== undefined && !["opening", "closing"].includes(s.state) ? (s.attributes.current_position ? `${s.attributes.current_position} %` : "закрыта") : ({ open: "открыта", closed: "закрыта", opening: "открывается…", closing: "закрывается…" })[s.state] || s.state), level: (s) => (num(s.attributes.current_position) ?? (s.state === "open" ? 100 : 0)) / 100, on: (s) => s.state !== "closed", tap: ["cover", "toggle"] },
+    cover: { icon: (s, c) => coverIcon({ entity: s.entity_id, s, kind: c?.kind, opening: c?.opening }), tone: "ice", word: (s) => (num(s.attributes.current_position) !== undefined && !["opening", "closing"].includes(s.state) ? (s.attributes.current_position ? `${s.attributes.current_position} %` : "закрыта") : ({ open: "открыта", closed: "закрыта", opening: "открывается…", closing: "закрывается…" })[s.state] || haState(s)), level: (s) => (num(s.attributes.current_position) ?? (s.state === "open" ? 100 : 0)) / 100, on: (s) => s.state !== "closed", tap: ["cover", "toggle"] },
     // The big number is what is now, what it does is the word, the setpoint small (owner 28.10, Д16).
-    climate: { icon: () => "hauflo:thermo", tone: "ice", word: (s) => { const k = climateNow(null, s); const cur = num(s.attributes.current_temperature); const t = num(s.attributes.temperature); return k === "off" ? "Выключено" : `${cur !== undefined ? `${fmt(cur, 1)}° · ` : ""}${climateLine(k, t, activeMode(s)) || `${modeSmall(s.state) || HVAC[s.state] || s.state}${t !== undefined ? ` · → ${fmt(t, t % 1 ? 1 : 0)}°` : ""}`}`; }, on: (s) => { const k = climateNow(null, s); return acting(k) || k === "idle"; }, tap: null },
-    media_player: { icon: () => "hauflo:speaker", tone: "amber", word: (s) => (s.state === "playing" ? s.attributes.media_title || "идёт" : s.state === "paused" ? "на паузе" : s.state === "off" ? "выкл" : s.state === "on" ? "включён" : s.state === "idle" || s.state === "standby" ? "ждёт" : s.state === "buffering" ? "загрузка…" : s.state), on: (s) => s.state === "playing", tap: (s) => ["media_player", s.state === "off" ? "turn_on" : "media_play_pause"] },
-    weather: { icon: (s) => WEATHER[s.state]?.[1] || "hauflo:sun", tone: "ice", word: (s) => `${num(s.attributes.temperature) !== undefined ? `${fmt(num(s.attributes.temperature), 0)}° · ` : ""}${WEATHER[s.state]?.[0] || s.state}`, on: () => false, tap: null },
+    climate: { icon: () => "hauflo:thermo", tone: "ice", word: (s) => { const k = climateNow(null, s); const cur = num(s.attributes.current_temperature); const t = num(s.attributes.temperature); return k === "off" ? "Выключено" : `${cur !== undefined ? `${fmt(cur, 1)}° · ` : ""}${climateLine(k, t, activeMode(s)) || `${modeSmall(s.state) || HVAC[s.state] || haState(s)}${t !== undefined ? ` · → ${fmt(t, t % 1 ? 1 : 0)}°` : ""}`}`; }, on: (s) => { const k = climateNow(null, s); return acting(k) || k === "idle"; }, tap: null },
+    media_player: { icon: () => "hauflo:speaker", tone: "amber", word: (s) => (s.state === "playing" ? s.attributes.media_title || "идёт" : s.state === "paused" ? "на паузе" : s.state === "off" ? "выкл" : s.state === "on" ? "включён" : s.state === "idle" || s.state === "standby" ? "ждёт" : s.state === "buffering" ? "загрузка…" : haState(s)), on: (s) => s.state === "playing", tap: (s) => ["media_player", s.state === "off" ? "turn_on" : "media_play_pause"] },
+    weather: { icon: (s) => WEATHER[s.state]?.[1] || "hauflo:sun", tone: "ice", word: (s) => `${num(s.attributes.temperature) !== undefined ? `${fmt(num(s.attributes.temperature), 0)}° · ` : ""}${WEATHER[s.state]?.[0] || haState(s)}`, on: () => false, tap: null },
     scene: { icon: () => "hauflo:scene", tone: "amber", word: () => "выполнить", on: () => false, tap: ["scene", "turn_on"] },
     script: { icon: () => "hauflo:scene", tone: "amber", word: (s) => (s.state === "on" ? "выполняется…" : "выполнить"), tap: ["script", "turn_on"] },
     automation: { icon: () => "hauflo:clock", tone: "mint", word: (s) => (s.state === "on" ? "вкл" : "выкл"), tap: ["automation", "toggle"] },
-    person: { icon: () => "hauflo:user", tone: "mint", word: (s) => (s.state === "home" ? "дома" : s.state === "not_home" ? "не дома" : s.state), on: (s) => s.state === "home", tap: null },
-    camera: { icon: () => "hauflo:camera", tone: "alert", word: (s) => (s.state === "recording" ? "запись" : s.state === "streaming" ? "трансляция" : s.state), on: () => false, tap: null },
-    alarm_control_panel: { icon: (s) => (s.state.startsWith("armed") ? "hauflo:shield" : s.state === "triggered" ? "hauflo:shield-alert" : "hauflo:shield"), tone: "mint", word: (s) => ({ disarmed: "Снята", armed_away: "Под охраной", armed_home: "Под охраной · дома", armed_night: "Ночной режим", arming: "Ставится…", disarming: "Снимается…", pending: "Задержка входа…", triggered: "ТРЕВОГА" })[s.state] || s.state, on: (s) => s.state.startsWith("armed"), alarm: (s) => s.state === "triggered", tap: null },
+    person: { icon: () => "hauflo:user", tone: "mint", word: (s) => (s.state === "home" ? "дома" : s.state === "not_home" ? "не дома" : haState(s)), on: (s) => s.state === "home", tap: null },
+    camera: { icon: () => "hauflo:camera", tone: "alert", word: (s) => (s.state === "recording" ? "запись" : s.state === "streaming" ? "трансляция" : haState(s)), on: () => false, tap: null },
+    alarm_control_panel: { icon: (s) => (s.state.startsWith("armed") ? "hauflo:shield" : s.state === "triggered" ? "hauflo:shield-alert" : "hauflo:shield"), tone: "mint", word: (s) => ({ disarmed: "Снята", armed_away: "Под охраной", armed_home: "Под охраной · дома", armed_night: "Ночной режим", arming: "Ставится…", disarming: "Снимается…", pending: "Задержка входа…", triggered: "ТРЕВОГА" })[s.state] || haState(s), on: (s) => s.state.startsWith("armed"), alarm: (s) => s.state === "triggered", tap: null },
   };
   const domainOf = (id) => String(id || "").split(".")[0];
   const kindOf = (s) => {
     const d = domainOf(s.entity_id);
     if (ONE[d]) return ONE[d];
     const v = DEV[d];
-    if (v) return { icon: () => (v.icon === "hauflo:info" && (SENSOR_ICON[s.attributes.device_class] || AREA_ICON[d])) || v.icon, tone: "mint", word: (x) => v.word(x, nameOf(x, x.entity_id)), on: v.on, alarm: (x) => v.tone?.(x) === "alarm", warn: (x) => v.tone?.(x) === "warn", tap: v.tap };
-    return { icon: () => s.attributes.icon || SENSOR_ICON[s.attributes.device_class] || AREA_ICON[d] || "hauflo:info", tone: "mint", word: (x) => `${x.state}${unitOf(x) ? ` ${unitOf(x)}` : ""}`, on: (x) => x.state === "on", tap: null };
+    if (v) return { icon: () => (v.icon === "hauflo:info" && (SENSOR_ICON[s.attributes.device_class] || AREA_ICON[d])) || v.icon, tone: domTone(d), word: (x) => v.word(x, nameOf(x, x.entity_id)), on: v.on, alarm: (x) => v.tone?.(x) === "alarm", warn: (x) => v.tone?.(x) === "warn", tap: v.tap };
+    return { icon: () => s.attributes.icon || SENSOR_ICON[s.attributes.device_class] || AREA_ICON[d] || "hauflo:info", tone: domTone(d), word: (x) => `${x.state}${unitOf(x) ? ` ${unitOf(x)}` : ""}`, on: (x) => x.state === "on", tap: null };
   };
   // What a tap / hold / double tap does when the editor set it (HA's own action format); else the domain's default.
   const runAction = (card, a, entity) => {
@@ -8983,7 +9260,7 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
   // panel, a number's ±, a list. Only what the entity says it supports (its features / modes), whatever the integration.
   // This card is never written by the cloud (the agent's tunnel refuses it): the family picked the entity, it is theirs.
   const B_ = (svc, icon, label, data, on) => `<button class="cb${on ? " on" : ""}" data-svc="${svc}"${data ? ` data-x="${esc(JSON.stringify(data))}"` : ""} aria-label="${esc(label)}" title="${esc(label)}">${icon.startsWith("mdi:") || icon.startsWith("hauflo:") ? `<ha-icon icon="${icon}"></ha-icon>` : `<span>${esc(icon)}</span>`}</button>`;
-  const SL_ = (svc, field, min, max, step, v, label, kind = "") => `<div class="sl ${kind}" data-svc="${svc}" data-f="${field}" data-min="${min}" data-max="${max}" data-step="${step}" data-v="${v ?? min}" role="slider" aria-label="${esc(label)}" aria-valuenow="${v ?? ""}"><i style="width:${v === undefined ? 0 : Math.round(((v - min) / (max - min || 1)) * 100)}%"></i><span class="sv">${esc(label)}</span></div>`;
+  const SL_ = (svc, field, min, max, step, v, label, kind = "", unit) => `<div class="sl ${kind}" data-svc="${svc}" data-f="${field}" data-min="${min}" data-max="${max}" data-step="${step}" data-v="${v ?? min}"${unit === undefined ? "" : ` data-u="${esc(unit)}"`} role="slider" aria-label="${esc(label)}" aria-valuenow="${v ?? ""}"><i style="width:${v === undefined ? 0 : Math.round(((v - min) / (max - min || 1)) * 100)}%"></i><span class="sv">${esc(label)}</span></div>`;
   const PM_ = (svc, field, v, step, min, max, unit, digits = 0) =>
     `<div class="pmr">${B_(svc, "−", "−", { [field]: v === undefined ? undefined : Math.max(min ?? -Infinity, +(v - step).toFixed(4)) })}<span class="pmv thin">${v === undefined ? "—" : `${fmt(v, digits)}<small>${esc(unit)}</small>`}</span>${B_(svc, "+", "+", { [field]: v === undefined ? undefined : Math.min(max ?? Infinity, +(v + step).toFixed(4)) })}</div>`;
   const CTL = {
@@ -9008,7 +9285,7 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
     cover: (s) => {
       const f = s.attributes.supported_features || 0;
       const pos = num(s.attributes.current_position);
-      const btns = `${f & 1 ? B_("cover.open_cover", "mdi:arrow-up", "Открыть") : ""}${f & 8 ? B_("cover.stop_cover", "mdi:stop", "Стоп") : ""}${f & 2 ? B_("cover.close_cover", "mdi:arrow-down", "Закрыть") : ""}`;
+      const btns = `${f & 1 ? B_("cover.open_cover", coverBtnIcon(s, "open_cover"), "Открыть") : ""}${f & 8 ? B_("cover.stop_cover", "mdi:stop", "Стоп") : ""}${f & 2 ? B_("cover.close_cover", coverBtnIcon(s, "close_cover"), "Закрыть") : ""}`;
       const tilt = `${f & 16 ? B_("cover.open_cover_tilt", "mdi:arrow-top-right", "Открыть ламели") : ""}${f & 32 ? B_("cover.close_cover_tilt", "mdi:arrow-bottom-left", "Закрыть ламели") : ""}`;
       return `${f & 4 ? `<div class="row">${SL_("cover.set_cover_position", "position", 0, 100, 1, pos, pos === undefined ? "—" : `${pos} %`, "pos")}</div>` : ""}${btns || tilt ? `<div class="row btns">${btns}${tilt}</div>` : ""}`;
     },
@@ -9071,11 +9348,16 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
       const f = a.supported_features || 0;
       return `<div class="row chips">${f & 1 ? `<button class="chip${s.state === "armed_home" ? " on" : ""}" data-svc="alarm_control_panel.alarm_arm_home">Дома</button>` : ""}${f & 2 ? `<button class="chip${s.state === "armed_away" ? " on" : ""}" data-svc="alarm_control_panel.alarm_arm_away">Уйти</button>` : ""}${f & 4 ? `<button class="chip${s.state === "armed_night" ? " on" : ""}" data-svc="alarm_control_panel.alarm_arm_night">Ночь</button>` : ""}<button class="chip${s.state === "disarmed" ? " on" : ""}" data-svc="alarm_control_panel.alarm_disarm">Снять</button></div>`;
     },
+    // HA's own rule (number entity `mode`): «slider» → a slider, «box» → ±, «auto» → a slider while the range has ≤ 256 steps.
     number: (s) => {
       const a = s.attributes;
       const step = num(a.step) || 1;
       const dg = String(step).includes(".") ? String(step).split(".")[1].length : 0;
-      return `<div class="row">${PM_(`${domainOf(s.entity_id)}.set_value`, "value", num(s.state), step, num(a.min), num(a.max), unitOf(s), dg)}</div>`;
+      const [mn, mx, v] = [num(a.min), num(a.max), num(s.state)];
+      const unit = unitOf(s) || (mn === 0 && mx === 100 ? "%" : "");
+      const slide = mn !== undefined && mx !== undefined && mx > mn && (a.mode === "slider" || (a.mode !== "box" && (mx - mn) / step <= 256));
+      if (slide) return `<div class="row">${SL_(`${domainOf(s.entity_id)}.set_value`, "value", mn, mx, step, v, v === undefined ? "—" : `${fmt(v, dg)} ${unit}`.trim(), "pos", unit)}</div>`;
+      return `<div class="row">${PM_(`${domainOf(s.entity_id)}.set_value`, "value", v, step, mn, mx, unitOf(s), dg)}</div>`;
     },
     select: (s) => `<div class="row"><select class="dd" data-svc="${domainOf(s.entity_id)}.select_option"${nd(s) ? " disabled" : ""}>${(s.attributes.options || []).map((o) => `<option value="${esc(o)}"${o === s.state ? " selected" : ""}>${esc(o)}</option>`).join("")}</select></div>`,
     valve: (s) => {
@@ -9104,7 +9386,8 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
     const show = (v) => {
       fill.style.width = `${Math.round(((v - mn) / (mx - mn || 1)) * 100)}%`;
       const f = el.dataset.f;
-      lab.textContent = f === "color_temp_kelvin" ? `${v} K` : f === "hs_color" ? `${v}°` : `${v} %`;
+      const dg = String(stp).includes(".") ? String(stp).split(".")[1].length : 0;
+      lab.textContent = f === "color_temp_kelvin" ? `${v} K` : f === "hs_color" ? `${v}°` : el.dataset.u !== undefined ? `${fmt(v, dg)} ${el.dataset.u}`.trim() : `${v} %`;
     };
     // Sideways swipe only (a tap or a page scroll sets nothing); sent when let go.
     hdrag(el, {
@@ -9148,8 +9431,8 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
 .chip{min-height:36px;padding:0 12px;border-radius:12px;font:500 12px Onest,sans-serif;color:var(--ink2);box-shadow:inset 0 0 0 1px var(--line)}.chip.on{color:var(--ink);background:var(--track);box-shadow:none}
 .sl{flex:1;min-width:0;height:44px;border-radius:15px;background:var(--track);position:relative;overflow:hidden;touch-action:pan-y;cursor:ew-resize;user-select:none;-webkit-user-select:none}
 .sl i{position:absolute;left:0;top:0;bottom:0;background:color-mix(in srgb,var(--acc) 55%,transparent);border-radius:15px 0 0 15px;transition:width .2s}.sl .sv{position:absolute;left:14px;top:50%;transform:translateY(-50%);font:500 13px Onest,sans-serif;color:var(--ink)}
-.sl.ct{background:linear-gradient(90deg,#ffb15a,#fff3e0 55%,#cfe3ff)}.sl.ct i,.sl.hue i{background:transparent;border-right:3px solid var(--ink);border-radius:0}
-.sl.hue{background:linear-gradient(90deg,#f00,#ff0 17%,#0f0 33%,#0ff 50%,#00f 67%,#f0f 83%,#f00)}.sl.ct .sv,.sl.hue .sv{color:#222}
+.sl.ct{background:var(--hf-ct-spectrum)}.sl.ct i,.sl.hue i{background:transparent;border-right:3px solid var(--ink);border-radius:0}
+.sl.hue{background:var(--hf-hue-spectrum)}.sl.ct .sv,.sl.hue .sv{color:var(--hf-slider-ink)}
 .pmr{display:flex;align-items:center;gap:8px;flex:1}.pmv{flex:1;text-align:center;font-size:30px;line-height:1}.pmv small{font:300 14px Onest,sans-serif;color:var(--ink2);margin-left:2px}
 .dd{flex:1;min-height:44px;border-radius:15px;border:0;padding:0 12px;font:500 14px Onest,sans-serif;color:var(--ink);background:var(--track)}`;
   class Entity extends EHCard {
@@ -9179,10 +9462,10 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
       const name = c.name || nameOf(s, s.entity_id);
       const pick = (what, dflt) => (what === undefined ? dflt : what);
       const p1 = INFO(s, pick(c.primary_info, "name"), k);
-      const p2 = INFO(s, pick(c.secondary_info, "state"), k);
+      const p2 = riskWord(this, s.entity_id) || INFO(s, pick(c.secondary_info, "state"), k);
       // A player shows what plays (its cover) unless the card says otherwise, as Mushroom's media card.
       const pic = (c.icon_type === "entity-picture" || (c.icon_type === undefined && domainOf(s.entity_id) === "media_player" && s.state !== "off")) && s.attributes.entity_picture;
-      const icon = c.icon_type === "none" ? "" : `<div class="ic${pic ? " pic" : ""}"${pic ? ` style="background-image:url('${esc(s.attributes.entity_picture)}')"` : ""}>${pic ? "" : `<ha-icon icon="${esc(c.icon || s.attributes.icon || k.icon(s))}"></ha-icon>`}</div>`;
+      const icon = c.icon_type === "none" ? "" : `<div class="ic${pic ? " pic" : ""}"${pic ? ` style="background-image:url('${esc(s.attributes.entity_picture)}')"` : ""}>${pic ? "" : `<ha-icon icon="${esc(c.icon || s.attributes.icon || k.icon(s, c))}"></ha-icon>`}</div>`;
       const ctl = this.controls(s);
       const level = k.level && c.show_level !== false && on && !ctl ? Math.max(0, Math.min(1, k.level(s))) : 0;
       return `<div class="glass e${ctl ? " hasctl" : ""}${c.layout === "vertical" ? " v" : ""}${on ? " on" : ""}${alarm ? " alarm" : ""}${warn ? " warn" : ""}${nd(s) ? " un" : ""}" style="--acc:${acc};--accGlow:${glow}" role="button" tabindex="0" aria-label="${esc(name)}"><div class="glow"></div>${icon}<div class="tx">${p1 === "" ? "" : `<div class="p1">${esc(p1 ?? name)}</div>`}${p2 === "" ? "" : `<div class="p2">${esc(p2 ?? name)}</div>`}</div>${level ? `<i class="lvl" style="width:${Math.round(level * 100)}%"></i>` : ""}${ctl ? `<div class="ctl">${ctl}</div>` : ""}</div>`;
@@ -9238,6 +9521,7 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
         const k = s && kindOf(s);
         const t = k && (typeof k.tap === "function" ? k.tap(s) : k.tap);
         if (!t) return moreInfo(this, id);
+        if (!riskTap(this, id)) return;
         haptic(this);
         call(this._hass, t[0], t[1], { entity_id: id });
       };
@@ -9251,7 +9535,8 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
         at = [ev.clientX, ev.clientY];
         timer = setTimeout(() => {
           held = true;
-          runAction(this, c.hold_action || { action: "more-info" }, id);
+          if (c.hold_action) runAction(this, c.hold_action, id);
+          else openTile(this, id);
         }, 500);
       });
       el.addEventListener("pointermove", (ev) => at && Math.hypot(ev.clientX - at[0], ev.clientY - at[1]) > 8 && (clearTimeout(timer), (at = null)));
@@ -9453,7 +9738,7 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
       // On a dashboard Hauflo made: what a change here means (owner 28.10: «не понял, почему карточки не редактируются»).
       if (!this._note && /^\/hauflo-/.test(location.pathname)) {
         this._note = document.createElement("div");
-        this._note.style.cssText = "margin:0 0 16px;padding:10px 14px;border-radius:12px;background:rgba(127,127,127,.1);font-size:13px;line-height:1.45;color:var(--secondary-text-color)";
+        this._note.style.cssText = "margin:0 0 16px;padding:10px 14px;border-radius:12px;background:var(--hf-grey-10);font-size:13px;line-height:1.45;color:var(--secondary-text-color)";
         this._note.textContent =
           userLang(this._hass) === "ru"
             ? "Свои карточки можно добавлять — Hauflo сохранит их при следующей выкатке. Названия блоков — «Настройки → Вид» на панели."
