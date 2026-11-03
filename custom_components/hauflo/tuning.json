@@ -97,5 +97,15 @@
     "max_skip": 200,
     "max_ours": 3000,
     "living_words": "гостин|кухн|столов|зал\\b|living|kitchen|lounge|dining"
+  },
+  "cards": {
+    "off_in_max_min": 1440
+  }
+,
+  "automations": {
+    "max_sensors": 8,
+    "max_for_min": 240,
+    "max_only_if": 5,
+    "max_set": 100
   }
 }

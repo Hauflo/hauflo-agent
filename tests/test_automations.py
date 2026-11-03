@@ -443,3 +443,165 @@ def test_saved_without_location_is_a_caution_not_an_error() -> None:
     assert "warn: true" in line and "bad: true" not in line
     assert ".msg.warn{" in js and "eh-amber" in js.split(".msg.warn{", 1)[1].split("}", 1)[0]
     assert js.count('this.bad ? "bad" : this.warn ? "warn" : ""') == 2
+
+
+# --- owner 03.11: «что сделать» over a set, a rule by a reading (one sensor or the average of several), «только если» ---
+T1, T2, T3 = "sensor.living_temp", "sensor.bedroom_temp", "sensor.kitchen_temp"
+HUM = "sensor.living_humidity"
+
+
+def _sensors(hass: HomeAssistant) -> None:
+    for eid, v in ((T1, "21.0"), (T2, "23.0"), (T3, "25.0")):
+        hass.states.async_set(eid, v, {"device_class": "temperature", "unit_of_measurement": "°C", "friendly_name": eid})
+    hass.states.async_set(HUM, "40", {"device_class": "humidity", "unit_of_measurement": "%"})
+
+
+async def test_set_action_rooms_all_and_devices(hass: HomeAssistant, hass_client, entry, bus) -> None:
+    """Several devices, a whole room, everything of a kind — one action, HA's own target (owner 03.11: «по одному»)."""
+    client = await hass_client()
+    every = {"when": {"event": "time", "at": "07:00"}, "actions": [{"do": "set", "domain": "light", "cmd": "on", "all": True, "value": 60}, {"do": "set", "domain": "cover", "cmd": "position", "rooms": [entry.area], "value": 40}, {"do": "set", "domain": "scene", "cmd": "on", "entities": [SCENE]}]}
+    r = await client.post(URL, json={"op": "save", "rule": every})
+    assert r.status == 200, await r.text()
+    rid = (await r.json())["id"]
+    mine = [a for a in _file(hass) if a.get("id") == rid][0]
+    assert mine["actions"] == [
+        {"action": "light.turn_on", "target": {"area_id": [entry.area]}, "data": {"brightness_pct": 60}},
+        {"action": "cover.set_cover_position", "target": {"area_id": [entry.area]}, "data": {"position": 40}},
+        {"action": "scene.turn_on", "target": {"entity_id": [SCENE]}},
+    ]
+    # The integrator's light in the room: the room becomes its Hauflo lights by name, never HAND.
+    er.async_get(hass).async_update_entity(HAND, area_id=entry.area)
+    picked = {"when": {"event": "time", "at": "07:00"}, "actions": [{"do": "set", "domain": "light", "cmd": "off", "rooms": [entry.area], "entities": [LIGHT]}]}
+    r = await (await client.post(URL, json={"op": "save", "rule": picked})).json()
+    mine = [a for a in _file(hass) if a.get("id") == r["id"]][0]
+    assert mine["actions"] == [{"action": "light.turn_off", "target": {"entity_id": [LIGHT, LAMP]}}]
+    bus.clear()
+    assert (await client.post(URL, json={"op": "run", "id": r["id"]})).status == 200
+    await hass.async_block_till_done()
+    assert [m[0] for m in bus] == ["light.turn_off"] and sorted(bus[0][1]) == [LIGHT, LAMP]
+    for bad in (
+        {"do": "set", "domain": "light", "cmd": "on"},  # nothing picked
+        {"do": "set", "domain": "light", "cmd": "on", "entities": [HAND]},
+        {"do": "set", "domain": "light", "cmd": "on", "entities": ["light.nowhere"]},
+        {"do": "set", "domain": "cover", "cmd": "open", "entities": [GARAGE]},
+        {"do": "set", "domain": "light", "cmd": "on", "entities": [BLIND]},  # another kind
+        {"do": "set", "domain": "light", "cmd": "ramp", "entities": [LIGHT]},
+        {"do": "set", "domain": "lock", "cmd": "unlock", "all": True},
+        {"do": "set", "domain": "scene", "cmd": "on", "all": True},
+        {"do": "set", "domain": "light", "cmd": "on", "rooms": ["nowhere"]},
+        {"do": "set", "domain": "light", "cmd": "on", "entities": [LIGHT, LIGHT]},
+        {"do": "set", "domain": "cover", "cmd": "position", "rooms": [entry.area]},  # no value
+        {"do": "set", "domain": "light", "cmd": "on", "all": True, "value": 0},
+    ):
+        res = await client.post(URL, json={"op": "save", "rule": {**picked, "actions": [bad]}})
+        assert res.status == 400, bad
+
+
+async def test_value_rule_one_sensor_and_the_average(hass: HomeAssistant, hass_client, entry, bus) -> None:
+    """«Средняя температура выше 24° — закрыть шторы»: one sensor → its own numeric_state; several → HA's min_max helper
+    (an unavailable one left out by HA), shared and removed with the last rule."""
+    _sensors(hass)
+    client = await hass_client()
+    got = await (await client.get(URL)).json()
+    assert {s["entity_id"] for s in got["targets"]["sensors"]} >= {T1, T2, T3, HUM}
+    one = {"when": {"event": "value", "sensors": [T1], "op": "below", "x": 18.5, "for_min": 10}, "actions": [{"do": "set", "domain": "light", "cmd": "on", "rooms": [entry.area]}]}
+    r = await client.post(URL, json={"op": "save", "rule": one})
+    assert r.status == 200, await r.text()
+    mine = [a for a in _file(hass) if a.get("id") == (await r.json())["id"]][0]
+    assert mine["triggers"] == [{"trigger": "numeric_state", "entity_id": T1, "below": 18.5, "for": {"minutes": 10}}]
+
+    avg = {"when": {"event": "value", "sensors": [T3, T1, T2], "stat": "mean", "op": "above", "x": 24}, "actions": [{"do": "set", "domain": "cover", "cmd": "close", "all": True}], "only_if": [{"if": "light"}]}
+    r = await client.post(URL, json={"op": "save", "rule": avg})
+    assert r.status == 200, await r.text()
+    rule = await r.json()
+    helper = rule["when"]["entity"]
+    assert helper.startswith("sensor.") and rule["when"]["sensors"] == sorted([T1, T2, T3])
+    await hass.async_block_till_done()
+    assert float(hass.states.get(helper).state) == 23.0
+    ent = er.async_get(hass).async_get(helper)
+    assert ent.platform == "min_max" and ent.name.startswith("Hauflo · ")
+    assert helper not in {s["entity_id"] for s in (await (await client.get(URL)).json())["targets"]["sensors"]}  # not offered as a sensor
+    mine = [a for a in _file(hass) if a.get("id") == rule["id"]][0]
+    assert mine["triggers"] == [{"trigger": "numeric_state", "entity_id": helper, "above": 24}]
+    assert mine["conditions"] == [{"condition": "sun", "after": "sunrise", "before": "sunset"}]
+    # An unavailable sensor: HA's average of the others.
+    hass.states.async_set(T1, "unavailable", {"device_class": "temperature", "unit_of_measurement": "°C"})
+    await hass.async_block_till_done()
+    assert float(hass.states.get(helper).state) == 24.0
+    # The same sensors in another rule: the same helper; deleted one by one — the helper goes with the last.
+    r2 = await (await client.post(URL, json={"op": "save", "rule": {**avg, "only_if": [{"if": "between", "after": "22:00", "before": "06:00"}]}})).json()
+    assert r2["when"]["entity"] == helper
+    assert [a for a in _file(hass) if a.get("id") == r2["id"]][0]["conditions"] == [{"condition": "time", "after": "22:00:00", "before": "06:00:00"}]
+    assert (await client.post(URL, json={"op": "delete", "id": rule["id"]})).status == 200
+    assert hass.states.get(helper) is not None and len(hass.config_entries.async_entries("min_max")) == 1
+    # Edited to one sensor: the helper is no longer needed.
+    r3 = await (await client.post(URL, json={"op": "save", "rule": {**avg, "id": r2["id"], "when": {**avg["when"], "sensors": [T2]}}})).json()
+    assert r3["when"]["entity"] == T2
+    await hass.async_block_till_done()
+    assert hass.config_entries.async_entries("min_max") == []
+    for bad in (
+        {**avg["when"], "sensors": []},
+        {**avg["when"], "sensors": [T1, HUM]},  # two kinds
+        {**avg["when"], "sensors": ["sensor.nowhere"]},
+        {**avg["when"], "sensors": [PHONE_ALARM]},
+        {**avg["when"], "sensors": [helper]},
+        {**avg["when"], "stat": "sum"},
+        {**avg["when"], "op": "equal"},
+        {**avg["when"], "x": "{{ 1 }}"},
+        {**avg["when"], "for_min": 241},
+    ):
+        res = await client.post(URL, json={"op": "save", "rule": {**avg, "when": bad}})
+        assert res.status == 400, bad
+    assert hass.config_entries.async_entries("min_max") == []  # a refused rule leaves no helper
+
+
+async def test_only_if_and_presence(hass: HomeAssistant, hass_client, entry, bus) -> None:
+    _sensors(hass)
+    client = await hass_client()
+    away = {"when": {"event": "presence", "to": "away"}, "actions": [{"do": "set", "domain": "light", "cmd": "off", "all": True}], "only_if": [{"if": "dark"}, {"if": "value", "sensors": [HUM], "op": "above", "x": 30}]}
+    r = await client.post(URL, json={"op": "save", "rule": away})
+    assert r.status == 200, await r.text()
+    mine = [a for a in _file(hass) if a.get("id") == (await r.json())["id"]][0]
+    assert mine["triggers"] == [{"trigger": "numeric_state", "entity_id": "zone.home", "below": 1}]
+    assert mine["conditions"] == [
+        {"condition": "or", "conditions": [{"condition": "sun", "after": "sunset"}, {"condition": "sun", "before": "sunrise"}]},
+        {"condition": "numeric_state", "entity_id": HUM, "above": 30},
+    ]
+    for bad in (
+        {**away, "only_if": [{"if": "dark"}, {"if": "light"}]},
+        {**away, "only_if": [{"if": "home"}, {"if": "away"}]},
+        {**away, "only_if": [{"if": "between", "after": "22:00", "before": "22:00"}]},
+        {**away, "only_if": [{"if": "between", "after": "25:00", "before": "06:00"}]},
+        {**away, "only_if": [{"if": "template"}]},
+        {**away, "only_if": [{"if": "dark"}] * 6},
+        {**away, "when": {"event": "presence", "to": "work"}},
+        # never true at its own trigger (live check 03.11: «пришёл первый» + «только если никого» was saved)
+        {**away, "only_if": [{"if": "home"}]},
+        {**away, "when": {"event": "presence", "to": "home"}, "only_if": [{"if": "away"}]},
+        {**away, "when": {"event": "time", "at": "07:00"}, "only_if": [{"if": "between", "after": "22:00", "before": "06:00"}]},
+        {**away, "when": {"event": "time", "at": "07:00"}, "only_if": [{"if": "between", "after": "08:00", "before": "09:00"}, {"if": "between", "after": "06:00", "before": "08:00"}]},
+        {**away, "when": {"event": "value", "sensors": [T1, T2], "stat": "mean", "op": "above", "x": 25}, "only_if": [{"if": "value", "sensors": [T2, T1], "stat": "mean", "op": "below", "x": 25}]},
+        {**away, "only_if": [{"if": "value", "sensors": [HUM], "op": "above", "x": 60}, {"if": "value", "sensors": [HUM], "op": "below", "x": 40}]},
+        # the sensors decide the kind: a humidity sensor isn't taken for a temperature rule
+        {**away, "when": {"event": "value", "kind": "temperature", "sensors": [HUM], "op": "above", "x": 25}, "only_if": []},
+    ):
+        res = await client.post(URL, json={"op": "save", "rule": bad})
+        assert res.status == 400, bad
+    for good in (
+        {**away, "when": {"event": "time", "at": "23:00"}, "only_if": [{"if": "between", "after": "22:00", "before": "06:00"}]},
+        {**away, "when": {"event": "time", "at": "05:59"}, "only_if": [{"if": "between", "after": "22:00", "before": "06:00"}]},
+        {**away, "when": {"event": "value", "sensors": [T1, T2], "stat": "mean", "op": "above", "x": 25}, "only_if": [{"if": "value", "sensors": [T1, T2], "stat": "max", "op": "below", "x": 25}]},
+        {**away, "only_if": [{"if": "value", "sensors": [HUM], "op": "above", "x": 40}, {"if": "value", "sensors": [HUM], "op": "below", "x": 60}]},
+    ):
+        res = await client.post(URL, json={"op": "save", "rule": good})
+        assert res.status == 200, (good, await res.text())
+
+
+async def test_old_rules_keep_their_file_and_digest(hass: HomeAssistant, hass_client, entry, bus) -> None:
+    """A rule saved before 03.11 (no only_if, per-device actions) makes the very same automation — no «changed in HA»."""
+    client = await hass_client()
+    r = await (await client.post(URL, json={"op": "save", "rule": SUNSET})).json()
+    before = [a for a in _file(hass) if a.get("id") == r["id"]][0]
+    assert before["conditions"] == [] and "only_if" not in r
+    listed = (await (await client.get(URL)).json())["rules"]
+    assert listed[0]["changed"] is False

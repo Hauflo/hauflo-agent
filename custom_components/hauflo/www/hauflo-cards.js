@@ -983,6 +983,23 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
   // --- the client's own view (owner 28.10: «менять карточку как мне, так и клиенту»): scenes in their blocks or on top,
   // climate and floor heating large or a line. The integrator's choice is each card's config (the default); the person's
   // own choice is kept by HA for him (frontend user data, as his theme) — other people of the house keep theirs.
+  // v5 cards (hauflo-cards-v5.js) read the same stores: tell them on a change, and take theirs (hauflo-house event).
+  const houseChanged = (store) => window.dispatchEvent(new CustomEvent("hauflo-house", { detail: { store } }));
+  window.addEventListener("hauflo-house", (e) => {
+    // a favourite added from a v5 scene sheet: the agent's new house settings come with the event
+    if (e.detail?.from === "v5" && e.detail.store === "house" && e.detail.data) return HOUSE.set(e.detail.data);
+    const k = e.detail?.from === "v5" && { view: VIEW, titles: TITLES, order: ORDER }[e.detail.store];
+    if (!k) return;
+    try {
+      k.data = JSON.parse(localStorage.getItem(`hauflo_${e.detail.store}`) || "null") || {};
+    } catch (err) {
+      return;
+    }
+    for (const c of k.cards) {
+      c._sig = "";
+      c._update();
+    }
+  });
   const VIEW = { data: null, state: "", cards: new Set() };
   const viewRerender = () => {
     // Every card of the dashboard, shown or not: a hidden one (scenes that were in their blocks) may show now.
@@ -1032,6 +1049,7 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
       /* private mode */
     }
     viewRerender();
+    houseChanged("view");
     await h.callWS({ type: "frontend/set_user_data", key: "hauflo_view", value: next });
   };
   // --- the client's names of the blocks (owner 28.10: «как переименовать карточку — кому-то надо так, а кому-то как мне»):
@@ -1075,6 +1093,7 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
       c._sig = "";
       c._update();
     }
+    houseChanged("titles");
   };
   /** A block's title: the client's name (marked `data-own` — kept as typed, not put into English), else the config's,
    * else the card's own word. */
@@ -1154,6 +1173,7 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
     } catch (e) {
       /* private mode */
     }
+    houseChanged("order");
   };
   const orderRedraw = () => {
     for (const c of ORDER.cards) {
@@ -3473,7 +3493,11 @@ ${this.cct(cur, target, step, this._config.entity)}
       );
       this.shadowRoot.querySelectorAll("button[data-f]").forEach((b) => b.addEventListener("click", () => call(this._hass, "climate", "set_fan_mode", { entity_id: id, fan_mode: b.dataset.f })));
       this.shadowRoot.querySelectorAll("button[data-sw]").forEach((b) => b.addEventListener("click", () => call(this._hass, "climate", "set_swing_mode", { entity_id: id, swing_mode: b.dataset.sw })));
-      if (this.shadowRoot.querySelector(".c")) this.shadowRoot.querySelector(".caps")?.addEventListener("click", () => moreInfo(this, id));
+      const head = this.shadowRoot.querySelector(".c") && this.shadowRoot.querySelector(".caps");
+      if (head) {
+        head.addEventListener("click", () => moreInfo(this, id));
+        head.addEventListener("contextmenu", (ev) => (ev.preventDefault(), moreInfo(this, id))); // the right button as everywhere
+      }
       this.shadowRoot.querySelectorAll("[data-pk]").forEach((b) =>
         b.addEventListener("click", () => {
           this._sel = b.dataset.pk;
@@ -4456,6 +4480,7 @@ ${hidden ? `<button class="more" data-more="1">${coversFolded ? `Каждая о
   /** The control sheet of one light / blind / scene, over the page. */
   const openTile = (card, id) => {
     if (TILE) return;
+    if (window.__haufloRemote?.(card._hass, id)) return; // «Вид карточек: новый» (hauflo-cards-v5.js) draws this type's remote
     const h0 = card._hass;
     if (!st(h0, id)) return;
     haptic(card, "medium");
@@ -5941,6 +5966,15 @@ ${!vs.length && ss.length ? `<div class="hint" data-own>${LL("Кран не на
         });
         el.addEventListener("pointermove", (ev) => at && Math.hypot(ev.clientX - at[0], ev.clientY - at[1]) > 8 && (clearTimeout(t), (at = null)));
         el.addEventListener("pointercancel", () => (clearTimeout(t), (at = null)));
+        // A mouse's right button = the long press (as every other row): the browser's menu said nothing here.
+        el.addEventListener("contextmenu", (ev) => {
+          ev.preventDefault();
+          if (held) return;
+          clearTimeout(t);
+          at = null;
+          held = true;
+          moreInfo(this, id);
+        });
         el.addEventListener("pointerup", () => {
           clearTimeout(t);
           const still = at !== null;
@@ -6040,7 +6074,10 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
       const hf = /^\/hauflo-/.test(location.pathname)
         ? "ha-tab-group-tab{font-size:calc(15px*min(var(--hf-ts,1),1.4))!important}ha-tab-group-tab:last-of-type{margin-inline-end:36px}@media (max-width:600px){ha-tab-group-tab::part(base){padding-inline:10px}}ha-menu-button,ha-icon-button,.hauflo-gear{--mdc-icon-size:calc(24px*min(var(--hf-ts,1),1.3))}"
         : "";
-      const css = hf + (atelier ? TABS : "") + (mode ? HEAD[mode].replace("ha-tab-group,ha-tab-group-tab,", "") + (mode === "dark" ? "ha-tab-group{--wa-color-neutral-on-quiet:#F4F2EE!important}ha-tab-group-tab{color:rgba(244,242,238,.64)!important}ha-tab-group-tab[active],ha-tab-group-tab:hover{color:#F4F2EE!important}" : "ha-tab-group{--wa-color-neutral-on-quiet:#121212!important}ha-tab-group-tab{color:rgba(18,18,18,.64)!important}ha-tab-group-tab[active],ha-tab-group-tab:hover{color:#121212!important}") : "");
+      // the tab's inner label takes HA's own hover colour (black under a light user theme on a dark board — owner 03.11):
+      // it follows the tab's colour set here instead, in every state
+      const part = atelier || mode ? "ha-tab-group-tab::part(base),ha-tab-group-tab:hover::part(base),ha-tab-group-tab:focus-visible::part(base){color:inherit!important}" : "";
+      const css = hf + part + (atelier ? TABS : "") + (mode ? HEAD[mode].replace("ha-tab-group,ha-tab-group-tab,", "") + (mode === "dark" ? "ha-tab-group{--wa-color-neutral-on-quiet:#F4F2EE!important}ha-tab-group-tab{color:rgba(244,242,238,.64)!important}ha-tab-group-tab[active],ha-tab-group-tab:hover{color:#F4F2EE!important}" : "ha-tab-group{--wa-color-neutral-on-quiet:#121212!important}ha-tab-group-tab{color:rgba(18,18,18,.64)!important}ha-tab-group-tab[active],ha-tab-group-tab:hover{color:#121212!important}") : "");
       if (el.textContent !== css) el.textContent = css;
     }, 400);
   })();
@@ -6061,8 +6098,30 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
         min: "мин", h: "ч", d: "д", today: "сегодня", tomorrow: "завтра", at: "в",
         wd: ["пн", "вт", "ср", "чт", "пт", "сб", "вс"],
         every: "каждый день", workdays: "по будням", weekend: "по выходным",
-        ev: { sunrise: "Рассвет", sunset: "Закат", time: "Время", alarm: "Будильник" },
+        ev: { sunrise: "Рассвет", sunset: "Закат", time: "Время", alarm: "Будильник", value: "Датчики", presence: "Дома / нет дома" },
         evGen: { sunrise: "рассвета", sunset: "заката", alarm: "будильника" },
+        kind: { temperature: "Температура", humidity: "Влажность", carbon_dioxide: "CO₂", illuminance: "Освещённость" },
+        stat: { mean: "Среднее", min: "Минимум", max: "Максимум" },
+        op: { above: "Выше", below: "Ниже" },
+        valueWhen: (k, src, op, x, u, f) => `${k}${src ? ` (${src})` : ""} ${op === "above" ? "выше" : "ниже"} ${x}${u}${f ? `, дольше ${f} мин` : ""}`,
+        statOf: (s, n) => `${{ mean: "среднее", min: "минимум", max: "максимум" }[s]} по ${n} датч.`,
+        sensors: "Какие датчики", how: "Как считать", limit: "Порог", hold: "Держится", holdTxt: (m) => (m ? `дольше ${m} мин` : "сразу"),
+        nowVal: (v) => `Сейчас: ${v}`, noData: "нет данных", noSensors: "Нет датчиков температуры, влажности, CO₂ или освещённости.", needSensor: "Выберите хотя бы один датчик.",
+        valueNote: "Несколько датчиков — Hauflo заведёт в Home Assistant помощник «Мин/макс»: недоступный датчик в расчёт не попадёт.",
+        valueHow: "Сработает в момент, когда значение перейдёт порог, — не всё время, пока оно за порогом.",
+        presence: { away: "Все ушли из дома", home: "Кто-то пришёл домой" },
+        noPeople: "В Home Assistant нет людей с телефонами — «дома / нет дома» не узнать. Добавьте человека и приложение Home Assistant на его телефон.",
+        onlyIf: "Только если", addIf: "Добавить условие…", ifFrom: "с", ifTo: "до",
+        ifs: { dark: "Темно", light: "Светло", between: "В промежутке времени", home: "Кто-то дома", away: "Никого нет дома", value: "По датчику" },
+        ifText: { dark: "темно", light: "светло", between: (a, b) => `с ${a} до ${b}`, home: "кто-то дома", away: "никого нет дома" },
+        onlyIfLine: (l) => `только если ${l}`,
+        pick: { light: "Свет", cover: "Шторы", scene: "Сцены", house: "Весь дом", room: (n) => `вся комната · ${n}`, noRoom: "Без комнаты", add: (n) => `Добавить (${n})`, change: "Изменить выбор", none: "Отметьте комнаты или устройства.", hint: "Можно выбрать весь дом, комнаты целиком и отдельные устройства." },
+        set: {
+          light: { on: (l, v) => `Включить свет${v ? ` на ${v} %` : ""}: ${l}`, off: (l) => `Выключить свет: ${l}` },
+          cover: { open: (l) => `Открыть шторы: ${l}`, close: (l) => `Закрыть шторы: ${l}`, position: (l, v) => `Шторы на ${v} %: ${l}` },
+          scene: { on: (l) => `Сцены: ${l}` },
+        },
+        houseAll: "весь дом",
         atTime: (t) => `В ${t}`,
         alarmOf: (p) => `Будильник ${p}`,
         offLong: (ev, o) => (o < 0 ? `за ${dur(-o, "ru")} до ${W.ru.evGen[ev]}` : o > 0 ? `через ${dur(o, "ru")} после ${W.ru.evGen[ev]}` : ev === "alarm" ? "со звонком будильника" : `ровно на ${ev === "sunset" ? "закате" : "рассвете"}`),
@@ -6079,6 +6138,7 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
           wake_light: ["Свет-будильник: плавно 0 → 25 %", (src) => `Спальня · ${src}`],
           night_off: ["Выключать весь свет в 01:00", () => "Каждый день · все комнаты"],
           corridor_night: ["Свет в коридоре ночью на 10 %", (r) => `Каждый день в 23:00 · ${r}`],
+          away_off: ["Все ушли — выключить весь свет", () => "Когда уходит последний · весь дом"],
         },
         srcAndroid: (p) => `за 20 мин до будильника ${p}`, srcIphone: "с будильником iPhone",
         newRule: "Новое правило", rule: "Правило", back: "Назад",
@@ -6091,9 +6151,9 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
         iphoneSteps: [
           "Откройте на iPhone приложение «Команды».",
           "Внизу нажмите «Автоматизация», затем «+».",
-          "Выберите «Будильник» → «Выключен» (или «Сработал»), будильник — «Любой». Включите «Запускать сразу» и нажмите «Далее».",
-          "«Новая пустая автоматизация» → «Добавить действие» → найдите «Home Assistant» → «Отправить событие».",
-          "В поле «Событие» вставьте этот код:",
+          "Выберите «Будильник» → «Остановлен» (или «Отложен»), будильник — «Любой». Включите «Запускать сразу» и нажмите «Далее».",
+          "«Новая пустая автоматизация» → «Добавить действие» → найдите «Home Assistant» → «Fire Event» («Отправить событие»).",
+          "В поле «Event Type» («Тип события») вставьте этот код, «Event Data» оставьте пустым:",
           "Нажмите «Готово». Утром выключите будильник — шторы и свет сработают сами. На iPhone нужно приложение Home Assistant, вошедшее в этот дом.",
         ],
         share: "Отправить инструкцию", shareTitle: "Будильник iPhone → дом", shared: "Инструкция скопирована — вставьте её в сообщение.",
@@ -6102,7 +6162,7 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
         chk: "Проверить", chkTitle: "Что видит Hauflo",
         chkAndroidOk: (t) => `Hauflo видит ближайший будильник: ${t}. Всё работает.`,
         chkAndroidNone: "Датчик есть, но будильника не видно — сделайте шаг 2: поставьте будильник на телефоне и откройте приложение Home Assistant. Потом нажмите «Проверить» ещё раз.",
-        chkAndroidOff: "Датчик недоступен (телефон выключен или приложение давно не открывали) — откройте приложение Home Assistant на телефоне и проверьте ещё раз.",
+        chkAndroidOff: "Датчик «недоступен»: либо на телефоне не стоит ни одного будильника (так приложение показывает пустое), либо телефон выключен или приложение давно не открывали. Поставьте будильник в «Часах», откройте приложение Home Assistant и нажмите «Проверить» ещё раз.",
         chkAndroidMissing: "Датчика будильника ещё нет — сделайте шаг 1: включите «Следующий будильник» в приложении Home Assistant.",
         chkIphoneSave: "Правило ещё не сохранено — сохраните его, и появится код для «Команд» (шаг 5).",
         chkIphoneOk: (t) => `Команда с iPhone приходила: ${t}. Всё работает.`,
@@ -6195,8 +6255,30 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
         min: "min", h: "h", d: "d", today: "today", tomorrow: "tomorrow", at: "at",
         wd: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
         every: "every day", workdays: "on weekdays", weekend: "at weekends",
-        ev: { sunrise: "Sunrise", sunset: "Sunset", time: "Time", alarm: "Alarm" },
+        ev: { sunrise: "Sunrise", sunset: "Sunset", time: "Time", alarm: "Alarm", value: "Sensors", presence: "Home / away" },
         evGen: { sunrise: "sunrise", sunset: "sunset", alarm: "the alarm" },
+        kind: { temperature: "Temperature", humidity: "Humidity", carbon_dioxide: "CO₂", illuminance: "Light level" },
+        stat: { mean: "Average", min: "Minimum", max: "Maximum" },
+        op: { above: "Above", below: "Below" },
+        valueWhen: (k, src, op, x, u, f) => `${k}${src ? ` (${src})` : ""} ${op === "above" ? "above" : "below"} ${x}${u}${f ? ` for ${f} min` : ""}`,
+        statOf: (s, n) => `${{ mean: "average", min: "minimum", max: "maximum" }[s]} of ${n} sensors`,
+        sensors: "Which sensors", how: "How to count", limit: "Threshold", hold: "Lasts", holdTxt: (m) => (m ? `for ${m} min` : "at once"),
+        nowVal: (v) => `Now: ${v}`, noData: "no data", noSensors: "No temperature, humidity, CO₂ or light-level sensors.", needSensor: "Pick at least one sensor.",
+        valueNote: "Several sensors — Hauflo adds a «Min / max» helper in Home Assistant: an unavailable sensor is left out of it.",
+        valueHow: "Runs the moment the value crosses the threshold — not all the time it stays past it.",
+        presence: { away: "Everyone left home", home: "Someone came home" },
+        noPeople: "Home Assistant has no people with phones — it can't tell home from away. Add a person and the Home Assistant app on their phone.",
+        onlyIf: "Only if", addIf: "Add a condition…", ifFrom: "from", ifTo: "to",
+        ifs: { dark: "It's dark", light: "It's light", between: "Between times", home: "Someone is home", away: "Nobody is home", value: "By a sensor" },
+        ifText: { dark: "it's dark", light: "it's light", between: (a, b) => `from ${a} to ${b}`, home: "someone is home", away: "nobody is home" },
+        onlyIfLine: (l) => `only if ${l}`,
+        pick: { light: "Lights", cover: "Blinds", scene: "Scenes", house: "Whole house", room: (n) => `whole room · ${n}`, noRoom: "No room", add: (n) => `Add (${n})`, change: "Change the choice", none: "Tick rooms or devices.", hint: "Pick the whole house, whole rooms and single devices." },
+        set: {
+          light: { on: (l, v) => `Turn on the lights${v ? ` at ${v} %` : ""}: ${l}`, off: (l) => `Turn off the lights: ${l}` },
+          cover: { open: (l) => `Open the blinds: ${l}`, close: (l) => `Close the blinds: ${l}`, position: (l, v) => `Blinds to ${v} %: ${l}` },
+          scene: { on: (l) => `Scenes: ${l}` },
+        },
+        houseAll: "the whole house",
         atTime: (t) => `At ${t}`,
         alarmOf: (p) => `Alarm ${p}`,
         offLong: (ev, o) => (o < 0 ? `${dur(-o, "en")} before ${W.en.evGen[ev]}` : o > 0 ? `${dur(o, "en")} after ${W.en.evGen[ev]}` : ev === "alarm" ? "as the alarm rings" : `right at ${ev}`),
@@ -6213,6 +6295,7 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
           wake_light: ["Wake-up light: slowly 0 → 25 %", (src) => `Bedroom · ${src}`],
           night_off: ["All lights off at 01:00", () => "Every day · all rooms"],
           corridor_night: ["Hall light at night at 10 %", (r) => `Every day at 23:00 · ${r}`],
+          away_off: ["Everyone left — all lights off", () => "When the last one leaves · whole house"],
         },
         srcAndroid: (p) => `20 min before the alarm on ${p}`, srcIphone: "with the iPhone alarm",
         newRule: "New rule", rule: "Rule", back: "Back",
@@ -6225,9 +6308,9 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
         iphoneSteps: [
           "Open the Shortcuts app on the iPhone.",
           "Tap «Automation» at the bottom, then «+».",
-          "Choose «Alarm» → «Is Stopped» (or «Goes Off»), alarm — «Any». Turn on «Run Immediately» and tap «Next».",
+          "Choose «Alarm» → «Is Stopped» (or «Is Snoozed»), alarm — «Any». Turn on «Run Immediately» and tap «Next».",
           "«New Blank Automation» → «Add Action» → find «Home Assistant» → «Fire Event».",
-          "Paste this code into «Event»:",
+          "Paste this code into «Event Type» and leave «Event Data» empty:",
           "Tap «Done». In the morning stop the alarm — the blinds and lights follow. The iPhone needs the Home Assistant app signed in to this house.",
         ],
         share: "Send the steps", shareTitle: "iPhone alarm → home", shared: "Steps copied — paste them into a message.",
@@ -6236,7 +6319,7 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
         chk: "Check", chkTitle: "What Hauflo sees",
         chkAndroidOk: (t) => `Hauflo sees the next alarm: ${t}. All works.`,
         chkAndroidNone: "The sensor is there but no alarm is visible — do step 2: set an alarm on the phone and open the Home Assistant app. Then tap «Check» again.",
-        chkAndroidOff: "The sensor is unavailable (phone off, or the app wasn't opened for a long time) — open the Home Assistant app on the phone and check again.",
+        chkAndroidOff: "The sensor is «unavailable»: either the phone has no alarm set (that is how the app shows «none»), or the phone is off / the app wasn't opened for a long time. Set an alarm in the Clock app, open the Home Assistant app and tap «Check» again.",
         chkAndroidMissing: "There is no alarm sensor yet — do step 1: turn on «Next alarm» in the Home Assistant app.",
         chkIphoneSave: "The rule isn't saved yet — save it and the code for Shortcuts appears (step 5).",
         chkIphoneOk: (t) => `The iPhone's command came: ${t}. All works.`,
@@ -6334,6 +6417,11 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
       return m >= 60 ? `${Math.floor(m / 60)} ${w.h}${m % 60 ? ` ${m % 60} ${w.min}` : ""}` : `${m} ${w.min}`;
     }
     const sign = (o) => (o < 0 ? `−${-o}` : `+${o}`);
+    const fmtNum = (x) => (Number.isFinite(Number(x)) ? String(Math.round(Number(x) * 10) / 10) : String(x ?? ""));
+    // Threshold step and default by what a sensor reads (HA's units: °C, %, ppm, lx).
+    const KIND_STEP = { temperature: 0.5, humidity: 5, carbon_dioxide: 100, illuminance: 50 };
+    const KIND_X = { temperature: 24, humidity: 60, carbon_dioxide: 1000, illuminance: 200 };
+    const KIND_ICON = { temperature: "mdi:thermometer", humidity: "mdi:water-percent", carbon_dioxide: "mdi:molecule-co2", illuminance: "mdi:brightness-5" };
     // Little drawings of the iPhone steps (family review 28.10: «Команды → Автоматизация, Fire Event» lost a person).
     const svg = (d) => `<svg viewBox="0 0 32 32" width="32" height="32" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
     const STEP_ART = [
@@ -6430,6 +6518,9 @@ details.man{margin:12px 0 0}details.man summary{font:500 14px Onest,sans-serif;c
 .gls{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:6px}.gls li{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:14px;background:var(--eh-track,rgba(127,127,127,.08))}
 .gls li.dis{opacity:.6}.gtx{flex:1;min-width:0;display:flex;flex-direction:column}.gtx b{font:600 14px/1.3 Onest,sans-serif;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.gls .btn.sm{align-self:center}
 .guest .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.guest .fld+.row{margin-top:16px}.guest input[data-glabel]{width:100%}
+.pick{padding:12px;border-radius:18px;margin:0 0 8px;box-shadow:inset 0 0 0 1px var(--eh-hair,var(--divider-color,rgba(127,127,127,.35)));display:grid;gap:10px}
+.prm .caps{margin:0 0 6px}.chips button:disabled{opacity:.45;cursor:default}.chips button small{font:400 12px Onest,sans-serif;opacity:.75;margin-left:4px}
+.vbox{display:grid;gap:8px;margin:10px 0 0}.fld .chips+.vbox,.act .vbox{margin-top:4px}
 ha-icon{--mdc-icon-size:20px}`;
 
     class Automations extends HTMLElement {
@@ -6788,8 +6879,27 @@ ${logHtml}</section>`;
         const t = this.w;
         if (w.event === "time") return t.atTime(w.at);
         if (w.event === "alarm_iphone") return t.alarmOf("iPhone");
+        if (w.event === "value") return this.valueText(w);
+        if (w.event === "presence") return t.presence[w.to] || t.ev.presence;
         const base = w.event === "alarm_android" ? t.alarmOf(this.phone(w.sensor)) : t.ev[w.event];
         return w.offset ? `${base} ${sign(w.offset)} ${t.min}` : base;
+      }
+      sensor(eid) {
+        return (this.data?.targets?.sensors || []).find((s) => s.entity_id === eid);
+      }
+      // «Температура (среднее по 3 датч.) выше 24 °C» / «Температура (Спальня) ниже 18 °C».
+      valueText(v, hold = true) {
+        const t = this.w;
+        const list = v.sensors || [];
+        const one = list.length === 1 ? this.sensor(list[0]) : null;
+        const src = list.length > 1 ? t.statOf(v.stat || "mean", list.length) : one ? (one.area ? this.room(one.area) : clientName(one.name, one.entity_id)) : "";
+        const unit = (one || this.sensor(list[0]))?.unit;
+        return t.valueWhen(t.kind[v.kind] || "", src, v.op, fmtNum(v.x), unit ? ` ${unit}` : "", hold ? v.for_min : 0);
+      }
+      ifsText(list) {
+        const t = this.w;
+        const one = (c) => (c.if === "between" ? t.ifText.between(c.after, c.before) : c.if === "value" ? this.valueText(c, false).replace(/^./, (x) => x.toLowerCase()) : t.ifText[c.if]);
+        return list?.length ? t.onlyIfLine(list.map(one).join(", ")) : "";
       }
       daysText(days) {
         const t = this.w;
@@ -6802,6 +6912,7 @@ ${logHtml}</section>`;
         const t = this.w.act;
         if (a.do === "room_off") return t.room_off(this.room(a.area_id));
         if (a.do === "room_covers") return this.w.roomCovers[a.cover](this.room(a.area_id), a.value);
+        if (a.do === "set") return this.w.set[a.domain]?.[a.cmd]?.(this.setList(a), a.value) || "";
         const n = this.nameIn(a.entity_id);
         if (a.entity_id.startsWith("scene.")) return t.scene(n);
         return t[a.do] ? t[a.do](n, a.value, a.minutes) : n;
@@ -6816,7 +6927,7 @@ ${logHtml}</section>`;
           if (a.do === "room_covers" && a.cover !== "position") {
             if (!rooms.has(a.cover)) {
               rooms.set(a.cover, []);
-              order.push({ rooms: a.cover });
+              order.push({ coverRooms: a.cover });
             }
             rooms.get(a.cover).push(a.area_id);
           } else if (a.entity_id?.startsWith("cover.") && (a.do === "open" || a.do === "close")) {
@@ -6835,9 +6946,16 @@ ${logHtml}</section>`;
           } else order.push(a);
         }
         const list = (n) => (n.length > 3 ? `${n.slice(0, 2).join(", ")}${this.w.more(n.length - 2)}` : n.join(", "));
-        return order.map((x) => (typeof x === "string" ? this.w.act[x](list(groups.get(x))) : x.rooms ? this.w.roomCovers[x.rooms](this.roomsList(rooms.get(x.rooms))) : x.roomOff ? this.w.act.room_offs(this.roomsList(rooms.get("_off"))) : this.actText(x))).join(", ");
+        return order.map((x) => (typeof x === "string" ? this.w.act[x](list(groups.get(x))) : x.coverRooms ? this.w.roomCovers[x.coverRooms](this.roomsList(rooms.get(x.coverRooms))) : x.roomOff ? this.w.act.room_offs(this.roomsList(rooms.get("_off"))) : this.actText(x))).join(", ");
+      }
+      // What a «set» covers, in words: «весь дом», rooms, then single devices; long lists fold into «и ещё N».
+      setList(a) {
+        const names = [...(a.all ? [this.w.houseAll] : []), ...(a.rooms || []).map((x) => this.room(x)), ...(a.entities || []).map((e) => (a.domain === "scene" ? this.name(e) : this.nameIn(e)))];
+        return names.length > 3 ? `${names.slice(0, 2).join(", ")}${this.w.more(names.length - 2)}` : names.join(", ");
       }
       icon(w) {
+        if (w.event === "value") return KIND_ICON[w.kind] || "mdi:gauge";
+        if (w.event === "presence") return w.to === "away" ? "mdi:home-export-outline" : "mdi:home-import-outline";
         return w.event === "sunrise" ? "mdi:weather-sunset-up" : w.event === "sunset" ? "mdi:weather-sunset-down" : w.event === "time" ? "mdi:clock-outline" : "mdi:alarm";
       }
       // --- suggestions ---------------------------------------------------------------------------------------------------
@@ -6866,6 +6984,9 @@ ${logHtml}</section>`;
         const hall = dim.find((l) => HALL.test(areaName(l.area)));
         if (hall)
           out.push({ key: "corridor_night", title: w.s.corridor_night[0], sub: w.s.corridor_night[1](areaName(hall.area)), rule: { when: { event: "time", at: "23:00" }, days: DAYS, actions: [{ entity_id: hall.entity_id, do: "on", value: 10 }] } });
+        // Only where HA follows someone's phone: without a person «nobody home» is never known.
+        if (t.people && (t.lights || []).length)
+          out.push({ key: "away_off", title: w.s.away_off[0], sub: w.s.away_off[1](), rule: { when: { event: "presence", to: "away" }, days: DAYS, actions: [{ do: "set", domain: "light", cmd: "off", all: true }] } });
         return out.filter((s) => !have.has(s.key));
       }
       autoName(r) {
@@ -6974,7 +7095,7 @@ ${loc.set && this.isAdmin() ? `<p class="muted">${esc(w.locNow(loc.latitude.toFi
         const on = r.state === "on";
         const t = this.nextOf(r);
         const last = s?.attributes?.last_triggered;
-        const meta = r.state === "missing" ? w.missing : [r.changed ? w.changedTag : "", this.daysText(r.days), (r.when.event === "sunrise" || r.when.event === "sunset") && !this.data.location.set ? `⚠ ${w.approx}` : "", t && on ? `→ ${this.when(t)}` : "", last ? w.last(this.when(Date.parse(last))) : w.never].filter(Boolean).join(" · ");
+        const meta = r.state === "missing" ? w.missing : [r.changed ? w.changedTag : "", this.daysText(r.days), this.ifsText(r.only_if), (r.when.event === "sunrise" || r.when.event === "sunset") && !this.data.location.set ? `⚠ ${w.approx}` : "", t && on ? `→ ${this.when(t)}` : "", last ? w.last(this.when(Date.parse(last))) : w.never].filter(Boolean).join(" · ");
         return `<li class="${on ? "" : "dis"}"><span class="ic"><ha-icon icon="${this.icon(r.when)}"></ha-icon></span>
 <button class="bd" ${canEdit(this._hass) ? `data-open="${esc(r.id)}"` : "disabled"}><div class="nm">${esc(r.name || this.autoName(r))}</div><div class="ds">${esc(this.actsText(r))}</div><div class="ds">${esc(meta)}</div></button>
 <button class="sw" role="switch" aria-checked="${on}" aria-label="${esc(on ? w.on : w.offShort)}" data-sw="${esc(r.id)}" ${r.state === "missing" || !canEdit(this._hass) ? "disabled" : ""}></button></li>`;
@@ -7066,7 +7187,9 @@ ${this.locMsg ? `<p class="msg ${this.locBad ? "bad" : ""}" role="status">${esc(
           const opt = (n, on) => `<option value="${String(n).padStart(2, "0")}"${n === on ? " selected" : ""}>${String(n).padStart(2, "0")}</option>`;
           const mins = [...new Set([...Array.from({ length: 12 }, (_, i) => i * 5), mm || 0])].sort((a, b) => a - b);
           whenBody = `<div class="fld tm"><select data-ath aria-label="${esc(this.lang === "en" ? "Hours" : "Часы")}">${Array.from({ length: 24 }, (_, i) => opt(i, hh || 0)).join("")}</select><b>:</b><select data-atm aria-label="${esc(this.lang === "en" ? "Minutes" : "Минуты")}">${mins.map((m) => opt(m, mm || 0)).join("")}</select></div>`;
-        }
+        } else if (ev === "value") whenBody = `<div class="fld">${this.valueHtml("w", r.when)}</div>`;
+        else if (ev === "presence")
+          whenBody = `<div class="fld"><div class="seg" role="group">${["away", "home"].map((x) => `<button data-pres="${x}" aria-pressed="${r.when.to === x}">${esc(w.presence[x])}</button>`).join("")}</div>${t.people ? "" : `<p class="tn">${esc(w.noPeople)}</p>`}</div>`;
         else {
           const opts = [...(t.alarms || []).map((a) => `<option value="${esc(a.entity_id)}" ${r.when.sensor === a.entity_id ? "selected" : ""}>${esc(`Android · ${a.phone}`)}</option>`), `<option value="iphone" ${r.when.event === "alarm_iphone" ? "selected" : ""}>${esc(w.iphoneOpt)}</option>`];
           whenBody = `<div class="fld"><div class="caps">${esc(w.phone)}</div><select data-phone>${opts.join("")}</select>${r.when.event === "alarm_android" || !(t.alarms || []).length ? `<ol class="steps">${w.androidSteps.map((x, i) => `<li><span class="stt"><b>${i + 1}.</b> ${esc(x)}</span></li>`).join("")}</ol>` : ""}</div>`;
@@ -7078,20 +7201,23 @@ ${this.locMsg ? `<p class="msg ${this.locBad ? "bad" : ""}" role="status">${esc(
         }
         const days = r.days || DAYS;
         const acts = r.actions.map((a, i) => this.actHtml(a, i)).join("");
-        const opt = (v, label) => `<option value="${esc(v)}">${esc(label)}</option>`;
-        const picker = `<select data-addact aria-label="${esc(w.addAction)}"><option value="">${esc(w.addAction)}</option>
-${(t.cover_rooms || []).length ? `<optgroup label="${esc(w.grp.coverRooms)}">${t.cover_rooms.map((c) => opt(`rc:${c.area_id}`, `${c.name} · ${c.covers}`)).join("")}</optgroup>` : ""}
-${t.covers.length ? `<optgroup label="${esc(w.grp.covers)}">${t.covers.map((c) => opt(c.entity_id, this.name(c.entity_id) + (c.area ? ` · ${this.room(c.area)}` : ""))).join("")}</optgroup>` : ""}
-${t.lights.length ? `<optgroup label="${esc(w.grp.lights)}">${t.lights.map((c) => opt(c.entity_id, this.name(c.entity_id) + (c.area ? ` · ${this.room(c.area)}` : ""))).join("")}</optgroup>` : ""}
-${t.scenes.length ? `<optgroup label="${esc(w.grp.scenes)}">${t.scenes.map((c) => opt(c.entity_id, this.name(c.entity_id))).join("")}</optgroup>` : ""}
-${t.rooms.length ? `<optgroup label="${esc(w.grp.rooms)}">${t.rooms.map((c) => opt(`room:${c.area_id}`, c.name)).join("")}</optgroup>` : ""}</select>`;
+        // «Что сделать» as a multi-pick (owner 03.11: «только по одному устройству»): the whole house, whole rooms and single
+        // devices of one kind at once — one action, like the HA editor's target picker and Apple Home's scenes.
+        const picker = this.pick ? this.pickHtml() : this.pickDomains().length ? `<button class="btn sm" data-addact>+ ${esc(w.addAction.replace(/…$/, ""))}</button>` : "";
+        const ifs = r.only_if || [];
+        const have = new Set(ifs.map((c) => c.if));
+        if (r.when.event === "presence") have.add(r.when.to === "away" ? "away" : "home");  // «the last one left» holds «nobody home» itself
+        const clash = { dark: "light", light: "dark", home: "away", away: "home", between: "between" };
+        const addable = ["dark", "light", "between", "home", "away", "value"].filter((k) => (k === "value" ? (t.sensors || []).length : !have.has(k) && !have.has(clash[k]) && (!["home", "away"].includes(k) || t.people)));
+        const ifBlock = `<div class="fld"><div class="caps">${esc(w.onlyIf)}</div>${ifs.map((c, i) => this.ifHtml(c, i)).join("")}${ifs.length < 5 && addable.length ? `<select data-addif aria-label="${esc(w.addIf)}"><option value="">${esc(w.addIf)}</option>${addable.map((k) => `<option value="${k}">${esc(w.ifs[k])}</option>`).join("")}</select>` : ""}</div>`;
         const next = this.nextOf(r);
         const saved = !!r.id;
         return `<div class="row"><button class="btn sm" data-back>← ${esc(w.back)}</button></div>
 <section class="box"><h2>${esc(saved ? r.name || this.autoName(r) : w.newRule)}</h2>
-<div class="fld"><div class="caps">${esc(w.when)}</div><div class="seg" role="group">${["sunrise", "sunset", "time", "alarm"].map((e) => `<button data-ev="${e}" aria-pressed="${ev === e}">${esc(w.ev[e])}</button>`).join("")}</div>${whenBody}</div>
+<div class="fld"><div class="caps">${esc(w.when)}</div><div class="chips" role="group">${["sunrise", "sunset", "time", "alarm", "value", "presence"].map((e) => `<button data-ev="${e}" aria-pressed="${ev === e}">${esc(w.ev[e])}</button>`).join("")}</div>${whenBody}</div>
 <div class="fld"><div class="caps">${esc(w.days)}</div><div class="chips">${DAYS.map((d, i) => `<button data-day="${d}" aria-pressed="${days.includes(d)}">${esc(w.wd[i])}</button>`).join("")}</div></div>
 <div class="fld"><div class="caps">${esc(w.what)}</div>${acts}${picker}</div>
+${ifBlock}
 <p class="msg" data-next>${esc(r.when.event === "alarm_iphone" ? w.willNot : next ? `${w.willRun(this.when(next))} (${this.rel(next)})` : "")}</p>
 ${this.msg ? `<p class="msg ${this.bad ? "bad" : this.warn ? "warn" : ""}" role="status">${esc(this.msg)}</p>` : ""}
 ${this.asking === "run" ? `<div class="ask"><p class="msg">${esc(w.runAsk(this.actsText(r)))}${r.actions.some((a) => a.do === "ramp") ? ` ${esc(w.rampNote)}` : ""}</p><div class="row"><button class="btn pri" data-runyes>${esc(w.runYes)}</button><button class="btn" data-no>${esc(w.cancel)}</button></div></div>` : ""}
@@ -7099,6 +7225,94 @@ ${r.changed ? `<div class="ask"><p class="msg">${esc(w.changedNote)}</p>${this.a
 ${this.asking === "del" ? `<div class="ask"><p class="msg">${esc(w.delAsk)}</p><div class="row"><button class="btn dan" data-delyes>${esc(w.delYes)}</button><button class="btn" data-no>${esc(w.cancel)}</button></div></div>` : ""}
 <div class="row fld">${r.changed ? "" : `<button class="btn pri" data-save ${this.busy ? "disabled" : ""}>${esc(w.save)}</button>`}<button class="btn" data-back>${esc(w.cancel)}</button><span class="grow"></span>
 ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.run)}</button><button class="btn dan" data-del>${esc(w.del)}</button>` : ""}</div></section>`;
+      }
+      /** A reading as a trigger (k = "w") or a «только если» (k = "c0"…): the kind, which sensors (several → average /
+       * minimum / maximum by HA's own «Мин/макс» helper), above / below a threshold — owner 03.11: «по средней температуре». */
+      valueHtml(k, v) {
+        const w = this.w;
+        const all = this.data.targets.sensors || [];
+        if (!all.length) return `<p class="tn">${esc(w.noSensors)}</p>`;
+        const kinds = Object.keys(KIND_STEP).filter((x) => all.some((s) => s.kind === x));
+        const kind = kinds.includes(v.kind) ? v.kind : kinds[0];
+        const mine = all.filter((s) => s.kind === kind);
+        const sel = new Set(v.sensors || []);
+        const num = (eid) => Number(this._hass?.states[eid]?.state);
+        const vals = mine.filter((s) => sel.has(s.entity_id)).map((s) => num(s.entity_id)).filter(Number.isFinite);
+        const stat = v.stat || "mean";
+        const cur = vals.length ? (stat === "min" ? Math.min(...vals) : stat === "max" ? Math.max(...vals) : vals.reduce((a, b) => a + b, 0) / vals.length) : null;
+        const unit = mine[0]?.unit ? ` ${mine[0].unit}` : "";
+        // No room and a name another one has too («Температура пола 1» ×4): its own id tells them apart.
+        const bare = (s) => clientName(s.name, s.entity_id);
+        const label = (s) => (s.area ? `${this.room(s.area)}${mine.filter((x) => x.area === s.area).length > 1 ? ` · ${bare(s)}` : ""}` : mine.some((x) => x !== s && !x.area && bare(x) === bare(s)) ? `${bare(s)} · ${s.entity_id.split(".")[1]}` : bare(s));
+        const live = (s) => (Number.isFinite(num(s.entity_id)) ? `${fmtNum(num(s.entity_id))}${unit}` : w.noData);
+        const seg = (attr, opts, on) => `<div class="seg" role="group">${opts.map(([x, l]) => `<button data-${attr}="${k}:${x}" aria-pressed="${x === on}">${esc(l)}</button>`).join("")}</div>`;
+        return `<div class="vbox">${kinds.length > 1 ? seg("vk", kinds.map((x) => [x, w.kind[x]]), kind) : ""}
+<div class="caps">${esc(w.sensors)}</div><div class="chips">${mine.map((s) => `<button data-vs="${k}:${esc(s.entity_id)}" aria-pressed="${sel.has(s.entity_id)}">${esc(label(s))}<small>${esc(live(s))}</small></button>`).join("")}</div>
+${sel.size > 1 ? `<div class="caps">${esc(w.how)}</div>${seg("vst", ["mean", "min", "max"].map((x) => [x, w.stat[x]]), stat)}<p class="hint">${esc(w.valueNote)}</p>` : ""}
+${cur !== null ? `<p class="hint" data-vnow>${esc(w.nowVal(`${fmtNum(cur)}${unit}`))}</p>` : ""}
+<div class="caps">${esc(w.limit)}</div>${seg("vop", ["above", "below"].map((x) => [x, w.op[x]]), v.op)}
+<div class="step"><button data-vx="${k}:-1" aria-label="−">−</button><span>${esc(`${fmtNum(v.x)}${unit}`)}</span><button data-vx="${k}:1" aria-label="+">+</button></div>
+${k === "w" ? `<div class="caps">${esc(w.hold)}</div><div class="step"><button data-vf="-1" aria-label="−">−</button><span>${esc(w.holdTxt(v.for_min || 0))}</span><button data-vf="1" aria-label="+">+</button></div><p class="hint">${esc(w.valueHow)}</p>` : ""}</div>`;
+      }
+      tmSel(key, val) {
+        const all = [...new Set([...Array.from({ length: 96 }, (_, i) => `${String(Math.floor(i / 4)).padStart(2, "0")}:${String((i % 4) * 15).padStart(2, "0")}`), val])].sort();
+        return `<select data-ift="${key}" style="width:auto">${all.map((x) => `<option value="${x}"${x === val ? " selected" : ""}>${x}</option>`).join("")}</select>`;
+      }
+      ifHtml(c, i) {
+        const w = this.w;
+        let body = "";
+        if (c.if === "between") body = `<div class="row">${esc(w.ifFrom)} ${this.tmSel(`${i}:after`, c.after)} ${esc(w.ifTo)} ${this.tmSel(`${i}:before`, c.before)}</div>`;
+        else if (c.if === "value") body = this.valueHtml(`c${i}`, c);
+        return `<div class="act"><div class="top"><b>${esc(w.ifs[c.if])}</b><button class="x" data-ifrm="${i}" aria-label="${esc(w.remove)}"><ha-icon icon="mdi:close"></ha-icon></button></div>${body}</div>`;
+      }
+      pickItems(domain) {
+        const t = this.data.targets;
+        return domain === "light" ? t.lights || [] : domain === "cover" ? (t.covers || []).filter((c) => !c.group) : t.scenes || [];
+      }
+      pickDomains() {
+        return ["light", "cover", "scene"].filter((d) => this.pickItems(d).length);
+      }
+      pickHtml() {
+        const w = this.w;
+        const t = this.data.targets;
+        const p = this.pick;
+        const tabs = `<div class="seg" role="group">${this.pickDomains().map((d) => `<button data-pdom="${d}" aria-pressed="${p.domain === d}">${esc(w.pick[d])}</button>`).join("")}</div>`;
+        let body;
+        if (p.domain === "scene") body = `<div class="chips">${this.pickItems("scene").map((s) => `<button data-pent="${esc(s.entity_id)}" aria-pressed="${p.entities.includes(s.entity_id)}">${esc(this.name(s.entity_id))}${s.area ? `<small>${esc(this.room(s.area))}</small>` : ""}</button>`).join("")}</div>`;
+        else {
+          const roomsOk = new Map(((p.domain === "light" ? t.rooms : t.cover_rooms) || []).map((r) => [r.area_id, r.lights ?? r.covers]));
+          const byRoom = new Map();
+          for (const it of this.pickItems(p.domain)) {
+            const a = it.area || "";
+            if (!byRoom.has(a)) byRoom.set(a, []);
+            byRoom.get(a).push(it);
+          }
+          const order = [...byRoom.keys()].sort((a, b) => Number(!a) - Number(!b) || this.room(a).localeCompare(this.room(b), undefined, { numeric: true, sensitivity: "base" }));
+          body = `<p class="hint">${esc(w.pick.hint)}</p><div class="chips"><button data-xall aria-pressed="${p.all}">${esc(w.pick.house)}</button></div>${order
+            .map((a) => {
+              const roomOn = !!a && (p.all || p.rooms.includes(a));
+              const looseOn = !a && p.all;
+              return `<div class="prm"><div class="caps">${esc(a ? this.room(a) : w.pick.noRoom)}</div><div class="chips">${a && roomsOk.has(a) ? `<button data-xroom="${esc(a)}" aria-pressed="${roomOn}" ${p.all ? "disabled" : ""}>${esc(w.pick.room(roomsOk.get(a)))}</button>` : ""}${byRoom
+                .get(a)
+                .map((it) => `<button data-pent="${esc(it.entity_id)}" aria-pressed="${roomOn || looseOn || p.entities.includes(it.entity_id)}" ${roomOn || looseOn ? "disabled" : ""}>${esc(this.name(it.entity_id))}</button>`)
+                .join("")}</div></div>`;
+            })
+            .join("")}`;
+        }
+        const n = (p.all ? 1 : 0) + p.rooms.length + p.entities.length;
+        return `<div class="pick">${tabs}${body}<div class="row"><button class="btn pri" data-padd ${n ? "" : "disabled"}>${esc(w.pick.add(n))}</button><button class="btn" data-pcancel>${esc(w.cancel)}</button></div></div>`;
+      }
+      // Can every blind of the set stop at a position / does any light of it dim — what the action card offers.
+      setCanPos(a) {
+        const t = this.data.targets;
+        const cr = (x) => (t.cover_rooms || []).find((r) => r.area_id === x)?.position;
+        const cv = (e) => (t.covers || []).find((c) => c.entity_id === e)?.position;
+        if (a.all) return (t.cover_rooms || []).some((r) => r.position);
+        return (a.rooms || []).every(cr) && (a.entities || []).every(cv);
+      }
+      setLights(a) {
+        const lights = this.data.targets.lights || [];
+        return a.all ? lights : lights.filter((l) => (a.rooms || []).includes(l.area) || (a.entities || []).includes(l.entity_id));
       }
       /** «Проверить» on an alarm-clock rule: what Hauflo sees right now — the phone's next-alarm sensor (Android) or the
        * last command from Shortcuts (iPhone) — else the step to do (owner 28.10: «не понял, как включить/проверить»). */
@@ -7144,7 +7358,21 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
         let title = "";
         let body = "";
         if (a.do === "room_off") title = `${w.grp.rooms}: ${this.room(a.area_id)}`;
-        else if (a.do === "room_covers") {
+        else if (a.do === "set") {
+          title = `${w.pick[a.domain]}: ${this.setList(a)}`;
+          const sc = (opts) => `<div class="seg" role="group">${opts.map(([v, l]) => `<button data-sc="${i}:${v}" aria-pressed="${a.cmd === v}">${esc(l)}</button>`).join("")}</div>`;
+          if (a.domain === "cover") {
+            body = sc([["open", w.do.open], ["close", w.do.close], ...(this.setCanPos(a) ? [["position", w.do.position]] : [])]);
+            if (a.cmd === "position") body += stepper("value", a.value ?? 50, " %", "");
+          } else if (a.domain === "light") {
+            const lights = this.setLights(a);
+            // One dimmable lamp: a wake-up light («Плавно») is still there.
+            const one = !a.all && !(a.rooms || []).length && (a.entities || []).length === 1 && lights[0]?.dim;
+            body = sc([["on", w.do.on], ["off", w.do.off], ...(one ? [["ramp", w.do.ramp]] : [])]);
+            if (a.cmd === "on" && lights.length && lights.every((l) => l.dim)) body += stepper("value", a.value ?? 100, " %", w.bright);
+          }
+          body += `<button class="lnk" data-pedit="${i}">${esc(w.pick.change)}</button>`;
+        } else if (a.do === "room_covers") {
           const cr = this.coverRoom(a.area_id);
           title = `${w.coverRooms(this.room(a.area_id))}${cr ? ` · ${cr.covers}` : ""}`;
           body = `<div class="seg" role="group">${[["open", w.do.open], ["close", w.do.close], ...(cr?.position ? [["position", w.do.position]] : [])].map(([v, l]) => `<button data-rc="${i}:${v}" aria-pressed="${a.cover === v}">${esc(l)}</button>`).join("")}</div>`;
@@ -7327,7 +7555,16 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
         const redraw = () => this.draw();
         on("[data-ev]", (el) => {
           const e = el.dataset.ev;
-          if (e === "alarm") {
+          if ((r.when.event.startsWith("alarm") ? "alarm" : r.when.event) === e) return;  // the same again keeps what was set
+          if (e === "value") {
+            const s = this.data.targets.sensors || [];
+            const kind = s.some((x) => x.kind === "temperature") ? "temperature" : s[0]?.kind || "temperature";
+            r.when = { event: "value", kind, sensors: [], op: "above", x: KIND_X[kind], for_min: 0 };
+          } else if (e === "presence") {
+            r.when = { event: "presence", to: "away" };
+            r.only_if = (r.only_if || []).filter((c) => c.if !== "home" && c.if !== "away");
+          }
+          else if (e === "alarm") {
             const a = this.data.targets.alarms?.[0];
             r.when = a ? { event: "alarm_android", sensor: a.entity_id, offset: 0 } : { event: "alarm_iphone" };
           } else if (e === "time") r.when = { event: "time", at: r.when.at || "07:00" };
@@ -7356,12 +7593,148 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
           r.days = DAYS.filter((x) => days.has(x));
           redraw();
         });
-        sr.querySelector("[data-addact]")?.addEventListener("change", (e) => {
-          const v = e.target.value;
-          if (!v) return;
-          if (v.startsWith("room:")) r.actions.push({ do: "room_off", area_id: v.slice(5) });
-          else if (v.startsWith("rc:")) r.actions.push({ do: "room_covers", area_id: v.slice(3), cover: "close" });
-          else r.actions.push({ entity_id: v, do: v.startsWith("cover.") ? "close" : "on" });
+        on("[data-pres]", (el) => {
+          r.when.to = el.dataset.pres;
+          r.only_if = (r.only_if || []).filter((c) => c.if !== "home" && c.if !== "away");  // the trigger says it already
+          redraw();
+        });
+        // A reading's editor: the trigger («w») or a «только если» («c0»…).
+        const spec = (k) => (k === "w" ? r.when : (r.only_if || [])[Number(k.slice(1))]);
+        const kv = (x) => [x.slice(0, x.indexOf(":")), x.slice(x.indexOf(":") + 1)];
+        on("[data-vk]", (el) => {
+          const [k, x] = kv(el.dataset.vk);
+          Object.assign(spec(k), { kind: x, sensors: [], x: KIND_X[x] });
+          delete spec(k).stat;
+          redraw();
+        });
+        on("[data-vs]", (el) => {
+          const [k, e] = kv(el.dataset.vs);
+          const v = spec(k);
+          const set = new Set(v.sensors || []);
+          if (set.has(e)) set.delete(e);
+          else if (set.size < 8) set.add(e);
+          v.sensors = [...set];
+          if (set.size > 1) v.stat = v.stat || "mean";
+          else delete v.stat;
+          redraw();
+        });
+        on("[data-vst]", (el) => {
+          const [k, x] = kv(el.dataset.vst);
+          spec(k).stat = x;
+          redraw();
+        });
+        on("[data-vop]", (el) => {
+          const [k, x] = kv(el.dataset.vop);
+          spec(k).op = x;
+          redraw();
+        });
+        on("[data-vx]", (el) => {
+          const [k, dir] = kv(el.dataset.vx);
+          const v = spec(k);
+          const st = KIND_STEP[v.kind] || 1;
+          v.x = Math.max(-100, Math.min(200000, Math.round((Math.round((Number(v.x) || 0) / st) + Number(dir)) * st * 100) / 100));
+          redraw();
+        });
+        on("[data-vf]", (el) => {
+          const steps = [0, 5, 10, 15, 30, 60, 120, 240];
+          const at = steps.findIndex((m) => m >= (r.when.for_min || 0));
+          r.when.for_min = steps[Math.max(0, Math.min(steps.length - 1, (at < 0 ? steps.length - 1 : at) + Number(el.dataset.vf)))];
+          redraw();
+        });
+        sr.querySelector("[data-addif]")?.addEventListener("change", (e) => {
+          const k = e.target.value;
+          if (!k) return;
+          const s = this.data.targets.sensors || [];
+          const kind = s.some((x) => x.kind === "temperature") ? "temperature" : s[0]?.kind;
+          r.only_if = [...(r.only_if || []), k === "between" ? { if: k, after: "22:00", before: "06:00" } : k === "value" ? { if: k, kind, sensors: [], op: "above", x: KIND_X[kind] } : { if: k }];
+          redraw();
+        });
+        on("[data-ifrm]", (el) => {
+          r.only_if.splice(Number(el.dataset.ifrm), 1);
+          redraw();
+        });
+        sr.querySelectorAll("[data-ift]").forEach((el) =>
+          el.addEventListener("change", () => {
+            const [i, f] = el.dataset.ift.split(":");
+            r.only_if[Number(i)][f] = el.value;
+            redraw();
+          }),
+        );
+        // The multi-pick of «Что сделать».
+        on("[data-addact]", () => {
+          this.pick = { domain: this.pickDomains()[0], all: false, rooms: [], entities: [], idx: null };
+          redraw();
+        });
+        on("[data-pedit]", (el) => {
+          const i = Number(el.dataset.pedit);
+          const a = r.actions[i];
+          this.pick = { domain: a.domain, all: !!a.all, rooms: [...(a.rooms || [])], entities: [...(a.entities || [])], idx: i };
+          redraw();
+        });
+        on("[data-pdom]", (el) => {
+          if (this.pick.domain !== el.dataset.pdom) Object.assign(this.pick, { domain: el.dataset.pdom, all: false, rooms: [], entities: [] });
+          redraw();
+        });
+        on("[data-xall]", () => {
+          const p = this.pick;
+          p.all = !p.all;
+          if (p.all) {
+            p.rooms = [];
+            p.entities = [];
+          }
+          redraw();
+        });
+        on("[data-xroom]", (el) => {
+          const p = this.pick;
+          const a = el.dataset.xroom;
+          if (p.rooms.includes(a)) p.rooms = p.rooms.filter((x) => x !== a);
+          else {
+            p.rooms = [...p.rooms, a];
+            // A device of a room now taken whole isn't named twice.
+            p.entities = p.entities.filter((e) => this.pickItems(p.domain).find((it) => it.entity_id === e)?.area !== a);
+          }
+          redraw();
+        });
+        on("[data-pent]", (el) => {
+          const p = this.pick;
+          const e = el.dataset.pent;
+          p.entities = p.entities.includes(e) ? p.entities.filter((x) => x !== e) : [...p.entities, e];
+          redraw();
+        });
+        on("[data-pcancel]", () => {
+          this.pick = null;
+          redraw();
+        });
+        on("[data-padd]", () => {
+          const p = this.pick;
+          const a = { do: "set", domain: p.domain, cmd: p.domain === "cover" ? "close" : "on" };
+          if (p.all) a.all = true;
+          if (p.rooms.length) a.rooms = [...p.rooms];
+          if (p.entities.length) a.entities = [...p.entities];
+          const old = p.idx !== null ? r.actions[p.idx] : null;
+          if (old?.domain === p.domain) {
+            a.cmd = old.cmd;
+            if (old.value != null) a.value = old.value;
+          }
+          if (a.cmd === "position" && !this.setCanPos(a)) {
+            a.cmd = "close";
+            delete a.value;
+          }
+          if (a.domain === "light" && !this.setLights(a).every((l) => l.dim)) delete a.value;
+          if (old) r.actions.splice(p.idx, 1, a);
+          else r.actions.push(a);
+          this.pick = null;
+          redraw();
+        });
+        on("[data-sc]", (el) => {
+          const [i, v] = el.dataset.sc.split(":");
+          const a = r.actions[Number(i)];
+          if (v === "ramp") r.actions.splice(Number(i), 1, { entity_id: a.entities[0], do: "ramp", value: 25, minutes: 15 });
+          else {
+            a.cmd = v;
+            if (v === "position") a.value = a.value ?? 50;
+            else if (v !== "on" || a.domain !== "light") delete a.value;
+          }
           redraw();
         });
         on("[data-rc]", (el) => {
@@ -7400,7 +7773,7 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
           const [i, field, dir] = el.dataset.val.split(":");
           const a = r.actions[Number(i)];
           const step = field === "minutes" ? 5 : 5;
-          const pos = a.do === "position" || a.do === "room_covers";
+          const pos = a.do === "position" || a.do === "room_covers" || a.cmd === "position";
           const lo = field === "minutes" ? 5 : pos ? 0 : 5;
           const hi = field === "minutes" ? 60 : 100;
           const cur = a[field] ?? (field === "minutes" ? 15 : pos ? 50 : a.do === "ramp" ? 25 : 100);
@@ -7461,7 +7834,8 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
       }
       edit(rule) {
         if (this.view === "list") this._listScroll = this.scrollers();
-        this.draft = rule ? JSON.parse(JSON.stringify({ id: rule.id, name: rule.name, when: rule.when, days: rule.days, actions: rule.actions, enabled: rule.enabled, from: rule.from, changed: rule.changed })) : { when: { event: "sunset", offset: 0 }, days: [...DAYS], actions: [], enabled: true };
+        this.draft = rule ? JSON.parse(JSON.stringify({ id: rule.id, name: rule.name, when: rule.when, days: rule.days, actions: rule.actions, only_if: rule.only_if || [], enabled: rule.enabled, from: rule.from, changed: rule.changed })) : { when: { event: "sunset", offset: 0 }, days: [...DAYS], actions: [], only_if: [], enabled: true };
+        this.pick = null;
         this.view = "edit";
         this.chk = null;
         this.msg = "";
@@ -7472,6 +7846,7 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
         const out = { when: r.when, days: r.days, actions: r.actions, enabled: r.enabled !== false, name: r.from && r.name ? r.name : this.autoName(r) };  // a ready one keeps its title
         if (r.id) out.id = r.id;
         if (r.from) out.from = r.from;
+        if (r.only_if?.length) out.only_if = r.only_if;
         return out;
       }
       async save(force = false) {
@@ -7480,6 +7855,7 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
         this.bad = true;
         this.warn = false;
         if (!r.actions.length) this.msg = w.needAction;
+        else if ([r.when, ...(r.only_if || [])].some((x) => (x.event === "value" || x.if === "value") && !(x.sensors || []).length)) this.msg = w.needSensor;
         else if (!(r.days || DAYS).length) this.msg = w.needDay;
         else {
           this.busy = true;
@@ -8012,12 +8388,13 @@ details.pro{margin-top:22px;border-top:1px solid var(--divider-color,rgba(127,12
        * this page, each opens its sheet (order of the block, for the whole house) over this one. */
       let blocksHere = [];
       const orderMenu = () => {
-        blocksHere = ORDER.ok ? orderBlocksHere() : [];
+        // v5 cards keep their own list (hauflo-cards-v5.js): {name, n, shown, top, open}
+        blocksHere = ORDER.ok ? [...orderBlocksHere(), ...(window.__haufloOrderV5?.blocks?.() || [])].sort((a, b) => Number(b.shown) - Number(a.shown) || a.top - b.top) : [];
         if (!blocksHere.length) return "";
         const ow = OW[langOf(h)];
         const ro = !canEdit(h);
         return `<div class="caps">${esc(ow.menu)}</div>${ro ? `<p class="hint">${esc(w.ro)}</p>` : ""}${blocksHere
-          .map((b, i) => `<button class="go ord" data-order="${i}"${ro ? " disabled" : ""}><ha-icon icon="mdi:drag-variant"></ha-icon><span><b>${esc(orderName(b.card))}</b><small>${esc(ow.items(b.n))}</small></span><i aria-hidden="true">›</i></button>`)
+          .map((b, i) => `<button class="go ord" data-order="${i}"${ro ? " disabled" : ""}><ha-icon icon="mdi:drag-variant"></ha-icon><span><b>${esc(b.name || orderName(b.card))}</b><small>${esc(ow.items(b.n))}</small></span><i aria-hidden="true">›</i></button>`)
           .join("")}<p class="hint">${esc(ow.menuHint)}</p>`;
       };
       const seasonBlock = () => {
@@ -8131,7 +8508,7 @@ ${askHtml || (res ? `<div class="ask done"><p class="res" data-res role="status"
       const bindOrder = () =>
         sr.querySelectorAll("[data-order]").forEach((b) => (b.onclick = () => {
           const it = blocksHere[Number(b.dataset.order)];
-          if (it) openOrder(it.card);
+          if (it) it.open ? it.open() : openOrder(it.card);
         }));
       let ask = null;
       const bindSeason = () => {
@@ -8340,7 +8717,7 @@ ${askHtml || (res ? `<div class="ask done"><p class="res" data-res role="status"
       info = await loadSeason(h);
       if (sheet) fill("season");
     };
-    const GEAR = ".hauflo-gear{display:inline-flex;align-items:center;justify-content:center;width:48px;height:48px;margin:0 2px;border:0;border-radius:24px;background:none;color:var(--app-header-text-color,var(--primary-text-color));cursor:pointer;flex:none;-webkit-tap-highlight-color:transparent}.hauflo-gear:hover{background:rgba(127,127,127,.12)}.hauflo-gear ha-icon{--mdc-icon-size:calc(22px*min(var(--hf-ts,1),1.3))}";
+    const GEAR = ".hauflo-gear{display:inline-flex;align-items:center;justify-content:center;width:48px;height:48px;margin:0 2px;border:0;border-radius:24px;background:none;color:inherit;cursor:pointer;flex:none;-webkit-tap-highlight-color:transparent}.hauflo-gear:hover{background:rgba(127,127,127,.12)}.hauflo-gear ha-icon{--mdc-icon-size:calc(22px*min(var(--hf-ts,1),1.3))}";
     let deep = (() => {
       try {
         return new URLSearchParams(location.search).get("hauflo") === "editors" ? "editors" : null;

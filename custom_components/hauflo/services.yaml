@@ -1,0 +1,15 @@
+off_in:
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          domain: light
+    minutes:
+      required: true
+      default: 30
+      selector:
+        number:
+          min: 0
+          max: 1440
+          unit_of_measurement: min

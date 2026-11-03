@@ -20,7 +20,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util, slugify
 
 from . import automations, keep
-from .const import VERSION
+from .const import ASSET_TAG, VERSION
 from .notify import ACTION_EVENT, NotifyEngine
 
 _LOGGER = logging.getLogger(__name__)
@@ -101,7 +101,7 @@ async def async_export(hass: HomeAssistant, engine: NotifyEngine | None) -> dict
     ru = not engine._english() if engine is not None else str(hass.config.language or "").startswith("ru")
     out: dict[str, Any] = {"cards": None, "added": [], "already": [], "skipped": [], "error": None}
     try:
-        out["cards"] = await keep.async_make_independent(hass, VERSION)
+        out["cards"] = await keep.async_make_independent(hass, ASSET_TAG)
     except Exception as err:  # noqa: BLE001 — the automations are still worth making
         _LOGGER.exception("Hauflo: cards not kept")
         out["cards"] = f"error: {err}"

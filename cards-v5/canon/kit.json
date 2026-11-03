@@ -1,0 +1,891 @@
+{
+  "$comment": "Hauflo cards v5 — layout and per-domain data the kit needs beyond the design canon (CANON.md §2 remote, lighting spec §6, climate spec). Data, not code: components read it through src/gen/canon.js; the generator turns `tokens` into --hf-* custom properties.",
+  "tokens": {
+    "remote-w": "560px",
+    "remote-w-wide": "760px",
+    "remote-max-h": "94vh",
+    "graph-h": "96px",
+    "hold-ink": "0.16",
+    "hold-role": "0.22",
+    "hold-done": "0.4",
+    "off-opacity": "0.38",
+    "press-scale": "0.96",
+    "ctl-xl": "104px",
+    "ctl-power": "132px",
+    "ct-track": "linear-gradient(90deg, {state-light}, {state-cool})",
+    "tile-min": "160px",
+    "tile-min-row": "262px",
+    "room-min-h": "172px",
+    "photo-shade": "linear-gradient(180deg, rgba(0,0,0,.42) 0%, rgba(0,0,0,.3) 45%, rgba(0,0,0,.64) 100%)",
+    "photo-text-shadow": "0 1px 2px rgba(0,0,0,.55), 0 0 14px rgba(0,0,0,.45)",
+    "photo-chip": "rgba(255,255,255,.2)",
+    "icon-stroke": "1.6",
+    "tile-art-h": "108px",
+    "tile-min-art": "130px",
+    "tile-slider-h": "216px",
+    "tile-min-slider": "92px",
+    "fill-from": "42%",
+    "fill-to": "22%",
+    "tile-row-h": "52px",
+    "row-val-w": "84px"
+  },
+  "remote": {
+    "sheet_below_px": 600,
+    "wide_from_px": 1024,
+    "updated_tick_ms": 30000
+  },
+  "light": {
+    "ct_presets_k": [
+      2700,
+      3000,
+      4000,
+      5500
+    ],
+    "ct_preset_keys": [
+      "cozy",
+      "warm",
+      "neutral",
+      "day"
+    ],
+    "timer_min": [
+      15,
+      30,
+      60,
+      120
+    ],
+    "brightness_step_pct": 5,
+    "ct_match_k": 250,
+    "ct_fallback_k": {
+      "min": 2000,
+      "max": 6500
+    }
+  },
+  "cards": {
+    "weather": {
+      "icons": {
+        "clear-night": ["night", "state-auto"],
+        "cloudy": ["cloud", "state-cool"],
+        "exceptional": ["alert", "state-warn"],
+        "fog": ["fog", "state-cool"],
+        "hail": ["rain", "state-cool"],
+        "lightning": ["storm", "state-warn"],
+        "lightning-rainy": ["storm", "state-warn"],
+        "partlycloudy": ["partly", "state-light"],
+        "pouring": ["rain", "state-cool"],
+        "rainy": ["rain", "state-cool"],
+        "snowy": ["snow", "state-cool"],
+        "snowy-rainy": ["snow", "state-cool"],
+        "sunny": ["sun", "state-light"],
+        "windy": ["wind", "state-fan"],
+        "windy-variant": ["wind", "state-fan"]
+      },
+      "other_icon": ["partly", "state-cool"],
+      "nodata_icon": ["alert", "state-offline"],
+      "temp": [-70, 65],
+      "pressure_hpa": [870, 1085],
+      "pressure_mmhg": [650, 815],
+      "hpa_units": ["hPa", "mbar"],
+      "unit_default": "°C",
+      "days_default": 5,
+      "days_s": 3,
+      "forecast_default": "daily",
+      "forecast_bits": 7
+    },
+    "media": { "role": "state-on" },
+    "camera": { "refresh_default": 10, "refresh_min": 2, "aspect": "16 / 10" },
+    "auto": { "role": "state-on", "ran_ms": 1200 },
+    "graph": {
+      "hours_default": 24,
+      "refresh_min": 5,
+      "points": 120,
+      "roles": ["state-light", "state-cool", "state-ok", "state-alarm"],
+      "ranges": { "carbon_dioxide": [300, 5000], "humidity": [0, 100], "temperature": [-50, 70], "pm25": [0, 1000], "atmospheric_pressure": [870, 1085] },
+      "whole_units": ["ppm", "%", "ppb", "W", "Вт"]
+    },
+    "air": {
+      "pm25_steps": [[9, "state-ok"], [35.4, "state-warn"], [55.4, "state-warn"], [125.4, "state-alarm"], [null, "state-alarm"]],
+      "scale_edges": [0, 9, 35.4, 55.4, 150],
+      "co2_limits": [800, 1200],
+      "ranges": { "pm25": [0, 1000], "pm10": [0, 2000], "co2": [300, 5000], "voc": [0, 60000], "hum": [0, 100], "t": [-40, 60] },
+      "attrs": { "pm25": "particulate_matter_2_5", "pm10": "particulate_matter_10", "co2": "carbon_dioxide", "voc": "volatile_organic_compounds", "hum": "humidity", "t": "temperature" },
+      "cells": [["pm10", "µg/m³", 0], ["co2", "ppm", 0], ["voc", "ppb", 0], ["hum", "%", 0], ["t", "°", 1]]
+    }
+  },
+  "climate": {
+    "step_default": 0.5,
+    "history_periods_h": {
+      "day": 24,
+      "week": 168
+    },
+    "graph_points": 96,
+    "fits_band": 0.5,
+    "frost_preset": "building_protection",
+    "card_history_h": 6,
+    "flat_eps": 0.01,
+    "card_history_ttl_min": 5,
+    "fan_icon_modes": true
+  },
+  "graph": {
+    "w": 300,
+    "h": 96
+  },
+  "cover": {
+    "_scene_verbs": "Blind scene names «<verb> <curtain type>» (ETS names in any UI language) → one labelled row per curtain type.",
+    "scene_verbs": ["Открыть", "Закрыть", "Open", "Close"],
+    "$comment": "covers spec v5 K5: axis = which triple (v: up stop down, h: expandH stop collapseH); inverse = down opens (awning); guard = class A (gate/garage/door: open and close only by a 1 s hold); verb/state = locale groups (cover.verb.*, cover.state.*)",
+    "presets_pct": [
+      0,
+      25,
+      50,
+      75,
+      100
+    ],
+    "default_type": "shade",
+    "$sub": "Ателье v2 (03.11): what hangs on the window — icon, the tile's drawing (art) and how a curtain opens. base = the HA type (device_class) whose words/triple it keeps; by_class = the subtype when the config says nothing (entity option kind / opening)",
+    "subtypes": {
+      "roller": {
+        "base": "shade",
+        "icon": "roller",
+        "art": "roller"
+      },
+      "roman": {
+        "base": "shade",
+        "icon": "roman",
+        "art": "roman"
+      },
+      "pleated": {
+        "base": "shade",
+        "icon": "pleated",
+        "art": "pleated"
+      },
+      "venetian": {
+        "base": "blind",
+        "icon": "venetian",
+        "art": "venetian"
+      },
+      "vertical": {
+        "base": "blind",
+        "icon": "vertical",
+        "art": "vertical",
+        "opening": "center"
+      },
+      "curtain": {
+        "base": "curtain",
+        "icon": "curtain_center",
+        "art": "curtain",
+        "opening": "center"
+      },
+      "tulle": {
+        "base": "curtain",
+        "icon": "tulle",
+        "art": "tulle",
+        "opening": "center"
+      },
+      "shutter": {
+        "base": "shutter",
+        "icon": "shutter",
+        "art": "shutter"
+      },
+      "awning": {
+        "base": "awning",
+        "icon": "awning",
+        "art": "awning"
+      },
+      "window": {
+        "base": "window",
+        "icon": "window",
+        "art": "window"
+      },
+      "skylight": {
+        "base": "window",
+        "icon": "skylight",
+        "art": "window"
+      },
+      "damper": {
+        "base": "damper",
+        "icon": "damper",
+        "art": null
+      },
+      "gate_slide": {
+        "base": "gate",
+        "icon": "gate_slide",
+        "art": "gate",
+        "opening": "left"
+      },
+      "gate_swing": {
+        "base": "gate",
+        "icon": "gate_swing",
+        "art": "gate",
+        "opening": "center"
+      },
+      "garage": {
+        "base": "garage",
+        "icon": "garage",
+        "art": "garage"
+      },
+      "door": {
+        "base": "door",
+        "icon": "door",
+        "art": "window"
+      }
+    },
+    "by_class": {
+      "shade": "roller",
+      "blind": "venetian",
+      "curtain": "curtain",
+      "shutter": "shutter",
+      "awning": "awning",
+      "window": "window",
+      "damper": "damper",
+      "gate": "gate_slide",
+      "garage": "garage",
+      "door": "door"
+    },
+    "openings": [
+      "center",
+      "left",
+      "right"
+    ],
+    "opening_icons": {
+      "curtain": {
+        "center": "curtain_center",
+        "left": "curtain_left",
+        "right": "curtain_right"
+      }
+    },
+    "types": {
+      "shutter": {
+        "axis": "v",
+        "icon": "shutter",
+        "verb": "lift",
+        "state": "lift_f"
+      },
+      "shade": {
+        "axis": "v",
+        "icon": "shade",
+        "verb": "lift",
+        "state": "lift_f"
+      },
+      "blind": {
+        "axis": "v",
+        "icon": "blind",
+        "verb": "lift",
+        "state": "lift_pl"
+      },
+      "curtain": {
+        "axis": "h",
+        "icon": "curtain",
+        "verb": "draw",
+        "state": "draw_pl"
+      },
+      "awning": {
+        "axis": "v",
+        "icon": "awning",
+        "verb": "extend",
+        "state": "extend_f",
+        "inverse": true
+      },
+      "window": {
+        "axis": "v",
+        "icon": "window",
+        "verb": "open",
+        "state": "open_n"
+      },
+      "damper": {
+        "axis": "v",
+        "icon": "damper",
+        "verb": "open",
+        "state": "open_f"
+      },
+      "gate": {
+        "axis": "h",
+        "icon": "gate",
+        "verb": "open",
+        "state": "open_pl",
+        "guard": true
+      },
+      "garage": {
+        "axis": "v",
+        "icon": "garage",
+        "verb": "open",
+        "state": "open_m",
+        "guard": true
+      },
+      "door": {
+        "axis": "h",
+        "icon": "door",
+        "verb": "open",
+        "state": "open_f",
+        "guard": true
+      }
+    }
+  },
+  "device": {
+    "tile_state": {
+      "ru": "Исключение из K4 (канон владельца v1, 03.11): плитка без значения показывает «вкл»/«выкл»; зона и состояние — одна строка под именем («зона ТВ · выкл»).",
+      "en": "K4 exception (owner's v1 canon, 03.11): a tile with no value shows «on»/«off»; the zone and the state share one line under the name («TV zone · off»)."
+    },
+    "$comment": "house spec v5 §2–3 (devices by purpose, sub-block): icons = the config's purpose icon (backend purposes.ts) → kit glyph; domains = glyph, tap (key of taps; none → the remote), guard = class A (tap opens the remote: valve, boiler, lock, siren), on = states that light the tile (default: on); taps = HA services; binary = binary_sensor classes by group (danger red · fault yellow · open words · presence word); battery_low_pct = a battery sensor below it is a warning.",
+    "icons": {
+      "mdi:pump": "pump",
+      "mdi:water-boiler": "boiler",
+      "mdi:sprinkler-variant": "sprinkler",
+      "mdi:motion-sensor": "motion",
+      "mdi:television": "tv",
+      "mdi:radiator": "radiator",
+      "mdi:heating-coil": "coil",
+      "mdi:window-open-variant": "windowOpen",
+      "mdi:water-alert": "leak",
+      "mdi:tablet-dashboard": "tablet",
+      "mdi:toggle-switch-outline": "toggle",
+      "mdi:power-socket-de": "socket",
+      "mdi:lightbulb-outline": "light",
+      "mdi:floor-lamp": "light",
+      "mdi:fan": "fan",
+      "mdi:fan-chevron-up": "fanUp",
+      "mdi:fan-chevron-down": "fanDown",
+      "mdi:door": "door",
+      "mdi:gate": "gate",
+      "mdi:lock-outline": "lock",
+      "mdi:smoke-detector-variant": "smoke",
+      "mdi:alert-circle-outline": "fault",
+      "mdi:account-eye-outline": "eye",
+      "mdi:checkbox-blank-circle-outline": "toggle",
+      "mdi:robot-vacuum": "vacuum",
+      "mdi:doorbell": "doorbell",
+      "hauflo:fan": "fan",
+      "hauflo:valve": "valve",
+      "hauflo:boiler": "boiler",
+      "hauflo:power": "power",
+      "hauflo:switch": "toggle",
+      "hauflo:lock": "lock",
+      "hauflo:bell": "bell",
+      "hauflo:humidity": "humidity",
+      "hauflo:user": "user",
+      "hauflo:info": "info",
+      "hauflo:doorbell": "doorbell"
+    },
+    "domains": {
+      "switch": {
+        "icon": "power",
+        "tap": "toggle"
+      },
+      "input_boolean": {
+        "icon": "toggle",
+        "tap": "toggle"
+      },
+      "light": {
+        "icon": "light",
+        "tap": "toggle"
+      },
+      "fan": {
+        "icon": "fan",
+        "tap": "toggle",
+        "value": "percentage",
+        "unit": "%"
+      },
+      "humidifier": {
+        "icon": "humidity",
+        "tap": "toggle",
+        "value": "humidity",
+        "unit": "%"
+      },
+      "remote": {
+        "icon": "remote",
+        "tap": "toggle"
+      },
+      "valve": {
+        "icon": "valve",
+        "guard": true,
+        "on": [
+          "open",
+          "opening",
+          "closing"
+        ],
+        "value": "current_position",
+        "unit": "%"
+      },
+      "water_heater": {
+        "icon": "boiler",
+        "guard": true,
+        "off": [
+          "off"
+        ],
+        "value": "temperature",
+        "unit": "°"
+      },
+      "lock": {
+        "icon": "lock",
+        "guard": true,
+        "count": false,
+        "on": [
+          "unlocked",
+          "open",
+          "opening",
+          "unlocking"
+        ]
+      },
+      "siren": {
+        "icon": "siren",
+        "guard": true,
+        "count": false
+      },
+      "vacuum": {
+        "icon": "vacuum",
+        "tap": "vacuum",
+        "on": [
+          "cleaning",
+          "returning"
+        ]
+      },
+      "lawn_mower": {
+        "icon": "mower",
+        "tap": "mower",
+        "on": [
+          "mowing",
+          "returning"
+        ]
+      },
+      "button": {
+        "icon": "button",
+        "tap": "press",
+        "action": true
+      },
+      "input_button": {
+        "icon": "button",
+        "tap": "press",
+        "action": true
+      },
+      "scene": {
+        "icon": "scene",
+        "tap": "activate",
+        "action": true
+      },
+      "script": {
+        "icon": "auto",
+        "tap": "run",
+        "action": true
+      },
+      "automation": {
+        "icon": "auto"
+      },
+      "binary_sensor": {
+        "icon": "info",
+        "read": true
+      },
+      "sensor": {
+        "icon": "gauge",
+        "read": true
+      },
+      "number": {
+        "icon": "gauge",
+        "read": true
+      },
+      "input_number": {
+        "icon": "gauge",
+        "read": true
+      },
+      "select": {
+        "icon": "list",
+        "read": true
+      },
+      "input_select": {
+        "icon": "list",
+        "read": true
+      },
+      "text": {
+        "icon": "info",
+        "read": true
+      },
+      "input_text": {
+        "icon": "info",
+        "read": true
+      },
+      "device_tracker": {
+        "icon": "user",
+        "on": [
+          "home"
+        ],
+        "read": true
+      },
+      "person": {
+        "icon": "user",
+        "on": [
+          "home"
+        ],
+        "read": true
+      },
+      "update": {
+        "icon": "update",
+        "read": true
+      },
+      "climate": {
+        "icon": "thermostat",
+        "read": true
+      }
+    },
+    "default_icon": "info",
+    "taps": {
+      "toggle": {
+        "service": "toggle"
+      },
+      "press": {
+        "service": "press"
+      },
+      "activate": {
+        "service": "turn_on"
+      },
+      "run": {
+        "service": "turn_on"
+      },
+      "vacuum": {
+        "on": "return_to_base",
+        "off": "start"
+      },
+      "mower": {
+        "on": "dock",
+        "off": "start_mowing"
+      }
+    },
+    "binary": {
+      "danger": [
+        "moisture",
+        "smoke",
+        "gas",
+        "carbon_monoxide"
+      ],
+      "fault": [
+        "problem",
+        "safety",
+        "tamper",
+        "heat",
+        "cold",
+        "battery"
+      ],
+      "open": [
+        "door",
+        "window",
+        "garage_door",
+        "opening"
+      ],
+      "presence": [
+        "motion",
+        "occupancy",
+        "presence",
+        "vibration",
+        "sound",
+        "moving"
+      ],
+      "icons": {
+        "moisture": "leak",
+        "smoke": "smoke",
+        "gas": "gas",
+        "carbon_monoxide": "co",
+        "door": "door",
+        "window": "window",
+        "garage_door": "garage",
+        "opening": "doorOpen",
+        "motion": "motion",
+        "occupancy": "motion",
+        "presence": "motion",
+        "vibration": "motion",
+        "moving": "motion",
+        "sound": "bell",
+        "problem": "fault",
+        "safety": "shield",
+        "tamper": "shield",
+        "heat": "heat",
+        "cold": "thermometer",
+        "battery": "battery",
+        "lock": "lock",
+        "plug": "socket",
+        "power": "flash",
+        "running": "power",
+        "light": "light",
+        "connectivity": "network"
+      }
+    },
+    "sensor_icons": {
+      "temperature": "thermometer",
+      "humidity": "humidity",
+      "battery": "battery",
+      "power": "flash",
+      "energy": "flash",
+      "current": "flash",
+      "voltage": "flash",
+      "apparent_power": "flash",
+      "pressure": "gauge",
+      "carbon_dioxide": "co",
+      "carbon_monoxide": "co",
+      "illuminance": "light",
+      "moisture": "leak"
+    },
+    "battery_low_pct": 20
+  },
+  "room": {
+    "$comment": "house spec §7: the room tile — number step per size (canon scale XS 22 · S 32 · M 48 · L 76), how many counters (lamps, blinds, humidity) each size keeps, other temperatures under the big one (M/L), the icon when the integrator gave none",
+    "num": {
+      "XS": "xs",
+      "S": "s",
+      "M": "m",
+      "L": "l"
+    },
+    "counters_max": {
+      "XS": 2,
+      "S": 3,
+      "M": 3,
+      "L": 3
+    },
+    "others_max": 2,
+    "default_icon": "mdi:floor-plan"
+  },
+  "budget_bytes": 380000,
+  "remote_device": {
+    "$comment": "The big remote of a device / sensor (owner 03.11: a hold opens the big card where it helps). kinds = domain → remote kind; guard = class A pairs (secure = by tap, release = only by a 1 s hold); siblings = what the SAME HA device offers beside it (consumption, battery, link); history_hours = the sensor's sparkline.",
+    "kinds": {
+      "switch": "switch",
+      "input_boolean": "switch",
+      "fan": "fan",
+      "humidifier": "humidifier",
+      "siren": "guard",
+      "valve": "guard",
+      "lock": "guard",
+      "water_heater": "heater",
+      "vacuum": "vacuum",
+      "sensor": "sensor",
+      "binary_sensor": "binary"
+    },
+    "guard": {
+      "lock": { "secure": { "service": "lock", "state": "locked", "icon": "lock", "text": "rdev.lock" }, "release": { "service": "unlock", "icon": "lockOpen", "text": "rdev.unlock" } },
+      "valve": { "secure": { "service": "close_valve", "state": "closed", "icon": "valve", "text": "rdev.close" }, "release": { "service": "open_valve", "icon": "valve", "text": "rdev.open" } },
+      "siren": { "secure": { "service": "turn_off", "state": "off", "icon": "siren", "text": "common.turn_off" }, "release": { "service": "turn_on", "icon": "siren", "text": "common.turn_on" } },
+      "water_heater": { "secure": { "service": "turn_off", "state": "off", "icon": "power", "text": "common.turn_off" }, "release": { "service": "turn_on", "icon": "power", "text": "common.turn_on" } }
+    },
+    "features": {
+      "fan": {
+        "speed": 1,
+        "preset": 8
+      },
+      "humidifier": {
+        "modes": 1
+      },
+      "water_heater": {
+        "target": 1,
+        "mode": 2,
+        "power": 8
+      },
+      "vacuum": {
+        "pause": 4,
+        "home": 16,
+        "start": 8192
+      }
+    },
+    "siblings": {
+      "power": [
+        "power",
+        "apparent_power"
+      ],
+      "energy": [
+        "energy"
+      ],
+      "battery": [
+        "battery"
+      ],
+      "link": [
+        "signal_strength"
+      ],
+      "link_id": "linkquality|link_quality"
+    },
+    "history_hours": 24,
+    "history_max_points": 240,
+    "history_ws": "history/history_during_period",
+    "vacuum_active": [
+      "cleaning",
+      "returning"
+    ],
+    "heater_step": 1,
+    "heater_range": {
+      "min": 30,
+      "max": 75
+    },
+    "humidity_range": {
+      "min": 0,
+      "max": 100
+    }
+  },
+  "status": {
+    "$comment": "hauflo-status · dispatching: normal rows fold under «ещё N — в норме» in M past fold_after; a binary sensor with no class reads as a fault when its name says so (tie-breaker only)",
+    "fold_after": 6,
+    "fault_ok": "^(|ok|ок|норма|в норме|нет|none|no errors?|no faults?|ошибок нет|нет ошибок|аварий нет|0|false|off|normal)$",
+    "fault_name": "ошибк|авари|неисправ|протечк|утечк|перегрев|fault|error|alarm|leak|failure",
+    "words": [
+      "running",
+      "plug",
+      "power",
+      "light",
+      "update",
+      "lock"
+    ],
+    "warn_when": {
+      "power": "off",
+      "lock": "on"
+    }
+  },
+  "hero": {
+    "$comment": "hauflo-hero · the house header: outside temperature shown only inside temp_ok; a light or sensor silent longer than dead_ms is «нет данных» (shorter — «обновляется…», fresh_ms after a restart); the favourite room's «Потеплее» steps at least warm_min_step, shows the wanted value for warm_hold_ms; weather state → glyph (the word is hero.weather.<state>); fav domains → what a tap does.",
+    "temp_ok": [
+      -70,
+      65
+    ],
+    "dead_ms": 600000,
+    "fresh_ms": 30000,
+    "warm_min_step": 0.5,
+    "warm_hold_ms": 10000,
+    "warm_max": 35,
+    "presence_ttl_ms": 60000,
+    "fav": {
+      "light": "toggle",
+      "switch": "toggle",
+      "fan": "toggle",
+      "scene": "run",
+      "script": "run",
+      "cover": "remote"
+    }
+  },
+  "leaks": {
+    "$comment": "hauflo-leaks · sensors and valves of a water zone. area: every moisture binary_sensor, valve (not gas) and water switch of the HA area joins; the valve closes by HOLD (class A).",
+    "sensor_class": "moisture",
+    "valve_skip_class": "gas",
+    "switch_class": "water",
+    "close": {
+      "valve": "close_valve",
+      "switch": "turn_off",
+      "other": "turn_off"
+    },
+    "open": {
+      "valve": "open_valve",
+      "switch": "turn_on",
+      "other": "turn_on"
+    }
+  },
+  "security": {
+    "$comment": "hauflo-security · alarm_control_panel state → kind (ok · arm · wait · alarm) and the arming buttons; supported_features bit 4 = night. Never a code in the card: with code_format the button opens the remote.",
+    "states": {
+      "disarmed": "ok",
+      "armed_home": "arm",
+      "armed_away": "arm",
+      "armed_night": "arm",
+      "armed_vacation": "arm",
+      "armed_custom_bypass": "arm",
+      "arming": "wait",
+      "disarming": "wait",
+      "pending": "wait",
+      "triggered": "alarm"
+    },
+    "modes": [
+      {
+        "v": "disarm",
+        "service": "alarm_disarm",
+        "state": "disarmed",
+        "icon": "shield"
+      },
+      {
+        "v": "home",
+        "service": "alarm_arm_home",
+        "state": "armed_home",
+        "icon": "home"
+      },
+      {
+        "v": "away",
+        "service": "alarm_arm_away",
+        "state": "armed_away",
+        "icon": "lock"
+      },
+      {
+        "v": "night",
+        "service": "alarm_arm_night",
+        "state": "armed_night",
+        "icon": "night",
+        "feature": 4
+      }
+    ],
+    "open_classes": [
+      "door",
+      "window",
+      "garage_door",
+      "opening",
+      "lock"
+    ],
+    "motion_classes": [
+      "motion",
+      "occupancy",
+      "presence"
+    ]
+  },
+  "entity": {
+    "$comment": "hauflo-entity · one entity as a tile; config colour → role, info lines, the picture whitelist, the double-tap wait",
+    "defaults": {
+      "icon_type": "icon",
+      "layout": "horizontal",
+      "show_level": true,
+      "primary_info": "name",
+      "secondary_info": "state",
+      "controls": true
+    },
+    "colors": {
+      "amber": "state-light",
+      "ice": "state-cool",
+      "mint": "state-on",
+      "alert": "state-alarm"
+    },
+    "info": [
+      "name",
+      "state",
+      "last_changed",
+      "last_updated",
+      "none"
+    ],
+    "picture_domains": [
+      "media_player"
+    ],
+    "picture_ok": "^(/|https?://)[^\\s\"'()\\\\]+$",
+    "url_ok": "^(/|https?://)",
+    "double_tap_ms": 250,
+    "level_attr": {
+      "light": "brightness",
+      "fan": "percentage",
+      "cover": "current_position"
+    },
+    "level_max": {
+      "light": 255,
+      "fan": 100,
+      "cover": 100
+    },
+    "rel_units": [
+      [
+        "year",
+        31536000
+      ],
+      [
+        "month",
+        2592000
+      ],
+      [
+        "day",
+        86400
+      ],
+      [
+        "hour",
+        3600
+      ],
+      [
+        "minute",
+        60
+      ],
+      [
+        "second",
+        1
+      ]
+    ]
+  }
+}

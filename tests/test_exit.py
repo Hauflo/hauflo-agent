@@ -11,7 +11,7 @@ from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.hauflo import keep, theme
-from custom_components.hauflo.const import CONF_SECRET, CONF_SERVER, DATA_CARDS_LOCAL, DOMAIN, VERSION
+from custom_components.hauflo.const import ASSET_TAG, CONF_SECRET, CONF_SERVER, DATA_CARDS_LOCAL, DOMAIN
 
 
 async def _idle(self):  # the link loop: no Hauflo server in tests
@@ -35,7 +35,7 @@ async def lovelace(hass: HomeAssistant, tmp_path: Path):
     return tmp_path
 
 
-SERVED = sorted(f"/hauflo_static/{n}?v={VERSION}" for n in keep.MODULES)
+SERVED = sorted(f"/hauflo_static/{n}?v={ASSET_TAG}" for n in keep.MODULES)
 
 
 def _urls(hass: HomeAssistant) -> list[str]:
@@ -56,7 +56,7 @@ async def test_removal_keeps_the_dashboard_cards(hass: HomeAssistant, lovelace: 
     assert "hauflo.ownership" not in hass_storage  # the last plan goes with the agent
     for name in ("hauflo-cards.js", "hauflo-icons.js", "fonts/onest-latin.woff2"):
         assert (lovelace / "www" / "hauflo" / name).is_file(), name
-    want = sorted(f"/local/hauflo/{n}?v={VERSION}" for n in keep.MODULES)
+    want = sorted(f"/local/hauflo/{n}?v={ASSET_TAG}" for n in keep.MODULES)
     assert _urls(hass) == want
     # Saved at once: an HA restart right after the removal keeps them.
     assert sorted(i["url"] for i in hass_storage["lovelace_resources"]["data"]["items"]) == want
@@ -74,13 +74,13 @@ async def test_served_resources_follow_the_version_and_stay_single(hass: HomeAss
     await res.async_create_item({"res_type": "module", "url": "/hauflo_static/hauflo-cards.js?v=0.1.0"})
     await res.async_create_item({"res_type": "module", "url": "/hauflo_static/hauflo-cards.js?v=0.2.0"})
     await res.async_create_item({"res_type": "module", "url": "/local/theirs.js"})
-    assert await keep.async_on_start(hass, VERSION) is False
+    assert await keep.async_on_start(hass, ASSET_TAG) is False
     assert _urls(hass) == sorted([*SERVED, "/local/theirs.js"])
-    assert await keep.async_on_start(hass, VERSION) is False  # a second start changes nothing
+    assert await keep.async_on_start(hass, ASSET_TAG) is False  # a second start changes nothing
     assert _urls(hass) == sorted([*SERVED, "/local/theirs.js"])
     # Independent: the agent's addresses go, the copies' come.
-    assert await keep.async_make_independent(hass, VERSION) == keep.ADDED
-    assert _urls(hass) == sorted([*(f"/local/hauflo/{n}?v={VERSION}" for n in keep.MODULES), "/local/theirs.js"])
+    assert await keep.async_make_independent(hass, ASSET_TAG) == keep.ADDED
+    assert _urls(hass) == sorted([*(f"/local/hauflo/{n}?v={ASSET_TAG}" for n in keep.MODULES), "/local/theirs.js"])
 
 
 async def test_a_resource_of_an_older_agent_is_moved_to_this_version(hass: HomeAssistant, lovelace: Path) -> None:
@@ -89,32 +89,51 @@ async def test_a_resource_of_an_older_agent_is_moved_to_this_version(hass: HomeA
     await res.async_get_info()
     await res.async_create_item({"res_type": "module", "url": "/local/hauflo/hauflo-cards.js?v=0.1.0"})
     await res.async_create_item({"res_type": "module", "url": "/local/theirs.js"})
-    assert await keep.async_keep_dashboard(hass, VERSION) == keep.ADDED
-    assert _urls(hass) == sorted([f"/local/hauflo/hauflo-cards.js?v={VERSION}", f"/local/hauflo/hauflo-icons.js?v={VERSION}", "/local/theirs.js"])
+    assert await keep.async_keep_dashboard(hass, ASSET_TAG) == keep.ADDED
+    assert _urls(hass) == sorted([f"/local/hauflo/hauflo-cards.js?v={ASSET_TAG}", f"/local/hauflo/hauflo-icons.js?v={ASSET_TAG}", "/local/theirs.js"])
+
+
+async def test_switching_the_cards_view_leaves_one_cards_file(hass: HomeAssistant, lovelace: Path) -> None:
+    """«Вид карточек» switched: the other file's resource goes (30.10: the old one stayed and loaded beside v5)."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    from custom_components.hauflo.const import CARDS_NEW, CONF_CARDS_VIEW
+
+    MockConfigEntry(domain=DOMAIN, data={CONF_SERVER: "https://app.hauflo.ru", CONF_SECRET: "s"}, options={CONF_CARDS_VIEW: CARDS_NEW}).add_to_hass(hass)
+    res = keep._resources(hass)
+    await res.async_get_info()
+    await res.async_create_item({"res_type": "module", "url": "/hauflo_static/hauflo-cards.js?v=0.17.0"})
+    await res.async_create_item({"res_type": "module", "url": "/local/theirs.js"})
+    await keep.async_on_start(hass, ASSET_TAG)
+    want = sorted([f"/hauflo_static/hauflo-icons.js?v={ASSET_TAG}", f"/hauflo_static/hauflo-cards-v5.js?v={ASSET_TAG}", "/local/theirs.js"])
+    assert _urls(hass) == want
+    # Independent copies: the same — only the chosen file.
+    assert await keep.async_make_independent(hass, ASSET_TAG) == keep.ADDED
+    assert _urls(hass) == sorted([f"/local/hauflo/hauflo-icons.js?v={ASSET_TAG}", f"/local/hauflo/hauflo-cards-v5.js?v={ASSET_TAG}", "/local/theirs.js"])
 
 
 async def test_yaml_resources_are_said_not_pretended(hass: HomeAssistant, tmp_path: Path) -> None:
     hass.config.config_dir = str(tmp_path)
     assert await async_setup_component(hass, "lovelace", {"lovelace": {"resource_mode": "yaml"}})
     with patch.object(keep.persistent_notification, "async_create") as note:
-        assert await keep.async_keep_dashboard(hass, VERSION) == keep.YAML
+        assert await keep.async_keep_dashboard(hass, ASSET_TAG) == keep.YAML
     assert (tmp_path / "www" / "hauflo" / "hauflo-cards.js").is_file()
     # HA says what to add, in its language — never a silent «kept».
     text = note.call_args.args[1]
     assert note.call_args.args[3] == keep.NOTE_ID and "/local/hauflo/hauflo-cards.js" in text and "resources" in text
     # Nothing remembered as independent: the agent keeps serving its own cards.
-    assert await keep.async_make_independent(hass, VERSION) == keep.YAML
+    assert await keep.async_make_independent(hass, ASSET_TAG) == keep.YAML
     assert not await keep.async_independent(hass)
 
 
 async def test_independent_house_keeps_its_cards_while_installed(hass: HomeAssistant, lovelace: Path) -> None:
     entry = await _add(hass)
-    assert await keep.async_make_independent(hass, VERSION) == keep.ADDED
+    assert await keep.async_make_independent(hass, ASSET_TAG) == keep.ADDED
     with patch("custom_components.hauflo.Agent.run", _idle):
         await hass.config_entries.async_reload(entry.entry_id)
         await hass.async_block_till_done()
     # Not released at the next start, refreshed instead; the agent doesn't add a second copy of the scripts.
-    assert _urls(hass) == sorted(f"/local/hauflo/{n}?v={VERSION}" for n in keep.MODULES)
+    assert _urls(hass) == sorted(f"/local/hauflo/{n}?v={ASSET_TAG}" for n in keep.MODULES)
     assert hass.data[DATA_CARDS_LOCAL] is True
     # An updated agent: the copy and the address follow its version.
     (lovelace / "www" / "hauflo" / "hauflo-cards.js").write_text("old")

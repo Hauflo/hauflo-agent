@@ -40,18 +40,35 @@ from typing import Any
 
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er
+from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er, translation
 from homeassistant.util import dt as dt_util
 
 from .house import refuse
 from .natural import natural_key
+from .const import DOMAIN
 from .storage import HaufloStore
+from .tuning import TUNING
 _LOGGER = logging.getLogger(__name__)
 STORE_KEY = "hauflo.automations"
 PREFIX = "hauflo_auto_"
 ALARM_EVENT = "hauflo_alarm_"
 AUTOMATIONS = "automations.yaml"
-EVENTS = ("sunrise", "sunset", "time", "alarm_android", "alarm_iphone")
+EVENTS = ("sunrise", "sunset", "time", "alarm_android", "alarm_iphone", "value", "presence")
+# «По показаниям» (owner 03.11: «не смог сделать по средней температуре»): a reading of one sensor, or the mean / min / max
+# of several through HA's own min_max helper («Combine the state of several sensors») — HA's standard, no engine of ours.
+VALUE_KINDS = ("temperature", "humidity", "carbon_dioxide", "illuminance")
+STATS = ("mean", "min", "max")
+OPS = ("above", "below")
+_T = TUNING["automations"]
+MAX_SENSORS = _T["max_sensors"]
+MAX_FOR_MIN = _T["max_for_min"]
+# «Только если …»: HA's own conditions — sun, a time window, anyone home (zone.home counts the people in it), a reading.
+IFS = ("dark", "light", "between", "home", "away", "value")
+MAX_ONLY_IF = _T["max_only_if"]
+# One «set» action: several lights / blinds / scenes at once — rooms, the whole house, or picked devices (owner 03.11:
+# «можно выбрать только одно устройство»).
+MAX_SET = _T["max_set"]
+HELPER = "min_max"
 DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 MAX_OFFSET = 120
 MAX_RULES = 50
@@ -219,6 +236,179 @@ class Automations:
             return {"area_id": area_id}
         return {"entity_id": explicit}
 
+    def _value_kind(self, eid: Any) -> str | None:
+        """A reading a rule may follow: a sensor of a known kind (temperature, humidity, CO₂, light level) on the
+        screen — any integration's (reading is harmless), never a helper Hauflo made for an average."""
+        if not isinstance(eid, str) or not eid.startswith("sensor.") or (s := self.hass.states.get(eid)) is None:
+            return None
+        kind = s.attributes.get("device_class")
+        if kind not in VALUE_KINDS:
+            return None
+        ent = er.async_get(self.hass).async_get(eid)
+        if ent is not None and (ent.disabled_by or ent.hidden_by or (ent.platform == HELPER and str(ent.original_name or "").startswith("hauflo_"))):
+            return None
+        return str(kind)
+
+    def _value_spec(self, raw: Any, what: str) -> dict[str, Any]:
+        """{sensors, stat, op, x} → the clean reading condition: 1…8 sensors of one kind and unit; stat only for several."""
+        if not isinstance(raw, dict):
+            raise Invalid(f"{what}: an object")
+        sensors = raw.get("sensors")
+        if not isinstance(sensors, list) or not 1 <= len(sensors) <= MAX_SENSORS or len(set(map(str, sensors))) != len(sensors):
+            raise Invalid(f"{what}.sensors: 1…{MAX_SENSORS} different sensors")
+        kinds = {self._value_kind(e) for e in sensors}
+        if None in kinds:
+            raise Invalid(f"{what}.sensors: a temperature, humidity, CO₂ or light-level sensor")
+        if len(kinds) != 1 or len({self.hass.states.get(e).attributes.get("unit_of_measurement") for e in sensors}) != 1:
+            raise Invalid(f"{what}.sensors: one kind and one unit")
+        if raw.get("kind") not in (None, *kinds):
+            raise Invalid(f"{what}.kind: the sensors measure {next(iter(kinds))}, not {raw.get('kind')}")
+        op = raw.get("op")
+        if op not in OPS:
+            raise Invalid(f"{what}.op: above or below")
+        x = _float(raw.get("x"), -100, 200000, f"{what}.x")
+        out: dict[str, Any] = {"sensors": sorted(sensors), "kind": kinds.pop(), "op": op, "x": int(x) if x.is_integer() else round(x, 2)}
+        if len(sensors) > 1:
+            if raw.get("stat", "mean") not in STATS:
+                raise Invalid(f"{what}.stat: mean, min or max")
+            out["stat"] = raw.get("stat", "mean")
+        return out
+
+    @staticmethod
+    def _never(when: dict[str, Any], only_if: list[dict[str, Any]]) -> None:
+        """A rule whose «только если» can't hold at its own trigger never runs — refused, not saved silently."""
+        ifs = {c["if"] for c in only_if}
+        if when["event"] == "presence" and ("home" if when["to"] == "away" else "away") in ifs:
+            raise Invalid("only_if: never true at this trigger (the last one left, yet someone is home — or the other way)")
+        if when["event"] == "time":
+            for c in only_if:
+                if c["if"] == "between":
+                    at, a, b = when["at"], c["after"], c["before"]
+                    if not (a <= at < b if a < b else at >= a or at < b):
+                        raise Invalid(f"only_if.between: {a}–{b} never includes the trigger's {at}")
+        # Readings of the same sensors (and statistic): above X and below Y together only if X < Y (HA's are strict).
+        spans: dict[tuple[Any, ...], list[float]] = {}
+        for spec in (x for x in [when, *only_if] if x.get("event") == "value" or x.get("if") == "value"):
+            span = spans.setdefault((tuple(spec["sensors"]), spec.get("stat")), [-math.inf, math.inf])
+            if spec["op"] == "above":
+                span[0] = max(span[0], spec["x"])
+            else:
+                span[1] = min(span[1], spec["x"])
+            if span[0] >= span[1]:
+                raise Invalid("only_if.value: never true together with the other reading of the same sensors")
+
+    def _only_if(self, raw: Any) -> list[dict[str, Any]]:
+        if raw is None:
+            return []
+        if not isinstance(raw, list) or len(raw) > MAX_ONLY_IF:
+            raise Invalid(f"only_if: 0…{MAX_ONLY_IF}")
+        out: list[dict[str, Any]] = []
+        for c in raw:
+            kind = c.get("if") if isinstance(c, dict) else None
+            if kind not in IFS:
+                raise Invalid("only_if: dark, light, between, home, away or value")
+            if kind == "between":
+                after, before = c.get("after"), c.get("before")
+                if not all(isinstance(t, str) and _TIME.fullmatch(t) for t in (after, before)) or after == before:
+                    raise Invalid("only_if.between: after and before HH:MM, not the same")
+                out.append({"if": "between", "after": after, "before": before})
+            elif kind == "value":
+                out.append({"if": "value", **self._value_spec(c, "only_if.value")})
+            else:
+                out.append({"if": kind})
+        if {"dark", "light"} <= {c["if"] for c in out} or {"home", "away"} <= {c["if"] for c in out}:
+            raise Invalid("only_if: never true (dark and light, or home and away)")
+        if len([c for c in out if c["if"] == "between"]) > 1:
+            raise Invalid("only_if.between: one time window")
+        return out
+
+    def _set_members(self, domain: str, area_id: str, position: bool = False) -> list[str]:
+        return self._room_lights(area_id) if domain == "light" else self._room_covers(area_id, position)
+
+    def _set_action(self, a: dict[str, Any]) -> dict[str, Any]:
+        """«Что сделать» over a set: the whole house, rooms and / or picked devices of one kind, one command."""
+        domain, cmd = a.get("domain"), a.get("cmd")
+        if domain not in _DO:
+            raise Invalid("set.domain: light, cover or scene")
+        if cmd not in _DO[domain] or cmd == "ramp":
+            raise Invalid(f"set.cmd: one of {', '.join(c for c in _DO[domain] if c != 'ramp')}")
+        rooms, entities, every = a.get("rooms") or [], a.get("entities") or [], a.get("all") is True
+        if not isinstance(rooms, list) or not isinstance(entities, list) or len(set(map(str, rooms))) != len(rooms) or len(set(map(str, entities))) != len(entities):
+            raise Invalid("set: rooms and entities — lists without repeats")
+        if domain == "scene" and (rooms or every):
+            raise Invalid("set: scenes one by one")
+        if not (every or rooms or entities):
+            raise Invalid("set: pick at least one room or device")
+        if len(rooms) + len(entities) > MAX_SET:
+            raise Invalid(f"set: at most {MAX_SET}")
+        position = cmd == "position"
+        for room in rooms:
+            if not isinstance(room, str) or not self._set_members(domain, room, position):
+                raise Invalid(f"set.rooms: {room!r} has no Hauflo {domain}")
+        for eid in entities:
+            if not self._pickable(eid) or eid.split(".")[0] != domain:
+                raise Invalid(f"{eid!r}: not a Hauflo {domain}")
+            if position and not int(self.hass.states.get(eid).attributes.get("supported_features") or 0) & 4:
+                raise Invalid(f"{eid}: can't stop at a position")
+        if every and not any(self._all_target(domain, position)):
+            raise Invalid(f"set.all: no Hauflo {domain} in the house")
+        out: dict[str, Any] = {"do": "set", "domain": domain, "cmd": cmd}
+        if every:
+            out["all"] = True
+        if rooms:
+            out["rooms"] = sorted(rooms)
+        if entities:
+            out["entities"] = sorted(entities)
+        if position:
+            out["value"] = _int(a.get("value"), 0, 100, "position %")
+        elif domain == "light" and cmd == "on" and a.get("value") is not None:
+            out["value"] = _int(a.get("value"), 1, 100, "brightness %")
+        return out
+
+    def _all_target(self, domain: str, position: bool) -> tuple[list[str], list[str]]:
+        """The whole house: its rooms with Hauflo lights / blinds, and the ones in no room (never a group — its lamps
+        are there one by one)."""
+        reg = er.async_get(self.hass)
+        rooms, loose = set(), []
+        for eid in self.hass.states.async_entity_ids(domain):
+            if not self._pickable(eid):
+                continue
+            if area := self._area(eid):
+                rooms.add(area)
+            elif (e := reg.async_get(eid)) is not None and e.platform != "group" and (not position or int(self.hass.states.get(eid).attributes.get("supported_features") or 0) & 4):
+                loose.append(eid)
+        rooms = {r for r in rooms if self._set_members(domain, r, position)}
+        return sorted(rooms), sorted(loose)
+
+    def _set_target(self, a: dict[str, Any]) -> dict[str, Any] | None:
+        """The HA target of a «set»: a room itself when all of its lights / blinds are Hauflo's (a lamp added later
+        follows), else its Hauflo ones; a device already in a targeted room isn't named twice."""
+        domain, position = a["domain"], a["cmd"] == "position"
+        if domain == "scene":
+            eids = [e for e in a.get("entities", []) if self._pickable(e)]
+            return {"entity_id": eids} if eids else None
+        rooms, loose = self._all_target(domain, position) if a.get("all") else ([], [])
+        rooms = sorted({*rooms, *a.get("rooms", [])})
+        area_ids: list[str] = []
+        eids: list[str] = []
+        for room in rooms:
+            if not (members := self._set_members(domain, room, position)):
+                continue
+            t = self._area_target(domain, room, members)
+            if "area_id" in t:
+                area_ids.append(room)
+            else:
+                eids += t["entity_id"]
+        for eid in [*loose, *a.get("entities", [])]:
+            if self._pickable(eid) and eid not in eids and self._area(eid) not in area_ids:
+                eids.append(eid)
+        target: dict[str, Any] = {}
+        if area_ids:
+            target["area_id"] = area_ids
+        if eids:
+            target["entity_id"] = eids
+        return target or None
+
     def targets(self) -> dict[str, Any]:
         areas = ar.async_get(self.hass)
         out: dict[str, list[dict[str, Any]]] = {"cover": [], "light": [], "scene": []}
@@ -251,7 +441,20 @@ class Automations:
                 dev = dr.async_get(self.hass).async_get(ent.device_id) if ent.device_id else None
                 s = self.hass.states.get(ent.entity_id)
                 alarms.append({"entity_id": ent.entity_id, "phone": (dev.name_by_user or dev.name) if dev else ent.entity_id, "next": s.state if s else None})
+        sensors = []
+        for eid in sorted(self.hass.states.async_entity_ids("sensor")):
+            if (kind := self._value_kind(eid)) is None:
+                continue
+            s = self.hass.states.get(eid)
+            sensors.append({"entity_id": eid, "name": s.attributes.get("friendly_name") or eid, "area": self._area(eid), "kind": kind, "unit": s.attributes.get("unit_of_measurement"), "value": s.state})
+        for i in sensors:
+            if i["area"] and i["area"] not in names:
+                names[i["area"]] = area.name if (area := areas.async_get_area(i["area"])) else i["area"]
+        # People whose phones HA follows: without one, «nobody home» is always true — the page says so, not offers it.
+        people = sum(1 for eid in self.hass.states.async_entity_ids("person") if (self.hass.states.get(eid).attributes.get("device_trackers") or []))
         return {
+            "sensors": sensors,
+            "people": people,
             "alarms": sorted(alarms, key=lambda a: str(a["phone"])),
             "covers": out["cover"],
             "lights": out["light"],
@@ -268,9 +471,17 @@ class Automations:
             raise Invalid("rule: an object")
         when = raw.get("when")
         if not isinstance(when, dict) or when.get("event") not in EVENTS:
-            raise Invalid("when.event: sunrise, sunset or time")
+            raise Invalid("when.event: sunrise, sunset, time, alarm_android, alarm_iphone, value or presence")
         rule_when: dict[str, Any] = {"event": when["event"]}
-        if when["event"] == "time":
+        if when["event"] == "value":
+            # Fires when the reading crosses the threshold (HA's numeric_state) and stays there for_min minutes.
+            rule_when.update(self._value_spec(when, "when"))
+            rule_when["for_min"] = _int(when.get("for_min", 0), 0, MAX_FOR_MIN, "when.for_min (minutes)")
+        elif when["event"] == "presence":
+            if when.get("to") not in ("away", "home"):
+                raise Invalid("when.to: away (the last one left) or home (the first one came)")
+            rule_when["to"] = when["to"]
+        elif when["event"] == "time":
             at = when.get("at")
             if not isinstance(at, str) or not _TIME.fullmatch(at):
                 raise Invalid("when.at: HH:MM")
@@ -297,6 +508,9 @@ class Automations:
             if not isinstance(a, dict):
                 raise Invalid("action: an object")
             do = a.get("do")
+            if do == "set":
+                clean.append(self._set_action(a))
+                continue
             if do == "room_off":
                 area_id = a.get("area_id")
                 if not isinstance(area_id, str) or not self._room_lights(area_id):
@@ -342,6 +556,9 @@ class Automations:
         if origin is not None and (not isinstance(origin, str) or not _FROM.fullmatch(origin)):
             raise Invalid("from: a suggestion's key")
         out = {"when": rule_when, "days": [d for d in DAYS if d in days], "actions": clean, "enabled": enabled, "name": _clean_name(raw.get("name"))}
+        if only_if := self._only_if(raw.get("only_if")):
+            self._never(rule_when, only_if)
+            out["only_if"] = only_if
         if origin:
             out["from"] = origin
         return out
@@ -368,6 +585,15 @@ class Automations:
                 lights = self._room_lights(a["area_id"])
                 if lights:
                     out.append({"action": "light.turn_off", "target": self._area_target("light", a["area_id"], lights)})
+                continue
+            if a["do"] == "set":
+                if target := self._set_target(a):
+                    call = {"action": _DO[a["domain"]][a["cmd"]], "target": target}
+                    if a["cmd"] == "position":
+                        call["data"] = {"position": a["value"]}
+                    elif a.get("value") is not None:
+                        call["data"] = {"brightness_pct": a["value"]}
+                    out.append(call)
                 continue
             if a["do"] == "room_covers":
                 if covers := self._room_covers(a["area_id"], a["cover"] == "position"):
@@ -399,6 +625,13 @@ class Automations:
             trigger = {"trigger": "event", "event_type": when["code"]}
         elif when["event"] == "alarm_android":
             trigger = {"trigger": "time", "at": {"entity_id": when["sensor"], "offset": _offset_text(when["offset"])}}
+        elif when["event"] == "value":
+            trigger = {"trigger": "numeric_state", "entity_id": when["entity"], when["op"]: when["x"]}
+            if when.get("for_min"):
+                trigger["for"] = {"minutes": when["for_min"]}
+        elif when["event"] == "presence":
+            # zone.home's state is how many people are in it (HA's own count of the people whose phones it follows).
+            trigger = {"trigger": "numeric_state", "entity_id": "zone.home", **({"below": 1} if when["to"] == "away" else {"above": 0})}
         else:
             trigger = {"trigger": "sun", "event": when["event"]}
             if when["offset"]:
@@ -411,12 +644,90 @@ class Automations:
             # Neutral: it keeps working after Hauflo is removed (HA expert 28.10), the page it named may be gone.
             "description": "Создано в Hauflo." if ru else "Made in Hauflo.",
             "triggers": [trigger],
-            "conditions": [{"condition": "time", "weekday": list(rule["days"])}] if len(rule["days"]) < 7 else [],
+            "conditions": ([{"condition": "time", "weekday": list(rule["days"])}] if len(rule["days"]) < 7 else []) + [self._condition(c) for c in rule.get("only_if", [])],
             "actions": self._service_calls(rule),
             "mode": "single",
             # No initial_state: HA keeps the on / off a person set (in HA or here) over restarts (HA expert 28.10).
         }
         return cfg
+
+    @staticmethod
+    def _condition(c: dict[str, Any]) -> dict[str, Any]:
+        """«Только если …» as HA's own condition."""
+        if c["if"] == "dark":
+            return {"condition": "or", "conditions": [{"condition": "sun", "after": "sunset"}, {"condition": "sun", "before": "sunrise"}]}
+        if c["if"] == "light":
+            return {"condition": "sun", "after": "sunrise", "before": "sunset"}
+        if c["if"] == "between":
+            # HA's time condition handles a window over midnight (22:00 → 06:00) itself.
+            return {"condition": "time", "after": c["after"] + ":00", "before": c["before"] + ":00"}
+        if c["if"] == "home":
+            return {"condition": "numeric_state", "entity_id": "zone.home", "above": 0}
+        if c["if"] == "away":
+            return {"condition": "numeric_state", "entity_id": "zone.home", "below": 1}
+        return {"condition": "numeric_state", "entity_id": c["entity"], c["op"]: c["x"]}
+
+    @staticmethod
+    def _readings(rule: dict[str, Any]) -> list[dict[str, Any]]:
+        """The rule's reading specs (its trigger and its «только если» readings) — each gets the entity it follows."""
+        return [x for x in [rule["when"], *rule.get("only_if", [])] if x.get("event") == "value" or x.get("if") == "value"]
+
+    async def _resolve(self, rule: dict[str, Any], data: dict[str, Any]) -> None:
+        """One sensor → itself; several → HA's min_max helper of them (one per set of sensors and statistic, shared by
+        rules, made here and removed when no rule uses it)."""
+        for spec in self._readings(rule):
+            spec["entity"] = spec["sensors"][0] if len(spec["sensors"]) == 1 else await self._helper(data, spec)
+
+    async def _helper(self, data: dict[str, Any], spec: dict[str, Any]) -> str:
+        helpers = data.setdefault("helpers", {})
+        sig = f"{spec['stat']}:{','.join(spec['sensors'])}"
+        reg = er.async_get(self.hass)
+        if (h := helpers.get(sig)) and self.hass.config_entries.async_get_entry(h["entry_id"]) and (eid := reg.async_get_entity_id("sensor", HELPER, h["entry_id"])):
+            return eid
+        ru = str(self.hass.config.language or "").startswith("ru")
+        flow = await self.hass.config_entries.flow.async_init(HELPER, context={"source": "user"})
+        res = await self.hass.config_entries.flow.async_configure(
+            flow["flow_id"],
+            {"name": f"hauflo_{spec['stat']}_{secrets.token_hex(4)}", "entity_ids": list(spec["sensors"]), "type": spec["stat"], "round_digits": 1 if spec["kind"] == "temperature" else 0},
+        )
+        entry = res.get("result")
+        if entry is None:
+            raise Invalid(f"Home Assistant didn't make the {spec['stat']} helper: {res.get('errors') or res.get('reason')}")
+        eid = None
+        for _ in range(50):
+            if eid := reg.async_get_entity_id("sensor", HELPER, entry.entry_id):
+                break
+            await asyncio.sleep(0.1)
+        if eid is None:
+            await self.hass.config_entries.async_remove(entry.entry_id)
+            raise Invalid("Home Assistant didn't set up the helper")
+        title = await self._helper_title(spec, ru)
+        self.hass.config_entries.async_update_entry(entry, title=title)
+        reg.async_update_entity(eid, name=title)
+        helpers[sig] = {"entry_id": entry.entry_id, "entity_id": eid}
+        return eid
+
+    async def _helper_title(self, spec: dict[str, Any], ru: bool) -> str:
+        """«Hauflo · среднее (3 датч.)» — the helper's name in the house's language (translations, «exceptions»)."""
+        pre = f"component.{DOMAIN}.exceptions."
+        tr: dict[str, str] = {}
+        for lang in (("ru", "en") if ru else ("en",)):
+            got = await translation.async_get_translations(self.hass, lang, "exceptions", [DOMAIN])
+            tr = {**{k: v for k, v in got.items() if k.startswith(pre)}, **tr}
+        say = lambda key: tr.get(f"{pre}{key}.message", key)  # noqa: E731
+        try:
+            return say("automations_helper").format(stat=say(f"automations_stat_{spec['stat']}"), n=len(spec["sensors"]))
+        except (KeyError, IndexError, ValueError):
+            return f"Hauflo · {spec['stat']}"
+
+    async def _drop_unused_helpers(self, data: dict[str, Any]) -> None:
+        used = {spec.get("entity") for rule in data["rules"].values() for spec in self._readings(rule)}
+        for sig, h in list(data.get("helpers", {}).items()):
+            if h.get("entity_id") in used:
+                continue
+            if self.hass.config_entries.async_get_entry(h["entry_id"]):
+                await self.hass.config_entries.async_remove(h["entry_id"])
+            del data["helpers"][sig]
 
     @staticmethod
     def _plain(text: str) -> list[Any]:
@@ -535,10 +846,17 @@ class Automations:
             rule = self.validate(raw, data["rules"].get(rule_id) if rule_id else None)
             rule_id = rule_id or PREFIX + secrets.token_hex(6)
             rule["by"], rule["at"] = user, time.time()
+            await self._resolve(rule, data)
             cfg = self.automation(rule_id, rule)
-            await self._put(rule_id, cfg)
+            try:
+                await self._put(rule_id, cfg)
+            except Exception:
+                await self._drop_unused_helpers(data)  # a helper made for a rule HA refused isn't left behind
+                await self.store.async_save(data)
+                raise
             rule["hash"] = _digest(cfg)
             data["rules"][rule_id] = rule
+            await self._drop_unused_helpers(data)
             await self.store.async_save(data)
         await self._apply_enabled(rule_id, rule["enabled"])
         out = {"id": rule_id, **{k: v for k, v in rule.items() if k != "hash"}}
@@ -581,6 +899,7 @@ class Automations:
             self._own(data, rule_id)
             await self._put(rule_id, None)
             del data["rules"][rule_id]
+            await self._drop_unused_helpers(data)
             await self.store.async_save(data)
 
     async def run(self, rule_id: Any) -> dict[str, Any]:

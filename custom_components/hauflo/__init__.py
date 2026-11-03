@@ -33,11 +33,11 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
 
-from . import automations, backup, dashmerge, guest, house, issues, keep, notify, ownership, presence, ranges, retired, rules, scenes, season, service, sidebar, theme, titles, voice
+from . import automations, backup, dashmerge, guest, house, issues, keep, notify, ownership, presence, ranges, retired, rules, scenes, season, service, sidebar, theme, timers, titles, voice
 from . import order as block_order
 from .issues import DEGRADED, degrade  # noqa: F401 — DEGRADED: diagnostics read it here
 from .storage import HaufloStore
-from .const import DATA_CARDS_LOCAL, CONF_REFRESH_TOKEN_ID, CONF_SECRET, CONF_SERVER, CONF_USER_ID, DATA_NOTIFY_VIEWS, DATA_UNLINKED, DOMAIN, MONITOR_LABEL, MONITOR_LABEL_EN, MONITOR_LABELS, OWNED_STORE, STATUS_EVERY, VERSION, CONF_RANGES, CONF_ALLOW_CHANGES, LOCKED_CODE
+from .const import ASSET_TAG, DATA_CARDS_LOCAL, CONF_REFRESH_TOKEN_ID, CONF_SECRET, CONF_SERVER, CONF_USER_ID, DATA_NOTIFY_VIEWS, DATA_UNLINKED, DOMAIN, MONITOR_LABEL, MONITOR_LABEL_EN, MONITOR_LABELS, OWNED_STORE, STATUS_EVERY, VERSION, CONF_RANGES, CONF_ALLOW_CHANGES, LOCKED_CODE
 from .tuning import TUNING
 from .tunnel import TUNNEL
 
@@ -2164,7 +2164,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
     # version; fallback copies an earlier removal left are taken off (keep.py). Before the theme adds its scripts, and
     # both before the link starts: a deploy right after it must find the cards served (integrator review r2, D2).
     try:
-        hass.data[DATA_CARDS_LOCAL] = await keep.async_on_start(hass, VERSION)
+        hass.data[DATA_CARDS_LOCAL] = await keep.async_on_start(hass, ASSET_TAG)
     except Exception as err:  # noqa: BLE001 — never stops the agent
         degrade("lovelace resources", err)
     for feature, setup in (("voice sentences", voice.async_setup), ("theme", theme.async_setup), ("menu for new people", sidebar.async_setup)):
@@ -2229,6 +2229,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
     # a new link (reauth / reconfigure: another secret or server) reloads here — HA's way since 2026.12, the flow only
     # updates the entry (HA reviewer r2: async_update_reload_and_abort with an update listener breaks in 2026.12).
     entry.async_on_unload(entry.add_update_listener(_entry_changed))
+    timers.async_setup(hass)
     issues.sync_degraded(hass)
     return True
 
@@ -2239,6 +2240,7 @@ def relinked(agent: Agent, data: Mapping[str, Any]) -> bool:
 
 
 async def _entry_changed(hass: HomeAssistant, entry: HaufloConfigEntry) -> None:
+    theme.apply_cards_view(hass)  # «Вид карточек» changed: the other cards file from now on
     if relinked(entry.runtime_data, entry.data):
         hass.config_entries.async_schedule_reload(entry.entry_id)
         return
@@ -2422,7 +2424,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     # 25.10: re-adding lost every ownership and the next deploy made «_2» duplicates).
     # The client's dashboard keeps its cards without the agent (copies + Lovelace resources).
     try:
-        await keep.async_keep_dashboard(hass, VERSION)
+        await keep.async_keep_dashboard(hass, ASSET_TAG)
     except Exception:  # noqa: BLE001
         _LOGGER.exception("Hauflo: dashboard cards not kept")
     with contextlib.suppress(Exception):

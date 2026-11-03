@@ -15,11 +15,10 @@ from aiohttp import web
 from homeassistant.components.frontend import add_extra_js_url
 from homeassistant.components.http import KEY_HASS, HomeAssistantView
 
-from .const import VERSION
 from homeassistant.components import persistent_notification
 from homeassistant.core import CoreState, Event, HomeAssistant, callback
 
-from .const import DATA_CARDS_LOCAL, DATA_THEME_DEFAULTS, DATA_THEME_LISTENER, DATA_THEME_FIRING, DATA_WWW
+from .const import ASSET_TAG, CARDS_CURRENT, CARDS_FILES, DATA_CARDS_FILE, DATA_CARDS_LOCAL, cards_file, DATA_THEME_DEFAULTS, DATA_THEME_LISTENER, DATA_THEME_FIRING, DATA_WWW
 
 _LOGGER = logging.getLogger(__name__)
 THEME = "Hauflo Atelier"
@@ -27,8 +26,14 @@ THEME = "Hauflo Atelier"
 OLD_THEMES = ("Hauflo Aura", "Hauflo Atelier", "Hauflo Atelier · светлая", "Hauflo Atelier · тёмная")
 # The agent's version in the URL: the HA app and browsers kept serving the old cards after an update (owner 29.10:
 # «4 из 4 работают», «Нагрев» from before 0.16.4 still on his phone) — a new version is a new URL, loaded fresh.
-ICONS_URL = f"/hauflo_static/hauflo-icons.js?v={VERSION}"
-CARDS_URL = f"/hauflo_static/hauflo-cards.js?v={VERSION}"
+ICONS_URL = f"/hauflo_static/hauflo-icons.js?v={ASSET_TAG}"
+
+
+CARDS_URL = f"/hauflo_static/{CARDS_FILES[CARDS_CURRENT]}?v={ASSET_TAG}"  # the default view
+
+
+def cards_url(hass: HomeAssistant) -> str:
+    return f"/hauflo_static/{cards_file(hass)}?v={ASSET_TAG}"
 
 _COMMON = {
     "ha-card-border-radius": "30px",
@@ -50,6 +55,7 @@ _COMMON = {
 
 # Graphite (dark) and paper (light): glass with an edge highlight, deep soft shadows, light as colour.
 DARK = {
+    "eh-mode": "dark",  # read by the v5 cards: a view set to a fixed theme wins over the phone's mode
     "primary-color": "#5CE0B4",
     "accent-color": "#5CE0B4",
     "primary-background-color": "#08090A",
@@ -111,6 +117,7 @@ DARK = {
 }
 
 LIGHT = {
+    "eh-mode": "light",
     "primary-color": "#14946C",
     "accent-color": "#14946C",
     "primary-background-color": "#EFECE6",
@@ -278,7 +285,8 @@ async def async_setup(hass: HomeAssistant) -> None:
         # An independent house loads them from /config/www/hauflo (keep.py) — not twice.
         if not hass.data.get(DATA_CARDS_LOCAL):
             add_extra_js_url(hass, ICONS_URL)
-            add_extra_js_url(hass, CARDS_URL)
+            hass.data[DATA_CARDS_FILE] = cards_url(hass)
+            add_extra_js_url(hass, hass.data[DATA_CARDS_FILE])
             # Set up while HA runs (just paired): a tab that had already opened a dashboard loads neither the extra JS nor
             # the resources again until a reload (integrator review r2, D2) — HA says so. Gone at the next HA start.
             if hass.state is CoreState.running:
@@ -344,3 +352,18 @@ def async_unload(hass: HomeAssistant) -> None:
         unsub()
     hass.data.pop(DATA_THEME_FIRING, None)
     hass.data.pop(DATA_THEME_DEFAULTS, None)
+
+
+def apply_cards_view(hass: HomeAssistant) -> bool:
+    """The owner changed «Вид карточек»: the other file is the extra JS from now on (open tabs reload to get it)."""
+    old = hass.data.get(DATA_CARDS_FILE)
+    new = cards_url(hass)
+    if old is None or old == new or hass.data.get(DATA_CARDS_LOCAL):
+        return False
+    from homeassistant.components.frontend import remove_extra_js_url
+
+    remove_extra_js_url(hass, old)
+    add_extra_js_url(hass, new)
+    hass.data[DATA_CARDS_FILE] = new
+    _say_reload(hass)
+    return True

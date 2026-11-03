@@ -27,12 +27,19 @@ from pathlib import Path
 from homeassistant.components import persistent_notification
 from homeassistant.core import HomeAssistant
 
+from .const import CARDS_CURRENT, CARDS_FILES, cards_file
 from .storage import HaufloStore
 
 _LOGGER = logging.getLogger(__name__)
 LOCAL = "/local/hauflo/"
 SERVED = "/hauflo_static/"  # the agent's own static path (theme.py)
-MODULES = ("hauflo-icons.js", "hauflo-cards.js")
+ICONS = "hauflo-icons.js"
+MODULES = (ICONS, CARDS_FILES[CARDS_CURRENT])  # the default view
+
+
+def modules(hass: HomeAssistant) -> tuple[str, ...]:
+    """The icons and the cards file this house chose (const.cards_file)."""
+    return (ICONS, cards_file(hass))
 STORE_KEY = "hauflo.independent"
 NOTE_ID = "hauflo_dashboard_resources"
 # The result of a keep: resources added (or already there), or HA keeps them in YAML (a person adds them).
@@ -66,7 +73,8 @@ async def async_keep_dashboard(hass: HomeAssistant, version: str) -> str:
     await res.async_get_info()
     # The agent's own addresses die with it.
     changed = await _drop(res, SERVED)
-    for name in MODULES:
+    changed = await _drop_unchosen(hass, res, LOCAL) or changed
+    for name in modules(hass):
         url = f"{LOCAL}{name}?v={version}"
         have = [item for item in res.async_items() if str(item.get("url", "")).startswith(LOCAL + name)]
         if not have:
@@ -83,7 +91,7 @@ async def async_keep_dashboard(hass: HomeAssistant, version: str) -> str:
 
 def _say_yaml(hass: HomeAssistant) -> None:
     ru = str(hass.config.language or "").startswith("ru")
-    lines = "\n".join(f"    - url: {LOCAL}{n}\n      type: module" for n in MODULES)
+    lines = "\n".join(f"    - url: {LOCAL}{n}\n      type: module" for n in modules(hass))
     persistent_notification.async_create(
         hass,
         (f"Карточки Hauflo скопированы в /config/www/hauflo, но ресурсы панелей здесь задаются в configuration.yaml — "
@@ -129,6 +137,20 @@ async def async_on_start(hass: HomeAssistant, version: str) -> bool:
     return False
 
 
+async def _drop_unchosen(hass: HomeAssistant, res, base: str) -> bool:
+    """The other «Вид карточек» file's resource goes: after a switch it stayed under its old address and loaded too
+    (30.10: hauflo-cards.js?v=0.17.0 beside hauflo-cards-v5.js)."""
+    chosen = modules(hass)
+    removed = False
+    for name in set(CARDS_FILES.values()) - set(chosen):
+        for item in list(res.async_items()):
+            url = str(item.get("url", ""))
+            if url == base + name or url.startswith(base + name + "?"):
+                await res.async_delete_item(item["id"])
+                removed = True
+    return removed
+
+
 async def _drop(res, prefix: str) -> bool:
     removed = False
     for item in list(res.async_items()):
@@ -146,7 +168,9 @@ async def async_release(hass: HomeAssistant, version: str | None = None) -> None
         return
     await res.async_get_info()
     changed = await _drop(res, LOCAL)
-    for name in MODULES if version else ():
+    if version:
+        changed = await _drop_unchosen(hass, res, SERVED) or changed
+    for name in modules(hass) if version else ():
         url = f"{SERVED}{name}?v={version}"
         have = [item for item in res.async_items() if str(item.get("url", "")).startswith(SERVED + name)]
         for extra in have[1:]:

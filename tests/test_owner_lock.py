@@ -235,9 +235,9 @@ async def test_the_lock_survives_a_restart(hass: HomeAssistant, entry) -> None:
 async def test_the_dialog(hass: HomeAssistant, entry) -> None:
     flow = await hass.config_entries.options.async_init(entry.entry_id)
     assert flow["type"] is FlowResultType.FORM and flow["step_id"] == "init"  # nothing pending: no «—»
-    assert [str(k) for k in flow["data_schema"].schema] == [CONF_ALLOW_CHANGES, CONF_RANGES, "independent"]
+    assert [str(k) for k in flow["data_schema"].schema] == [CONF_ALLOW_CHANGES, CONF_RANGES, "cards_view", "independent"]
     defaults = {str(k): k.default() for k in flow["data_schema"].schema}
-    assert defaults == {CONF_ALLOW_CHANGES: True, CONF_RANGES: "1/1", "independent": False}
+    assert defaults == {CONF_ALLOW_CHANGES: True, CONF_RANGES: "1/1", "cards_view": "current", "independent": False}
     assert flow["description_placeholders"] == {
         "pending": "",
         "project": "Вилла Юг",
@@ -253,7 +253,7 @@ async def test_the_dialog(hass: HomeAssistant, entry) -> None:
     assert "29.10.2026 — the home moved from «Volkov KNX» to «Сервис-Дом» (approved by the owner in Home Assistant)" in shown["history"]
     # Commas and new lines both separate the addresses.
     flow = await hass.config_entries.options.async_configure(flow["flow_id"], {CONF_ALLOW_CHANGES: True, CONF_RANGES: "1/1\n2/2/5-9, 3/3/1\n\nx"})
-    assert entry.options == {CONF_RANGES: ["1/1", "2/2/5-9", "3/3/1"], CONF_ALLOW_CHANGES: True}
+    assert entry.options == {CONF_RANGES: ["1/1", "2/2/5-9", "3/3/1"], CONF_ALLOW_CHANGES: True, "cards_view": "current"}
 
     hass.data[DATA_PENDING_RANGES] = {"7/1/1"}
     flow = await hass.config_entries.options.async_init(entry.entry_id)
@@ -273,7 +273,7 @@ async def test_pending_is_never_prefilled_security_2810(hass: HomeAssistant, ent
     flow = await hass.config_entries.options.async_init(entry.entry_id)
     assert flow["step_id"] == "init_pending"
     defaults = {str(k): k.default() for k in flow["data_schema"].schema}
-    assert defaults == {CONF_ALLOW_CHANGES: True, CONF_RANGES: "1/1", "accept_pending": [], "independent": False}
+    assert defaults == {CONF_ALLOW_CHANGES: True, CONF_RANGES: "1/1", "cards_view": "current", "accept_pending": [], "independent": False}
     sel = [v for k, v in flow["data_schema"].schema.items() if str(k) == "accept_pending"][0]
     assert sel.config["multiple"] is True and [o["value"] if isinstance(o, dict) else o for o in sel.config["options"]] == ["1/2/3", "7/7/1"]
     # The reviewer's exact case: only the lock toggled, Submit with the defaults.
@@ -308,8 +308,8 @@ def test_both_languages_say_the_same_steps() -> None:
         assert "{report}" in steps["independent_done"]["description"]
         steps = {k: v for k, v in steps.items() if k.startswith("init")}
         for step in steps.values():
-            assert set(step["data"]) - {"accept_pending"} == {CONF_ALLOW_CHANGES, CONF_RANGES, "independent"}
+            assert set(step["data"]) - {"accept_pending"} == {CONF_ALLOW_CHANGES, CONF_RANGES, "cards_view", "independent"}
             assert "{project}" in step["description"] and "{server}" in step["description"] and "{url}" in step["description"]
         assert "{pending}" in steps["init_pending"]["description"] and "{pending}" not in steps["init"]["description"]
-        assert set(steps["init_pending"]["data"]) == set(steps["init_pending"]["data_description"]) == {CONF_ALLOW_CHANGES, CONF_RANGES, "accept_pending", "independent"}
+        assert set(steps["init_pending"]["data"]) == set(steps["init_pending"]["data_description"]) == {CONF_ALLOW_CHANGES, CONF_RANGES, "accept_pending", "cards_view", "independent"}
         assert "—" not in steps["init"]["description"].split("\n\n", 1)[1]

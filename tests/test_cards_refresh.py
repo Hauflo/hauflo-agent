@@ -11,7 +11,7 @@ from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.hauflo import theme
-from custom_components.hauflo.const import CONF_SECRET, CONF_SERVER, DOMAIN, VERSION
+from custom_components.hauflo.const import ASSET_TAG, CONF_SECRET, CONF_SERVER, DOMAIN, VERSION
 
 
 async def test_link_entity_says_the_agent_version(hass: HomeAssistant) -> None:
@@ -64,4 +64,4 @@ async def test_only_files_inside_the_folder(client, tmp_path) -> None:
 
 
 async def test_cards_urls_carry_the_version() -> None:
-    assert theme.CARDS_URL.endswith(f"?v={VERSION}") and theme.ICONS_URL.endswith(f"?v={VERSION}")
+    assert theme.CARDS_URL.endswith(f"?v={ASSET_TAG}") and theme.ICONS_URL.endswith(f"?v={ASSET_TAG}")

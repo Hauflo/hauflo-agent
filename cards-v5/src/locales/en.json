@@ -1,0 +1,957 @@
+{
+  "common": {
+    "on": "on",
+    "off": "off",
+    "close": "Close",
+    "more_ha": "More in Home Assistant",
+    "retry": "Retry",
+    "undo": "Undo",
+    "sending": "sending…",
+    "failed": "not done",
+    "offline": "no link",
+    "offline_since": "no link · since {t}",
+    "no_data": "no data",
+    "readonly": "view only",
+    "hold_hint": "Hold 1 s — {action}",
+    "more_n": "{n} more",
+    "updated_now": "Updated just now",
+    "updated_min": "Updated {n} min ago",
+    "updated_h": "Updated {n} h ago",
+    "updated_d": "Updated {n} d ago",
+    "history": "History",
+    "power": "Power",
+    "turn_on": "Turn on",
+    "turn_off": "Turn off",
+    "up": "Up",
+    "down": "Down",
+    "source_ha": "Home Assistant",
+    "not_in_v5": "This card is still in the previous look",
+    "blocked": "blocked"
+  },
+  "period": {
+    "day": "Day",
+    "week": "Week"
+  },
+  "light": {
+    "kind": "Light",
+    "on": "on",
+    "off": "off",
+    "brightness": "Brightness",
+    "ct": "Tone",
+    "presets": "Light tone",
+    "timer": "Timer",
+    "timer_off_at": "Turns off at {t}",
+    "timer_cancel": "Cancel",
+    "fav_add": "Add to favourites",
+    "fav_remove": "Remove from favourites",
+    "only_switch": "This light only turns on and off",
+    "assumed": "The command is sent, but the light does not report its state"
+  },
+  "climate": {
+    "kind": "Climate",
+    "now": "now {v}", "now_under": "Now {v}",
+    "low": "heat to",
+    "high": "cool from",
+    "mode": "Mode",
+    "fan": "Fan",
+    "swing": "Swing",
+    "swing_h": "Horizontal swing",
+    "preset": "Preset",
+    "setpoint": "Setpoint",
+    "current": "Current",
+    "target": "Target",
+    "state": {
+      "heat": "Heating",
+      "cool": "Cooling",
+      "dry": "Drying",
+      "fan": "Fan",
+      "idle": "On target",
+      "off": "Off"
+    },
+    "valves": "valves {n} of {total}",
+    "title": "Climate",
+    "none": "Thermostat not found",
+    "floor_title": "Floor heating",
+    "frost": "frost protection",
+    "fault": "fault"
+  },
+  "time": {
+    "min": "{n} min",
+    "h": "{n} h"
+  },
+  "rdev": {
+    "over": {
+      "switch": "Switch",
+      "fan": "Fan",
+      "humidifier": "Humidifier",
+      "lock": "Lock",
+      "valve": "Valve",
+      "siren": "Siren",
+      "heater": "Water heater",
+      "water_heater": "Water heater",
+      "vacuum": "Vacuum",
+      "sensor": "Sensor",
+      "binary": "Sensor"
+    },
+    "on": "on",
+    "off": "off",
+    "lock": "Lock",
+    "unlock": "Unlock",
+    "open": "Open",
+    "close": "Close",
+    "siren_on": "sounding",
+    "siren_off": "quiet",
+    "speed": "Speed",
+    "preset": "Preset",
+    "mode": "Mode",
+    "target_humidity": "Target humidity",
+    "vac_start": "Start",
+    "vac_pause": "Pause",
+    "vac_home": "To base",
+    "now_title": "Now",
+    "history_title": "History",
+    "history": "History, last {n} h",
+    "no_history": "No readings for the last {n} h",
+    "h_ago": "{n} h ago",
+    "now": "now",
+    "since": "since {t}",
+    "usage": "Consumption",
+    "power": "Power now",
+    "energy": "Energy",
+    "device": "Device",
+    "changed": "Changed",
+    "battery": "Battery",
+    "link": "Signal"
+  },
+  "values": {
+    "wh_mode": {
+      "eco": "Eco",
+      "electric": "Electric",
+      "performance": "Performance",
+      "high_demand": "High demand",
+      "heat_pump": "Heat pump",
+      "gas": "Gas",
+      "off": "Off"
+    },
+    "vacuum_state": {
+      "cleaning": "cleaning",
+      "docked": "docked",
+      "paused": "paused",
+      "idle": "idle",
+      "returning": "returning to base",
+      "error": "error",
+      "unavailable": "offline"
+    },
+    "lock_state": {
+      "locked": "locked",
+      "unlocked": "unlocked",
+      "locking": "locking",
+      "unlocking": "unlocking",
+      "jammed": "jammed",
+      "open": "latch open",
+      "opening": "opening"
+    },
+    "valve_state": {
+      "open": "open",
+      "closed": "closed",
+      "opening": "opening",
+      "closing": "closing"
+    },
+    "hum_mode": {
+      "normal": "Normal",
+      "eco": "Eco",
+      "away": "Away",
+      "boost": "Boost",
+      "comfort": "Comfort",
+      "home": "Home",
+      "sleep": "Sleep",
+      "auto": "Auto",
+      "baby": "Baby"
+    },
+    "light_ct": {
+      "cozy": "Cozy",
+      "warm": "Warm",
+      "neutral": "White",
+      "day": "Daylight"
+    },
+    "hvac": {
+      "off": "Off",
+      "heat": "Heat",
+      "cool": "Cool",
+      "heat_cool": "Heat and cool",
+      "auto": "Auto",
+      "dry": "Dry",
+      "fan_only": "Fan"
+    },
+    "action": {
+      "off": "off",
+      "heating": "heating",
+      "cooling": "cooling",
+      "drying": "drying",
+      "fan": "fan",
+      "idle": "holding",
+      "preheating": "preheating",
+      "defrosting": "defrosting"
+    },
+    "fan": {
+      "1": "1",
+      "2": "2",
+      "3": "3",
+      "auto": "Auto",
+      "on": "On",
+      "off": "Off",
+      "low": "Low",
+      "medium": "Medium",
+      "middle": "Medium",
+      "high": "High",
+      "top": "Max",
+      "focus": "Focus",
+      "diffuse": "Diffuse",
+      "quiet": "Quiet"
+    },
+    "swing": {
+      "1": "1",
+      "2": "2",
+      "3": "3",
+      "off": "Stop",
+      "on": "On",
+      "vertical": "Vert.",
+      "horizontal": "Horiz.",
+      "both": "3D",
+      "auto": "Auto",
+      "rangefull": "Full"
+    },
+    "preset": {
+      "none": "None",
+      "home": "Home",
+      "away": "Away",
+      "eco": "Eco",
+      "comfort": "Comfort",
+      "sleep": "Sleep",
+      "boost": "Boost",
+      "activity": "Activity"
+    },
+    "weather": {
+      "clear-night": "Clear night",
+      "cloudy": "Cloudy",
+      "exceptional": "Exceptional",
+      "fog": "Fog",
+      "hail": "Hail",
+      "lightning": "Thunderstorm",
+      "lightning-rainy": "Thunderstorm, rain",
+      "partlycloudy": "Partly cloudy",
+      "pouring": "Pouring",
+      "rainy": "Rainy",
+      "snowy": "Snowy",
+      "snowy-rainy": "Sleet",
+      "sunny": "Sunny",
+      "windy": "Windy",
+      "windy-variant": "Windy, cloudy"
+    }
+  },
+  "lights": {
+    "title": "Lights",
+    "count": "{n} of {total}",
+    "none": "No lights",
+    "all_off": "Turn all lights off",
+    "all_on": "Turn all lights on",
+    "count_on": "{n} of {total} on"
+  },
+  "cards": {
+    "lights": {
+      "name": "Hauflo · Lights console",
+      "desc": "Room lights: all at once, common brightness, lamps"
+    },
+    "climate": {
+      "name": "Hauflo · Climate",
+      "desc": "A thermostat: big setpoint, ±, chart"
+    },
+    "scenes": {
+      "name": "Hauflo · Scenes",
+      "desc": "Room scenes: KNX, HA and your own, «+ Scene»"
+    },
+    "alert": {
+      "name": "Hauflo · Alarms",
+      "desc": "The alarm across the block: what, where, since when, what to do, «Accept»"
+    },
+    "covers": {
+      "name": "Hauflo · Blinds",
+      "desc": "The room's blinds: all at once, scenes, each blind"
+    },
+    "devices": {
+      "name": "Hauflo · Devices",
+      "desc": "Ventilation, pumps, valves, boilers, sensors: tap to switch, hold for the remote"
+    },
+    "room": {
+      "name": "Hauflo · Room",
+      "desc": "A room glowing with its state; tap opens its page, hold opens the room remote"
+    },
+    "acs": {
+      "name": "Hauflo · Air conditioners",
+      "desc": "Every AC or floor heating zone of the house: what runs, temperature, all off"
+    },
+    "status": {
+      "name": "Hauflo · Building systems",
+      "desc": "Plant status: running, fault, offline"
+    },
+    "hero": {
+      "name": "Hauflo · Home",
+      "desc": "The home at a glance: temperature, lights, alarms"
+    },
+    "sliders": {
+      "name": "Hauflo · Sliders",
+      "desc": "Lights, blinds, fans, players as tall sliders"
+    },
+    "weather": {
+      "name": "Hauflo · Weather",
+      "desc": "Now and the next days — any weather integration"
+    },
+    "air": {
+      "name": "Hauflo · Air",
+      "desc": "PM2.5 on a scale, PM10, CO₂, humidity — any sensors"
+    },
+    "graph": {
+      "name": "Hauflo · Graph",
+      "desc": "A value over the last hours as a soft line, with min and max"
+    },
+    "media": {
+      "name": "Hauflo · Player",
+      "desc": "What plays, its cover, play/pause and volume"
+    },
+    "camera": {
+      "name": "Hauflo · Camera",
+      "desc": "The camera picture, refreshed; a tap opens the live view"
+    },
+    "auto": {
+      "name": "Hauflo · Automations",
+      "desc": "Automations and scripts: on/off, run, when it last worked"
+    },
+    "leaks": {
+      "name": "Hauflo · Leak protection",
+      "desc": "Leak sensors and a valve of any integration: all is well, or where the leak is; the valve by a hold"
+    },
+    "security": {
+      "name": "Hauflo · Security",
+      "desc": "Alarm panel, locks, doors and windows: the mode in one tap, a lock by a hold"
+    },
+    "area": {
+      "name": "Room",
+      "desc": "Everything Home Assistant puts in a room: climate, sensors, switches, settings"
+    },
+    "entity": {
+      "name": "Hauflo · Device",
+      "desc": "One device as a tile: state, tap, hold, climate and number steps"
+    }
+  },
+  "kind": {
+    "light": "Light",
+    "switch": "Switch",
+    "cover": "Blind",
+    "climate": "Climate",
+    "binary_sensor": "Sensor",
+    "sensor": "Sensor",
+    "scene": "Scene",
+    "script": "Script",
+    "fan": "Fan",
+    "valve": "Valve",
+    "lock": "Lock",
+    "other": "Device"
+  },
+  "order": {
+    "title": "Order",
+    "hint": "Drag by ⠿ with a finger or the mouse, or tap ↑ ↓. Saved at once — for the whole house, and it stays over the next deploys.",
+    "done": "Done",
+    "saved": "Saved",
+    "reset": "Hauflo's order",
+    "up": "Up",
+    "down": "Down",
+    "error": "Not saved — no link to the house, or the Hauflo agent is out of date.",
+    "child": "The order for the whole house is changed by adults — this is a child profile",
+    "groups": "Groups",
+    "scenes": "Scenes",
+    "alarms": "Alarms",
+    "sensors": "Sensors"
+  },
+  "scenes": {
+    "title": "Scenes",
+    "light_title": "Light scenes",
+    "cover_title": "Blind scenes",
+    "mixed_title": "Scenes",
+    "light": "Lights",
+    "cover": "Blinds",
+    "none": "No scenes",
+    "mine": "My scenes",
+    "add": "Scene",
+    "add_label": "New scene",
+    "knx": "KNX",
+    "ha": "HA",
+    "on": "Scene «{name}» is on",
+    "failed": "The scene didn't run — no link to the bus",
+    "offline": "«{name}» is unavailable — no link",
+    "child": "Child profile: grown-ups change scenes.",
+    "add_light": "New light scene",
+    "add_cover": "New blind scene",
+    "add_hint_light": "Set the lights as you like — the scene remembers what is on and how bright.",
+    "add_hint_cover": "Set the blinds as you like — the scene remembers their positions.",
+    "add_where": "The scene is saved in Home Assistant: on the panel, in voice and in automations. It won't be on the KNX wall switches.",
+    "ph_light": "For example, Movie",
+    "ph_cover": "For example, Morning",
+    "name": "Name",
+    "need_name": "Enter a name",
+    "capture": "Remember as it is now",
+    "cancel": "Cancel",
+    "rename": "Rename",
+    "save": "Save",
+    "delete": "Delete the scene",
+    "hide": "Remove from the panel",
+    "ha_hint": "Your integrator set up this scene. You can rename and overwrite it; removing takes it off this panel only.",
+    "knx_hint": "The same scene as on the wall switches.",
+    "sure": "Sure? The scene will be overwritten",
+    "sure_light": "«{name}» will remember the room's lights as they are now. The previous scene is lost.",
+    "sure_cover": "«{name}» will remember the room's blinds as they are now. The previous scene is lost.",
+    "sure_knx_light": "The room's lights as they are now go into «{name}». The scene changes on the wall switches too.",
+    "sure_knx_cover": "The room's blinds as they are now go into «{name}». The scene changes on the wall switches too.",
+    "sure_knx_mixed": "The room's lights and blinds as they are now go into «{name}». The scene changes on the wall switches too.",
+    "yes": "Yes, overwrite",
+    "done_title": "Scene overwritten",
+    "done_ha": "«{name}» is now the room as it is.",
+    "done_knx": "The command went to the switches. Check it: press «{name}». If the scene stayed the same, these switches don't store scenes — ask your integrator.",
+    "ready": "Done",
+    "knx_empty": "The name on this panel. Empty — the integrator's name again.",
+    "fav_add": "Add to favourites",
+    "fav_del": "Remove from favourites",
+    "fav_error": "Not saved — check the link to the home",
+    "error": "That didn't work — try again"
+  },
+  "alert": {
+    "none": "No alarms",
+    "dead": {
+      "one": "Offline · {n} sensor",
+      "few": "Offline · {n} sensors",
+      "many": "Offline · {n} sensors",
+      "other": "Offline · {n} sensors"
+    },
+    "more": {
+      "one": "{n} more alarm",
+      "few": "{n} more alarms",
+      "many": "{n} more alarms",
+      "other": "{n} more alarms"
+    },
+    "word": {
+      "moisture": "Leak",
+      "smoke": "Smoke",
+      "gas": "Gas",
+      "carbon_monoxide": "Carbon monoxide",
+      "heat": "Overheat",
+      "cold": "Cold",
+      "problem": "Fault",
+      "safety": "Danger",
+      "tamper": "Tamper",
+      "default": "Alarm"
+    },
+    "sensor": {
+      "moisture": "Leak sensor",
+      "smoke": "Smoke detector",
+      "gas": "Gas detector",
+      "carbon_monoxide": "CO detector",
+      "heat": "Heat sensor",
+      "cold": "Cold sensor",
+      "problem": "Fault sensor",
+      "safety": "Safety sensor",
+      "tamper": "Tamper sensor",
+      "door": "Door sensor",
+      "window": "Window sensor",
+      "opening": "Opening sensor",
+      "motion": "Motion sensor",
+      "occupancy": "Presence sensor",
+      "vibration": "Vibration sensor"
+    },
+    "since": "since {t}",
+    "returned": "back to normal at {t} — confirm you've seen it",
+    "acked": "accepted by {name}",
+    "you": "you",
+    "accept": "Accept",
+    "accept_all": "Accept all faults · {n}",
+    "ack_hint": "The alarm stays until the cause is fixed; everyone sees who accepted it.",
+    "failed": "Couldn't accept — try again",
+    "run": "Run",
+    "todo": {
+      "moisture": "Shut off the water: close the main valve (usually by the meter). Then check where it leaks.",
+      "moisture_valve": "Shut off the water — the «{valve}» button below (or the main valve by the meter). Then check where it leaks.",
+      "smoke": "If you see smoke or fire, get out of the house and call 112.",
+      "gas": "Don't switch on lights or fire, open the windows, get out and call 112.",
+      "carbon_monoxide": "Open the windows, get into fresh air and call 112.",
+      "pushed_ack": "Phones got a notice (whether anyone saw it is unknown until someone accepts); «Accept» stops the repeats.",
+      "fault": "This is an equipment fault, not a danger to people.",
+      "fault_call": "The service's number is in Settings.",
+      "fault_tell": "Tell whoever maintains the house.",
+      "pushed": "Phones got a notice (whether anyone saw it is unknown until someone accepts)."
+    }
+  },
+  "cover": {
+    "kind": "Cover",
+    "stop": "Stop",
+    "position": "Position",
+    "tilt": "Slats",
+    "no_position": "Position unknown — the drive doesn't report it",
+    "type": {
+      "shutter": "Shutter",
+      "shade": "Roller shade",
+      "blind": "Venetian blind",
+      "curtain": "Curtains",
+      "awning": "Awning",
+      "window": "Window",
+      "damper": "Damper",
+      "gate": "Gate",
+      "garage": "Garage door",
+      "door": "Door"
+    },
+    "verb": {
+      "lift": {
+        "open": "Raise",
+        "close": "Lower"
+      },
+      "draw": {
+        "open": "Open",
+        "close": "Close"
+      },
+      "extend": {
+        "open": "Extend",
+        "close": "Retract"
+      },
+      "open": {
+        "open": "Open",
+        "close": "Close"
+      }
+    },
+    "state": {
+      "lift_f": {
+        "open": "open",
+        "closed": "closed",
+        "opening": "rising",
+        "closing": "lowering"
+      },
+      "lift_pl": {
+        "open": "open",
+        "closed": "closed",
+        "opening": "rising",
+        "closing": "lowering"
+      },
+      "draw_pl": {
+        "open": "open",
+        "closed": "closed",
+        "opening": "opening",
+        "closing": "closing"
+      },
+      "extend_f": {
+        "open": "extended",
+        "closed": "retracted",
+        "opening": "extending",
+        "closing": "retracting"
+      },
+      "open_n": {
+        "open": "open",
+        "closed": "closed",
+        "opening": "opening",
+        "closing": "closing"
+      },
+      "open_f": {
+        "open": "open",
+        "closed": "closed",
+        "opening": "opening",
+        "closing": "closing"
+      },
+      "open_m": {
+        "open": "open",
+        "closed": "closed",
+        "opening": "opening",
+        "closing": "closing"
+      },
+      "open_pl": {
+        "open": "open",
+        "closed": "closed",
+        "opening": "opening",
+        "closing": "closing"
+      }
+    },
+    "tilt_short": "slats {v} %",
+    "opening": {
+      "center": "from the centre",
+      "left": "to the left",
+      "right": "to the right"
+    },
+    "sub": {
+      "roller": "Roller",
+      "roman": "Roman",
+      "pleated": "Pleated",
+      "venetian": "Venetian",
+      "vertical": "Vertical blinds",
+      "curtain": "Drapes",
+      "tulle": "Sheer",
+      "shutter": "Shutter",
+      "awning": "Awning",
+      "window": "Window",
+      "skylight": "Skylight",
+      "damper": "Damper",
+      "gate_slide": "Sliding gate",
+      "gate_swing": "Swing gate",
+      "garage": "Garage",
+      "door": "Door"
+    }
+  },
+  "covers": {
+    "title": "Blinds",
+    "count": "{n} of {total} open",
+    "none": "No blinds",
+    "no_position": "position unknown",
+    "all_open": "Open all",
+    "all_close": "Close all",
+    "all_stop": "Stop all",
+    "moving_n": {
+      "one": "{n} moving",
+      "few": "{n} moving",
+      "many": "{n} moving",
+      "other": "{n} moving"
+    }
+  },
+  "device": {
+    "open": "open",
+    "closed": "closed",
+    "presence": "motion",
+    "on_word": "on",
+    "home": "home",
+    "away": "away",
+    "update": "update available",
+    "jammed": "jammed",
+    "unlocked": "unlocked",
+    "error": "error"
+  },
+  "devices": {
+    "title": "Devices",
+    "none": "No devices",
+    "count": "{n} of {total} on",
+    "ok": "all fine",
+    "alarm_n": "alarm · {n}",
+    "offline_n": "offline · {n}",
+    "warn_n": "attention · {n}"
+  },
+  "room": {
+    "stub": "Room",
+    "over": "Room",
+    "deaf": "offline · {n}",
+    "c_lights": "Lights: {n} of {total}",
+    "c_covers": "Blinds open: {n} of {total}",
+    "c_hum": "Humidity {v} %",
+    "temp": "Temperature",
+    "climate_more": "All climate",
+    "open": "Open the room",
+    "empty": "Nothing to control in this room yet"
+  },
+  "acs": {
+    "title_ac": "Air conditioners",
+    "title_floor": "Floor heating",
+    "title_heat": "Heating",
+    "heat_n": "heating · {n}",
+    "cool_n": "cooling · {n}",
+    "work_n": "running · {n}",
+    "fault_n": "fault · {n}",
+    "on_n": "{n} of {total} on",
+    "ok": "all fine",
+    "all_off": "all off",
+    "turn_all_off": "Turn all off"
+  },
+  "status": {
+    "title": "Building systems",
+    "none": "No points",
+    "ok_n": {
+      "one": "all fine · {n} point",
+      "few": "all fine · {n} points",
+      "many": "all fine · {n} points",
+      "other": "all fine · {n} points"
+    },
+    "fold": {
+      "one": "{n} more — all fine",
+      "few": "{n} more — all fine",
+      "many": "{n} more — all fine",
+      "other": "{n} more — all fine"
+    },
+    "fold_less": "Show less",
+    "ok": "fine",
+    "online": "online",
+    "battery_low": "battery low",
+    "battery": "battery {v} %",
+    "running": "running",
+    "stopped": "off",
+    "valve_open": "open",
+    "valve_closed": "closed",
+    "problems": {
+      "one": "problem",
+      "few": "problems",
+      "many": "problems",
+      "other": "problems"
+    },
+    "bin": {
+      "clear": "clear",
+      "on": "on",
+      "off": "off",
+      "running_on": "running",
+      "running_off": "off",
+      "plug_on": "plugged in",
+      "plug_off": "unplugged",
+      "power_on": "power",
+      "power_off": "no power",
+      "light_on": "light",
+      "light_off": "dark",
+      "update_on": "update available",
+      "update_off": "up to date",
+      "lock_on": "unlocked",
+      "lock_off": "locked"
+    }
+  },
+  "hero": {
+    "title": "Home",
+    "ok": "All good",
+    "leak": "Leak: {name}",
+    "siren": "Siren sounding",
+    "panel": "Alarm · security",
+    "alarm1": "Alarm: {name}",
+    "first": "First: {name}",
+    "alarms": {
+      "one": "{n} alarm",
+      "few": "{n} alarms",
+      "many": "{n} alarms",
+      "other": "{n} alarms"
+    },
+    "accepted": {
+      "one": "Accepted · {n} alarm",
+      "few": "Accepted · {n} alarms",
+      "many": "Accepted · {n} alarms",
+      "other": "Accepted · {n} alarms"
+    },
+    "devices_off": {
+      "one": "Offline · {n} device",
+      "few": "Offline · {n} devices",
+      "many": "Offline · {n} devices",
+      "other": "Offline · {n} devices"
+    },
+    "climate_wait": "Climate: no data",
+    "fresh": "Updating…",
+    "deaf_lights": "No data · {what}",
+    "light_word": "lights",
+    "lamps": {
+      "one": "{n} lamp",
+      "few": "{n} lamps",
+      "many": "{n} lamps",
+      "other": "{n} lamps"
+    },
+    "in_rooms": {
+      "one": "{n} room",
+      "few": "{n} rooms",
+      "many": "{n} rooms",
+      "other": "{n} rooms"
+    },
+    "lamps_in": "{lamps} in {rooms}",
+    "f_rooms": "In the rooms",
+    "f_hum": "Humidity",
+    "f_light": "Lights",
+    "f_climate": "Climate",
+    "f_sensors": "Sensors",
+    "sensors_ok": "fine",
+    "sensors_off": {
+      "one": "{n} sensor offline",
+      "few": "{n} sensors offline",
+      "many": "{n} sensors offline",
+      "other": "{n} sensors offline"
+    },
+    "climate_part": "{n} of {total} without data",
+    "l_none": "no data",
+    "l_fresh": "updating…",
+    "l_outer": "on: {name}",
+    "l_off": "off",
+    "l_off_fresh": "off · updating…",
+    "l_off_deaf": "off · {n} without data",
+    "out": "outside",
+    "away": "Away · simulation",
+    "away_covers": "Away · blinds only",
+    "away_lights": "Away · lights only",
+    "away_none": "Away · nothing today",
+    "fav": "Favourites",
+    "my_room": "My room ›",
+    "my_light": "My lights",
+    "my_light_on": "on · {n} of {total}",
+    "my_light_on1": "on",
+    "warm": "Warmer",
+    "warm_set": "set {set}°",
+    "warm_now": "set {set}° · now {now}°",
+    "scene": "scene",
+    "scene_on": "Scene «{name}» is on",
+    "open": "open",
+    "closed": "closed",
+    "on": "on",
+    "off": "off",
+    "weather": {
+      "clear-night": "Clear",
+      "cloudy": "Cloudy",
+      "exceptional": "Unusual",
+      "fog": "Fog",
+      "hail": "Hail",
+      "lightning": "Thunderstorm",
+      "lightning-rainy": "Thunderstorm, rain",
+      "partlycloudy": "Partly cloudy",
+      "pouring": "Downpour",
+      "rainy": "Rain",
+      "snowy": "Snow",
+      "snowy-rainy": "Sleet",
+      "sunny": "Sunny",
+      "windy": "Windy",
+      "windy-variant": "Windy, cloudy"
+    }
+  },
+  "sliders": {
+    "none": "No devices"
+  },
+  "weather": {
+    "title": "Weather",
+    "none": "No weather",
+    "nodata": "No data",
+    "feels": "feels like {n}°",
+    "u": {
+      "km/h": "km/h",
+      "m/s": "m/s",
+      "mph": "mph",
+      "kn": "kn",
+      "mmHg": "mmHg",
+      "hPa": "hPa",
+      "mbar": "mbar"
+    }
+  },
+  "air": {
+    "title": "Air quality",
+    "none": "No air sensors chosen",
+    "nopm": "No particle data",
+    "unit": "µg/m³",
+    "l0": "Good",
+    "l1": "Moderate",
+    "l2": "Unhealthy for sensitive",
+    "l3": "Unhealthy",
+    "l4": "Hazardous",
+    "pm10": "PM10",
+    "co2": "CO₂ · {w}",
+    "co2_fresh": "fresh",
+    "co2_vent": "ventilate",
+    "co2_stuffy": "stuffy",
+    "voc": "VOC",
+    "hum": "Humidity",
+    "t": "Temperature"
+  },
+  "graph": {
+    "title": "Last {n} h",
+    "none": "No sensors chosen",
+    "min": "min",
+    "max": "max",
+    "nohist": "No history yet",
+    "nodata": "no data"
+  },
+  "media": {
+    "title": "Player",
+    "none": "No player",
+    "off": "Off",
+    "playing": "Playing",
+    "paused": "Paused",
+    "prev": "Previous",
+    "next": "Next",
+    "play": "Play",
+    "pause": "Pause",
+    "volume": "Volume"
+  },
+  "camera": {
+    "title": "Camera",
+    "none": "No camera chosen",
+    "recording": "Recording",
+    "streaming": "Streaming",
+    "updated": "Updated {t}"
+  },
+  "auto": {
+    "title": "Automations",
+    "empty": "Empty",
+    "off": "Off",
+    "running": "Running…",
+    "never_fired": "Never fired yet",
+    "never_ran": "Never run yet",
+    "fired": "Fired {ago}",
+    "ran": "Ran {ago}",
+    "run": "Run",
+    "started": "Started",
+    "ago_now": "just now",
+    "ago_min": "{n} min ago",
+    "ago_h": "{n} h ago",
+    "ago_d": "{n} d ago",
+    "stop": "Stop",
+    "on_of": "of {all} on"
+  },
+  "leaks": {
+    "title": "Leak protection",
+    "ok": "All is well",
+    "leak": "Leak",
+    "nolink": "No signal from the sensors",
+    "no_sensors": "No sensors yet",
+    "none": "Connect leak sensors and a valve in Home Assistant — they show up here by themselves",
+    "dry": "dry",
+    "wet": "leak",
+    "deaf": "no signal: {n}",
+    "of": "{n} of {total}",
+    "sensors": { "one": "{n} sensor", "few": "{n} sensors", "many": "{n} sensors", "other": "{n} sensors" },
+    "valve": { "on": "water is on", "off": "water is off", "opening": "opening…", "closing": "closing…" },
+    "close": "Shut off the water",
+    "open": "Open the water",
+    "no_valve": "No valve found: name it in the card (valves) or put it into this area in Home Assistant."
+  },
+  "security": {
+    "title": "Security",
+    "none": "Set an alarm panel, locks or door / window sensors in the card settings",
+    "state": {
+      "disarmed": "Disarmed",
+      "armed_home": "Armed · home",
+      "armed_away": "Armed",
+      "armed_night": "Night mode",
+      "armed_vacation": "Vacation",
+      "armed_custom_bypass": "Armed",
+      "arming": "Arming…",
+      "disarming": "Disarming…",
+      "pending": "Entry delay…",
+      "triggered": "ALARM"
+    },
+    "mode": { "disarm": "Disarm", "home": "Home", "away": "Away", "night": "Night" },
+    "mode_do": { "disarm": "Disarm", "home": "Arm · home", "away": "Arm · away", "night": "Night mode" },
+    "opened": "open: {n}",
+    "nodata": "no data: {n}",
+    "closed": "all closed",
+    "unlocked": "unlocked: {n}",
+    "lockdead": "locks offline: {n}",
+    "locked": "doors locked",
+    "lock": { "locked": "locked", "unlocked": "unlocked", "jammed": "jammed", "moving": "turning…", "dead": "offline" },
+    "open": { "open": "open", "closed": "closed", "motion": "motion", "still": "no motion", "dead": "no data" },
+    "unlock": "Unlock",
+    "lock_do": "Lock"
+  },
+  "area": {
+    "title": "Room",
+    "none": "Nothing here yet",
+    "none_admin": "Nothing here yet. Assign this room to devices in Home Assistant settings",
+    "press": "Run: {name}",
+    "block": {
+      "climate": "Climate",
+      "status": "Status",
+      "switches": "Controls",
+      "settings": "Settings",
+      "values": "Readings",
+      "buttons": "Buttons and scenes",
+      "other": "Other"
+    }
+  },
+  "entity": {
+    "title": "Device",
+    "none": "Pick a device in the card settings",
+    "confirm": "Run: {name}?"
+  }
+}
