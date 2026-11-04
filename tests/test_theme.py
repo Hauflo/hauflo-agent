@@ -132,7 +132,12 @@ def test_the_deploy_sets_a_theme_the_tunnel_allows():
     import pathlib
     import re
 
-    deploy = (pathlib.Path(__file__).parents[2] / "backend/src/ha/deploy.ts").read_text(encoding="utf-8")
+    import pytest
+
+    ts = pathlib.Path(__file__).parents[2] / "backend/src/ha/deploy.ts"
+    if not ts.exists():
+        pytest.skip("backend not in this checkout")  # the HACS repository holds the agent only
+    deploy = ts.read_text(encoding="utf-8")
     name = re.search(r'const ATELIER_THEME = "([^"]+)"', deploy)
     assert name and name.group(1) in theme.names()
 
