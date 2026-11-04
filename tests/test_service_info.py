@@ -31,7 +31,7 @@ def test_clean_keeps_known_fields_only() -> None:
 def test_describe_in_the_owners_language() -> None:
     who, hist = service.describe(service.clean(INFO), "ru")
     assert who == "«Сервис-Дом» — тел. +7 900 000-00-02"
-    assert "29.10.2026 — дом передан от «Volkov KNX» компании «Сервис-Дом» (подтвердил владелец в Home Assistant)" in hist
+    assert "29.10.2026 — объект передан от «Volkov KNX» компании «Сервис-Дом» (подтвердил владелец в Home Assistant)" in hist
     assert "поддержка Hauflo: правка проекта до 27.10.2026 (закрыт 21.10.2026)" in hist
     who_en, hist_en = service.describe(service.clean(INFO), "en-GB")
     assert "approved by the owner in Home Assistant" in hist_en and who_en.startswith("«Сервис-Дом»")

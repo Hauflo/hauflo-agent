@@ -5,8 +5,14 @@ Plan and limits: docs/automations.md.
 
 Every rule is a real HA automation in automations.yaml (it runs without Hauflo or the internet), id `hauflo_auto_…`,
 written only here — never through the tunnel (no generic automation-create there). What a rule may do is fixed:
-open / close / set the position of a Hauflo cover, switch a Hauflo light on (brightness) or off, a Hauflo scene on —
-never a lock, the alarm, a valve or a garage door / gate cover, never any other service or entity.
+open / close / set the position of a blind, switch a light on (brightness) or off, a scene on, a fan or a socket on /
+off, a thermostat's set temperature or its mode off / heat / cool — never a lock, the alarm, a valve, a water heater,
+a siren, a garage door / gate / door / damper cover, a bare switch (it may be a pump or a boiler), anything Hauflo
+protects (`protected`: __init__._protected — sticky marks, groups / scenes with one of them inside), never any other
+service or entity. Owner 04.11 («Дом умнеет»): of ANY integration of HA, not only Hauflo's — what the person sees in
+HA (not hidden, disabled or a config / diagnostic entity); a blind of another integration only by its class (blind,
+shutter, curtain, shade, awning), a scene of another integration only HA's own with every member safe (or a lights
+integration's). Habit suggestions (habits.py) are built from and checked by the same rules (validate()).
 
 The house's place: HA's own home location (latitude / longitude / elevation only, nothing else of the core config) —
 found by the house's internet address (HA's own onboarding helper; the HA box has no GPS) or the phone, saved only
@@ -38,6 +44,7 @@ import secrets
 import time
 from typing import Any
 
+from homeassistant.components.climate import ClimateEntityFeature
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er, translation
@@ -75,21 +82,32 @@ MAX_RULES = 50
 MAX_ACTIONS = 20
 MAX_RAMP_MIN = 60
 RAMP_STEPS = 12
-_FROM = re.compile(r"[a-z_]{1,32}")
+_FROM = re.compile(r"[a-z0-9_]{1,40}")  # a static suggestion's key or habits.py's habit_<hex>
 _ID = re.compile(r"hauflo_auto_[0-9a-f]{12}")
 _ALARM_CODE = re.compile(r"hauflo_alarm_[0-9a-f]{6}")
 _TIME = re.compile(r"([01]\d|2[0-3]):([0-5]\d)")
 # HA's place before anyone set it: 0/0 (a fresh install) or the old San Diego default.
 _UNSET = ((0.0, 0.0), (32.87336, -117.22743))
-NO_LOCATION_RU = "Место дома не задано — рассвет и закат посчитаются неправильно. Укажите, где дом."
-NO_LOCATION_EN = "The home's location isn't set — sunrise and sunset will be wrong. Set where the house is."
+NO_LOCATION_RU = "Место объекта не задано — рассвет и закат посчитаются неправильно. Укажите, где он."
+NO_LOCATION_EN = "The site's location isn't set — sunrise and sunset will be wrong. Set where it is."
 # What a rule may do, by domain: the service and what its value is.
 _DO = {
     "cover": {"open": "cover.open_cover", "close": "cover.close_cover", "position": "cover.set_cover_position"},
     # «ramp»: a wake-up light, brightness up in steps over minutes (KNX lights in HA have no transition).
     "light": {"on": "light.turn_on", "off": "light.turn_off", "ramp": "light.turn_on"},
     "scene": {"on": "scene.turn_on"},
+    "fan": {"on": "fan.turn_on", "off": "fan.turn_off"},
+    "switch": {"on": "switch.turn_on", "off": "switch.turn_off"},  # a socket only (_pickable)
+    # «temp»: the set temperature (°C of HA's units, the thermostat's own min…max); heat / cool / off: its mode.
+    "climate": {"temp": "climate.set_temperature", "heat": "climate.set_hvac_mode", "cool": "climate.set_hvac_mode", "off": "climate.set_hvac_mode"},
 }
+# «Что сделать» over a set (rooms / the whole house): lights, blinds, scenes; the rest one by one.
+SET_DOMAINS = ("light", "cover", "scene")
+_H = TUNING["habits"]
+COVER_CLASSES = set(_H["cover_classes"])
+COVER_NEVER = set(_H["cover_never"])
+SCENE_PLATFORMS = set(_H["scene_platforms"])
+CLIMATE_STEP = _H["climate_step"]
 
 
 BACKUP = AUTOMATIONS + ".hauflo-bak-"
@@ -106,10 +124,10 @@ class NotPlain(RuntimeError):
     """automations.yaml carries what a re-dump would lose (409, said in both languages)."""
 
     RU = ("Hauflo не меняет automations.yaml: в нём комментарии, !include / !secret или ручное оформление, которые "
-          "потерялись бы при перезаписи. Правила Hauflo в этом доме добавляет интегратор, или он приводит файл к виду, "
+          "потерялись бы при перезаписи. Правила Hauflo на этом объекте добавляет интегратор, или он приводит файл к виду, "
           "в каком его сохраняет редактор автоматизаций Home Assistant.")
     EN = ("Hauflo doesn't change automations.yaml: it has comments, !include / !secret or hand formatting a rewrite would "
-          "lose. In this home the integrator adds Hauflo's rules, or saves the file the way Home Assistant's automation "
+          "lose. At this site the integrator adds Hauflo's rules, or saves the file the way Home Assistant's automation "
           "editor writes it.")
 
 
@@ -172,9 +190,11 @@ async def async_add_new(hass: HomeAssistant, configs: list[dict[str, Any]]) -> t
 
 
 class Automations:
-    def __init__(self, hass: HomeAssistant, owns: Callable[[str], bool]) -> None:
+    def __init__(self, hass: HomeAssistant, owns: Callable[[str], bool], protected: Callable[[str], bool] | None = None, habits: Callable[[], Any] | None = None) -> None:
         self.hass = hass
         self.owns = owns
+        self.protected = protected or (lambda eid: False)
+        self.habits = habits or (lambda: None)  # habits.py — its suggestions in answer()
         self.store = HaufloStore(hass, STORE_KEY)
         self.lock = asyncio.Lock()
 
@@ -189,15 +209,34 @@ class Automations:
             return dev.area_id
         return None
 
-    def _pickable(self, eid: Any) -> bool:
-        """A Hauflo cover / light / scene, on the client's screen, safe (owns() leaves out locks, the alarm, valves,
-        garage doors and gates)."""
-        if not isinstance(eid, str) or eid.split(".")[0] not in _DO or self.hass.states.get(eid) is None:
+    def _pickable(self, eid: Any, depth: int = 0) -> bool:
+        """A light / blind / scene / fan / socket / thermostat of any integration that the person sees in HA, and safe:
+        never what Hauflo protects (locks, the alarm, valves, garage doors and gates, sticky marks), a blind only by
+        its class, a switch only a socket, a scene only when what it sets is safe."""
+        if not isinstance(eid, str) or (domain := eid.split(".")[0]) not in _DO or (st := self.hass.states.get(eid)) is None:
             return False
         ent = er.async_get(self.hass).async_get(eid)
-        if ent is None or ent.disabled_by or ent.hidden_by:
+        if ent is None or ent.disabled_by or ent.hidden_by or ent.entity_category is not None or self.protected(eid):
             return False
-        return bool(self.owns(eid))
+        classes = {st.attributes.get("device_class"), ent.device_class, ent.original_device_class} - {None}
+        if domain == "cover":
+            return not classes & COVER_NEVER and (bool(classes & COVER_CLASSES) or bool(self.owns(eid)))
+        if domain == "switch":
+            return "outlet" in classes
+        if domain == "climate":
+            return bool(int(st.attributes.get("supported_features") or 0) & ClimateEntityFeature.TARGET_TEMPERATURE) or bool(self._modes(eid))
+        if domain == "scene":
+            if self.owns(eid) or ent.platform in SCENE_PLATFORMS:
+                return True
+            members = st.attributes.get("entity_id")
+            return ent.platform == "homeassistant" and depth < 2 and isinstance(members, list) and bool(members) and all(self._pickable(m, depth + 1) for m in members)
+        return True  # a light, a fan
+
+    def _modes(self, eid: str) -> list[str]:
+        """The thermostat's modes a rule may set: off / heat / cool, the ones it has."""
+        st = self.hass.states.get(eid)
+        have = (st.attributes.get("hvac_modes") or []) if st else []
+        return [m for m in ("heat", "cool", "off") if m in have]
 
     def _alarm_sensor(self, eid: Any) -> bool:
         """A phone's «next alarm» sensor of the HA app (Android) — the only sensor a rule may follow."""
@@ -229,8 +268,10 @@ class Automations:
         return sorted(out)
 
     def _area_target(self, domain: str, area_id: str, explicit: list[str]) -> dict[str, Any]:
-        """The room itself when every one of its lights / blinds is Hauflo's (a lamp added later follows — HA expert
-        28.10); else the list — never the integrator's own or a garage door by way of the room."""
+        """The room itself when every one of its lights is safe to pick (a lamp added later follows — HA expert 28.10);
+        else the list. Blinds always by the list: a garage door put in the room later would follow the room."""
+        if domain == "cover":
+            return {"entity_id": explicit}
         everything = [eid for eid in self.hass.states.async_entity_ids(domain) if self._area(eid) == area_id]
         if everything and all(self._pickable(eid) for eid in everything):
             return {"area_id": area_id}
@@ -328,7 +369,7 @@ class Automations:
     def _set_action(self, a: dict[str, Any]) -> dict[str, Any]:
         """«Что сделать» over a set: the whole house, rooms and / or picked devices of one kind, one command."""
         domain, cmd = a.get("domain"), a.get("cmd")
-        if domain not in _DO:
+        if domain not in SET_DOMAINS:
             raise Invalid("set.domain: light, cover or scene")
         if cmd not in _DO[domain] or cmd == "ramp":
             raise Invalid(f"set.cmd: one of {', '.join(c for c in _DO[domain] if c != 'ramp')}")
@@ -344,14 +385,14 @@ class Automations:
         position = cmd == "position"
         for room in rooms:
             if not isinstance(room, str) or not self._set_members(domain, room, position):
-                raise Invalid(f"set.rooms: {room!r} has no Hauflo {domain}")
+                raise Invalid(f"set.rooms: {room!r} has no {domain} a rule may use")
         for eid in entities:
             if not self._pickable(eid) or eid.split(".")[0] != domain:
-                raise Invalid(f"{eid!r}: not a Hauflo {domain}")
+                raise Invalid(f"{eid!r}: not a {domain} a rule may use")
             if position and not int(self.hass.states.get(eid).attributes.get("supported_features") or 0) & 4:
                 raise Invalid(f"{eid}: can't stop at a position")
         if every and not any(self._all_target(domain, position)):
-            raise Invalid(f"set.all: no Hauflo {domain} in the house")
+            raise Invalid(f"set.all: no {domain} a rule may use")
         out: dict[str, Any] = {"do": "set", "domain": domain, "cmd": cmd}
         if every:
             out["all"] = True
@@ -411,7 +452,7 @@ class Automations:
 
     def targets(self) -> dict[str, Any]:
         areas = ar.async_get(self.hass)
-        out: dict[str, list[dict[str, Any]]] = {"cover": [], "light": [], "scene": []}
+        out: dict[str, list[dict[str, Any]]] = {"cover": [], "light": [], "scene": [], "fan": [], "switch": [], "climate": []}
         rooms: dict[str, int] = {}
         for domain in out:
             for eid in sorted(self.hass.states.async_entity_ids(domain)):
@@ -426,6 +467,8 @@ class Automations:
                 if domain == "light":
                     modes = s.attributes.get("supported_color_modes") or []
                     item["dim"] = any(m != "onoff" for m in modes)
+                if domain == "climate":
+                    item.update(self._climate_spec(eid))
                 out[domain].append(item)
         for area_id in {i["area"] for i in out["light"] if i["area"]}:
             if n := len(self._room_lights(area_id)):
@@ -459,6 +502,9 @@ class Automations:
             "covers": out["cover"],
             "lights": out["light"],
             "scenes": out["scene"],
+            "fans": out["fan"],
+            "switches": out["switch"],
+            "climates": out["climate"],
             "rooms": sorted(({"area_id": a, "name": names.get(a, a), "lights": n} for a, n in rooms.items()), key=lambda r: natural_key(r["name"])),
             "cover_rooms": sorted(cover_rooms, key=lambda r: natural_key(r["name"])),
             "areas": names,
@@ -531,12 +577,21 @@ class Automations:
                 continue
             eid = a.get("entity_id")
             if not self._pickable(eid):
-                raise Invalid(f"{eid!r}: not a Hauflo cover, light or scene")
+                raise Invalid(f"{eid!r}: not a light, blind, scene, fan, socket or thermostat a rule may use")
             domain = eid.split(".")[0]
             if do not in _DO[domain]:
                 raise Invalid(f"{eid}: do one of {', '.join(_DO[domain])}")
             item: dict[str, Any] = {"entity_id": eid, "do": do}
-            if do == "position":
+            if domain == "climate":
+                spec = self._climate_spec(eid)
+                if do == "temp":
+                    if not spec["temp"]:
+                        raise Invalid(f"{eid}: has no set temperature")
+                    v = _float(a.get("value"), spec["min"], spec["max"], "temperature")
+                    item["value"] = round(round(v / spec["step"]) * spec["step"], 1)
+                elif do not in spec["modes"]:
+                    raise Invalid(f"{eid}: modes {', '.join(spec['modes']) or 'none'}")
+            elif do == "position":
                 item["value"] = _int(a.get("value"), 0, 100, "position %")
             elif domain == "light" and do == "on" and a.get("value") is not None:
                 item["value"] = _int(a.get("value"), 1, 100, "brightness %")
@@ -562,6 +617,15 @@ class Automations:
         if origin:
             out["from"] = origin
         return out
+
+    def _climate_spec(self, eid: str) -> dict[str, Any]:
+        """The thermostat's own bounds: min / max / step of its set temperature, the modes a rule may set."""
+        a = self.hass.states.get(eid).attributes
+        lo, hi, step = a.get("min_temp"), a.get("max_temp"), a.get("target_temp_step")
+        ok = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)  # noqa: E731
+        lo, hi = (float(lo), float(hi)) if ok(lo) and ok(hi) and lo < hi else (None, None)
+        temp = lo is not None and bool(int(a.get("supported_features") or 0) & ClimateEntityFeature.TARGET_TEMPERATURE)
+        return {"temp": temp, "min": lo, "max": hi, "step": float(step) if ok(step) and step > 0 else CLIMATE_STEP, "modes": self._modes(eid), "value": a.get("temperature")}
 
     @staticmethod
     def _ramp(a: dict[str, Any]) -> list[dict[str, Any]]:
@@ -608,6 +672,8 @@ class Automations:
                 call["data"] = {"position": a["value"]}
             elif domain == "light" and a.get("value") is not None:
                 call["data"] = {"brightness_pct": a["value"]}
+            elif domain == "climate":
+                call["data"] = {"temperature": a["value"]} if a["do"] == "temp" else {"hvac_mode": a["do"]}
             out.append(call)
         # The wake-up lights last (they take minutes), side by side.
         if len(ramps) == 1:
@@ -1009,7 +1075,12 @@ class Automations:
             # On / off as HA has it (a person may switch it in HA too).
             rules.append({"id": rule_id, **{k: v for k, v in rule.items() if k not in ("by", "hash")}, "entity_id": eid, "state": s.state if s else "missing", "enabled": s.state == "on" if s else rule["enabled"], "changed": rule_id in edited})
         rules.sort(key=lambda r: r.get("at") or 0)
-        return {"location": self.location(), "days": self.days(self.location()["set"]), "rules": rules, "targets": self.targets(), "max_offset": MAX_OFFSET}
+        out = {"location": self.location(), "days": self.days(self.location()["set"]), "rules": rules, "targets": self.targets(), "max_offset": MAX_OFFSET}
+        if (h := self.habits()) is not None:
+            # «Предложения по привычкам» (habits.py): the person's repeated hand actions as ready rules; off by the switch.
+            out["habits_on"] = h.enabled
+            out["habits"] = h.suggestions(self, data) if h.enabled else []
+        return out
 
 
 class AutomationsView(HomeAssistantView):
@@ -1042,7 +1113,7 @@ class AutomationsView(HomeAssistantView):
         ru = wants_ru(body, engine.hass.config.language)
         if op in ("location", "detect") and not (user is not None and user.is_admin):
             # HA's home location moves zone.home (presence, every sun rule): an administrator's (security review 28.10).
-            msg = "Место дома задаёт администратор Home Assistant." if ru else "The home's location is set by the Home Assistant administrator."
+            msg = "Место объекта задаёт администратор Home Assistant." if ru else "The site's location is set by the Home Assistant administrator."
             return self.json({"message": msg, "code": "admin_only"}, 403)
         # Creating, changing, switching off or deleting a house automation: not a restricted (child) profile (house.py,
         # family review round 3: a 9-year-old saved «Выключать весь свет в 01:00»). «Запустить» is pressing a button.
@@ -1065,6 +1136,19 @@ class AutomationsView(HomeAssistantView):
                 return self.json(await engine.set_location(body))
             if op == "detect":
                 return self.json(await engine.detect())
+            if op in ("dismiss_habit", "habits"):
+                # «Не предлагать» / «Предлагать по привычкам»: the same say as a rule's (a child profile can't).
+                if (no := await refuse(request)) is not None:
+                    return no
+                if (h := engine.habits()) is None:
+                    return self.json_message("habits not running", 503)
+                if op == "habits":
+                    if not isinstance(body.get("enabled"), bool):
+                        raise Invalid("enabled: true or false")
+                    await h.set_enabled(body["enabled"])
+                else:
+                    await h.dismiss(body.get("key"))
+                return self.json(await engine.answer())
             if op == "timezone":
                 # The whole HA's clock: only HA's owner (an admin).
                 if not (user and user.is_admin):
@@ -1086,4 +1170,4 @@ class AutomationsView(HomeAssistantView):
         except Exception as err:  # noqa: BLE001 — HA refused the automation or the file: said, not a 500
             _LOGGER.warning("Hauflo sun: %s failed: %s", op, err)
             return self.json_message(f"Home Assistant: {err}", 500)
-        return self.json_message("op: save, enable, delete, run, detect, location or timezone", 400)
+        return self.json_message("op: save, enable, delete, run, detect, location, timezone, dismiss_habit or habits", 400)

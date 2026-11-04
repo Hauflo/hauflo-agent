@@ -1,0 +1,47 @@
+{
+  "_doc": "«Заменить на Hauflo»: which Hauflo card a stock Home Assistant card of any integration becomes — ONE table (the agent's stock.py reads it; the cards' admin sheet and the deploy plan show its offers). `types`: by the stock card's type. `generic` types decide by their entities' domain: `one` for a single entity, `many` for a list (every entity in the group of the key — `groups`, else the key's domain alone), else all of one device → `device` («Устройство целиком»), else `mixed`. `guarded` (protect.py / massSafety): never in a console with an «all at once» action and never pre-ticked. `fan_speeds_max`: a fan of 2…N speeds gets «Скорости 1…N» on its tile. `names`: the key the stock card's title / name goes to.",
+  "version": 1,
+  "types": {
+    "thermostat": { "card": "hauflo-climate", "key": "entity" },
+    "media-control": { "card": "hauflo-media", "key": "entity" },
+    "weather-forecast": { "card": "hauflo-weather", "key": "entity" },
+    "alarm-panel": { "card": "hauflo-security", "key": "entity" },
+    "picture-entity": { "card": "hauflo-camera", "key": "entity", "domains": ["camera"] },
+    "history-graph": { "card": "hauflo-graph", "key": "entities" },
+    "statistics-graph": { "card": "hauflo-graph", "key": "entities" },
+    "sensor": { "card": "hauflo-graph", "key": "entities" },
+    "area": { "card": "hauflo-area", "key": "area" }
+  },
+  "generic": ["tile", "button", "entity", "light", "humidifier", "gauge", "entities", "glance"],
+  "one": {
+    "climate": { "card": "hauflo-climate", "key": "entity" },
+    "water_heater": { "card": "hauflo-entity", "key": "entity" },
+    "media_player": { "card": "hauflo-media", "key": "entity" },
+    "weather": { "card": "hauflo-weather", "key": "entity" },
+    "camera": { "card": "hauflo-camera", "key": "entity" },
+    "alarm_control_panel": { "card": "hauflo-security", "key": "entity" },
+    "fan": { "card": "hauflo-sliders", "key": "entities" },
+    "*": { "card": "hauflo-entity", "key": "entity" }
+  },
+  "many": {
+    "light": { "card": "hauflo-lights", "key": "entities" },
+    "cover": { "card": "hauflo-covers", "key": "entities" },
+    "climate": { "card": "hauflo-acs", "key": "entities" },
+    "automation": { "card": "hauflo-auto", "key": "entities" },
+    "binary_sensor": { "card": "hauflo-status", "key": "entities" },
+    "sensor": { "card": "hauflo-graph", "key": "entities" },
+    "scene": { "card": "hauflo-scenes", "key": "scenes" },
+    "fan": { "card": "hauflo-sliders", "key": "entities" }
+  },
+  "groups": { "light": ["light", "switch"], "automation": ["automation", "script"], "scene": ["scene", "script"] },
+  "device": "hauflo-area",
+  "mixed": "hauflo-devices",
+  "names": {
+    "hauflo-entity": "name", "hauflo-media": "name", "hauflo-weather": "name", "hauflo-camera": "name", "hauflo-security": "name",
+    "hauflo-climate": "label", "hauflo-lights": "title", "hauflo-covers": "title", "hauflo-acs": "title", "hauflo-auto": "title",
+    "hauflo-status": "title", "hauflo-graph": "title", "hauflo-scenes": "title", "hauflo-devices": "title", "hauflo-area": "title"
+  },
+  "guarded": { "domains": ["lock", "alarm_control_panel", "valve"], "cover_classes": ["garage", "gate", "door"] },
+  "fan_speeds_max": 10,
+  "max_entities": 60
+}

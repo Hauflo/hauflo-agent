@@ -52,6 +52,9 @@ LOG_MAX = _T["log_max"]
 TEMP_BAND = tuple(_T["temp_band"])  # a guest's thermostat range, inside the entity's own
 RATE_ACT = _T["rate_act"]  # actions a minute per link
 RATE_STATE = _T["rate_state"]  # reads a minute per link (the page polls every 10 s)
+# Under the link's cap, each device its own (security review 04.11): one phone hammering the link can't lock the others out.
+RATE_ACT_DEVICE = _T["rate_act_device"]
+RATE_STATE_DEVICE = _T["rate_state_device"]
 RATE_BAD = _T["rate_bad"]  # wrong tokens a minute for the whole house → every wrong one gets 429
 _TOKEN = re.compile(r"([A-Za-z0-9_-]{12})\.([A-Za-z0-9_-]{32})")
 _DEVICE = re.compile(r"[A-Za-z0-9_-]{16,64}")
@@ -126,7 +129,7 @@ class GuestAccess:
         self.lock = asyncio.Lock()
         self._load_lock = asyncio.Lock()
         self.bad = _Window(RATE_BAD)
-        self.rates: dict[tuple[str, str], _Window] = {}
+        self.rates: dict[tuple[str, ...], _Window] = {}
         self.refused: set[tuple[str, str]] = set()
 
     # --- storage -----------------------------------------------------------------------------------------------------
@@ -322,12 +325,9 @@ class GuestAccess:
         issuer = await self.hass.auth.async_get_user(grant.get("by_id") or "")
         if issuer is None or not issuer.is_active or not _issuer_ok(issuer):
             return 410, {"code": "revoked"}
-        rate = self.rates.setdefault((grant["id"], op), _Window(RATE_ACT if op == "act" else RATE_STATE))
-        if rate.full():
-            return 429, {"code": "slow_down"}
-        rate.add()
         dev = _hash(device)[:16]
         if dev not in grant["devices"]:
+            # A device over the limit is refused before the rates: it never spends the link's own.
             if len(grant["devices"]) >= grant.get("max_devices", DEFAULT_DEVICES):
                 if (grant["id"], dev) not in self.refused:  # once per device: a forwarded link can't flood the log
                     self.refused.add((grant["id"], dev))
@@ -335,6 +335,12 @@ class GuestAccess:
                 return 403, {"code": "device_limit"}
             grant["devices"].append(dev)
             self._note({"grant": grant["id"], "label": grant.get("label") or "", "sys": "opened", "n": len(grant["devices"])})
+        mine = self.rates.setdefault((grant["id"], op, dev), _Window(RATE_ACT_DEVICE if op == "act" else RATE_STATE_DEVICE))
+        link = self.rates.setdefault((grant["id"], op), _Window(RATE_ACT if op == "act" else RATE_STATE))
+        if mine.full() or link.full():
+            return 429, {"code": "slow_down"}
+        mine.add()
+        link.add()
         allowed = self._allowed(grant, issuer)
         if op == "state":
             return 200, self._view(grant, allowed)

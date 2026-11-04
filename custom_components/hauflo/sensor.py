@@ -13,6 +13,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .device import device_info
 from .ownership import SIGNAL
+from .season import SeasonCurrent, SeasonRecommended
 
 # One push-updated entity, never polled.
 PARALLEL_UPDATES = 0
@@ -20,6 +21,9 @@ PARALLEL_UPDATES = 0
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEntitiesCallback) -> None:
     add([HaufloOwnership(entry)])
+    # «Рекомендуемый сезон» / «Текущий сезон» (season.py), push-updated.
+    if (season := getattr(entry.runtime_data, "season", None)) is not None:
+        add([SeasonRecommended(entry, season), SeasonCurrent(entry, season)])
     # Derived values (dew point, absolute humidity, …): real sensors (derived.py, rules.py).
     if (engine := getattr(entry.runtime_data, "rules", None)) is not None:
         engine.add_sensors = add

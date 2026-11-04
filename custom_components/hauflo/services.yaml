@@ -13,3 +13,16 @@ off_in:
           min: 0
           max: 1440
           unit_of_measurement: min
+unprotect:
+  fields:
+    entity_id:
+      required: false
+      selector:
+        entity:
+          integration: knx
+          multiple: true
+    group_address:
+      required: false
+      selector:
+        text:
+          multiple: true

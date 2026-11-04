@@ -28,6 +28,20 @@ for `days` days in a row while the house cools → «пора на зиму / о
 summer. No sensor or too little history → «нет данных», never a guess. «Не сейчас» snoozes it; sent again only after a
 change or the snooze.
 
+Two ways the integrator picks per house («Зима/Лето» in Hauflo, owner 04.11), both on the same rule:
+  * «вручную» (default): the suggestion above — the family decides;
+  * «автоматически раз в день»: the rule's outputs become {auto} (no push asking), and the agent itself takes the
+    recommended season once a day (`auto_hour`, tuning.json — the family is awake to read «Переключено на …»), through
+    the very `apply()` of the family's switch (so the same thermostats, the resend after HA starts / KNX comes back).
+    The recommendation is the rule's own verdict with its hysteresis: winter after `n` cold days in a row (and held until
+    `n_back` warm ones), summer after `n_back` warm days in a row; anything between is «без изменений» and no data is
+    «нет данных» — neither ever switches, the house keeps what it has. At most one automatic switch a day, a restart
+    never repeats it.
+Entities (sensor.py / switch.py), for the integrator's own automations: «Рекомендуемый сезон» (heat / cool / none /
+no_data, the daily means and the reason in its attributes), «Текущий сезон» (heat / cool) and the staff-only switch
+«Переключать автоматически» (entity_category config; the same setting as Hauflo's, an HA user who isn't an admin is
+refused).
+
 GET/POST /api/hauflo/season — any signed-in person of this HA (the client isn't an admin); not through the tunnel.
 GET/POST /api/hauflo/season/config — Hauflo's settings through the tunnel (admin only).
 """
@@ -44,14 +58,21 @@ from typing import Any
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import CALLBACK_TYPE, CoreState, Event, HomeAssistant, callback
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
+from homeassistant.components.switch import SwitchEntity
+from homeassistant.const import EntityCategory
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er, translation
+from homeassistant.helpers.dispatcher import async_dispatcher_connect, async_dispatcher_send
 from homeassistant.helpers.event import async_call_later, async_track_time_interval
 from homeassistant.util import dt as dt_util
 
 from . import derived as dv
 from .const import DOMAIN
+from .device import device_info
 from .house import may_edit, refuse
 from .storage import HaufloStore
+from .rules import window_off
 from .tuning import TUNING
 
 _LOGGER = logging.getLogger(__name__)
@@ -81,6 +102,16 @@ ACTION = "HAUFLO_SEASON"  # a phone's button: «HAUFLO_SEASON|heat», «HAUFLO_S
 LATER = "later"
 NOTIFY_TAG = "hauflo_season_suggest"
 SEASON_RULE = "season"  # the suggestion's value rule (and its recipe) — its entity id, once made, never changes
+AUTO_HOUR = _T["auto_hour"]  # the automatic switch waits for the morning (local hour)
+AUTO_BY = "auto"  # who switched it when the agent did
+NONE, NO_DATA = "none", "no_data"  # the recommendation's two non-seasons: keep what the house has
+RECOMMENDED = (HEAT, COOL, NONE, NO_DATA)
+SIGNAL = f"{DOMAIN}_season"  # the season's entities read the agent again
+
+
+def mode_outputs(auto: bool) -> dict[str, bool]:
+    """The season rule's outputs for the integrator's way: «вручную» asks the family both ways, «автоматически» acts."""
+    return {"suggest": not auto, "suggest_back": not auto, "auto": auto}
 
 
 def can_switch(state: Any) -> bool:
@@ -178,6 +209,7 @@ def defaults() -> dict[str, Any]:
         "include": [],
         "labels": LABELS[0],
         "resend_s": RESEND_S,
+        "auto": None,  # «Переключать автоматически» as Hauflo last sent it (None: never — the rule's own outputs stand)
         "suggest": {"enabled": True, "sensor": None, "below": BELOW, "above": ABOVE, "days": DAYS, "snooze_days": SNOOZE_DAYS},
     }
 
@@ -204,6 +236,10 @@ def clean_config(raw: Any) -> tuple[dict[str, Any], list[str]]:
             dropped.append(f"include {str(eid)[:80]!r} is not a climate")
     if raw.get("labels") in LABELS:
         out["labels"] = raw["labels"]
+    if isinstance(raw.get("auto"), bool):
+        out["auto"] = raw["auto"]
+    elif raw.get("auto") is not None:
+        dropped.append(f"auto {str(raw.get('auto'))[:20]!r} is not true / false")
     if (r := dv.num(raw.get("resend_s"))) is not None:
         out["resend_s"] = 0 if r <= 0 else int(_clamp(r, RESEND_LO, RESEND_HI))
     sg = raw.get("suggest")
@@ -264,7 +300,10 @@ class Season:
         self.suggest_applied: dict[str, Any] | None = None
         self.pending: str | None = None  # why the rule couldn't be made yet (no street sensor yet …) — tried again
         self.last_resend: float | None = None
+        self.auto_day: str | None = None  # local date of the last automatic switch (one a day at most)
+        self.auto_checked: str | None = None  # local date of the last daily look (once a day)
         self.log: list[dict[str, Any]] = []
+        self._facts: tuple[Any, ...] | None = None  # what the entities showed last (they're told on a change)
         self.texts: dict[str, dict[str, str]] = {lang: {} for lang in LANGS}
         self._knx_up: bool | None = None
         self._unsubs: list[CALLBACK_TYPE] = []
@@ -281,9 +320,11 @@ class Season:
         self.migrated = data.get("migrated") is True
         self.suggest_applied = data.get("suggest_applied") if isinstance(data.get("suggest_applied"), dict) else None
         self.last_resend = data.get("last_resend") if isinstance(data.get("last_resend"), (int, float)) else None
+        self.auto_day = data.get("auto_day") if isinstance(data.get("auto_day"), str) else None
+        self.auto_checked = data.get("auto_checked") if isinstance(data.get("auto_checked"), str) else None
 
     def data(self) -> dict[str, Any]:
-        return {"config": self.config, "season": self.season, "at": self.at, "by": self.by, "migrated": self.migrated, "suggest_applied": self.suggest_applied, "last_resend": self.last_resend}
+        return {"config": self.config, "season": self.season, "at": self.at, "by": self.by, "migrated": self.migrated, "suggest_applied": self.suggest_applied, "last_resend": self.last_resend, "auto_day": self.auto_day, "auto_checked": self.auto_checked}
 
     async def _save(self) -> None:
         await self.store.async_save(self.data())
@@ -342,6 +383,8 @@ class Season:
             await self.resend("interval")
         if not self.migrated:
             await self.async_sync_rule()  # the street's sensor may have come up since
+        await self._auto_daily()
+        self.changed()
 
     # --- texts ----------------------------------------------------------------------------------------------------
 
@@ -429,11 +472,14 @@ class Season:
             return
         s = self.config["suggest"]
         if rule is not None and not force:
-            # Made already (by Hauflo's wizard): kept as it is.
+            # Made already (by Hauflo's wizard): kept as it is (the integrator's way only).
             self.migrated, self.suggest_applied = True, dict(s)
             await self._save()
+            await self._sync_auto()
             return
         body = rule_body(s)
+        if isinstance(self.config.get("auto"), bool):
+            body["outputs"] = mode_outputs(self.config["auto"])
         if rule is not None:
             # Hauflo's new settings: they change what they say; the integrator's other choices (outputs …) are kept.
             body = {**rule, **{k: body[k] for k in ("enabled", "input", "x", "y", "window", "snooze_days")}, "name": rule["name"]}
@@ -450,6 +496,141 @@ class Season:
         self.migrated, self.suggest_applied, self.pending = True, dict(s), None
         await self._save()
 
+    # --- «вручную» / «автоматически раз в день» ---------------------------------------------------------------------
+
+    def auto_on(self) -> bool:
+        """The house switches by itself: the season rule acts (its outputs) — before the rule exists, Hauflo's setting."""
+        _rules, rule = self._rule()
+        if rule is not None:
+            return bool(rule.get("outputs", {}).get("auto"))
+        return self.config.get("auto") is True
+
+    async def _sync_auto(self) -> None:
+        """Hauflo's setting onto the rule (when it was sent and differs)."""
+        rules, rule = self._rule()
+        want = self.config.get("auto")
+        if rule is None or not isinstance(want, bool) or bool(rule.get("outputs", {}).get("auto")) == want:
+            return
+        await rules.set_outputs(SEASON_RULE, mode_outputs(want))
+
+    async def set_auto(self, on: bool, why: str) -> None:
+        """«Переключать автоматически» on / off (Hauflo's setting or the HA switch): the rule keeps its state; turned on, the
+        day's look runs now (still in the morning only, still once a day)."""
+        self.config["auto"] = on
+        await self._save()
+        await self._sync_auto()
+        _LOGGER.info("Hauflo season: automatic switch %s (%s)", "on" if on else "off", why)
+        if on:
+            await self.auto_check(why)
+        self.changed(force=True)
+
+    def recommendation(self) -> tuple[str, str]:
+        """(heat / cool / none / no_data, why) — the street rule's verdict with its hysteresis: winter while the rule is
+        ACTIVE (n cold days in a row, held until n_back warm ones), summer after n_back warm days in a row, anything
+        between — «без изменений». No sensor, a day missing, the rule off — never a season (the house keeps its own)."""
+        rules, rule = self._rule()
+        if rule is None:
+            return NO_DATA, ("no_sensor" if self.config["suggest"]["enabled"] else "off")
+        if not rule["enabled"]:
+            return NONE, "off"
+        st = rules.st(SEASON_RULE)
+        if st.get("no_data"):
+            return NO_DATA, "no_data"
+        w = rule["window"]
+        vals = (rules.win.get(SEASON_RULE) or {}).get("values") or []
+        if st["active"]:
+            return self._to(rule, True)[0] or NONE, "cold"
+        back = vals[-int(w.get("n_back", w["n"])) :]
+        if back and len(back) == int(w.get("n_back", w["n"])) and all(v is not None and window_off(rule, v) for v in back):
+            return self._to(rule, False)[0] or NONE, "warm"
+        return NONE, "between"
+
+    def _means_today(self) -> bool:
+        """The rule has read the street today (its daily values are this morning's, not yesterday's)."""
+        rules, rule = self._rule()
+        at = (rules.win.get(SEASON_RULE) or {}).get("at") if rule is not None else None
+        return isinstance(at, (int, float)) and dt_util.as_local(dt_util.utc_from_timestamp(at)).date() == dt_util.now().date()
+
+    async def _auto_daily(self) -> None:
+        """Once a day, in the morning, with today's means: the recommended season, if the house is not in it."""
+        now = dt_util.now()
+        today = now.date().isoformat()
+        if not self.auto_on() or self.auto_checked == today or now.hour < AUTO_HOUR or not self._means_today():
+            return
+        self.auto_checked = today
+        await self._save()
+        await self.auto_check("daily")
+
+    async def auto_check(self, why: str) -> str:
+        """The automatic switch itself — what it did, said back: ok, or why not (off / none / no_data / already / today /
+        later). The value rule's own «auto» comes here too (rules.py → __init__), so its once a day and its morning hold."""
+        if not self.auto_on():
+            return "off"
+        to, _why = self.recommendation()
+        if to not in MODES:
+            return to
+        if to == self.current():
+            return "already"
+        now = dt_util.now()
+        today = now.date().isoformat()
+        if self.auto_day == today:
+            return "today"
+        if now.hour < AUTO_HOUR:
+            return "later"
+        self.auto_day = today
+        result = await self.apply(to, AUTO_BY)  # saves auto_day with the rest
+        _LOGGER.info("Hauflo season: switched to %s automatically (%s): %s", to, why, result)
+        await self._notify_auto(to)
+        return "ok"
+
+    async def _notify_auto(self, to: str) -> None:
+        """The family is told, not asked (the push the suggestion had, without buttons)."""
+        engine = self.notify_of()
+        if engine is None:
+            return
+        lang = self._lang()
+        rules, rule = self._rule()
+        mode, days, threshold = self._to(rule, to == self._to(rule, True)[0]) if rule is not None else (to, 0, 0.0)
+        name = self.say(f"season_to_{self.config['labels']}_{to}", lang)
+        why = self.say(f"season_suggest_why_{to}", lang, days=days, threshold=f"{threshold:g}")
+        try:
+            await engine.async_tell(self.say("season_auto_title", lang, to=name), self.say("season_auto_message", lang, to=name, why=why), None, tag=NOTIFY_TAG)
+        except Exception:  # noqa: BLE001 — a phone failing never stops the season
+            _LOGGER.warning("Hauflo season: the automatic switch not announced", exc_info=True)
+
+    def facts(self) -> dict[str, Any]:
+        """For the entities: the recommendation and why, the season now, the way, the street's daily means."""
+        rules, rule = self._rule()
+        to, why = self.recommendation()
+        win_ = (rules.win.get(SEASON_RULE) or {}) if rule is not None else {}
+        starts = win_.get("starts") or []
+        vals = win_.get("values") or []
+        means = {dt_util.as_local(dt_util.utc_from_timestamp(t)).date().isoformat(): v for t, v in zip(starts, vals) if isinstance(t, (int, float))}
+        w = (rule or {}).get("window") or {}
+        return {
+            "recommended": to,
+            "reason": why,
+            "current": self.current(),
+            "auto": self.auto_on(),
+            "sensor": win_.get("entity_id") or ((rule or {}).get("input") or {}).get("entity_id"),
+            "daily_means": means,
+            "below": (rule or {}).get("x"),
+            "above": float(rule["x"]) + float(rule.get("y", 0.0)) if rule else None,
+            "days": w.get("n"),
+            "days_back": w.get("n_back"),
+            "auto_switched": self.auto_day,
+            "auto_checked": self.auto_checked,
+        }
+
+    @callback
+    def changed(self, force: bool = False) -> None:
+        """Tell the entities when what they show changed (a tick looks; a switch / setting tells at once)."""
+        f = self.facts()
+        key = (f["recommended"], f["reason"], f["current"], f["auto"], tuple(f["daily_means"].items()), f["auto_switched"])
+        if force or key != self._facts:
+            self._facts = key
+            async_dispatcher_send(self.hass, SIGNAL)
+
     async def answer(self) -> dict[str, Any]:
         items = self.chosen()
         return {
@@ -457,6 +638,7 @@ class Season:
             "chosen": self.season,
             "at": self.at,
             "labels": self.config["labels"],
+            "auto": self.auto_on(),
             "suggestion": self.suggestion(),
             "acs": [{"entity_id": s.entity_id, "name": s.attributes.get("friendly_name") or s.entity_id, "state": s.state} for s in items],
         }
@@ -488,7 +670,12 @@ class Season:
                 "snoozed_until": snoozed,
                 "rule": rules.rule_out(SEASON_RULE, False) if rule else None,
                 "pending": self.pending,
+                "recommended": self.recommendation()[0],
+                "reason": self.recommendation()[1],
             },
+            "auto": self.auto_on(),
+            "auto_switched": self.auto_day,
+            "auto_checked": self.auto_checked,
             "last_resend": self.last_resend,
             "log": self.log[-LOG_MAX:],
         }
@@ -496,6 +683,7 @@ class Season:
     async def async_set_config(self, raw: Any) -> dict[str, Any]:
         prev = self.config.get("suggest")
         prev_include = self.config["include"]
+        prev_auto = self.config.get("auto")
         self.config, dropped = clean_config(raw)
         if isinstance(raw, dict) and "include" in raw:
             self.legacy = False  # Hauflo knows the setting: its list is the answer
@@ -505,9 +693,13 @@ class Season:
         if not sent and prev:
             # The app edits the street rule itself now (no «suggest» sent): the old settings stay until migrated.
             self.config["suggest"] = prev
+        if not (isinstance(raw, dict) and isinstance(raw.get("auto"), bool)):
+            self.config["auto"] = prev_auto  # not sent (an older Hauflo, never set on the page): what is held stays
         await self._save()
         if sent and self.config["suggest"] != self.suggest_applied:
             await self.async_sync_rule(force=self.migrated)
+        if isinstance(raw, dict) and isinstance(raw.get("auto"), bool):
+            await self.set_auto(raw["auto"], "hauflo")
         return {**self.setup_answer(), "dropped": dropped}
 
     # --- the client's switch ---------------------------------------------------------------------------------------
@@ -541,6 +733,7 @@ class Season:
         await self._save()
         if self.suggestion() is None:
             self._dismiss()  # done (by the switch or the push): the note goes too
+        self.changed(force=True)
         return {"season": mode, "changed": changed, "sent": sent, "skipped": skipped, "failed": failed}
 
     # --- resend ---------------------------------------------------------------------------------------------------
@@ -675,3 +868,90 @@ class SeasonConfigView(HomeAssistantView):
         if not isinstance(body, dict):
             return self.json_message("an object expected", 400)
         return self.json(await season.async_set_config(body))
+
+
+# --- entities (sensor.py / switch.py) ----------------------------------------------------------------------------------
+
+
+class _SeasonEntity:
+    """Push-updated by the season (SIGNAL), never polled; ids fixed in English so automations never lose them."""
+
+    _attr_should_poll = False
+    _attr_has_entity_name = True
+
+    def _setup(self, entry: Any, season: Season, domain: str, key: str) -> None:
+        self.season = season
+        self._attr_unique_id = f"{entry.entry_id}_season_{key}"
+        self.entity_id = f"{domain}.{DOMAIN}_season_{key}"
+        self._attr_device_info = device_info(entry.entry_id, entry)
+        # The wording the integrator picked («Зима / Лето» or «Обогрев / Охлаждение»); a change shows after a reload.
+        self._attr_translation_key = f"season_{key}_{season.config['labels']}"
+
+    async def async_added_to_hass(self) -> None:
+        self.async_on_remove(async_dispatcher_connect(self.hass, SIGNAL, self.async_write_ha_state))  # type: ignore[attr-defined]
+
+
+class SeasonRecommended(_SeasonEntity, SensorEntity):
+    """«Рекомендуемый сезон»: heat / cool / none / no_data — what the street says, whoever answered what."""
+
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = list(RECOMMENDED)
+    _unrecorded_attributes = frozenset({"daily_means", "below", "above", "days", "days_back", "sensor", "auto_checked"})
+
+    def __init__(self, entry: Any, season: Season) -> None:
+        self._setup(entry, season, "sensor", "recommended")
+
+    @property
+    def native_value(self) -> str:
+        return self.season.recommendation()[0]
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        f = self.season.facts()
+        return {k: f[k] for k in ("reason", "daily_means", "below", "above", "days", "days_back", "sensor", "auto", "auto_switched", "auto_checked")}
+
+
+class SeasonCurrent(_SeasonEntity, SensorEntity):
+    """«Текущий сезон»: heat / cool — what the house's chosen thermostats do (none known yet: unknown)."""
+
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = list(MODES)
+
+    def __init__(self, entry: Any, season: Season) -> None:
+        self._setup(entry, season, "sensor", "current")
+
+    @property
+    def native_value(self) -> str | None:
+        return self.season.current()
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {"chosen": self.season.season, "by": self.season.by, "at": dt_util.utc_from_timestamp(self.season.at).isoformat() if self.season.at else None}
+
+
+class SeasonAuto(_SeasonEntity, SwitchEntity):
+    """«Переключать автоматически» — for staff (config): the same setting as Hauflo's «Зима/Лето» page."""
+
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, entry: Any, season: Season) -> None:
+        self._setup(entry, season, "switch", "auto")
+        self._attr_translation_key = "season_auto"
+
+    @property
+    def is_on(self) -> bool:
+        return self.season.auto_on()
+
+    async def _staff(self) -> None:
+        uid = self._context.user_id if self._context else None  # type: ignore[attr-defined]
+        user = await self.hass.auth.async_get_user(uid) if uid else None  # type: ignore[attr-defined]
+        if user is not None and not user.is_admin:
+            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="season_auto_staff")
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        await self._staff()
+        await self.season.set_auto(True, "ha")
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        await self._staff()
+        await self.season.set_auto(False, "ha")

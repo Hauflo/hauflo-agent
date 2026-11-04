@@ -353,6 +353,19 @@ async def test_channel_send_refusals_and_bookkeeping(hass: HomeAssistant, entry)
         await send({"id": 20, "type": "lovelace/config/save", "url_path": "hauflo-main", "config": {}})
         await send({"id": 21, "type": hauflo.dashmerge.PLAN})
     assert dm.await_count == 2 and len(local.sent) == n + 5
+    # No id reused while it waits, ids are numbers (security review 04.11): get_states answered under get_config's reused id left unscrubbed.
+    with Out(agent) as out, patch.object(hauflo.backup, "fresh", return_value=True):
+        await send({"id": 10, "type": "get_config"})  # reused while get_states waits
+        await send({"id": 30, "type": "config/entity_registry/update", "entity_id": "light.mine"})
+        await send({"id": 30, "type": "get_config"})  # reused
+        await send({"id": "31", "type": "get_states"})
+        await send({"id": True, "type": "get_states"})
+        await send({"type": "get_states"})
+    assert out.codes() == ["id_reuse"] * 5 and len(local.sent) == n + 6
+    assert agent._pending[(1, 10)] == ("get_states", None)
+    # A states list where a config was asked for leaves nothing (fail closed).
+    states = [{"entity_id": "person.me", "state": "home", "attributes": {"latitude": 1}}]
+    assert hauflo._scrub_config(states) == {} and hauflo._scrub_states({"a": 1}) == []
     # close
     await agent._close_channel(1, tell=True)
     await agent._close_channel(1, tell=False)
@@ -434,7 +447,7 @@ async def test_status_reports_knx_monitoring_and_alarms(hass: HomeAssistant, ent
     reg = er.async_get(hass)
     reg.async_get_or_create("light", "knx", "u-1", config_entry=k, suggested_object_id="gone")
     hass.states.async_set("light.gone", "unavailable")
-    assert agent._knx() == {"loaded": False, "connected": None, "state": "not_loaded", "silentMin": 0, "heard": False}
+    assert agent._knx() == {"loaded": False, "connected": None, "state": "not_loaded", "silentMin": 0, "unansweredMin": None, "heard": False}
     k.mock_state(hass, ConfigEntryState.LOADED)
     hass.data["knx"] = NS(xknx=NS(connection_manager=NS(connected=NS(is_set=lambda: True))))
     assert agent._knx()["connected"] is True
@@ -599,6 +612,23 @@ async def test_knx_heard_only_from_the_bus(hass: HomeAssistant, entry, monkeypat
     async_dispatcher_send(hass, "knx_telegram_test", None, {"direction": "Incoming"})
     await hass.async_block_till_done()
     assert agent._knx_heard is not None and agent._knx()["heard"] is True
+    # HA's own read waits for an answer; any telegram from the bus answers it (Горького 3, 04.11).
+    assert agent._knx_asked is None
+    async_dispatcher_send(hass, "knx_telegram_test", None, {"direction": "Outgoing", "telegramtype": "GroupValueWrite"})
+    await hass.async_block_till_done()
+    assert agent._knx_asked is None  # a write isn't a question
+    async_dispatcher_send(hass, "knx_telegram_test", None, {"direction": "Outgoing", "telegramtype": "GroupValueRead"})
+    await hass.async_block_till_done()
+    first = agent._knx_asked
+    assert first is not None
+    async_dispatcher_send(hass, "knx_telegram_test", None, {"direction": "Outgoing", "telegramtype": "GroupValueRead"})
+    await hass.async_block_till_done()
+    assert agent._knx_asked == first  # the oldest unanswered read counts
+    agent._knx_asked -= 6 * 60
+    assert agent._knx()["unansweredMin"] == 6
+    async_dispatcher_send(hass, "knx_telegram_test", None, {"direction": "Incoming", "telegramtype": "GroupValueResponse"})
+    await hass.async_block_till_done()
+    assert agent._knx_asked is None and agent._knx()["unansweredMin"] is None
     await agent.stop()
     assert agent._unsub_knx is None
 

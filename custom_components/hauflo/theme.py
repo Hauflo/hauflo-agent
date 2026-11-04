@@ -34,7 +34,8 @@ CARDS_URL = f"/hauflo_static/{CARDS_FILE}?v={ASSET_TAG}"
 
 # The theme is data (www/themes/hauflo.json — the same file the cards read their tokens from): HA's variables, common +
 # graphite (dark) + paper (light).
-_DATA = json.loads((Path(__file__).parent / "www" / "themes" / "hauflo.json").read_text(encoding="utf-8"))
+_DIR = Path(__file__).parent / "www" / "themes"
+_DATA = json.loads((_DIR / "hauflo.json").read_text(encoding="utf-8"))
 _COMMON: dict[str, str] = _DATA["ha"]["common"]
 DARK: dict[str, str] = _DATA["ha"]["dark"]
 LIGHT: dict[str, str] = _DATA["ha"]["light"]
@@ -42,8 +43,9 @@ LIGHT: dict[str, str] = _DATA["ha"]["light"]
 AURA = {**_COMMON, "modes": {"light": LIGHT, "dark": DARK}}
 # Fixed variants: a dashboard or a view set to one of them stays light / dark whatever the phone says
 # (owner 2026-10-25: «итоговый набор тёмной и светлой темы»).
-THEME_LIGHT = f"{THEME} · светлая"
-THEME_DARK = f"{THEME} · тёмная"
+LIGHT_TAIL, DARK_TAIL = " · светлая", " · тёмная"
+THEME_LIGHT = f"{THEME}{LIGHT_TAIL}"
+THEME_DARK = f"{THEME}{DARK_TAIL}"
 FIXED = {THEME_LIGHT: {**_COMMON, **LIGHT}, THEME_DARK: {**_COMMON, **DARK}}
 
 
@@ -53,8 +55,54 @@ FIXED = {THEME_LIGHT: {**_COMMON, **LIGHT}, THEME_DARK: {**_COMMON, **DARK}}
 _STALE = tuple(t for t in OLD_THEMES if t != THEME and t not in FIXED)
 
 
+def _valid(data: object) -> bool:
+    """A theme file: a name and HA's variables (common, dark, light) as strings; its cards' tokens as strings."""
+    if not isinstance(data, dict) or not isinstance(data.get("name"), str) or not data["name"].strip():
+        return False
+    ha = data.get("ha")
+    parts = [ha.get(k) for k in ("common", "dark", "light")] if isinstance(ha, dict) else [None]
+    cards = data.get("cards", {})
+    return all(isinstance(p, dict) and all(isinstance(v, str) for v in p.values()) for p in [*parts, cards])
+
+
+def variants(data: dict) -> dict[str, dict]:
+    """One theme file → HA's themes: the one that follows the phone and the fixed light / dark ones. Another file's card
+    tokens go in as `hf-t-<name>` (the cards read `--hf-<name>: var(--hf-t-<name>, Hauflo's own)`): a new theme is one
+    JSON file in www/themes, no code (stage 5, item 6)."""
+    common, dark, light = data["ha"]["common"], data["ha"]["dark"], data["ha"]["light"]
+    tokens = {f"hf-t-{k}": v for k, v in data.get("cards", {}).items()}
+    base = {**common, **tokens}
+    name = data["name"].strip()[:60]
+    return {name: {**base, "modes": {"light": light, "dark": dark}}, f"{name}{LIGHT_TAIL}": {**base, **light}, f"{name}{DARK_TAIL}": {**base, **dark}}
+
+
+def load_extra(folder: Path) -> dict[str, dict]:
+    """Every other theme file in the folder (sorted by file name), a broken one skipped with a warning."""
+    out: dict[str, dict] = {}
+    for f in sorted(folder.glob("*.json")):
+        if f.name == "hauflo.json":
+            continue
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = None
+        if not _valid(data) or data["name"].strip() in (THEME, *FIXED):
+            _LOGGER.warning("Hauflo: theme file %s skipped (not a theme or Hauflo's own name)", f.name)
+            continue
+        out.update(variants(data))
+    return out
+
+
+EXTRA = load_extra(_DIR)
+
+
 def _ours() -> dict:
-    return {THEME: AURA, **FIXED}
+    return {THEME: AURA, **FIXED, **EXTRA}
+
+
+def names() -> set[str]:
+    """The themes that are Hauflo's own — the only ones the cloud may make the house's default."""
+    return set(_ours())
 
 
 @callback
@@ -80,8 +128,8 @@ async def _restore_default(hass: HomeAssistant) -> bool:
     saved = await Store(hass, 1, "frontend_theme").async_load() or {}
     changed = False
     for key in ("frontend_default_theme", "frontend_default_dark_theme"):
-        if saved.get(key) == THEME and hass.data.get(key) != THEME:
-            hass.data[key] = THEME
+        if saved.get(key) in names() and hass.data.get(key) != saved[key]:
+            hass.data[key] = saved[key]
             changed = True
     return changed
 
@@ -101,8 +149,8 @@ def _reapply_defaults(hass: HomeAssistant) -> bool:
     before = hass.data.get(DATA_THEME_DEFAULTS) or {}
     changed = False
     for k in _DEFAULT_KEYS:
-        if before.get(k) == THEME and hass.data.get(k) != THEME:
-            hass.data[k] = THEME
+        if before.get(k) in names() and hass.data.get(k) != before[k]:
+            hass.data[k] = before[k]
             changed = True
     return changed
 

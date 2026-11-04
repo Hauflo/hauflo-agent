@@ -74,8 +74,8 @@ class Invalid(ValueError):
 
 
 class Locked(RuntimeError):
-    RU = "Хозяин дома выключил «Разрешить Hauflo менять настройки этого дома» (Hauflo → Настроить) — сцену KNX сейчас не запомнить."
-    EN = "The home owner switched off «Allow Hauflo to change this home's setup» (Hauflo → Configure) — the KNX scene can't be saved now."
+    RU = "Владелец выключил «Разрешить Hauflo менять настройки этого объекта» (Hauflo → Настроить) — сцену KNX сейчас не запомнить."
+    EN = "The owner switched off “Allow Hauflo to change this site's setup” (Hauflo → Configure) — the KNX scene can't be saved now."
 
 
 class TooSoon(RuntimeError):

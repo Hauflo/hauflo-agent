@@ -6,8 +6,10 @@ from pathlib import Path
 
 from homeassistant.util.hass_dict import HassKey
 
+from . import servers as _servers
+
 DOMAIN = "hauflo"
-VERSION = "0.19.0"
+VERSION = "0.20.0"
 
 
 def _www_hash() -> str:
@@ -23,12 +25,12 @@ def _www_hash() -> str:
 # The cards' address tag: the version (the cards compare `v` with the agent's) + the files' content — a file rebuilt
 # under the same version (a hotfix, the test stand) is a new address too, never the browser's year-old copy (30.10).
 ASSET_TAG = f"{VERSION}&h={_www_hash()}"
-DEFAULT_SERVER = "https://app.hauflo.com"
-# A pairing code starts with its server's region: «RU-…» → the Russian instance (data of Russian clients stays in
-# Russia), «EU-…» and any other → the international one (owner 26.10).
-REGION_SERVERS = {"RU": "https://app.hauflo.ru", "EU": "https://app.hauflo.com", "AE": "https://app.hauflo.com"}
+# Hauflo's servers are data (servers.json, servers.py). A pairing code starts with its server's region: «RU-…» → the
+# Russian instance (data of Russian clients stays in Russia), «EU-…» and any other → the international one (owner 26.10).
+DEFAULT_SERVER = _servers.DEFAULT_SERVER
+REGION_SERVERS = {region: hosts[0] for region, hosts in _servers.REGIONS.items()}
 # Plan B: a code without a region the international server doesn't know (or can't be reached — blocked) is tried here.
-FALLBACK_SERVER = "https://app.hauflo.ru"
+FALLBACK_SERVER = _servers.PAIR_FALLBACK_SERVER
 CONF_SERVER = "server"
 CONF_SECRET = "secret"
 CONF_CODE = "code"

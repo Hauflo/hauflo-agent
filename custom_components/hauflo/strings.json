@@ -3,14 +3,14 @@
     "step": {
       "user": {
         "title": "Connect to Hauflo",
-        "description": "The pairing code is in Hauflo: your project → «Connect the home» → «Get a code». It works once, for 30 minutes. Enter only the code — the server is picked from it.",
+        "description": "The connection code is in Hauflo: your project → “Connect the site” → “Get a code”. It works once, for 30 minutes. Enter only the code — the server is picked from it.",
         "data": {
-          "code": "Pairing code",
+          "code": "Connection code",
           "confirm_takeover": "Yes, move this Home Assistant to this project (it leaves the other Hauflo account)"
         },
         "data_description": {
-          "code": "The code from Hauflo: your project → «Connect the home» → «Get a code» (9 characters, an «RU-» or «EU-» region in front is fine). Spaces and dashes don't matter. It works once, for 30 minutes.",
-          "confirm_takeover": "Tick only if this Home Assistant really moves to this project: the other Hauflo account's house loses its connection."
+          "code": "The code from Hauflo: your project → “Connect the site” → “Get a code” (9 characters, an “RU-” or “EU-” region in front is fine). Spaces and dashes don't matter. It works once, for 30 minutes.",
+          "confirm_takeover": "Tick only if this Home Assistant really moves to this project: the other Hauflo account's site loses its connection."
         },
         "sections": {
           "advanced": {
@@ -25,15 +25,15 @@
         }
       },
       "reauth_confirm": {
-        "title": "Link the Hauflo agent again",
-        "description": "Hauflo no longer knows this Home Assistant: the agent was unlinked or the project deleted. Get a new code in Hauflo (your project → «Connect the home» → «Get a code»). This entry is updated, no need to remove it.",
+        "title": "Reconnect the Hauflo agent",
+        "description": "Hauflo no longer knows this Home Assistant: the agent was disconnected or the project deleted. Get a new code in Hauflo (your project → “Connect the site” → “Get a code”). This entry is updated, no need to remove it.",
         "data": {
-          "code": "Pairing code",
+          "code": "Connection code",
           "confirm_takeover": "Yes, move this Home Assistant to this project (it leaves the other Hauflo account)"
         },
         "data_description": {
-          "code": "The code from Hauflo: your project → «Connect the home» → «Get a code» (9 characters, an «RU-» or «EU-» region in front is fine). Spaces and dashes don't matter. It works once, for 30 minutes.",
-          "confirm_takeover": "Tick only if this Home Assistant really moves to this project: the other Hauflo account's house loses its connection."
+          "code": "The code from Hauflo: your project → “Connect the site” → “Get a code” (9 characters, an “RU-” or “EU-” region in front is fine). Spaces and dashes don't matter. It works once, for 30 minutes.",
+          "confirm_takeover": "Tick only if this Home Assistant really moves to this project: the other Hauflo account's site loses its connection."
         },
         "sections": {
           "advanced": {
@@ -48,15 +48,15 @@
         }
       },
       "reconfigure": {
-        "title": "Link to another Hauflo project",
-        "description": "Get a new code in Hauflo (your project → «Connect the home» → «Get a code»). This entry is updated; the agent's Home Assistant user stays.",
+        "title": "Connect to another Hauflo project",
+        "description": "Get a new code in Hauflo (your project → “Connect the site” → “Get a code”). This entry is updated; the agent's Home Assistant user stays.",
         "data": {
-          "code": "Pairing code",
+          "code": "Connection code",
           "confirm_takeover": "Yes, move this Home Assistant to this project (it leaves the other Hauflo account)"
         },
         "data_description": {
-          "code": "The code from Hauflo: your project → «Connect the home» → «Get a code» (9 characters, an «RU-» or «EU-» region in front is fine). Spaces and dashes don't matter. It works once, for 30 minutes.",
-          "confirm_takeover": "Tick only if this Home Assistant really moves to this project: the other Hauflo account's house loses its connection."
+          "code": "The code from Hauflo: your project → “Connect the site” → “Get a code” (9 characters, an “RU-” or “EU-” region in front is fine). Spaces and dashes don't matter. It works once, for 30 minutes.",
+          "confirm_takeover": "Tick only if this Home Assistant really moves to this project: the other Hauflo account's site loses its connection."
         },
         "sections": {
           "advanced": {
@@ -72,7 +72,7 @@
       },
       "ranges": {
         "title": "Group addresses for Hauflo",
-        "description": "Hauflo will send commands only to these KNX group addresses of project «{project}» — the ones its entities write: {ranges}. Remove any Hauflo must not control (a gate, a lock), then continue. You can change this later in the integration's options.",
+        "description": "Hauflo will send commands only to these KNX group addresses of project “{project}” — the ones its entities write: {ranges}. Remove any Hauflo must not control (a gate, a lock), then continue. You can change this later in the integration's options.",
         "data": {
           "ranges": "Allowed addresses (1/1/5, a span 1/1/1-21 or a whole group 1/1; comma-separated or one per line)"
         },
@@ -81,8 +81,8 @@
         }
       },
       "transfer": {
-        "title": "Confirm the request to take over this home's service?",
-        "description": "«{company}» has asked Hauflo support to hand this home's service over to it.\n\nIf you own this home and asked for it, choose «Yes»: your confirmation is attached to the request. Nothing changes now: Hauflo support decides after telling the previous company (usually in 14 days). If the request is granted, «{company}» gets the home's setup in Hauflo and becomes the contact on the alarm cards; the previous company loses access.\n\nDidn't ask for it? Choose «No».",
+        "title": "Confirm the request to take over this site's service?",
+        "description": "“{company}” has asked Hauflo support to hand this site's service over to it.\n\nIf you own this site and asked for it, choose “Yes”: your confirmation is attached to the request. Nothing changes now: Hauflo support decides after telling the previous company (usually in 14 days). If the request is granted, “{company}” gets this site's setup in Hauflo and becomes the contact on the alarm cards; the previous company loses access.\n\nDidn't ask for it? Choose “No”.",
         "menu_options": {
           "transfer_yes": "Yes, I confirm the request",
           "transfer_no": "No, change nothing"
@@ -90,7 +90,7 @@
       },
       "relink_ranges": {
         "title": "Group addresses of the new project",
-        "description": "Hauflo will send commands only to these KNX group addresses of project «{project}» — the ones its entities write: {ranges}. The previous allowed list is replaced; these go: {removed}. Remove any Hauflo must not control (a gate, a lock), then continue.",
+        "description": "Hauflo will send commands only to these KNX group addresses of project “{project}” — the ones its entities write: {ranges}. The previous allowed list is replaced; these go: {removed}. Remove any Hauflo must not control (a gate, a lock), then continue.",
         "data": {
           "ranges": "Allowed addresses (1/1/5, a span 1/1/1-21 or a whole group 1/1; comma-separated or one per line)"
         },
@@ -103,23 +103,23 @@
       "invalid_code": "The code is wrong or expired. A code works once, for 30 minutes — get a new one in Hauflo.",
       "cannot_connect": "Can't reach Hauflo. Check that this Home Assistant has internet access, then enter the code again.",
       "https_required": "Hauflo's address must be https:// (http only for a local server).",
-      "takeover_confirm": "This Home Assistant is linked to a house of ANOTHER Hauflo account. If you continue, it leaves that account and the old house loses its connection. If that is intended, tick the box «Yes, move…» and press Submit; otherwise close this window.",
-      "transfer_ask": "Your decision is needed: hand this home's service over to another company?"
+      "takeover_confirm": "This Home Assistant is connected to a site of ANOTHER Hauflo account. If you continue, it leaves that account and the old site loses its connection. If that is intended, tick the box “Yes, move…” and press Submit; otherwise close this window.",
+      "transfer_ask": "Your decision is needed: hand this site's service over to another company?"
     },
     "abort": {
       "already_configured": "Hauflo is already connected in this Home Assistant.",
       "single_instance_allowed": "Only one Hauflo agent per Home Assistant: it is already set up.",
-      "reauth_successful": "The Hauflo agent is linked again.",
-      "reconfigure_successful": "The Hauflo agent is linked with the new code.",
+      "reauth_successful": "The Hauflo agent is connected again.",
+      "reconfigure_successful": "The Hauflo agent is connected with the new code.",
       "transfer_declined": "Nothing changed: this Home Assistant stays linked to the previous company.",
-      "transfer_recorded": "Done: your confirmation is attached to the request of «{company}». Nothing changed in this Home Assistant; Hauflo support decides after telling the previous company, and you will see the new company here once it is decided.",
-      "transfer_via_request": "Nothing changed. A home's service now goes to another company only by Hauflo support's decision: the new company files «House transfer request» in the Hauflo app and gives you a code to confirm it here."
+      "transfer_recorded": "Done: your confirmation is attached to the request of “{company}”. Nothing changed in this Home Assistant; Hauflo support decides after telling the previous company, and you will see the new company here once it is decided.",
+      "transfer_via_request": "Nothing changed. A site’s service now goes to another company only by Hauflo support's decision: the new company files “Site transfer request” in the Hauflo app and gives you a code to confirm it here."
     }
   },
   "entity": {
     "binary_sensor": {
       "link": {
-        "name": "Link"
+        "name": "Connection"
       },
       "rule": {
         "name": "Rule active · {name}"
@@ -127,27 +127,62 @@
     },
     "sensor": {
       "ownership": {
-        "name": "Made in this home"
+        "name": "Made at this site"
       },
       "derived": {
         "name": "{name}"
+      },
+      "season_recommended_season": {
+        "name": "Recommended season",
+        "state": {
+          "heat": "Winter",
+          "cool": "Summer",
+          "none": "No change",
+          "no_data": "No data"
+        }
+      },
+      "season_current_season": {
+        "name": "Current season",
+        "state": {
+          "heat": "Winter",
+          "cool": "Summer"
+        }
+      },
+      "season_recommended_mode": {
+        "name": "Recommended season",
+        "state": {
+          "heat": "Heating",
+          "cool": "Cooling",
+          "none": "No change",
+          "no_data": "No data"
+        }
+      },
+      "season_current_mode": {
+        "name": "Current season",
+        "state": {
+          "heat": "Heating",
+          "cool": "Cooling"
+        }
       }
     },
     "switch": {
       "rule": {
         "name": "Rule · {name}"
+      },
+      "season_auto": {
+        "name": "Switch automatically"
       }
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "Hauflo in this home",
-        "description": "Connected to project «{project}» on {server} — [open Hauflo]({url}).\n\n**Who services this home:** {service}\n\n**Access history:** {history}\n\nHauflo sends KNX commands only to the addresses below. Every address Hauflo asked for is allowed.",
+        "title": "Hauflo at this site",
+        "description": "Connected to project “{project}” on {server} — [open Hauflo]({url}).\n\n**Who services this site:** {service}\n\n**Access history:** {history}\n\nHauflo sends KNX commands only to the addresses below. Every address Hauflo asked for is allowed.",
         "data": {
-          "allow_changes": "Allow Hauflo to change this home's setup",
+          "allow_changes": "Allow Hauflo to change this site's setup",
           "ranges": "Allowed addresses (1/1/5, a span 1/1/1-21 or a whole group 1/1; comma-separated or one per line)",
-          "independent": "Make the house independent of Hauflo"
+          "independent": "Make the site independent of Hauflo"
         },
         "data_description": {
           "allow_changes": "Off: Hauflo changes nothing in Home Assistant — deploys, dashboards, rooms, KNX entities and backups started by Hauflo are refused. Monitoring, alarms and voice keep working.",
@@ -156,13 +191,13 @@
         }
       },
       "init_pending": {
-        "title": "Hauflo in this home",
-        "description": "Connected to project «{project}» on {server} — [open Hauflo]({url}).\n\n**Who services this home:** {service}\n\n**Access history:** {history}\n\nHauflo sends KNX commands only to the allowed addresses. Hauflo asked for these and waits for your permission: {pending}. They are NOT allowed until you tick them below. Check each one: it may be a gate or a lock. Unticked ones are declined when you save.",
+        "title": "Hauflo at this site",
+        "description": "Connected to project “{project}” on {server} — [open Hauflo]({url}).\n\n**Who services this site:** {service}\n\n**Access history:** {history}\n\nHauflo sends KNX commands only to the allowed addresses. Hauflo asked for these and waits for your permission: {pending}. They are NOT allowed until you tick them below. Check each one: it may be a gate or a lock. Unticked ones are declined when you save.",
         "data": {
-          "allow_changes": "Allow Hauflo to change this home's setup",
+          "allow_changes": "Allow Hauflo to change this site's setup",
           "ranges": "Allowed addresses (1/1/5, a span 1/1/1-21 or a whole group 1/1; comma-separated or one per line)",
           "accept_pending": "Allow these requested addresses",
-          "independent": "Make the house independent of Hauflo"
+          "independent": "Make the site independent of Hauflo"
         },
         "data_description": {
           "allow_changes": "Off: Hauflo changes nothing in Home Assistant — deploys, dashboards, rooms, KNX entities and backups started by Hauflo are refused. Monitoring, alarms and voice keep working.",
@@ -172,11 +207,11 @@
         }
       },
       "independent": {
-        "title": "Make the house independent",
-        "description": "What happens:\n- The Hauflo dashboard cards are copied to /config/www/hauflo and added as dashboard resources, so the family's dashboard works without the agent.\n- Every enabled Hauflo alarm rule becomes an ordinary automation in automations.yaml: the same sensors and alarm states, a push to the same Home Assistant app phones (critical where the rule is), a notification in HA and the rule's button. A backup copy of automations.yaml is made first. Automations made earlier this way are left as they are.\n- Nothing is deleted. Hauflo keeps working until you remove the integration; until then an alarm comes twice.\n\nWhat stops working once Hauflo is removed:\n- Cloud monitoring: «agent offline», «KNX bus silent», the monitoring page and the service company's view.\n- E-mail alarms and the alarm history in Hauflo; repeats until «Accept».\n- Deploys and updates from the project, guest links, «Away» presence simulation, voice sentences, editing the family's automations and scenes on the dashboard (the ones already made keep running).\n\nSubmit to do it."
+        "title": "Make the site independent",
+        "description": "What happens:\n- The Hauflo dashboard cards are copied to /config/www/hauflo and added as dashboard resources, so the family's dashboard works without the agent.\n- Every enabled Hauflo alarm rule becomes an ordinary automation in automations.yaml: the same sensors and alarm states, a push to the same Home Assistant app phones (critical where the rule is), a notification in HA and the rule's button. A backup copy of automations.yaml is made first. Automations made earlier this way are left as they are.\n- Nothing is deleted. Hauflo keeps working until you remove the integration; until then an alarm comes twice.\n\nWhat stops working once Hauflo is removed:\n- Cloud monitoring: “agent offline”, “KNX bus silent”, the monitoring page and the service company's view.\n- Email alarms and the alarm history in Hauflo; repeats until “Accept”.\n- Deploys and updates from the project, guest links, “Away” presence simulation, voice sentences, editing the family's automations and scenes on the dashboard (the ones already made keep running).\n\nSubmit to do it."
       },
       "independent_done": {
-        "title": "The house is independent",
+        "title": "The site is independent",
         "description": "{report}\n\nThe same text is in HA's notifications. Submit to close."
       }
     }
@@ -184,19 +219,19 @@
   "issues": {
     "link_lost": {
       "title": "No link to Hauflo for {hours} hours",
-      "description": "This Home Assistant has not reached Hauflo ({server}) for {hours} hours. The house works as before, but monitoring, alarms to Telegram and deploys from Hauflo wait for the link. Check the internet connection of this Home Assistant; the agent reconnects by itself. This message goes away when the link is back."
+      "description": "This Home Assistant has not reached Hauflo ({server}) for {hours} hours. Everything works as before, but monitoring, alarms to Telegram and deploys from Hauflo wait for the link. Check the internet connection of this Home Assistant; the agent reconnects by itself. This message goes away when the link is back."
     },
     "unlinked": {
       "title": "Hauflo no longer knows this Home Assistant",
-      "description": "The project was unlinked or deleted in Hauflo, so the agent stopped connecting. To link it again, get a new code in Hauflo (project → «Connect the home» → «Get a code») and enter it in Settings → Devices & services → Hauflo → Re-configure. If you don't use Hauflo any more, delete the integration."
+      "description": "The project was disconnected or deleted in Hauflo, so the agent stopped connecting. To connect it again, get a new code in Hauflo (project → “Connect the site” → “Get a code”) and enter it in Settings → Devices & services → Hauflo → Re-configure. If you don't use Hauflo any more, delete the integration."
     },
     "ranges_pending": {
-      "title": "Hauflo asks to allow {count} KNX addresses (project «{project}»)",
+      "title": "Hauflo asks to allow {count} KNX addresses (project “{project}”)",
       "fix_flow": {
         "step": {
           "confirm": {
             "title": "Allow Hauflo to send to these KNX addresses?",
-            "description": "Project «{project}» writes to {count} group addresses that aren't allowed yet:\n\n**Added:** {ranges}\n\n**Removed from the allowed list** (no address of this project is there): {removed}\n\nAllow only addresses of your own project. Never allow gates, locks or groups of other systems. You can change the list later: Settings → Devices & services → Hauflo → Configure.",
+            "description": "Project “{project}” writes to {count} group addresses that aren't allowed yet:\n\n**Added:** {ranges}\n\n**Removed from the allowed list** (no address of this project is there): {removed}\n\nAllow only addresses of your own project. Never allow gates, locks or groups of other systems. You can change the list later: Settings → Devices & services → Hauflo → Configure.",
             "menu_options": {
               "allow": "Allow",
               "decline": "Decline"
@@ -217,16 +252,16 @@
       "description": "This agent is version {version}; Hauflo needs at least {minimum} (latest: {latest}). Deploys and some features may fail until it is updated: HACS → Hauflo → Update, then restart Home Assistant."
     },
     "rule_fault": {
-      "title": "Value rule «{name}»: its sensor gives no data",
-      "description": "The rule «{name}» watches {entity}, which gives no usable value now ({reason}). Hauflo doesn't act on an old value: the rule waits (a heater rule switches the heater off). Check the sensor and its connection; this goes by itself once the sensor answers. Hauflo assists — the installation's own protections stay in charge."
+      "title": "Value rule “{name}”: its sensor gives no data",
+      "description": "The rule “{name}” watches {entity}, which gives no usable value now ({reason}). Hauflo doesn't act on an old value: the rule waits (a heater rule switches the heater off). Check the sensor and its connection; this goes by itself once the sensor answers. Hauflo assists — the installation's own protections stay in charge."
     },
     "rule_rate": {
-      "title": "Value rule «{name}»: too many switches",
-      "description": "{entity} was switched too often within an hour, so the rule «{name}» waits for the rest of the hour to spare the equipment. Usually the threshold is too close to the normal value: widen the margin (Y) or lengthen «for N minutes» in Hauflo."
+      "title": "Value rule “{name}”: too many switches",
+      "description": "{entity} was switched too often within an hour, so the rule “{name}” waits for the rest of the hour to spare the equipment. Usually the threshold is too close to the normal value: widen the margin (Y) or lengthen “for N minutes” in Hauflo."
     },
     "rule_paused": {
-      "title": "Value rule «{name}» is paused",
-      "description": "{entity} was changed by hand several times while the rule «{name}» held it, so the rule paused itself instead of arguing with people. Switch the rule on again (in Hauflo or with its switch in Home Assistant) once the reason is sorted."
+      "title": "Value rule “{name}” is paused",
+      "description": "{entity} was changed by hand several times while the rule “{name}” held it, so the rule paused itself instead of arguing with people. Switch the rule on again (in Hauflo or with its switch in Home Assistant) once the reason is sorted."
     }
   },
   "exceptions": {
@@ -249,7 +284,7 @@
       "message": "Attribute: a-z and _."
     },
     "rules_bad_time": {
-      "message": "«For» time: 0–{n} min."
+      "message": "“For” time: 0–{n} min."
     },
     "rules_bad_number": {
       "message": "{what}: a number expected (up to ±{n})."
@@ -263,17 +298,20 @@
     "rules_no_entity": {
       "message": "No such entity: {entity}."
     },
+    "rules_private_input": {
+      "message": "Private site data ({entity}) can't be read through the cloud: phones, people, presence and opening sensors. Pick a Hauflo sensor or label the entity “Hauflo monitoring” in Home Assistant."
+    },
     "rules_client_input": {
       "message": "You can use Hauflo's sensors only."
     },
     "rules_bad_condition": {
-      "message": "Condition «{kind}» is not filled in right."
+      "message": "Condition “{kind}” is not filled in right."
     },
     "rules_bad_action": {
-      "message": "Action «{do}» doesn't fit {entity}."
+      "message": "Action “{do}” doesn't fit {entity}."
     },
     "rules_bad_action_value": {
-      "message": "Value of «{do}»: {lo}–{hi}."
+      "message": "Value of “{do}”: {lo}–{hi}."
     },
     "rules_bad_mode": {
       "message": "Mode: one of the thermostat's modes (off, heat, cool, auto, dry, fan_only, heat_cool)."
@@ -282,7 +320,7 @@
       "message": "Notification text: up to {n} printable characters."
     },
     "rules_client_action": {
-      "message": "You can use: lights, blinds, a scene, «notify me»."
+      "message": "You can use: lights, blinds, a scene, “notify me”."
     },
     "rules_target_not_allowed": {
       "message": "{entity}: Hauflo's devices only; never locks, the alarm, gates or opening a valve."
@@ -312,7 +350,7 @@
       "message": "Actions: 1 to {n}."
     },
     "rules_limit_rules": {
-      "message": "At most {n} rules in a house."
+      "message": "At most {n} rules at a site."
     },
     "rules_limit_derived": {
       "message": "At most {n} derived values."
@@ -330,7 +368,7 @@
       "message": "A loop through other rules: {entity} → … → {other}."
     },
     "rules_conflict": {
-      "message": "{entity} ({attribute}) is already driven by the rule «{rule}»."
+      "message": "{entity} ({attribute}) is already driven by the rule “{rule}”."
     },
     "rules_client_integrator_rule": {
       "message": "The integrator's rule can only be switched on / off and its threshold moved."
@@ -384,7 +422,7 @@
       "message": "Manual — back at {time} or when {label} is back to normal."
     },
     "rules_explain_waiting": {
-      "message": "{label} {value} · not in effect now («only if»)."
+      "message": "{label} {value} · not in effect now (“only if”)."
     },
     "rules_explain_pending_on": {
       "message": "{label} {value}, {threshold} — acts in {minutes} min."
@@ -441,16 +479,16 @@
       "message": "the sensor answers again"
     },
     "rules_warn_interlock_off": {
-      "message": "«{name}»: the supply fan is off — the heater is switched off. Check the unit (a Hauflo hint, not a protection)."
+      "message": "“{name}”: the supply fan is off — the heater is switched off. Check the unit (a Hauflo hint, not a protection)."
     },
     "rules_warn_interlock_skip": {
-      "message": "«{name}»: the supply fan is off — the heater is not switched on. Check the unit (a Hauflo hint, not a protection)."
+      "message": "“{name}”: the supply fan is off — the heater is not switched on. Check the unit (a Hauflo hint, not a protection)."
     },
     "rules_warn_rate": {
-      "message": "«{name}»: {entity} switched {n} times in an hour — the rule waits until {time} to spare the equipment."
+      "message": "“{name}”: {entity} switched {n} times in an hour — the rule waits until {time} to spare the equipment."
     },
     "rules_warn_paused": {
-      "message": "«{name}»: {entity} was changed by hand several times — the rule is paused. Switch it on again when sorted."
+      "message": "“{name}”: {entity} was changed by hand several times — the rule is paused. Switch it on again when sorted."
     },
     "rules_hint_heater": {
       "message": "Hauflo assists, it doesn't protect: check that the unit has its own heater overheat protection and fan run-on after switching off. Safety is the installation's job."
@@ -465,7 +503,7 @@
       "message": "No sensor data now — the rule would wait."
     },
     "rules_preview_waiting": {
-      "message": "«Only if» isn't met now — the rule wouldn't act."
+      "message": "“Only if” isn't met now — the rule wouldn't act."
     },
     "rules_preview_now": {
       "message": "Now {value}, {threshold} — acts at once."
@@ -555,13 +593,13 @@
       "message": "Periods in a row: {lo}–{hi}."
     },
     "rules_window_no_stats": {
-      "message": "{entity} has no statistics in Home Assistant (no state_class) — a value over a period can't be taken. Pick a sensor with statistics, or the value «now»."
+      "message": "{entity} has no statistics in Home Assistant (no state_class) — a value over a period can't be taken. Pick a sensor with statistics, or the value “now”."
     },
     "rules_window_stat_kind": {
       "message": "{entity} ({kind}) can't give this statistic: mean / minimum / maximum are a measurement's, a sum is a counter's (total)."
     },
     "rules_window_on_time": {
-      "message": "{entity} is on / off: only «sum» (hours on in the period)."
+      "message": "{entity} is on / off: only “sum” (hours on in the period)."
     },
     "rules_window_history": {
       "message": "This value is read from HA's history: the whole window must fit into {n} days."
@@ -576,7 +614,7 @@
       "message": "The rule's outputs: on / off (suggestion, auto action)."
     },
     "rules_bad_snooze": {
-      "message": "«Not now» for {lo}–{hi} days."
+      "message": "“Not now” for {lo}–{hi} days."
     },
     "rules_bad_quiet": {
       "message": "Quiet hours: from and to as HH:MM, different from each other."
@@ -642,7 +680,7 @@
       "message": "Silent sensor"
     },
     "rules_link_silent_sensor": {
-      "message": "Already in the rule hints on «Review»: a sensor that sends nothing for hours — per room and for the weather station. Not made twice here."
+      "message": "Already in the rule hints on “Review”: a sensor that sends nothing for hours — per room and for the weather station. Not made twice here."
     },
     "rules_window_mean_hour": {
       "message": "mean per hour"
@@ -691,6 +729,15 @@
     },
     "automations_stat_max": {
       "message": "maximum"
+    },
+    "season_auto_title": {
+      "message": "Switched to {to}"
+    },
+    "season_auto_message": {
+      "message": "{why} Switched to {to} automatically."
+    },
+    "season_auto_staff": {
+      "message": "Only an administrator can change the automatic season switch."
     }
   },
   "selector": {},
@@ -706,6 +753,20 @@
         "minutes": {
           "name": "Minutes",
           "description": "Minutes until it is switched off; 0 cancels."
+        }
+      }
+    },
+    "unprotect": {
+      "name": "Remove gate protection",
+      "description": "For Home Assistant's admin only (Hauflo's cloud can't call it). A KNX entity Hauflo once saw as a gate, garage door or door, and the group addresses that open it, stay protected from scenes, voice assistants, guest links and Hauflo's changes even after its class changed. Clears that for the chosen entities or addresses; one still a gate / garage door / door by its class is protected again at once.",
+      "fields": {
+        "entity_id": {
+          "name": "Entities",
+          "description": "KNX entities to clear."
+        },
+        "group_address": {
+          "name": "Group addresses",
+          "description": "Addresses to clear (e.g. 7/7/1), for an entity already deleted."
         }
       }
     }

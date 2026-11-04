@@ -718,3 +718,52 @@ def test_automations_card_moved_out_of_service_is_not_left_duplicated():
     assert "hauflo-automations" not in json.dumps(svc)
     assert MY_CARD in [c for s in svc["sections"] for c in s["cards"]]
     assert any(v["path"] == "automations" for v in merged["views"])
+
+
+def test_automations_only_in_settings_the_card_tile_and_subview_go_and_nothing_else():
+    """Owner 04.11: «Автоматизации» live only in «Настройки». A dashboard with the section / tile + subview refreshes to one
+    without them: Hauflo's rules card, its tile and its page go; the readings, the rooms and the family's own card stay."""
+    auto = {"type": "custom:hauflo-automations", "grid_options": {"columns": "full"}}
+    tile = {"type": "custom:hauflo-room", "name": "Автоматизации", "icon": "mdi:robot-outline", "path": "/dash/automations"}
+    status = lambda: section("v/service/s:status", card("v/service/s:status/c:a", "sensor.a"))
+    room = lambda: view("v/living", "living", "Гостиная", section("v/living/s:l", card("v/living/s:l/c", "light.a")))
+    new = {"views": [room(), view("v/service", "service", "Сервис", status())]}
+    sect = {"type": "grid", ID: "v/service/s:automations:", "cards": [{**auto, ID: "v/service/s:automations:/automations:"}]}
+    page = lambda: {**view("v/automations", "automations", "Автоматизации", {"type": "grid", ID: "v/automations/s:a:", "cards": [{**auto, ID: "v/automations/s:a:/a:"}]}), "subview": True, "back_path": "/dash/service"}
+    olds = {
+        "section": {"views": [room(), view("v/service", "service", "Сервис", status(), sect)]},
+        "tile": {"views": [room(), view("v/service", "service", "Сервис", status(), {"type": "grid", ID: "v/service/s:t:", "cards": [{**tile, ID: "v/service/s:t:/t:"}]}), page()]},
+    }
+    for name, old in olds.items():
+        cur = copy.deepcopy(old)
+        cur["views"][1]["sections"].append({"type": "grid", "cards": [copy.deepcopy(MY_CARD)]})
+        merged, plan = plan_and_merge(copy.deepcopy(new), cur, copy.deepcopy(old))
+        text = json.dumps(merged, ensure_ascii=False)
+        assert "hauflo-automations" not in text and "robot-outline" not in text, name
+        assert [v["path"] for v in merged["views"]] == ["living", "service"], name
+        svc = merged["views"][1]
+        assert MY_CARD in [c for s in svc["sections"] for c in s["cards"]], name
+        assert "sensor.a" in text and "light.a" in text, name
+
+
+def test_stock_offer_only_on_the_integrators_cards_and_kept_his_after_the_merge():
+    """«Заменить на Hauflo» at deploy: Hauflo's own tiles are never offered; his stock card, ticked, becomes Hauflo's
+    card — still his (no Hauflo id), in its place, merged around as any own card; «Вернуть штатную» from it."""
+    from custom_components.hauflo import stock
+
+    def info(eid):
+        return {"domain": eid.split(".")[0], "device_class": None, "device_id": None, "state": "on" if not eid.startswith("sensor.") else "12", "percentage_step": None, "speed_count": None}
+
+    base = hauflo()
+    cur = copy.deepcopy(base)
+    mine = {"type": "entities", "title": "Свет сада", "entities": ["light.garden", "switch.path"]}
+    cards_of(cur, 0, 0).insert(2, mine)
+    offers = stock.offers(cur, info)
+    assert [(o["from"], o["to"], o["pick"]) for o in offers] == [("entities", "hauflo-lights", True)]
+    src, n = stock.apply(cur, [offers[0]["id"]], info)
+    merged, plan = plan_and_merge(hauflo("Люстра"), src, base)
+    got = cards_of(merged, 0, 0)
+    assert n == 1 and plan["lost"] == 0
+    assert {k: v for k, v in got[2].items() if k != stock.WAS} == {"type": "custom:hauflo-lights", "entities": ["light.garden", "switch.path"], "title": "Свет сада"}
+    assert got[2][stock.WAS] == mine and ID not in got[2]
+    assert got[1]["name"] == "Люстра"

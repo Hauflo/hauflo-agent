@@ -33,8 +33,10 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
 
-from . import automations, backup, dashmerge, guest, house, issues, keep, notify, ownership, presence, ranges, retired, rules, scenes, season, service, sidebar, theme, timers, titles, voice
+from . import automations, backup, dashmerge, guest, house, insight, issues, keep, notify, ownership, presence, protect, ranges, retired, rules, scenes, season, servers, service, sidebar, stock, theme, timers, titles, voice
+from . import derived as dv
 from . import order as block_order
+from . import habits as habits_mod
 from .issues import DEGRADED, degrade  # noqa: F401 — DEGRADED: diagnostics read it here
 from .storage import HaufloStore
 from .const import ASSET_TAG, DATA_CARDS_LOCAL, CONF_REFRESH_TOKEN_ID, CONF_SECRET, CONF_SERVER, CONF_USER_ID, DATA_NOTIFY_VIEWS, DATA_UNLINKED, DOMAIN, MONITOR_LABEL, MONITOR_LABEL_EN, MONITOR_LABELS, OWNED_STORE, STATUS_EVERY, VERSION, CONF_RANGES, CONF_ALLOW_CHANGES, LOCKED_CODE
@@ -105,10 +107,19 @@ def _ws_locked(msg: dict[str, Any]) -> bool:
 
 # A POST that only reads: a value rule's dry run (rules.py «preview») — the body the lock reads is the one sent on.
 _LOCKED_READ_OPS = {(r["path"], r["method"]): set(r["ops"]) for r in _TH["locked_read_ops"]}
+# Allowed while closed, but not with these keys: the deploy may still add protection, never take its marks back.
+_LOCKED_NEVER_KEYS = {(r["path"], r["method"]): set(r["keys"]) for r in _TH["locked_never_keys"]}
 
 
 def _http_locked(method: str, path: str, body: Any = None) -> bool:
     bare = path.split("?")[0]
+    if (keys := _LOCKED_NEVER_KEYS.get((bare, method))) is not None:
+        try:
+            data = json.loads(body) if isinstance(body, (str, bytes)) and body else body
+        except ValueError:
+            return True
+        if not isinstance(data, dict) or any(data.get(k) for k in keys):
+            return True
     if method == "GET" or (bare, method) in _LOCKED_HTTP_OK:
         return False
     if (ops := _LOCKED_READ_OPS.get((bare, method))) is not None:
@@ -184,11 +195,175 @@ def _protected(hass: HomeAssistant | None, entity_id: Any, depth: int = 0) -> bo
     members = st.attributes.get("entity_id") if st is not None else None
     if isinstance(members, list) and members and depth < 3 and any(_protected(hass, m, depth + 1) for m in members):
         return True
-    if not entity_id.startswith("cover.") or hass is None:
+    if hass is None:
         return False
+    # A «Switch as X» light / cover over a gate's relay operates the relay (red-team 2, A1): protected as its source.
+    src = _wrapped_source(hass, entity_id)
+    if src is not None and (src == "?" or depth >= 3 or src == entity_id or _protected(hass, src, depth + 1)):
+        return True
+    return _sticky(hass, entity_id) or _class_protected(hass, entity_id)
+
+
+_WRAPPER_PLATFORMS = {"switch_as_x"}
+
+
+def _wrapped_source(hass: HomeAssistant, entity_id: str) -> str | None:
+    """The entity a «Switch as X» helper operates; «?» when it can't be told (then it counts as protected — fail closed);
+    None for anything that wraps nothing."""
+    reg = er.async_get(hass)
+    entry = reg.async_get(entity_id)
+    if entry is None or entry.platform not in _WRAPPER_PLATFORMS:
+        return None
+    try:
+        cfg = hass.config_entries.async_get_entry(entry.config_entry_id) if entry.config_entry_id else None
+        src = cfg.options.get("entity_id") if cfg is not None else None
+        if isinstance(src, str) and "." not in src:  # HA may keep the registry id instead of the entity id
+            src = getattr(reg.async_get(src), "entity_id", None)
+    except Exception:  # noqa: BLE001 — not knowable: protected
+        return "?"
+    return src if isinstance(src, str) and src else "?"
+
+
+def _class_protected(hass: HomeAssistant, entity_id: str) -> bool:
+    """A cover that is a garage door / gate / door by its state, its registry class or its integration's."""
+    if not entity_id.startswith("cover."):
+        return False
+    st = hass.states.get(entity_id) if hasattr(hass, "states") else None
     reg = er.async_get(hass).async_get(entity_id)
     classes = {st.attributes.get("device_class") if st is not None else None, getattr(reg, "device_class", None), getattr(reg, "original_device_class", None)}
     return bool(classes & _PROTECTED_COVERS)
+
+
+_PROTECT_DATA = f"{DOMAIN}_protected"  # protect.DATA
+_PROTECT_BEFORE = ("knx/", "config/entity_registry/", "config/device_registry/")
+
+
+def _sticky(hass: HomeAssistant | None, entity_id: str) -> bool:
+    """A KNX entity once seen as a gate / garage door / door, or one sending to the addresses that open it (protect.py:
+    deleted and remade, under another class or platform, it stays protected until HA's admin clears it)."""
+    marks = getattr(hass, "data", {}).get(_PROTECT_DATA)
+    if marks is None or not (marks.uids or marks.gas):
+        return False
+    reg = er.async_get(hass).async_get(entity_id)
+    if reg is None or reg.platform != "knx":
+        return False
+    if reg.unique_id in marks.uids:
+        return True
+    config = ((_knx_store(hass) or {}).get(reg.domain) or {}).get(reg.unique_id)
+    return bool(_knx_writes(config.get("knx") if isinstance(config, dict) else None) & marks.gas)
+
+
+def _opening_gas(config: Any) -> set[str]:
+    """The addresses a KNX UI cover opens / moves by (write and passive, not its stop) — what a protected one keeps."""
+    knx = config.get("knx") if isinstance(config, dict) else None
+    out: set[str] = set()
+    for key, v in knx.items() if isinstance(knx, dict) else ():
+        if "stop" in str(key) or not isinstance(v, dict):
+            continue
+        passive = v.get("passive") if isinstance(v.get("passive"), list) else []
+        out |= {k for k in (_ga_key(ga) for ga in [v.get("write"), *passive] if ga not in (None, "")) if k is not None}
+    return out
+
+
+def _protect_refresh(hass: HomeAssistant | None) -> None:
+    """Mark every KNX cover protected by its class now (sticky from here on)."""
+    marks = protect.marks(hass)
+    store = _knx_store(hass) if marks is not None else None
+    if not store:
+        return
+    try:
+        reg = er.async_get(hass)
+        for uid, config in (store.get("cover") or {}).items():
+            eid = reg.async_get_entity_id("cover", "knx", uid)
+            st = hass.states.get(eid) if eid else None
+            entry = reg.async_get(eid) if eid else None
+            classes = {st.attributes.get("device_class") if st else None, getattr(entry, "device_class", None), getattr(entry, "original_device_class", None)}
+            if classes & _PROTECTED_COVERS:
+                marks.add(str(uid), _opening_gas(config))
+    except Exception as err:  # noqa: BLE001 — the marks so far stay; the class check still protects
+        degrade("protected covers", err)
+
+
+def _protect_marks_of(hass: HomeAssistant, entity_id: str) -> tuple[str | None, set[str]]:
+    """What «hauflo.unprotect» clears for an entity: its KNX unique id and opening addresses."""
+    entry = er.async_get(hass).async_get(entity_id)
+    if entry is None or entry.platform != "knx":
+        return None, set()
+    config = ((_knx_store(hass) or {}).get(entry.domain) or {}).get(entry.unique_id)
+    return entry.unique_id, _opening_gas(config)
+
+
+# The voice assistants HA exposes by (homeassistant.exposed_entities): a protected one is taken off every one of them.
+_ASSISTANTS = ("conversation", "cloud.alexa", "cloud.google_assistant")
+
+
+def _protect_mark(hass: HomeAssistant, entity_ids: list[str]) -> list[str]:
+    """The deploy says what a KNX switch is FOR (red-team 2, A1): a gate's / an electric lock's relay is a plain switch to
+    HA, so neither its class nor its domain tells the agent. Marked here — its unique id and the addresses it opens by —
+    it is protected like a gate cover (sticky: deleted and remade on its addresses it stays protected), and taken off
+    every voice assistant, itself and any «Switch as X» over it. Returns the entities marked."""
+    marks = protect.marks(hass)
+    if marks is None:
+        return []
+    done: list[str] = []
+    for eid in entity_ids:
+        uid, gas = _protect_marks_of(hass, eid)
+        if uid is None:
+            continue
+        marks.add_deploy(str(uid), gas)
+        done.append(eid)
+    if done:
+        _unexpose(hass, [*done, *_wrappers_of(hass, set(done))])
+    return done
+
+
+def _protect_unmark(hass: HomeAssistant, entity_ids: list[str]) -> list[str]:
+    """The deploy takes its own mark back (tester 04.11: a relay marked as a gate, then made an outlet again — its
+    voice was refused for good). Only a mark the deploy set by that entity's unique id: a gate cover's (by its class,
+    marked again at once), the agent's own and one from before marks had owners stay — HA's admin clears those
+    («hauflo.unprotect»). Never while the owner has closed the house (_http_locked). Returns the entities unmarked."""
+    marks = protect.marks(hass)
+    if marks is None:
+        return []
+    by_uid: dict[str, str] = {}
+    store = _knx_store(hass) or {}
+    alive = {str(u) for configs in store.values() for u in (configs or {})}
+    for eid in entity_ids:
+        uid, gas = _protect_marks_of(hass, eid)
+        if uid is None:
+            continue
+        by_uid[str(uid)] = eid
+        # The deploy's mark of a relay it has since removed and made again on these addresses (another domain, a new
+        # unique id): the same mark, kept by its addresses — taken back with it.
+        entry = er.async_get(hass).async_get(eid)
+        config = (store.get(entry.domain) or {}).get(entry.unique_id) if entry is not None else None
+        sends = gas | _knx_writes(config.get("knx") if isinstance(config, dict) else None)
+        for old, old_gas in marks.deploy.items():
+            if old not in alive and old_gas & sends:
+                by_uid.setdefault(old, eid)
+    gone = marks.unmark_deploy(set(by_uid))
+    _protect_refresh(hass)
+    return list(dict.fromkeys(by_uid[u] for u in sorted(gone)))
+
+
+def _wrappers_of(hass: HomeAssistant, sources: set[str]) -> list[str]:
+    out: list[str] = []
+    with contextlib.suppress(Exception):
+        for ent in list(er.async_get(hass).entities.values()):
+            if ent.platform in _WRAPPER_PLATFORMS and _wrapped_source(hass, ent.entity_id) in sources:
+                out.append(ent.entity_id)
+    return out
+
+
+def _unexpose(hass: HomeAssistant, entity_ids: list[str]) -> None:
+    try:
+        from homeassistant.components.homeassistant.exposed_entities import async_expose_entity  # noqa: PLC0415
+    except ImportError:  # an HA without exposed entities: nothing to take off
+        return
+    for eid in entity_ids:
+        for assistant in _ASSISTANTS:
+            with contextlib.suppress(Exception):  # an assistant this HA doesn't run
+                async_expose_entity(hass, assistant, eid, False)
 
 
 def _own_device(hass: HomeAssistant | None, device_id: Any) -> bool:
@@ -215,7 +390,7 @@ _CONFIG_KEEP = {"version", "components", "time_zone", "language", "unit_system",
 
 def _scrub_config(cfg: Any) -> Any:
     if not isinstance(cfg, dict):
-        return cfg
+        return {}  # not a config: nothing leaves (fail closed)
     out = {k: v for k, v in cfg.items() if k in _CONFIG_KEEP}
     # Only scheme://host[:port][/path]: a login and password in it (HA accepts https://user:pass@…) stay home (round 3, C3).
     url = out.get("external_url")
@@ -290,9 +465,9 @@ def _scrub_panels(panels: Any) -> Any:
 _PRESENCE_CLASSES = {"motion", "occupancy", "presence", "door", "window", "opening", "garage_door", "lock"}
 
 
-def _scrub_states(states: Any, hass: HomeAssistant | None = None, visible: Callable[[str], bool] | None = None) -> Any:
+def _scrub_states(states: Any, hass: HomeAssistant | None = None, visible: Callable[[str], bool] | None = None, hidden: set[str] | None = None) -> Any:
     if not isinstance(states, list):
-        return states
+        return []  # fail closed
     phones = set()
     if hass is not None:
         with contextlib.suppress(Exception):
@@ -310,7 +485,7 @@ def _scrub_states(states: Any, hass: HomeAssistant | None = None, visible: Calla
                 presence = not visible(eid)
             except Exception:  # noqa: BLE001 — not knowable: hidden
                 presence = True
-        if eid.split(".")[0] in _PRIVATE_STATE or eid in phones or presence:
+        if eid.split(".")[0] in _PRIVATE_STATE or eid in phones or presence or eid in (hidden or ()):
             st["attributes"] = {k: v for k, v in attrs.items() if k in _KEEP_ON_PRIVATE}
             st["state"] = "hidden"
             for k in _STATE_TIMES:  # when someone came home, and who did what
@@ -320,11 +495,40 @@ def _scrub_states(states: Any, hass: HomeAssistant | None = None, visible: Calla
     return states
 
 
+# A weather entity is private (forecasts, place), but its temperature / humidity are a rule's «улица» (derived.outdoor).
+_WEATHER_READS = {"temperature", "humidity"}
+
+
+def _cloud_reads(hass: HomeAssistant | None, eid: str, attr: str | None, visible: Callable[[str], bool]) -> bool:
+    """What the tunnel may read through a rule (input, condition, window history, derived source): the same as
+    get_states shows it — no private domain / phone / sun, a presence sensor only when visible, only attributes
+    get_states keeps."""
+    domain = eid.split(".")[0]
+    if domain == "weather":
+        return attr in _WEATHER_READS
+    if domain in _PRIVATE_STATE:
+        return False
+    if attr is not None and attr not in _STATE_ATTRS and attr != dv.SETPOINT_GAP:
+        return False
+    try:
+        reg = er.async_get(hass).async_get(eid) if hass is not None else None
+        if reg is not None and reg.platform in _PRIVATE_PLATFORMS | _PHONE_PLATFORMS:
+            return False
+        if domain == "binary_sensor":
+            st = hass.states.get(eid) if hass is not None else None
+            classes = {st.attributes.get("device_class") if st else None} | ({reg.device_class, reg.original_device_class} if reg else set())
+            if classes & _PRESENCE_CLASSES and not visible(eid):
+                return False
+    except Exception:  # noqa: BLE001 — not knowable: hidden
+        return False
+    return True
+
+
 def _scrub_cloud(status: Any) -> Any:
     """Nabu Casa's status without the account, the house's remote address, Google's PIN for locks or the cloudhooks
     (security re-review round 5) — Hauflo needs whether it's on and which assistants are."""
     if not isinstance(status, dict):
-        return status
+        return {}  # fail closed
     prefs = status.get("prefs") if isinstance(status.get("prefs"), dict) else {}
     return {"logged_in": status.get("logged_in"), "cloud": status.get("cloud"), "prefs": {k: prefs.get(k) for k in ("alexa_enabled", "google_enabled") if k in prefs}}
 
@@ -1029,7 +1233,35 @@ _RUNS = ("perform-action", "call-service")
 # images — never an address outside the house (a tracking pixel sees who opens the dashboard; security review 28.10).
 _IMAGE_KEYS = {"image", "picture", "camera_image", "background", "icon_image", "entity_picture"}
 _IMAGE_RE = re.compile(r"(?:/local/|/api/image/serve/|/api/image_proxy/|/api/camera_proxy/|/hauflo_static/)[A-Za-z0-9_./%?=&+-]*")
-_DATA_IMAGE_RE = re.compile(r"data:image/(?:png|jpeg|gif|webp|svg\+xml)(?:;[a-z0-9=_-]+)*;base64,[A-Za-z0-9+/=]*")
+_DATA_IMAGE_RE = re.compile(r"data:image/(?:png|jpeg|gif|webp)(?:;[a-z0-9=_-]+)*;base64,[A-Za-z0-9+/=]*")
+_DATA_SVG_RE = re.compile(r"data:image/svg\+xml;base64,([A-Za-z0-9+/=]*)")
+# An inline SVG is a document, not pixels (security review 04.11): only shapes and gradients — what Hauflo's stand-in
+# room pictures are — never a script, a handler, a link, a style or a reference outside the picture.
+_SVG_TAGS = {"svg", "defs", "g", "linearGradient", "radialGradient", "stop", "rect", "path", "circle", "ellipse", "line", "polyline", "polygon", "title"}
+_SVG_LOCAL_URL = re.compile(r"url\(#[A-Za-z0-9_-]+\)")
+# An encoded dot, slash, backslash or percent walks out of /local/ once the server decodes it.
+_ENCODED_PATH = re.compile(r"%(?:2e|2f|5c|25)", re.IGNORECASE)
+
+
+def _svg_ok(b64: str) -> bool:
+    import base64
+    import xml.etree.ElementTree as ET
+
+    try:
+        text = base64.b64decode(b64, validate=True).decode("utf-8")
+        if "<!" in text or "<?" in text:  # no DOCTYPE / entities / CDATA / processing instructions
+            return False
+        root = ET.fromstring(text)
+    except Exception:  # noqa: BLE001 — not a picture we can read is not one we pass
+        return False
+    for el in root.iter():
+        if not isinstance(el.tag, str) or el.tag.rsplit("}", 1)[-1] not in _SVG_TAGS:
+            return False
+        for key, val in el.attrib.items():
+            name = key.rsplit("}", 1)[-1].lower()
+            if name.startswith("on") or "href" in name or name == "style" or ("url(" in val and not _SVG_LOCAL_URL.fullmatch(val.strip())):
+                return False
+    return True
 
 
 def _image_ok(value: Any) -> bool:
@@ -1037,7 +1269,9 @@ def _image_ok(value: Any) -> bool:
         return False
     if _DATA_IMAGE_RE.fullmatch(value):
         return True
-    return bool(_IMAGE_RE.fullmatch(value)) and ".." not in value and "//" not in value
+    if (svg := _DATA_SVG_RE.fullmatch(value)) is not None:
+        return _svg_ok(svg.group(1))
+    return bool(_IMAGE_RE.fullmatch(value)) and ".." not in value and "//" not in value and not _ENCODED_PATH.search(value)
 
 
 def _area_lights_owned(hass: HomeAssistant | None, area_id: Any, owned: set[str] | None, owned_entries: set[str] | None) -> bool:
@@ -1055,16 +1289,94 @@ def _area_lights_owned(hass: HomeAssistant | None, area_id: Any, owned: set[str]
         return False
 
 
+def _owned_scene_sends(hass: HomeAssistant | None, owned: set[str] | None) -> dict[str, set[int]]:
+    """Address → the «store» bytes a dashboard may send there: each KNX scene Hauflo made, by its scene number (0x80 |
+    number−1; any of the 64 when it has none) — minus every address that opens something protected (protect.py)."""
+    store = _knx_store(hass)
+    if store is None or owned is None:
+        return {}
+    out: dict[str, set[int]] = {}
+    for uid, config in (store.get("scene") or {}).items():
+        knx = config.get("knx") if isinstance(config, dict) else None
+        if uid not in owned or not isinstance(knx, dict):
+            continue
+        key = _ga_key((knx.get("ga_scene") or {}).get("write") if isinstance(knx.get("ga_scene"), dict) else None)
+        number = knx.get("scene_number")
+        if key is None:
+            continue
+        out.setdefault(key, set()).update({0x80 | (number - 1)} if type(number) is int and 1 <= number <= 64 else set(range(0x80, 0xC0)))
+    marks = getattr(hass, "data", {}).get(_PROTECT_DATA)
+    for key in set(getattr(marks, "gas", None) or ()) | _protected_writes(hass):
+        out.pop(key, None)
+    return out
+
+
+def _protected_writes(hass: HomeAssistant | None) -> set[str]:
+    """The addresses every protected KNX entity sends to (a gate cover by its class, a marked relay)."""
+    out: set[str] = set()
+    store = _knx_store(hass)
+    if store is None:
+        return out
+    with contextlib.suppress(Exception):
+        reg = er.async_get(hass)
+        for domain, configs in store.items():
+            for uid, config in (configs or {}).items():
+                eid = reg.async_get_entity_id(domain, "knx", uid)
+                if eid and _protected(hass, eid):
+                    out |= _knx_writes(config.get("knx") if isinstance(config, dict) else None)
+    out.discard("?")
+    return out
+
+
+def _shown_protected(hass: HomeAssistant | None, eid: Any, owned: set[str] | None, owned_entries: set[str] | None) -> bool:
+    """A gate / garage door / electric lock Hauflo itself made (protected by its class or its mark, not by what it
+    holds): the family's dashboard shows it on its own card."""
+    if hass is None or not isinstance(eid, str) or eid.startswith(_NEVER_EXPOSE):
+        return False
+    if not (_sticky(hass, eid) or _class_protected(hass, eid)):
+        return False
+    return _own_entity(hass, eid, owned_entries) and (_platform(hass, eid) != "knx" or _owned_knx(hass, eid, owned))
+
+
+_WORD_RE = re.compile(r"[^\W_]+", re.UNICODE)
+
+
+def _words(text: Any) -> set[str]:
+    return set(_WORD_RE.findall(voice._norm(str(text or ""))))
+
+
+def _named_as(hass: HomeAssistant, eid: str, name: Any) -> bool:
+    """A card's name for a protected entity is its own: at least one word of HA's names for it (the deploy's short name
+    drops the room — «Ворота» of «Двор Ворота»), the rest its words, room names (a shared device's «(для Двора и
+    Гаража)») or short joining words — never «Свет кухня» on the gate (red-team 2, A1)."""
+    if not isinstance(name, str):
+        return False
+    st = hass.states.get(eid) if hasattr(hass, "states") else None
+    reg = er.async_get(hass).async_get(eid)
+    known = _words(st.attributes.get("friendly_name") if st is not None else None) | _words(getattr(reg, "name", None)) | _words(getattr(reg, "original_name", None))
+    rooms: set[str] = set()
+    with contextlib.suppress(Exception):
+        from homeassistant.helpers import area_registry as ar  # noqa: PLC0415
+
+        for area in ar.async_get(hass).async_list_areas():
+            rooms |= _words(area.name)
+    words = _words(name)
+    rest = words - known
+    return bool(words & known) and all(w in rooms or len(w) <= 3 or any(w.startswith(r[:-1]) for r in rooms if len(r) > 3) for w in rest)
+
+
 def _lovelace_ok(hass: HomeAssistant | None, config: Any, owned: set[str] | None, owned_entries: set[str] | None) -> bool:
     if not isinstance(config, dict):
         return False
-    owned_writes: list[set[str]] = []
+    scene_sends: list[dict[str, set[int]]] = []
 
     def entity_ok(eid: str) -> bool:
         domain = eid.split(".", 1)[0]
         if domain in _READ_ONLY_DOMAINS:
             return True
-        return _hauflo_entity(hass, eid, owned, owned_entries)
+        # A gate / an electric lock Hauflo made is shown on the family's dashboard — and operated only from its own card
+        # (service_ok), under its own name (walk): never hidden behind another button (red-team 2, A1).
+        return _hauflo_entity(hass, eid, owned, owned_entries) or _shown_protected(hass, eid, owned, owned_entries)
 
     def target_ids(value: Any) -> list[str] | None:
         """entity_id as HA reads it (cv.comp_entity_ids lower-cases, strips, splits on commas, takes «all»): only exact
@@ -1074,8 +1386,9 @@ def _lovelace_ok(hass: HomeAssistant | None, config: Any, owned: set[str] | None
             return None
         return items
 
-    def service_ok(v: dict[str, Any]) -> bool:
-        """A service call anywhere in a dashboard: an allowed service, on Hauflo's own entities named one by one."""
+    def service_ok(v: dict[str, Any], card: str | None = None) -> bool:
+        """A service call anywhere in a dashboard: an allowed service, on Hauflo's own entities named one by one; a
+        protected one only by the card that shows it (`card`: the nearest «entity» around the call)."""
         names = [v[k] for k in ("perform_action", "service") if k in v and not (k == "service" and isinstance(v[k], dict) and "perform_action" not in v)]
         if not names or not all(isinstance(n, str) and n in _CARD_SERVICES for n in names) or len(set(names)) != 1:
             return False
@@ -1088,12 +1401,15 @@ def _lovelace_ok(hass: HomeAssistant | None, config: Any, owned: set[str] | None
             if set(v) & ({"target", "service_data"} | _TARGET_KEYS) or "data" not in v:
                 return False
             data = v["data"]
-            if not owned_writes:
-                owned_writes.append(_owned_knx_writes(hass, owned))
+            if not scene_sends:
+                scene_sends.append(_owned_scene_sends(hass, owned))
+            # Only a scene's «store»: the address of a KNX scene Hauflo made, the one byte that stores that scene there
+            # (DPT 18.001: 0x80 | number−1) — never a gate's position or up/down by a disguised button (red-team 2, A2).
             payload = data.get("payload")
-            if set(data) - {"address", "payload"} or _ga_key(data.get("address")) not in owned_writes[0]:
+            allowed = scene_sends[0].get(_ga_key(data.get("address")) or "?")
+            if set(data) - {"address", "payload"} or not allowed:
                 return False
-            return isinstance(payload, list) and all(isinstance(b, int) and not isinstance(b, bool) and 0 <= b <= 255 for b in payload)
+            return isinstance(payload, list) and len(payload) == 1 and type(payload[0]) is int and payload[0] in allowed
         ids: list[str] = []
         areas: list[Any] = []
         # Our own alarm card's action names its entity at the top (hauflo-alert: {service, entity_id}).
@@ -1115,10 +1431,15 @@ def _lovelace_ok(hass: HomeAssistant | None, config: Any, owned: set[str] | None
             return False  # nothing named: never «whatever the service reaches by default»
         if areas and not all(_area_lights_owned(hass, a, owned, owned_entries) for a in areas):
             return False
-        return all(_hauflo_entity(hass, i, owned, owned_entries) for i in ids)
+        return all(_hauflo_entity(hass, i, owned, owned_entries) or (i == card and _shown_protected(hass, i, owned, owned_entries)) for i in ids)
 
-    def walk(v: Any, key: str = "") -> bool:
+    def walk(v: Any, key: str = "", card: str | None = None) -> bool:
         if isinstance(v, dict):
+            if isinstance(v.get("entity"), str):
+                card = v["entity"]
+                # A protected one under its own name: «Свет кухня» on the gate's tile is refused.
+                if "name" in v and _shown_protected(hass, card, owned, owned_entries) and not _named_as(hass, card, v["name"]):
+                    return False
             kind = v.get("type")
             if kind is not None and (not isinstance(kind, str) or kind not in _LOVELACE_TYPES):
                 return False
@@ -1131,20 +1452,20 @@ def _lovelace_ok(hass: HomeAssistant | None, config: Any, owned: set[str] | None
                 if action == "navigate" and not _NAV_RE.match(str(v.get("navigation_path", ""))):
                     return False
                 if action in _RUNS:
-                    if not service_ok(v):
+                    if not service_ok(v, card):
                         return False
                 elif set(v) & ({"perform_action", "service", "target", "data", "service_data"} | _TARGET_KEYS):
                     return False  # fail closed: a service or a target on an action that runs none
             elif "perform_action" in v or isinstance(v.get("service"), str):
-                if not service_ok(v):  # a service under any other key (our own cards' actions, card features)
+                if not service_ok(v, card):  # a service under any other key (our own cards' actions, card features)
                     return False
             elif "target" in v or "service_data" in v:
                 return False  # a target with no service to check it by
             if key == "state_image" and not all(_image_ok(x) for x in v.values()):
                 return False
-            return all(walk(x, str(k)) for k, x in v.items())
+            return all(walk(x, str(k), card) for k, x in v.items())
         if isinstance(v, list):
-            return all(walk(x, key) for x in v)
+            return all(walk(x, key, card) for x in v)
         if isinstance(v, str):
             if key in ("perform_action", "service", "type", "action", "navigation_path", "hauflo_id"):
                 return True  # checked with their dict
@@ -1204,9 +1525,19 @@ def _alice_labels(hass: HomeAssistant | None) -> set[str]:
     return {str(e.options.get("label")) for e in hass.config_entries.async_entries("yandex_smart_home") if e.options.get("label")}
 
 
+def _theme_ok(msg: dict[str, Any]) -> bool:
+    """frontend.set_theme only to Hauflo's own themes (security review 04.11): never a theme someone else wrote."""
+    data = msg.get("service_data")
+    if not isinstance(data, dict) or not data or not set(data) <= {"name", "name_dark"} or set(msg) - {"id", "type", "domain", "service", "service_data"}:
+        return False
+    return all(isinstance(v, str) and v in theme.names() for v in data.values())
+
+
 def _ws_allowed(msg: dict[str, Any], hass: HomeAssistant | None = None, owned: set[str] | None = None, owned_entries: set[str] | None = None) -> bool:
     t = str(msg.get("type", ""))
     if t == "call_service":
+        if (msg.get("domain"), msg.get("service")) == ("frontend", "set_theme"):
+            return _theme_ok(msg)
         return (str(msg.get("domain")), str(msg.get("service"))) in _SERVICES
     if t not in _WS_EXACT:
         return False
@@ -1222,8 +1553,11 @@ def _ws_allowed(msg: dict[str, Any], hass: HomeAssistant | None = None, owned: s
         eid = msg.get("entity_id")
         if not isinstance(eid, str) or eid.startswith(_NEVER_EXPOSE) or not _own_entity(hass, eid, owned_entries):
             return False
-        # A garage door / gate keeps its class and never gets Alice's label (security re-review round 5).
-        if _protected(hass, eid) and ("device_class" in msg or set(msg.get("labels") or []) & _alice_labels(hass)):
+        # A garage door / gate keeps its class and never gets Alice's label (security re-review round 5). One protected
+        # only by its addresses (protect.py: remade by a deploy, no class yet) may be given a protected class.
+        if _protected(hass, eid) and set(msg.get("labels") or []) & _alice_labels(hass):
+            return False
+        if "device_class" in msg and _protected(hass, eid) and (_class_protected(hass, eid) or msg["device_class"] not in _PROTECTED_COVERS):
             return False
         if _forbidden(msg.get("new_entity_id")):
             return False
@@ -1251,6 +1585,12 @@ def _ws_allowed(msg: dict[str, Any], hass: HomeAssistant | None = None, owned: s
     if t in ("knx/delete_entity", "knx/update_entity"):
         # Only what Hauflo created — rewriting a hand-made entity's addresses is as bad as deleting it, and an update
         # never makes an entity Hauflo's (security re-review round 4: update, then delete).
+        if t == "knx/update_entity" and _protected(hass, msg.get("entity_id")):
+            # A gate stays a gate (security review 04.11): no class out of the protected ones.
+            data = msg.get("data")
+            ent = data.get("entity") if isinstance(data, dict) else None
+            if isinstance(ent, dict) and "device_class" in ent and (_class_protected(hass, str(msg.get("entity_id"))) or ent["device_class"] not in _PROTECTED_COVERS):
+                return False
         return _owned_knx(hass, msg.get("entity_id"), owned) and (t == "knx/delete_entity" or _knx_config_ok(hass, msg, owned))
     if t == "knx/create_entity":
         return _knx_config_ok(hass, msg, owned)
@@ -1283,7 +1623,9 @@ def _ws_allowed(msg: dict[str, Any], hass: HomeAssistant | None = None, owned: s
         # Hauflo hands its own to a voice assistant, never the integrator's group or scene (integrator run 20); taking
         # one away from it is fine for any.
         ids = msg.get("entity_ids")
-        if not isinstance(ids, list) or any(_protected(hass, i) for i in ids):
+        if not isinstance(ids, list):
+            return False
+        if msg.get("should_expose") is not False and any(_protected(hass, i) for i in ids):
             return False
         if msg.get("should_expose") is False:
             # Taking one away too only from Hauflo's own (security expert 25.10: the integrator's voice setup).
@@ -1315,7 +1657,7 @@ def _scrub_diagnostics(text: str) -> str:
 def _scrub_devices(devices: Any, hass: HomeAssistant | None) -> Any:
     """The device list without the phones' names («iPhone Ivan»): Hauflo places devices, it needn't know whose."""
     if not isinstance(devices, list):
-        return devices
+        return []  # fail closed
     for d in devices:
         if isinstance(d, dict) and any(_entry_domain(hass, str(e)) == "mobile_app" for e in d.get("config_entries") or []):
             for k in ("name", "name_by_user", "model", "manufacturer"):
@@ -1327,7 +1669,7 @@ def _scrub_devices(devices: Any, hass: HomeAssistant | None) -> Any:
 def _scrub_monitor(info: Any) -> Any:
     """The bus monitor: which addresses answered (the devices check), never the values (who's home, what's on)."""
     if not isinstance(info, dict):
-        return info
+        return {}  # fail closed
     tg = info.get("recent_telegrams") if isinstance(info.get("recent_telegrams"), list) else []
     return {"project_loaded": info.get("project_loaded"), "recent_telegrams": [{k: x.get(k) for k in ("destination", "direction", "telegramtype", "timestamp")} for x in tg if isinstance(x, dict)]}
 
@@ -1478,6 +1820,9 @@ RECONNECT_HINT_WAIT = tuple(_T["reconnect_hint_wait_s"])
 LINK_LOST_ISSUE_AFTER = _T["lost_issue_after_s"]  # the link down this long: said in HA's Repairs
 # A frame this big (a dashboard, a plan) is parsed off the event loop: json.loads of megabytes blocks HA's loop.
 BIG_FRAME = _T["big_frame_bytes"]
+# A host of the region that doesn't take the connection this long gives way to the next one (servers.py).
+CONNECT_TIMEOUT = _T["connect_timeout_s"]
+UNPAIR_TIMEOUT = _T["unpair_timeout_s"]
 
 
 def _next_wait(delay: float, hinted: bool, uniform: Callable[[float, float], float] = random.uniform) -> float:
@@ -1504,10 +1849,12 @@ class Agent:
         self.engine: notify.NotifyEngine | None = None  # alarms to the phones (set up right after the agent)
         self.automations: Any = None  # the dashboard's «Автоматизации» (automations.py), made on first use
         self.presence: presence.Presence | None = None  # «Нет дома — имитация присутствия» (presence.py)
+        self.habits: habits_mod.Habits | None = None  # «Предложения по привычкам» (habits.py)
         self.season: season.Season | None = None  # «Зима / Лето»: the switch, the resend, the suggestion (season.py)
         self.rules: rules.Rules | None = None  # «Правила по значениям» and the derived values (rules.py, derived.py)
         self.guest: guest.GuestAccess | None = None  # «Гостевой доступ» (guest.py), set up with the entry
         self.ownership: ownership.Ownership | None = None  # the «Hauflo» label and «Создано в этом доме» (ownership.py)
+        self.insights: insight.Insights | None = None  # «Диагностика по своей норме» (insight.py): staff only, read only
         self.owned: set[str] = set()
         self.owned_entries: set[str] = set()  # config entries (HomeKit bridges, groups) made through the tunnel
         self._flow_memo: dict[str, list[str]] = {}  # HomeKit options: the domains of a flow's first step
@@ -1525,6 +1872,10 @@ class Agent:
         # integrator run 24.10): the last telegram that came FROM the bus says it.
         self._knx_heard: float | None = None
         self._knx_since = time.monotonic()
+        # A quiet flat is quiet for hours (Горького 3, 04.11: «шина молчит» every hour between HA's hourly state
+        # reads), so silence alone isn't a dead bus. Dead = HA asked (GroupValueRead) and nothing came back:
+        # the time of the first read still unanswered.
+        self._knx_asked: float | None = None
         # Names of the house's HA administrators (the service passport, service review r2 D5) — read in the status loop.
         self._admins: list[str] = []
         self._unsub_knx = None
@@ -1534,8 +1885,13 @@ class Agent:
 
             @callback
             def _heard(_telegram, telegram_dict) -> None:
-                if str((telegram_dict or {}).get("direction", "")).lower().startswith("incoming"):
+                t = telegram_dict or {}
+                direction = str(t.get("direction", "")).lower()
+                if direction.startswith("incoming"):
                     self._knx_heard = time.monotonic()
+                    self._knx_asked = None
+                elif direction.startswith("outgoing") and str(t.get("telegramtype", "")) == "GroupValueRead" and self._knx_asked is None:
+                    self._knx_asked = time.monotonic()
 
             self._unsub_knx = async_dispatcher_connect(hass, SIGNAL_KNX_TELEGRAM, _heard)
         except Exception as err:  # noqa: BLE001
@@ -1571,12 +1927,19 @@ class Agent:
         self.refresh = await _local_token(self.hass, self.entry)
         await self._ensure_label()
         delay = 5
-        url = self.server.replace("https://", "wss://").replace("http://", "ws://") + "/api/agent/ws"
+        # The hosts of this house's own region only (servers.py, owner 04.11): one that can't be reached gives way to
+        # the next at once; a round with none answering waits as before. One host (today) — just the back-off.
+        hosts = servers.same_region(self.server)
+        missed = 0
         self._watch_link(False)
         while not self.stopped:
             hinted = False
+            welcomed = False
+            host = hosts[missed % len(hosts)]
             try:
-                async with self.session.ws_connect(url, heartbeat=30, max_msg_size=16 * 1024 * 1024) as ws:
+                async with contextlib.AsyncExitStack() as stack:
+                    async with asyncio.timeout(CONNECT_TIMEOUT):
+                        ws = await stack.enter_async_context(self.session.ws_connect(servers.ws_url(host), heartbeat=30, max_msg_size=16 * 1024 * 1024))
                     self.ws = ws
                     await self.send({"t": "hello", "token": self.secret, "version": VERSION, "haVersion": HA_VERSION, "instance": await self._instance()})
                     async for msg in ws:
@@ -1595,6 +1958,11 @@ class Agent:
                         if frame.get("t") == "welcome":
                             self._set_linked(True)
                             delay = 5
+                            welcomed = True
+                            if host != hosts[0]:
+                                servers.remember(host)
+                                hosts = servers.same_region(self.server)
+                            missed = 0
                             self.hass.data.pop(DATA_UNLINKED, None)
                             persistent_notification.async_dismiss(self.hass, "hauflo_unlinked")
                             issues.clear_issue(self.hass, issues.UNLINKED)
@@ -1630,6 +1998,10 @@ class Agent:
                 for ch in list(self.channels):
                     await self._close_channel(ch, tell=False)
             if not self.stopped:
+                if not welcomed:
+                    missed += 1
+                    if missed % len(hosts):
+                        continue  # the next host of the region right away
                 await asyncio.sleep(_next_wait(delay, hinted))
                 delay = min(delay * 2, 60)
 
@@ -1711,7 +2083,7 @@ class Agent:
                 continue
             if kind in _SCRUBBED:
                 r["result"] = (
-                    _scrub_states(res, self.hass, self._state_visible) if kind == "get_states" else _scrub_config(res) if kind == "get_config"
+                    _scrub_states(res, self.hass, self._state_visible, self._rules_hidden()) if kind == "get_states" else _scrub_config(res) if kind == "get_config"
                     else _scrub_cloud(res) if kind == "cloud/status" else _scrub_devices(res, self.hass) if kind == "config/device_registry/list"
                     else _scrub_panels(res) if kind == "get_panels"
                     else _scrub_entities(res, self.hass) if kind.startswith("config/entity_registry/") else _scrub_monitor(res)
@@ -1809,6 +2181,14 @@ class Agent:
         except Exception:  # noqa: BLE001
             return None
 
+    def _rules_hidden(self) -> set[str]:
+        """A rule's / derived value's entity that would tell what get_states hides (rules.cloud_hidden_entities)."""
+        try:
+            return self.rules.cloud_hidden_entities() if self.rules is not None else set()
+        except Exception:  # noqa: BLE001 — the states still go out scrubbed by the rest
+            _LOGGER.debug("rules: hidden entities", exc_info=True)
+            return set()
+
     def _state_visible(self, eid: str) -> bool:
         """A presence sensor's state goes to Hauflo only when it is Hauflo's own or marked «Hauflo мониторинг»."""
         own = _own_entity(self.hass, eid, self.owned_entries) and (_platform(self.hass, eid) != "knx" or _owned_knx(self.hass, eid, self.owned))
@@ -1858,6 +2238,17 @@ class Agent:
             return
         if not isinstance(msg, dict):
             return
+        # A whole-number id not waiting for an answer (security review 04.11: get_states answered under get_config's
+        # reused id went out unscrubbed). An id reused after its answer gets HA's own «id_reuse»; an answer that meets
+        # the wrong scrubber is only scrubbed more (they fail closed).
+        if msg.get("type") != "auth":
+            mid = msg.get("id")
+            if type(mid) is not int or (ch, mid) in self._pending or (ch, mid) in self._note_subs:
+                _LOGGER.warning("Hauflo: a tunnel message with a reused or bad id was refused")
+                await self.send({"t": "ws_msg", "ch": ch, "data": json.dumps({"id": mid if type(mid) is int else None, "type": "result", "success": False, "error": {"code": "id_reuse", "message": "Hauflo agent: message id reused or not a number"}})})
+                return
+        if str(msg.get("type")).startswith(_PROTECT_BEFORE):
+            _protect_refresh(self.hass)  # a gate seen now stays one whatever this frame does to it
         # Hauflo doesn't hold a token for this HA: the agent signs in with its own.
         if msg.get("type") == "auth":
             data = json.dumps({"type": "auth", "access_token": self.token})
@@ -1971,8 +2362,11 @@ class Agent:
             except Exception as err:  # noqa: BLE001
                 degrade("knx connection state", err)
         # Minutes the bus has been silent (since the agent started when nothing came yet).
-        silent = int((time.monotonic() - (self._knx_heard or self._knx_since)) // 60)
-        return {"loaded": loaded, "connected": connected, "state": entries[0].state.value if entries else "missing", "silentMin": silent, "heard": self._knx_heard is not None}
+        now = time.monotonic()
+        silent = int((now - (self._knx_heard or self._knx_since)) // 60)
+        # Minutes HA's read has waited for any answer from the bus (None: nothing asked since the bus last spoke).
+        unanswered = int((now - self._knx_asked) // 60) if self._knx_asked is not None else None
+        return {"loaded": loaded, "connected": connected, "state": entries[0].state.value if entries else "missing", "silentMin": silent, "unansweredMin": unanswered, "heard": self._knx_heard is not None}
 
     def _knx_conn(self) -> dict[str, Any] | None:
         """How HA talks to the bus, for the service passport (service review r2 D5): the connection type, the gateway's
@@ -2017,6 +2411,9 @@ class Agent:
             "alarms": engine.active_list() if (engine := self.engine) else [],
             # No rules yet (a re-added agent before Hauflo sends them): its open alarms aren't known yet.
             "alarmsReady": bool(engine and engine.config["rules"]),
+            # «Диагностика по своей норме» (insight.py): a zone / sensor clearly off its own learned norm — for the
+            # integrator's staff (the cloud never tells the family), never an action.
+            "insights": ins.items() if (ins := self.insights) else [],
             # The owner closed the house for changes in HA: Hauflo stops a deploy before it starts.
             "locked": self.locked,
             # The alarms' times are ISO with their offset (UTC); this is the house's clock to say them in — mails
@@ -2046,6 +2443,7 @@ class Agent:
 
     async def _status_loop(self, ws: aiohttp.ClientWebSocketResponse) -> None:
         while self.ws is ws and not ws.closed:
+            _protect_refresh(self.hass)  # KNX loads after the agent: its gates are marked once it's there
             await self._refresh_admins()
             await self.send({"t": "status", "status": self.status()})
             self._watch_signals()
@@ -2107,6 +2505,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
     agent = Agent(hass, entry)
     await agent.async_load()
     entry.runtime_data = agent
+    # Gates / garage doors / doors stay protected once seen (protect.py): marked now, on every registry change and
+    # before each change the cloud sends.
+    await protect.async_setup(hass, lambda eid: _protect_marks_of(hass, eid), _ga_key, lambda: _protect_refresh(hass))
+    _protect_refresh(hass)
+    entry.async_on_unload(hass.bus.async_listen(er.EVENT_ENTITY_REGISTRY_UPDATED, callback(lambda _e: _protect_refresh(hass))))
     owns = lambda eid: _own_entity(hass, eid, agent.owned_entries) and (_platform(hass, eid) != "knx" or _owned_knx(hass, eid, agent.owned))  # noqa: E731
     # «Зима / Лето» from HA's storage (it keeps working without Hauflo online); «Комфортный пол» of an earlier agent is
     # taken away cleanly — its own entities and store only, the KNX thermostats untouched (retired.py).
@@ -2126,8 +2529,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
         if agent.engine is not None:
             await agent.engine.async_tell(title, message, None, actions=actions, tag=tag)
 
-    async def _season_set(mode: str, _why: str | None) -> None:
-        await agent.season.apply(mode, None)
+    async def _season_set(mode: str, why: str | None) -> str | None:
+        # The family's «Сделать» on the suggestion: their switch, now. The rule acting by itself («автоматически раз в
+        # день»): season.py decides — the recommendation, once a day, in the morning — and says what it did.
+        if why == "suggest":
+            await agent.season.apply(mode, None)
+            return None
+        return await agent.season.auto_check(why or "rule")
 
     # «Правила по значениям»: loaded before the platforms (their entities come from it), run after them.
     agent.rules = rules.Rules(
@@ -2141,6 +2549,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
         ask=_ask,
     )
     agent.rules.entry_id = entry.entry_id
+    agent.rules.cloud_reads = lambda eid, attr: _cloud_reads(hass, eid, attr, agent._state_visible)
     try:
         await agent.rules.async_load()
     except Exception as err:  # noqa: BLE001 — never stops the agent
@@ -2180,6 +2589,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
         await agent.presence.async_start()
     except Exception as err:  # noqa: BLE001 — never stops the agent
         degrade("presence simulation", err)
+    # «Предложения по привычкам»: a person's repeated hand actions → rule suggestions; kept in HA only (habits.py).
+    agent.habits = habits_mod.Habits(
+        hass,
+        lambda eid: (a := _automations(hass)) is not None and a._pickable(eid),
+        lambda: [agent.rules, agent.presence],
+        lambda eid: (a := _automations(hass)) is not None and a._area(eid) or None,
+    )
+    try:
+        await agent.habits.async_start()
+    except Exception as err:  # noqa: BLE001 — never stops the agent
+        degrade("habit suggestions", err)
     # «Гостевой доступ»: links to this region's server; the grants and the log stay in HA (guest.py).
     agent.guest = guest.GuestAccess(
         hass,
@@ -2198,6 +2618,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
     engine.locked = lambda: agent.locked
     await engine.async_start()
     agent.engine = engine
+    agent.insights = insight.Insights(hass, owns, agent.season.current)
+    agent.insights.on_change = agent.status_now
+    try:
+        await agent.insights.async_start()
+    except Exception as err:  # noqa: BLE001 — never stops the agent
+        agent.insights = None
+        degrade("insights", err)
     if not hass.data.get(DATA_NOTIFY_VIEWS):
         hass.data[DATA_NOTIFY_VIEWS] = True
         hass.http.register_view(notify.NotifyView(lambda: _engine(hass)))
@@ -2218,6 +2645,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
         hass.http.register_view(presence.PresenceView(lambda: _presence(hass)))
         hass.http.register_view(guest.GuestView(lambda: _guest(hass), lambda: _engine(hass)))
         hass.http.register_view(house.HouseView())
+        hass.http.register_view(stock.StockView())
+        hass.http.register_view(protect.ProtectView(_protect_mark, _protect_unmark))
 
     async def _stop(_event: Event) -> None:
         if agent.presence is not None:
@@ -2336,7 +2765,12 @@ def _automations(hass: HomeAssistant) -> automations.Automations | None:
     for entry in hass.config_entries.async_loaded_entries(DOMAIN):
         agent = entry.runtime_data
         if getattr(agent, "automations", None) is None:
-            agent.automations = automations.Automations(hass, lambda eid: _hauflo_entity(hass, eid, agent.owned, agent.owned_entries))
+            agent.automations = automations.Automations(
+                hass,
+                lambda eid: _hauflo_entity(hass, eid, agent.owned, agent.owned_entries),
+                lambda eid: _protected(hass, eid),
+                lambda: agent.habits,
+            )
         return agent.automations
     return None
 
@@ -2397,6 +2831,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> b
                     await sim.async_lights_out()
             except Exception:  # noqa: BLE001 — never blocks the unload
                 _LOGGER.warning("Hauflo presence: lights not switched off on unload", exc_info=True)
+    if (hb := entry.runtime_data.habits) is not None:
+        entry.runtime_data.habits = None
+        await hb.async_stop()
     await entry.runtime_data.stop()
     # Guest access stops with the entry: its unsaved log written, no grant served by an unloaded agent.
     if (guests := entry.runtime_data.guest) is not None:
@@ -2408,6 +2845,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> b
     voice.async_unload(hass)
     sidebar.async_unload(hass)
     theme.async_unload(hass)
+    if ins := entry.runtime_data.insights:
+        entry.runtime_data.insights = None
+        ins.async_stop()
+        await ins.store.async_save(ins.data())  # the norms as they are now (a delayed save would be lost)
     if engine := entry.runtime_data.engine:
         entry.runtime_data.engine = None
         engine.async_stop()
@@ -2434,8 +2875,17 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         await HaufloStore(hass, season.STORE_KEY).async_remove()
     with contextlib.suppress(Exception):
         await HaufloStore(hass, rules.STORE_KEY).async_remove()
+    with contextlib.suppress(Exception):
+        await HaufloStore(hass, insight.STORE_KEY).async_remove()  # the learned norms: the agent's, gone with it
+    with contextlib.suppress(Exception):
+        await HaufloStore(hass, habits_mod.STORE_KEY).async_remove()  # the house's habits: gone with the agent
     # The guest log names the house's people and when guests came (personal data, HA core review 29.10): it goes with
     # the agent, and so do the links — nobody serves them any more. The dashboards stay (deliberate, keep.py).
+    try:
+        await HaufloStore(hass, protect.STORE_KEY).async_remove()  # removing the integration is HA's admin's say
+    except Exception:  # noqa: BLE001
+        _LOGGER.exception("Hauflo: protected covers not removed")
+    hass.data.pop(protect.DATA, None)
     try:
         await HaufloStore(hass, guest.STORE_KEY).async_remove()
     except Exception:  # noqa: BLE001
@@ -2453,11 +2903,15 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         _LOGGER.exception("Hauflo: sidebar panels not restored")
     with contextlib.suppress(Exception):
         session = async_get_clientsession(hass)
-        await session.post(
-            f"{entry.data[CONF_SERVER]}/api/agent/unpair",
-            headers={"Authorization": f"Bearer {entry.data[CONF_SECRET]}"},
-            json={},
-            timeout=aiohttp.ClientTimeout(total=10),
-        )
+
+        async def unpair(host: str) -> None:
+            await session.post(
+                f"{host}/api/agent/unpair",
+                headers={"Authorization": f"Bearer {entry.data[CONF_SECRET]}"},
+                json={},
+                timeout=aiohttp.ClientTimeout(total=UNPAIR_TIMEOUT, sock_connect=CONNECT_TIMEOUT),
+            )
+
+        await servers.first_answer(servers.same_region(entry.data[CONF_SERVER]), unpair)
     if (uid := entry.data.get(CONF_USER_ID)) and (user := await hass.auth.async_get_user(uid)):
         await hass.auth.async_remove_user(user)

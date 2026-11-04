@@ -8,7 +8,7 @@ import ast, contextlib, glob, ipaddress, json, logging, pathlib, re, sys, types
 HERE = pathlib.Path(__file__).parent
 src = open(HERE.parent / "custom_components/hauflo/__init__.py").read()
 tree = ast.parse(src)
-FUNCS = {"_lovelace_ok", "_area_lights_owned", "_image_ok", "_hauflo_entity", "_own_entity", "_protected", "_platform", "_owned_knx", "_owned_knx_writes", "_knx_writes", "_ga_key"}
+FUNCS = {"_lovelace_ok", "_area_lights_owned", "_image_ok", "_svg_ok", "_hauflo_entity", "_own_entity", "_protected", "_sticky", "_class_protected", "_platform", "_owned_knx", "_owned_knx_writes", "_owned_scene_sends", "_protected_writes", "_shown_protected", "_words", "_named_as", "_wrapped_source", "_knx_store", "_knx_writes", "_ga_key"}
 keep = [n for n in tree.body if (isinstance(n, ast.Assign) and any(getattr(t, "id", "").startswith("_") for t in n.targets)) or (isinstance(n, ast.FunctionDef) and n.name in FUNCS)]
 sys.path.insert(0, str(HERE.parent / "custom_components/hauflo"))
 from tunnel import TUNNEL  # noqa: E402 — plain Python, no HA
@@ -55,7 +55,7 @@ def check(path: str) -> None:
     hass = types.SimpleNamespace(states=types.SimpleNamespace(get=lambda e: None), data={})
     ns["er"] = types.SimpleNamespace(async_get=lambda h: types.SimpleNamespace(async_get=reg.get))
     # A KNX scene's address (its tile's «hold») is one a Hauflo entity sends to.
-    ns["_owned_knx_writes"] = lambda h, o: {ns["_ga_key"](a) for a in sends}
+    ns["_owned_scene_sends"] = lambda h, o: {ns["_ga_key"](a): set(range(0x80, 0xC0)) for a in sends}
     assert ns["_lovelace_ok"](hass, cfg, owned, set()), f"the agent would refuse {path}"
     agent = pathlib.Path(path).stem.rsplit("_", 1)[1]
     newer = {t for t in kinds if t in NEW_IN and _v(agent) < _v(NEW_IN[t])}

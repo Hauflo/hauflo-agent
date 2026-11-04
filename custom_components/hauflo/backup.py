@@ -115,7 +115,7 @@ class BackupView(HomeAssistantView):
 
             persistent_notification.async_create(
                 hass,
-                f"Hauflo изменил настройку без бэкапа — по выбору интегратора ({dt_util.now().strftime('%Y-%m-%d %H:%M')}). / Hauflo changed the setup without a backup, as the integrator chose.",
+                f"Hauflo изменил настройку без резервной копии — по выбору интегратора ({dt_util.now().strftime('%Y-%m-%d %H:%M')}). / Hauflo changed the setup without a backup, as the integrator chose.",
                 "Hauflo",
                 NO_BACKUP_NOTE,
             )

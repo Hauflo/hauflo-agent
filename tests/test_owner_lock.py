@@ -250,7 +250,7 @@ async def test_the_dialog(hass: HomeAssistant, entry) -> None:
     await entry.runtime_data._on_frame({"t": "service", "info": {"company": "Сервис-Дом", "contact": {"phone": "+7 900 000-00-02"}, "history": [{"kind": "owner", "at": "2026-10-29T10:00:00Z", "from": "Volkov KNX", "to": "Сервис-Дом"}]}})
     shown = (await hass.config_entries.options.async_init(entry.entry_id))["description_placeholders"]
     assert shown["service"] == "«Сервис-Дом» — phone +7 900 000-00-02"
-    assert "29.10.2026 — the home moved from «Volkov KNX» to «Сервис-Дом» (approved by the owner in Home Assistant)" in shown["history"]
+    assert "29.10.2026 — the site moved from «Volkov KNX» to «Сервис-Дом» (approved by the owner in Home Assistant)" in shown["history"]
     # Commas and new lines both separate the addresses.
     flow = await hass.config_entries.options.async_configure(flow["flow_id"], {CONF_ALLOW_CHANGES: True, CONF_RANGES: "1/1\n2/2/5-9, 3/3/1\n\nx"})
     assert entry.options == {CONF_RANGES: ["1/1", "2/2/5-9", "3/3/1"], CONF_ALLOW_CHANGES: True}

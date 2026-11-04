@@ -131,9 +131,14 @@ async def test_plan_save_lock_backup_and_failures():
     await run(agent, {"type": dashmerge.SAVE, "url_path": "hauflo-x", "config": {}, "take": ["a", 5, "x" * 300], "restore": True, "replace": True, "title": "T" * 100, "lang": "ru-RU-extra"})
     take, restore, replace, title, lang = (agent.dashboards.calls[-1][i] for i in (2, 3, 4, 5, 7))
     assert sent[-1]["result"] == {"saved": True} and take == ["a"] and restore is True and replace is True and len(title) == 60 and lang == "ru-RU"
-    await run(agent, {"type": "lovelace/config/save", "url_path": "hauflo-x", "config": {}, "take": ["a"]})
+    # «Заменить на Hauflo»: only the ids he ticked (strings, bounded) — never «all» (a guarded card is never pre-ticked)
+    await run(agent, {"type": dashmerge.SAVE, "url_path": "hauflo-x", "config": {}, "stock": ["s1", 3, "x" * 100]})
+    assert agent.dashboards.calls[-1][8] == ["s1"]
+    await run(agent, {"type": dashmerge.SAVE, "url_path": "hauflo-x", "config": {}, "stock": True})
+    assert agent.dashboards.calls[-1][8] == []
+    await run(agent, {"type": "lovelace/config/save", "url_path": "hauflo-x", "config": {}, "take": ["a"], "stock": ["s1"]})
     args = agent.dashboards.calls[-1]
-    assert args[2] == [] and args[3] == [] and args[4] is False and sent[-1]["result"] is None
+    assert args[2] == [] and args[3] == [] and args[4] is False and args[8] == [] and sent[-1]["result"] is None
     agent.dashboards._managed = False
     await run(agent, {"type": "lovelace/config/save", "url_path": "hauflo-x", "config": {}})
     assert agent.dashboards.calls[-1][4] is True  # none yet: Hauflo's config replaces it (the old one kept as a copy)

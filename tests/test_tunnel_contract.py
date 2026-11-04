@@ -48,6 +48,8 @@ def test_every_ws_command_the_backend_sends(hass, c):
     if c["call"] in TUNNEL["ws"]["agent_commands"]:
         return  # answered by the agent itself (dashmerge.handle), before the allowlist
     msg = {"id": 1, "type": c["call"], **c["params"]}
+    if (c["params"].get("domain"), c["params"].get("service")) == ("frontend", "set_theme"):
+        msg["service_data"] = {"name": "Hauflo Atelier", "name_dark": "Hauflo Atelier"}  # what the deploy sets (test_theme)
     if c["call"] == "call_service" or c["call"] in ("config_entries/get", "manifest/get"):
         assert m._ws_allowed(msg, hass), c
     else:

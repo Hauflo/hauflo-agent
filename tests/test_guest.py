@@ -244,10 +244,21 @@ async def test_brute_force_and_rate_limits(hass: HomeAssistant, entry, person, c
     # Too many wrong tokens: every wrong one waits now — the real link still works.
     assert await engine.handle(_req(f"{gid}.{'Z' * 32}")) == (429, {"code": "slow_down"})
     assert (await engine.handle(_req(token)))[0] == 200
-    # Per link: at most RATE_ACT actions a minute.
+    # Per device (security review 04.11): one phone gets its share, then 429 — and the link still serves another.
+    assert G.RATE_ACT_DEVICE < G.RATE_ACT and G.RATE_STATE_DEVICE < G.RATE_STATE
     codes = [(await engine.handle(_req(token, "act", entity_id=LAMP, action="off")))[0] for _ in range(G.RATE_ACT + 3)]
-    assert codes.count(200) == G.RATE_ACT and codes[-1] == 429
+    assert codes.count(200) == G.RATE_ACT_DEVICE and codes[-1] == 429
+    other = "o" * 20
+    assert (await engine.handle(_req(token, "act", device=other, entity_id=LAMP, action="off")))[0] == 200
+    # Per link: at most RATE_ACT actions a minute, whichever devices.
+    codes = [(await engine.handle(_req(token, "act", device=d, entity_id=LAMP, action="off")))[0] for d in [other, "p" * 20] * G.RATE_ACT]
+    assert codes.count(200) == G.RATE_ACT - G.RATE_ACT_DEVICE - 1 and codes[-1] == 429
     assert len(calls) == G.RATE_ACT
+    # A device over the link's limit is refused without spending its reads.
+    token2, _ = await _issue(engine, person, [entry.living], max_devices=1)
+    for i in range(G.RATE_STATE + 5):
+        assert (await engine.handle(_req(token2, device=f"x{i:019d}")))[0] == (200 if i == 0 else 403)
+    assert (await engine.handle(_req(token2, device=f"x{0:019d}")))[0] == 200
 
 
 async def test_device_limit(hass: HomeAssistant, entry, person) -> None:

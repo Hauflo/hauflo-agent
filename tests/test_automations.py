@@ -21,7 +21,7 @@ LIGHT = "light.living_ceiling"
 LAMP = "light.living_lamp"
 SCENE = "scene.living_evening"
 GARAGE = "cover.garage_door"  # Hauflo's, but it opens the house
-HAND = "light.integrator_hand"  # a KNX light the integrator made by hand
+HAND = "light.integrator_hand"  # a KNX light the integrator made by hand and hid in HA: no rule may touch it
 LOCK = "lock.front"
 PHONE_ALARM = "sensor.pixel_next_alarm"
 URL = "/api/hauflo/automations"
@@ -58,6 +58,8 @@ async def entry(hass: HomeAssistant, tmp_path: Path):
         domain, obj = eid.split(".")
         reg.async_get_or_create(domain, "knx", uid, suggested_object_id=obj)
         hass.states.async_set(eid, "off" if domain != "cover" else "open", {"friendly_name": obj.replace("_", " "), **extra})
+    # Owner 04.11: a light of any integration may be in a rule — one the person sees in HA (this one is hidden).
+    reg.async_update_entity(HAND, hidden_by=er.RegistryEntryHider.INTEGRATION)
     hass.states.async_set(LOCK, "locked", {})
     area = __import__("homeassistant.helpers.area_registry", fromlist=["x"]).async_get(hass).async_create("Гостиная")
     for eid in (LIGHT, LAMP, BLIND):
@@ -98,7 +100,7 @@ async def test_sunset_rule_end_to_end(hass: HomeAssistant, hass_client, hass_rea
     got = await (await client.get(URL)).json()
     t = got["targets"]
     assert [c["entity_id"] for c in t["covers"]] == [BLIND]  # no garage door
-    assert {x["entity_id"] for x in t["lights"]} == {LIGHT, LAMP}  # not the integrator's own
+    assert {x["entity_id"] for x in t["lights"]} == {LIGHT, LAMP}  # not the hidden one
     assert [s["entity_id"] for s in t["scenes"]] == [SCENE]
     assert t["rooms"] == [{"area_id": entry.area, "name": "Гостиная", "lights": 2}]
     assert [a["entity_id"] for a in t["alarms"]] == [PHONE_ALARM]
@@ -156,7 +158,7 @@ async def test_sunset_rule_end_to_end(hass: HomeAssistant, hass_client, hass_rea
 @pytest.mark.parametrize(
     "rule",
     [
-        {**SUNSET, "actions": [{"entity_id": HAND, "do": "on"}]},  # the integrator's own light
+        {**SUNSET, "actions": [{"entity_id": HAND, "do": "on"}]},  # hidden in HA
         {**SUNSET, "actions": [{"entity_id": GARAGE, "do": "open"}]},  # opens the house
         {**SUNSET, "actions": [{"entity_id": LOCK, "do": "on"}]},
         {**SUNSET, "actions": [{"entity_id": "light.nowhere", "do": "on"}]},
@@ -466,10 +468,11 @@ async def test_set_action_rooms_all_and_devices(hass: HomeAssistant, hass_client
     mine = [a for a in _file(hass) if a.get("id") == rid][0]
     assert mine["actions"] == [
         {"action": "light.turn_on", "target": {"area_id": [entry.area]}, "data": {"brightness_pct": 60}},
-        {"action": "cover.set_cover_position", "target": {"area_id": [entry.area]}, "data": {"position": 40}},
+        # Blinds by name, never the room: a garage door put in the room later would follow it.
+        {"action": "cover.set_cover_position", "target": {"entity_id": [BLIND]}, "data": {"position": 40}},
         {"action": "scene.turn_on", "target": {"entity_id": [SCENE]}},
     ]
-    # The integrator's light in the room: the room becomes its Hauflo lights by name, never HAND.
+    # A hidden light in the room: the room becomes its other lights by name, never HAND.
     er.async_get(hass).async_update_entity(HAND, area_id=entry.area)
     picked = {"when": {"event": "time", "at": "07:00"}, "actions": [{"do": "set", "domain": "light", "cmd": "off", "rooms": [entry.area], "entities": [LIGHT]}]}
     r = await (await client.post(URL, json={"op": "save", "rule": picked})).json()

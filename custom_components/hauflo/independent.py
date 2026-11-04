@@ -156,6 +156,6 @@ def summary(result: dict[str, Any], ru: bool) -> str:
     if not added and not already and not result.get("error"):
         lines.append("Правил аварий нет — автоматизации не нужны." if ru else "No alarm rules — no automations needed.")
     if added:
-        lines.append("Пока агент установлен, тревога придёт дважды (от Hauflo и от автоматизации) — отключите одно из двух." if ru
+        lines.append("Пока агент установлен, авария придёт дважды (от Hauflo и от автоматизации) — отключите одно из двух." if ru
                      else "While the agent is installed an alarm comes twice (Hauflo and the automation) — turn one of them off.")
     return "\n".join(lines)

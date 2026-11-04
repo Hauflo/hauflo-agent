@@ -302,6 +302,12 @@
   {
    "file": "ha/deploy.ts",
    "kind": "rest",
+   "call": "POST /api/hauflo/protect",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "rest",
    "call": "POST /api/hauflo/ranges",
    "params": {}
   },

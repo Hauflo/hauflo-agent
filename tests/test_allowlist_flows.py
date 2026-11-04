@@ -91,14 +91,25 @@ def test_lovelace_services(hass, world):
     # a whole room off is allowed only when every light in it is Hauflo's
     assert run(perform_action="light.turn_off", target={"area_id": "nowhere"})  # an empty room: nothing there that is not Hauflo's
     er.async_get(hass).async_get_or_create("light", "knx", "u-room", suggested_object_id="inroom")
-    # knx.send: only the store byte on an address Hauflo's own entity writes to
+    # knx.send: only a scene's «store» byte (0x80 | number−1) on the scene address of a KNX scene Hauflo made (red-team 2, A2)
+    store = hass.data["knx"].config_store.data["entities"]
+    store["scene"] = {"u-sc": {"knx": {"ga_scene": {"write": "5/5/5"}, "scene_number": 2}}, "u-sc2": {"knx": {"ga_scene": {"write": "5/5/6"}}}, "u-alien": {"knx": {"ga_scene": {"write": "5/5/7"}, "scene_number": 1}}}
+    world.owned |= {"u-sc", "u-sc2"}
     send = lambda data, **kw: run(perform_action="knx.send", data=data, **kw)  # noqa: E731
-    assert send({"address": "1/1/1", "payload": [129]})
+    assert send({"address": "5/5/5", "payload": [129]})
+    assert not send({"address": "5/5/5", "payload": [128]}) and not send({"address": "5/5/5", "payload": [1]})  # recall / another scene's store
+    assert not send({"address": "5/5/5", "payload": [129, 129]})
+    assert send({"address": "5/5/6", "payload": [0x80 + 40]}) and not send({"address": "5/5/6", "payload": [0x7F]})  # no number: any store
+    assert not send({"address": "5/5/7", "payload": [128]})  # not Hauflo's scene
+    assert not send({"address": "1/1/1", "payload": [129]})  # Hauflo's own light: never by a raw telegram
     assert not send({"address": "7/7/1", "payload": [129]})  # the integrator's gate relay
-    assert not send({"address": "1/1/1", "payload": [300]}) and not send({"address": "1/1/1", "payload": [True]}) and not send({"address": "1/1/1", "payload": "x"})
-    assert not send({"address": "1/1/1", "payload": [1], "type": "string"})
-    assert not run(perform_action="knx.send", target={"entity_id": "light.mine"}, data={"address": "1/1/1", "payload": [1]})
+    assert not send({"address": "5/5/5", "payload": [300]}) and not send({"address": "5/5/5", "payload": [True]}) and not send({"address": "5/5/5", "payload": "x"})
+    assert not send({"address": "5/5/5", "payload": [129], "type": "string"})
+    assert not run(perform_action="knx.send", target={"entity_id": "light.mine"}, data={"address": "5/5/5", "payload": [129]})
     assert not run(perform_action="knx.send")
+    # an address that opens something protected (protect.py marks) is never a dashboard's, even a scene's
+    hass.data[m._PROTECT_DATA] = NS(uids=set(), gas={m._ga_key("5/5/5")})
+    assert not send({"address": "5/5/5", "payload": [129]}) and send({"address": "5/5/6", "payload": [128]})
 
 
 async def test_area_lights(hass, world):
@@ -352,7 +363,7 @@ def test_ws_locked_and_changes():
 
 
 def test_scrubbers(hass, world):
-    assert m._scrub_cloud(5) == 5
+    assert m._scrub_cloud(5) == {}  # fail closed
     assert m._scrub_cloud({"logged_in": True, "cloud": "connected", "prefs": {"alexa_enabled": 1, "google_pin": "1234", "cloudhooks": {}}}) == {"logged_in": True, "cloud": "connected", "prefs": {"alexa_enabled": 1}}
     assert m._scrub_cloud({"prefs": "x"})["prefs"] == {}
     # diagnostics keep only a bridge's filter and Alice's label
@@ -361,7 +372,7 @@ def test_scrubbers(hass, world):
     assert json.loads(m._scrub_diagnostics(json.dumps({"data": {"config-entry": {"options": "x"}, "entry": "y"}}))) == {"data": {"config-entry": {"options": {"filter": {}}}}}
     assert json.loads(m._scrub_diagnostics("[]")) == {"data": {}}
     # the bus monitor shows which addresses answered, never values
-    assert m._scrub_monitor(3) == 3
+    assert m._scrub_monitor(3) == {}  # fail closed
     assert m._scrub_monitor({"project_loaded": True, "recent_telegrams": [{"destination": "1/1/1", "payload": [1], "timestamp": "t"}, "x"]}) == {"project_loaded": True, "recent_telegrams": [{"destination": "1/1/1", "direction": None, "telegramtype": None, "timestamp": "t"}]}
     assert m._scrub_monitor({"recent_telegrams": "x"})["recent_telegrams"] == []
     # devices: phones lose their names
@@ -370,7 +381,7 @@ def test_scrubbers(hass, world):
     devs = [{"name": "Ivan's iPhone", "name_by_user": "x", "model": "m", "config_entries": [ph.entry_id]}, {"name": "Lamp", "config_entries": [world.knx.entry_id]}, "junk"]
     out = m._scrub_devices(devs, hass)
     assert out[0]["name"] is None and out[0]["manufacturer" if "manufacturer" in out[0] else "model"] is None and out[1]["name"] == "Lamp"
-    assert m._scrub_devices("x", hass) == "x"
+    assert m._scrub_devices("x", hass) == []  # fail closed
     # entities: phones never leave
     reg = er.async_get(hass)
     reg.async_get_or_create("sensor", "mobile_app", "p1", suggested_object_id="ivans_iphone_battery")
@@ -387,7 +398,7 @@ def test_scrubbers(hass, world):
     c = m._scrub_config({"latitude": 1, "version": "x", "external_url": "https://u:p@home.example:8123/a?q#f"})
     assert c == {"version": "x", "external_url": "https://home.example:8123/a"}
     assert "external_url" not in m._scrub_config({"external_url": "javascript:1"}) and "external_url" not in m._scrub_config({"external_url": 5})
-    assert m._scrub_config(5) == 5
+    assert m._scrub_config(5) == {}  # fail closed
     # states: a phone-platform sensor and presence classes
     reg.async_get_or_create("sensor", "sun", "s1", suggested_object_id="next_dawn")
     st = [{"entity_id": "sensor.next_dawn", "state": "t", "attributes": {"friendly_name": "d", "x": 1}}, "junk", {"entity_id": "binary_sensor.m", "state": "on", "attributes": {"device_class": "motion"}}]
@@ -398,7 +409,7 @@ def test_scrubbers(hass, world):
     out = m._scrub_states(st, hass, boom)
     assert out[0]["state"] == "hidden" and out[0]["attributes"] == {"friendly_name": "d"}
     assert out[2]["state"] == "hidden"
-    assert m._scrub_states("x") == "x"
+    assert m._scrub_states("x") == []  # fail closed
 
 
 def test_scrub_notes_and_alice(hass, world, monkeypatch):

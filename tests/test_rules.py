@@ -662,6 +662,83 @@ async def test_tunnel_reaches_it_and_the_owner_lock_refuses_writes() -> None:
     assert hauflo._http_locked("POST", "/api/hauflo/sidebar", '{"op": "preview"}') is True
 
 
+async def _tunnel(hass: HomeAssistant, hass_client):
+    """A client signed in as the agent's own system user — what the cloud reaches HA as."""
+    user = await hass.auth.async_create_system_user("Hauflo agent", group_ids=["system-admin"])
+    token = await hass.auth.async_create_refresh_token(user)
+    return await hass_client(hass.auth.async_create_access_token(token))
+
+
+async def test_tunnel_reads_only_what_get_states_shows(hass: HomeAssistant, hass_client, entry, calls) -> None:
+    """Security review 04.11 (MEDIUM-1): a rule's preview / save / log was a side door around get_states' scrub — a
+    phone's sensor, a motion sensor, a tracker's coordinates, a week of history. Through the tunnel it reads what
+    get_states shows; HA's own users keep everything."""
+    from homeassistant.helpers import label_registry as lr
+
+    from custom_components.hauflo.const import MONITOR_LABEL
+
+    reg = er.async_get(hass)
+    phone = reg.async_get_or_create("sensor", "mobile_app", "p-bat", suggested_object_id="pixel_battery").entity_id
+    motion = reg.async_get_or_create("binary_sensor", "zha", "m-hall", suggested_object_id="hall_motion").entity_id
+    hass.states.async_set(phone, "80", {"unit_of_measurement": "%", "state_class": "measurement"})
+    hass.states.async_set(motion, "on", {"device_class": "motion"})
+    hass.states.async_set("device_tracker.phone", "home", {"latitude": 55.7, "longitude": 37.6})
+    hass.states.async_set("sensor.where", "1", {"latitude": 55.7})
+    hass.states.async_set("weather.home", "sunny", {"temperature": -4, "temperature_unit": "°C"})
+    cloud, admin = await _tunnel(hass, hass_client), await hass_client()
+    light = {"id": "m", "name": "Свет по движению", "purpose": "light", "input": {"entity_id": motion}, "when": "on", "actions": [{"do": "on", "entity_id": HALL}]}
+    refused = [
+        light,
+        heater(input={"entity_id": phone}),
+        heater(input={"entity_id": "sensor.where", "attribute": "latitude"}),
+        heater(only_if=[{"type": "value", "entity_id": "device_tracker.phone", "attribute": "latitude", "when": "above", "x": 1}]),
+        heater(only_if=[{"type": "state", "entity_id": motion}]),
+        heater(input={"entity_id": "weather.home", "attribute": "wind_bearing"}),
+        heater(input={"entity_id": phone}, when="above", window={"stat": "mean", "period": "day", "n": 1}),
+        heater(input={"entity_id": motion}, when="above", x=1, y=0, window={"stat": "sum", "period": "day", "n": 1}),
+        {**light, "id": "i", "purpose": "heater", "input": {"entity_id": OUT}, "when": "below", "x": 5, "interlock": motion, "actions": [{"do": "on", "entity_id": HEATER}]},
+    ]
+    with patch.object(rules_mod.win, "values", side_effect=AssertionError("history read")):
+        for rule in refused:
+            got = await _post(cloud, {"op": "preview", "rule": rule})
+            assert got["ok"] is False and got["key"] == "rules_private_input" and "value" not in got, rule
+            assert (await _post(cloud, {"op": "save", "rule": rule}, 403))["key"] == "rules_private_input"
+    assert (await _post(cloud, {"op": "derived_save", "derived": {"id": "d", "name": "Телефон", "kind": "max", "sources": [phone, "sensor.room_t"]}}, 403))["key"] == "rules_private_input"
+    assert not _engine(entry).rules and not _engine(entry).derived_cfg
+    # The street's weather temperature and the house's own sensors are fine.
+    assert (await _post(cloud, {"op": "preview", "rule": heater(input={"entity_id": "weather.home"})}))["ok"] is True
+    # «Дома / никого» reads where the family is (red-team 2, A3): never through the tunnel — its on / off would tell it.
+    away = heater(id="away", name="Away", only_if=[{"type": "presence", "home": False}])
+    got = await _post(cloud, {"op": "preview", "rule": away})
+    assert got["ok"] is False and got["key"] == "rules_private_input"
+    assert (await _post(cloud, {"op": "save", "rule": away}, 403))["key"] == "rules_private_input"
+    assert "away" not in _engine(entry).rules
+    # Made in the house by HA's admin, it works — and the tunnel sees it hidden.
+    await _post(admin, {"op": "save", "rule": away})
+    seen = {r["id"]: r for r in (await (await cloud.get(URL)).json())["rules"]}
+    assert seen["away"]["state"] == "hidden" and seen["away"]["value"] is None
+    await _post(admin, {"op": "delete", "id": "away"})
+    # HA's own admin (the card in the house) keeps every input; the rule he made is hidden from the tunnel's answers.
+    assert (await _post(admin, {"op": "preview", "rule": light}))["ok"] is True
+    await _post(admin, {"op": "save", "rule": light})
+    await _post(admin, {"op": "save", "rule": heater(for_min=0)})
+    seen = {r["id"]: r for r in (await (await cloud.get(URL)).json())["rules"]}
+    assert seen["m"]["state"] == "hidden" and seen["m"]["value"] is None and seen["m"]["why"] is None and seen["m"]["since"] is None
+    assert seen["heater"]["state"] != "hidden" and seen["heater"]["value"] == 8.0
+    log = (await (await cloud.get(f"{URL}?log=m")).json())["log"]
+    assert log and all(set(i) == {"at", "event"} and i["event"] == "hidden" for i in log)
+    assert (await (await admin.get(URL)).json())["rules"][0]["state"] != "hidden"
+    active = _engine(entry).binaries["m"].entity_id
+    states = [{"entity_id": active, "state": "on", "attributes": {}}, {"entity_id": ACTIVE, "state": "off", "attributes": {}}]
+    hauflo._scrub_states(states, hass, entry.runtime_data._state_visible, entry.runtime_data._rules_hidden())
+    assert [s["state"] for s in states] == ["hidden", "off"]
+    # Marked «Hauflo мониторинг» in HA by its admin: the motion sensor is readable as get_states shows it.
+    label = lr.async_get(hass).async_create(MONITOR_LABEL)
+    reg.async_update_entity(motion, labels={label.label_id})
+    assert (await _post(cloud, {"op": "preview", "rule": light}))["ok"] is True
+    assert (await (await cloud.get(URL)).json())["rules"][0]["state"] != "hidden"
+
+
 async def test_rules_keep_running_while_the_house_is_locked(hass: HomeAssistant, hass_client, entry, calls, clock) -> None:
     await _post(await hass_client(), {"op": "save", "rule": heater(for_min=0)})
     hass.config_entries.async_update_entry(entry, options={**entry.options, "allow_changes": False})

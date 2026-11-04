@@ -98,6 +98,10 @@ CLIENT_ACTS = {"on", "off", "brightness", "position", "scene", "notify"}
 CLIENT_ACT_DOMAINS = {"light", "cover", "scene"}
 VALUED = {"speed", "setpoint", "mode", "position", "brightness"}  # their reverse is the value before
 POWERING = ("on", "speed", "brightness", "mode")  # what may switch a heater on (the interlock's)
+# A rule ending without its input saying so (edited, deleted, switched off): its own actions are undone (no orphan heater
+# left on) — but never a «season» one: the house's «Зима / Лето» is a mode the house is in, not something the rule holds
+# on; undoing it would switch a heating house to cooling because the integrator edited a threshold.
+UNDO_WHYS = ("changed", "deleted", "switched_off")
 PRIORITY = {"comfort": 0, "safety": 1}
 
 
@@ -533,6 +537,19 @@ def _blank() -> dict[str, Any]:
     return {"active": False, "pend": None, "hold_until": None, "hold_why": None, "paused": False, "fault": None, "restore": {}, "holds": [], "since": None, "log": [], "sug": None, "confirmed": None, "auto_at": {}, "no_data": False, "held": []}
 
 
+# What a rule's answer says about what it read: hidden from the tunnel when the rule reads what get_states hides.
+_LIVE = ("state", "active", "value", "why", "why_en", "since", "hold_until", "values", "starts", "periods", "suggestion")
+
+
+def _redact(out: dict[str, Any]) -> dict[str, Any]:
+    out = {**out, **{k: None for k in _LIVE if k in out}, "hidden": True}
+    if "state" in out:
+        out["state"] = "hidden"
+    if "log" in out:
+        out["log"] = [{"at": i.get("at"), "event": "hidden"} for i in out["log"]]
+    return out
+
+
 class Rules:
     """Every value rule and derived value of the house (one per loaded entry)."""
 
@@ -558,6 +575,8 @@ class Rules:
         self.ask = ask
         # A recipe's own push wording (the season's «Пора на зиму?»): recipe → (rule, on, ru) → (title, message, tag).
         self.ask_text: dict[str, Callable[[dict[str, Any], bool, bool], tuple[str, str, str]]] = {}
+        # What the tunnel (the cloud's system user) may read through a rule — set by the agent; fail closed.
+        self.cloud_reads: Callable[[str, str | None], bool] = lambda eid, attr: False
         self.win: dict[str, dict[str, Any]] = {}  # rule → its last periods' values (window.py), read when one closes
         self._win_timers: dict[str, CALLBACK_TYPE] = {}
         self._sug_sent: dict[str, list[float]] = {}  # rule → its suggestions' push times (the daily cap)
@@ -648,6 +667,44 @@ class Rules:
 
     def _env(self, client: bool) -> Env:
         return Env(self.hass, self.owns, self.own_raw, client)
+
+    def reads(self, rule: dict[str, Any]) -> set[tuple[str, str | None]]:
+        """(entity, attribute) a rule's decision reads, derived values unfolded to their sources."""
+        out = {(rule["input"]["entity_id"], rule["input"].get("attribute"))}
+        for c in rule["only_if"]:
+            if "entity_id" in c:
+                out.add((c["entity_id"], c.get("attribute") or ("hvac_action" if c["type"] == "heating" else dv.default_attribute(c["entity_id"]))))
+        if rule.get("interlock"):
+            out.add((rule["interlock"], None))
+        for eid, _ in list(out):
+            for src in self.derived_sources(eid):
+                e, a = dv.split_source(src)
+                out.add((e, a or dv.default_attribute(e)))
+        return out
+
+    def cloud_hidden(self, rule: dict[str, Any]) -> str | None:
+        """The first thing a rule reads that the tunnel may not (or None). «Дома / никого» reads where the family is — a
+        person's state, never the tunnel's (red-team 2, A3): such a rule is saved in HA only, and the tunnel sees it
+        redacted like any rule over a private input."""
+        if any(c["type"] == "presence" for c in rule["only_if"]):
+            return next(iter(sorted(self.hass.states.async_entity_ids("person"))), "person")
+        return next((eid for eid, attr in sorted(self.reads(rule), key=str) if not self.cloud_reads(eid, attr)), None)
+
+    def cloud_hidden_entities(self) -> set[str]:
+        """The rule / derived entities whose state would tell the tunnel what it may not read (scrubbed like private)."""
+        out: set[str] = set()
+        for rid, rule in self.rules.items():
+            if self.cloud_hidden(rule) is not None and (b := self.binaries.get(rid)) is not None and b.entity_id:
+                out.add(b.entity_id)
+        for did, cfg in self.derived_cfg.items():
+            if any(not self.cloud_reads(e, a or dv.default_attribute(e)) for e, a in map(dv.split_source, cfg["sources"])):
+                ent = self.sensors.get(did)
+                out.add(ent.entity_id if ent is not None and ent.entity_id else derived_entity_id(cfg))
+        return out
+
+    def _cloud_check(self, rule: dict[str, Any]) -> None:
+        if (eid := self.cloud_hidden(rule)) is not None:
+            raise Invalid("not_allowed", "rules_private_input", entity=eid)
 
     def derived_sources(self, eid: str) -> list[str]:
         for did, d in self.derived_cfg.items():
@@ -1210,6 +1267,8 @@ class Rules:
             for a in acts:
                 if a["do"] in VALUED and a["entity_id"] not in st["restore"]:
                     st["restore"][a["entity_id"]] = {"do": a["do"], "value": self.current(a["entity_id"], a["do"])}
+        if back and why in UNDO_WHYS:
+            acts = [a for a in acts if a["do"] != "season"]
         for a in acts:
             if not back and self._interlock_off(rule) and a["do"] in POWERING:
                 await self._interlocked(rule, a)
@@ -1360,11 +1419,12 @@ class Rules:
             self._log(rid, "already", entity_id=SEASON_TARGET, do="season", value=a["value"])
             return True
         try:
-            await self.season_set(a["value"], why)
+            # season.py may take it later (its automatic switch: once a day, in the morning) — then it says so.
+            done = await self.season_set(a["value"], why)
         except Exception as err:  # noqa: BLE001
             self._log(rid, "error", entity_id=SEASON_TARGET, do="season", value=a["value"], why=why, result=str(err)[: int(C("engine", "error_len"))])
             return False
-        self._log(rid, "write", entity_id=SEASON_TARGET, do="season", value=a["value"], why=why, result="ok")
+        self._log(rid, "write", entity_id=SEASON_TARGET, do="season", value=a["value"], why=why, result=done if isinstance(done, str) else "ok")
         return True
 
     async def _rate_hold(self, rule: dict[str, Any], eid: str, until: float) -> None:
@@ -1715,7 +1775,7 @@ class Rules:
             suffix = f" ({k})"
             rule["name"] = base[: C("limits", "name_len") - len(suffix)] + suffix
 
-    def rule_out(self, rid: str, full: bool) -> dict[str, Any]:
+    def rule_out(self, rid: str, full: bool, tunnel: bool = False) -> dict[str, Any]:
         rule, st = self.rules[rid], self.st(rid)
         b, s = self.binaries.get(rid), self.switches.get(rid)
         out: dict[str, Any] = {
@@ -1751,6 +1811,8 @@ class Rules:
         if full:
             out["rule"] = rule
             out["log"] = st["log"][-int(C("engine", "log_out")) :]
+        if tunnel and self.cloud_hidden(rule) is not None:
+            out = _redact(out)
         return out
 
     def recipes(self) -> list[dict[str, Any]]:
@@ -1760,15 +1822,17 @@ class Rules:
         """Recipes another part of Hauflo already makes (the silent sensor: the rule hints) — shown, not duplicated."""
         return [{**r, "title": self.say(f"rules_recipe_{r['id']}", True), "title_en": self.say(f"rules_recipe_{r['id']}", False), "text": self.say(f"rules_link_{r['id']}", True), "text_en": self.say(f"rules_link_{r['id']}", False)} for r in C("links")]
 
-    def answer(self, admin: bool) -> dict[str, Any]:
+    def answer(self, admin: bool, tunnel: bool = False) -> dict[str, Any]:
         visible = [rid for rid, r in self.rules.items() if admin or r["client"].get("visible", True)]
         derived = []
         if admin:
+            hidden = self.cloud_hidden_entities() if tunnel else set()
             for did, cfg in self.derived_cfg.items():
                 d, s = self.derived.get(did), self.sensors.get(did)
-                derived.append({**cfg, "entity_id": s.entity_id if s else derived_entity_id(cfg), "value": d.value if d else None, "unit": d.unit if d else None, "why": d.why if d else None})
+                item = {**cfg, "entity_id": s.entity_id if s else derived_entity_id(cfg), "value": d.value if d else None, "unit": d.unit if d else None, "why": d.why if d else None}
+                derived.append({**item, "value": None, "why": None} if item["entity_id"] in hidden else item)
         return {
-            "rules": [self.rule_out(rid, admin or self.rules[rid].get("owner") == "client") for rid in visible],
+            "rules": [self.rule_out(rid, admin or self.rules[rid].get("owner") == "client", tunnel) for rid in visible],
             "derived": derived,
             "quiet": self.quiet_out(),
             "outdoor": dv.outdoor(self.hass, self.owns),
@@ -1782,10 +1846,13 @@ class Rules:
             },
         }
 
-    def log_of(self, rid: str) -> list[dict[str, Any]]:
-        return list(self.st(rid)["log"]) if rid in self.rules else []
+    def log_of(self, rid: str, tunnel: bool = False) -> list[dict[str, Any]]:
+        if rid not in self.rules:
+            return []
+        log = list(self.st(rid)["log"])
+        return _redact({"log": log})["log"] if tunnel and self.cloud_hidden(self.rules[rid]) is not None else log
 
-    async def save(self, raw: Any, *, client: bool, user_id: str | None) -> dict[str, Any]:
+    async def save(self, raw: Any, *, client: bool, user_id: str | None, tunnel: bool = False) -> dict[str, Any]:
         if not isinstance(raw, dict):
             raise Invalid("bad", "rules_bad_object")
         if client and raw.get("id") in self.rules and self.rules[raw["id"]].get("owner") != "client":
@@ -1793,9 +1860,14 @@ class Rules:
         if user_id and "user_id" not in raw:
             raw = {**raw, "user_id": user_id}
         rule = clean_rule(raw, self._env(client))
+        if tunnel:
+            self._cloud_check(rule)
         check_house(rule, [r for k, r in self.rules.items() if k != rule["id"]], self.derived_sources)
         self.unique_name(rule)
         old = self.rules.get(rule["id"])
+        if old is not None and {k: v for k, v in old.items() if k != "outputs"} == {k: v for k, v in rule.items() if k != "outputs"}:
+            # Only what it does on a change (suggest / auto): the rule goes on where it is — no restart, nothing undone.
+            return await self.set_outputs(rule["id"], rule.get("outputs"), tunnel)
         if old is not None and self.st(rule["id"])["active"]:
             # A changed rule starts over from NORMAL, its own actions undone first (no orphan heater left on).
             await self._go(old, False, None, "changed")
@@ -1815,7 +1887,7 @@ class Rules:
         else:
             self._window_schedule(rule["id"])
             await self.evaluate(rule["id"], "saved")
-        return self.rule_out(rule["id"], True)
+        return self.rule_out(rule["id"], True, tunnel)
 
     def _rule(self, rid: Any) -> dict[str, Any]:
         rule = self.rules.get(rid) if isinstance(rid, str) else None
@@ -1842,7 +1914,21 @@ class Rules:
         self.sync_entities()
         self._listen()
 
-    async def set_enabled(self, rid: Any, on: Any) -> dict[str, Any]:
+    async def set_outputs(self, rid: Any, raw: Any, tunnel: bool = False) -> dict[str, Any]:
+        """What the rule does when it changes (its HA entity always; a suggestion; its actions by itself) — the rule keeps
+        its state: switching «auto» on or off neither restarts it nor undoes / redoes anything now."""
+        rule = self._rule(rid)
+        rule["outputs"] = clean_outputs(raw, bool(rule.get("window")))
+        st = self.st(rid)
+        if not rule["outputs"]["suggest"] and st["sug"] is not None:
+            st["sug"] = None
+            self._dismiss(rule)
+        self._log(rid, "outputs", result=",".join(k for k, v in rule["outputs"].items() if v) or "-")
+        await self._save()
+        self._refresh(rid)
+        return self.rule_out(rid, True, tunnel)
+
+    async def set_enabled(self, rid: Any, on: Any, tunnel: bool = False) -> dict[str, Any]:
         rule = self._rule(rid)
         if not isinstance(on, bool):
             raise Invalid("bad", "rules_bad_object")
@@ -1859,9 +1945,9 @@ class Rules:
         await self._save()
         await self.evaluate(rid, "enabled")
         self._refresh(rid)
-        return self.rule_out(rid, True)
+        return self.rule_out(rid, True, tunnel)
 
-    async def tune(self, rid: Any, body: dict[str, Any], *, client: bool) -> dict[str, Any]:
+    async def tune(self, rid: Any, body: dict[str, Any], *, client: bool, tunnel: bool = False) -> dict[str, Any]:
         rule = self._rule(rid)
         keys = ("x",) if rule["when"] in ("below", "above") else ("lo", "hi") if rule["when"] in ("outside", "between") else ()
         if not keys:
@@ -1881,19 +1967,23 @@ class Rules:
         self._log(rid, "tuned", **{k: new[k] for k in keys})
         await self._save()
         await self.evaluate(rid, "tuned")
-        return self.rule_out(rid, not client or rule.get("owner") == "client")
+        return self.rule_out(rid, not client or rule.get("owner") == "client", tunnel)
 
-    async def preview(self, raw: Any, *, client: bool) -> dict[str, Any]:
-        """A dry run: the rule checked as a save would, and what it would do now — nothing written."""
+    async def preview(self, raw: Any, *, client: bool, tunnel: bool = False) -> dict[str, Any]:
+        """A dry run: the rule checked as a save would, and what it would do now — nothing written. Through the tunnel
+        only what get_states would show is read, and «дома / никого» is not asked."""
         try:
             rule = clean_rule(raw, self._env(client))
+            if tunnel:
+                self._cloud_check(rule)
             check_house(rule, [r for k, r in self.rules.items() if k != rule["id"]], self.derived_sources)
         except Invalid as err:
             return {"ok": False, **self.refusal(err)}
+        live = {**rule, "only_if": [c for c in rule["only_if"] if c["type"] != "presence"]} if tunnel else rule
         if rule.get("window"):
-            return await self._preview_window(rule)
+            return await self._preview_window(rule, live)
         v, bad = self.read(rule)
-        ok, _cond = self.conditions(rule)
+        ok, _cond = self.conditions(live)
         if bad:
             now = "fault"
         elif not ok:
@@ -1921,7 +2011,7 @@ class Rules:
             **self.hint(rule["purpose"]),
         }
 
-    async def _preview_window(self, rule: dict[str, Any]) -> dict[str, Any]:
+    async def _preview_window(self, rule: dict[str, Any], live: dict[str, Any]) -> dict[str, Any]:
         """The last periods from the recorder, and whether n in a row are past X now — nothing written."""
         w = rule["window"]
         try:
@@ -1929,7 +2019,7 @@ class Rules:
         except Exception:  # noqa: BLE001
             vals, starts, bad = [], [], "no_statistics"
         last = vals[-w["n"]:]
-        ok, _cond = self.conditions(rule)
+        ok, _cond = self.conditions(live)
         held = in_row(rule, vals, past_on)
         if len(last) < w["n"] or any(v is None for v in last):
             now = "window_no_data"
@@ -1958,8 +2048,12 @@ class Rules:
             **self.hint(rule["purpose"]),
         }
 
-    async def save_derived(self, raw: Any) -> dict[str, Any]:
+    async def save_derived(self, raw: Any, *, tunnel: bool = False) -> dict[str, Any]:
         d = dv.clean(raw, self.hass)
+        for src in d["sources"] if tunnel else ():
+            e, a = dv.split_source(src)
+            if not self.cloud_reads(e, a or dv.default_attribute(e)):
+                raise Invalid("not_allowed", "rules_private_input", entity=e)
         if d["id"] not in self.derived_cfg and len(self.derived_cfg) >= C("derived", "max"):
             raise Invalid("limit", "rules_limit_derived", n=int(C("derived", "max")))
         self.derived_cfg[d["id"]] = d
@@ -2160,12 +2254,13 @@ class RulesView(HomeAssistantView):
             return self.json_message("Hauflo agent not set up", HTTPStatus.SERVICE_UNAVAILABLE)
         user = request["hass_user"]
         admin = bool(user and user.is_admin)
+        tunnel = bool(user and user.system_generated)  # the cloud: reads only what get_states shows
         if (rid := request.query.get("log")) is not None:
             rule = engine.rules.get(rid)
             if rule is None or not (admin or rule["client"].get("visible", True)):
                 return self.json_message("no such rule", HTTPStatus.NOT_FOUND)
-            return self.json({"id": rid, "log": engine.log_of(rid)})
-        return self.json(engine.answer(admin))
+            return self.json({"id": rid, "log": engine.log_of(rid, tunnel)})
+        return self.json(engine.answer(admin, tunnel))
 
     async def post(self, request):
         engine = self.engine_of()
@@ -2186,20 +2281,20 @@ class RulesView(HomeAssistantView):
         if op != "preview" and client and (no := await refuse(request)) is not None:
             return no
         try:
-            return self.json(await self._op(engine, op, body, client, user.id if user else None))
+            return self.json(await self._op(engine, op, body, client, user.id if user else None, bool(user and user.system_generated)))
         except Invalid as err:
             return self.json(engine.refusal(err), HTTPStatus.FORBIDDEN if err.code == "not_allowed" else HTTPStatus.BAD_REQUEST)
 
     @staticmethod
-    async def _op(engine: Rules, op: str, body: dict[str, Any], client: bool, user_id: str | None) -> dict[str, Any]:
+    async def _op(engine: Rules, op: str, body: dict[str, Any], client: bool, user_id: str | None, tunnel: bool = False) -> dict[str, Any]:
         if op == "preview":
-            return await engine.preview(body.get("rule"), client=client)
+            return await engine.preview(body.get("rule"), client=client, tunnel=tunnel)
         if op == "save":
-            return await engine.save(body.get("rule"), client=client, user_id=user_id)
+            return await engine.save(body.get("rule"), client=client, user_id=user_id, tunnel=tunnel)
         if op == "quiet":
             return {"quiet": await engine.set_quiet(body.get("quiet"))}
         if op == "derived_save":
-            return await engine.save_derived(body.get("derived"))
+            return await engine.save_derived(body.get("derived"), tunnel=tunnel)
         if op == "derived_delete":
             await engine.delete_derived(body.get("id"))
             return {"deleted": body.get("id")}
@@ -2212,5 +2307,5 @@ class RulesView(HomeAssistantView):
         if op == "enable":
             if client and rule.get("owner") != "client" and not rule["client"].get("toggle", True):
                 raise Invalid("not_allowed", "rules_toggle_not_allowed")
-            return await engine.set_enabled(rule["id"], body.get("enabled"))
-        return await engine.tune(rule["id"], body, client=client)
+            return await engine.set_enabled(rule["id"], body.get("enabled"), tunnel)
+        return await engine.tune(rule["id"], body, client=client, tunnel=tunnel)

@@ -45,6 +45,10 @@ def load(path: Path = FILE) -> dict[str, Any]:
         if not r.get("methods") or not set(r["methods"]) <= _METHODS:
             raise ValueError(f"tunnel.json http.routes {r['path']}: methods of {sorted(_METHODS)}")
     _pairs("http.locked_ok", http["locked_ok"])
+    for r in http["locked_never_keys"]:
+        if [r.get("path"), r.get("method")] not in http["locked_ok"]:
+            raise ValueError(f"tunnel.json http.locked_never_keys {r!r}: only a locked_ok path")
+        _strings(f"http.locked_never_keys {r['path']}", r.get("keys"))
     for k in ("setup", "options", "owned_only", "delete", "tracked", "diagnostics", "entities_by_entry"):
         _strings(f"flows.{k}", flows[k])
     sax = flows["switch_as_x"]

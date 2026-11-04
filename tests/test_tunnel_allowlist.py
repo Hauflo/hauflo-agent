@@ -3,13 +3,13 @@ Runs without Home Assistant installed: python3 agent/tests/test_tunnel_allowlist
 import ast, contextlib, glob, ipaddress, json, pathlib, re, sys, types
 src = open(pathlib.Path(__file__).parents[1] / "custom_components/hauflo/__init__.py").read()
 tree = ast.parse(src)
-HELPERS = ("_ws_allowed", "_ga_key", "_knx_listens", "_entry_domain", "_flow_handler", "_http_allowed", "_own_entity", "_own_device", "_owned_knx", "_forbidden", "_lan_host", "_flow_input_ok", "_unused_label", "_device_entities_owned", "_protected", "_own_dashboard", "_alice_labels", "_homekit_step_ok", "_hauflo_entity", "_knx_writes", "_foreign_knx_writes", "_knx_config_ok", "_flow_step", "_platform", "_lovelace_ok", "_area_lights_owned", "_image_ok", "_owned_knx_writes", "_label_ok", "_scrub_states", "_scrub_devices", "_scrub_entities", "_phone_ids", "_scrub_monitor", "_scrub_notes", "_ws_changes", "_http_changes", "_owns", "_area_floor_empty", "_foreign_holders", "_scrub_diagnostics", "_overlap_kind", "knx_data", "_knx_store", "_route", "_owned_entry", "_template_entities", "_rule_reads_ok", "_template_step_ok", "_switch_as_x_step_ok")
+HELPERS = ("_ws_allowed", "_ga_key", "_knx_listens", "_entry_domain", "_flow_handler", "_http_allowed", "_own_entity", "_own_device", "_owned_knx", "_forbidden", "_lan_host", "_flow_input_ok", "_unused_label", "_device_entities_owned", "_protected", "_sticky", "_class_protected", "_own_dashboard", "_alice_labels", "_homekit_step_ok", "_hauflo_entity", "_knx_writes", "_foreign_knx_writes", "_knx_config_ok", "_flow_step", "_platform", "_lovelace_ok", "_area_lights_owned", "_image_ok", "_svg_ok", "_owned_knx_writes", "_owned_scene_sends", "_protected_writes", "_shown_protected", "_words", "_named_as", "_wrapped_source", "_label_ok", "_scrub_states", "_scrub_devices", "_scrub_entities", "_phone_ids", "_scrub_monitor", "_scrub_notes", "_ws_changes", "_http_changes", "_owns", "_area_floor_empty", "_foreign_holders", "_scrub_diagnostics", "_overlap_kind", "knx_data", "_knx_store", "_route", "_owned_entry", "_template_entities", "_rule_reads_ok", "_template_step_ok", "_switch_as_x_step_ok", "_theme_ok")
 keep = [n for n in tree.body if (isinstance(n, ast.Assign) and any(getattr(t, "id", "").startswith("_") for t in n.targets)) or (isinstance(n, ast.FunctionDef) and n.name in HELPERS)]
 import logging
 sys.path.insert(0, str(pathlib.Path(__file__).parents[1] / "custom_components/hauflo"))
 from tunnel import TUNNEL  # noqa: E402 — plain Python, no HA
 from tuning import TUNING  # noqa: E402
-ns = {"TUNNEL": TUNNEL, "TUNING": TUNING, "json": json, "re": re, "contextlib": contextlib, "ipaddress": ipaddress, "Any": object, "HomeAssistant": object, "logging": logging, "__name__": "agent", "DOMAIN": "hauflo", "degrade": lambda feature, err: None}
+ns = {"theme": types.SimpleNamespace(names=lambda: {"Hauflo Atelier", "Hauflo Atelier · тёмная"}), "TUNNEL": TUNNEL, "TUNING": TUNING, "json": json, "re": re, "contextlib": contextlib, "ipaddress": ipaddress, "Any": object, "HomeAssistant": object, "logging": logging, "__name__": "agent", "DOMAIN": "hauflo", "degrade": lambda feature, err: None}
 # Compiled as the module is (`from __future__ import annotations`): annotations stay strings, so a name used only in
 # a signature (Callable, ConfigEntry…) needs no stub here — Python 3.13 evaluated them and the whole file failed to load.
 import __future__
@@ -110,7 +110,13 @@ cases = [
  (W({"type": "config/auth/create"}), False),
  (W({"type": "config_entries/flow"}), False),
  (W({"type": "call_service", "domain": "lock", "service": "unlock"}), False),
- (W({"type": "call_service", "domain": "frontend", "service": "set_theme"}), True),
+ # Security review 04.11: the house's default theme only to one of Hauflo's (a theme someone else wrote is theirs).
+ (W({"type": "call_service", "domain": "frontend", "service": "set_theme", "service_data": {"name": "Hauflo Atelier", "name_dark": "Hauflo Atelier · тёмная"}}), True),
+ (W({"type": "call_service", "domain": "frontend", "service": "set_theme"}), False),
+ (W({"type": "call_service", "domain": "frontend", "service": "set_theme", "service_data": {"name": "Evil"}}), False),
+ (W({"type": "call_service", "domain": "frontend", "service": "set_theme", "service_data": {"name_dark": "default"}}), False),
+ (W({"type": "call_service", "domain": "frontend", "service": "set_theme", "service_data": {"name": "Hauflo Atelier", "mode": "dark"}}), False),
+ (W({"type": "call_service", "domain": "frontend", "service": "set_theme", "service_data": {"name": "Hauflo Atelier"}, "target": {"entity_id": "x"}}), False),
  (W({"type": "knx/create_entity"}), True),
  (W({"type": "config/entity_registry/update"}), False),
  (W({"type": "render_template"}), False),
@@ -214,13 +220,13 @@ cases = [
    {"views": [{"cards": [{"type": "custom:hauflo-security", "entity": "alarm_control_panel.home"}]}]},
    {"views": [{"cards": [{"type": "tile", "entity": "lock.front"}]}]},
    {"views": [{"cards": [{"type": "tile", "entity": "scene.hauflo_r1_evening", "hold_action": {"action": "perform-action", "perform_action": "knx.send", "data": {"address": "7/7/7", "payload": [128]}}}]}]},
+   {"views": [{"cards": [{"type": "tile", "entity": "scene.hauflo_r1_evening", "hold_action": {"action": "perform-action", "perform_action": "knx.send", "data": {"address": "1/1/1", "payload": [128]}}}]}]},  # Hauflo's light: a raw telegram is no scene store (red-team 2, A2)
    {"views": [{"cards": [{"type": "button", "tap_action": {"action": "perform-action", "perform_action": "switch.turn_on", "target": {"area_id": "kitchen"}}}]}]},
    {"views": [{"cards": [{"type": "custom:hauflo-room", "path": "/lovelace/0", "lights": []}]}]},
    "views: []",
  )],
  *[(LV(c), True) for c in (
    {"views": [{"cards": [{"type": "tile", "entity": "light.knx_1", "icon_tap_action": {"action": "toggle"}}]}]},
-   {"views": [{"cards": [{"type": "tile", "entity": "scene.hauflo_r1_evening", "hold_action": {"action": "perform-action", "perform_action": "knx.send", "data": {"address": "1/1/1", "payload": [128]}}}]}]},
    {"views": [{"cards": [{"type": "button", "tap_action": {"action": "perform-action", "perform_action": "light.turn_off", "target": {"area_id": "kitchen"}}}]}]},
    {"views": [{"cards": [{"type": "custom:hauflo-alert", "alarms": ["binary_sensor.smoke_z"], "service": {"phone": "+7 900", "name": "ИП"}, "action": {"title": "Перекрыть воду", "service": "switch.turn_off", "entity_id": "light.knx_1"}}]}]},
    {"views": [{"cards": [{"type": "custom:hauflo-hero", "weather": "weather.home", "alarms": ["binary_sensor.smoke_z"]}]}]},
@@ -395,6 +401,21 @@ BLOCKER_REFUSED = {
     "image with css break-out": {"views": [{"cards": [{"type": "custom:hauflo-room", "name": "x", "picture": "/local/a.jpg') url('https://evil.example"}]}]},
     "state_image external": {"views": [{"cards": [{"type": "picture-glance", "image": "/local/a.jpg", "state_image": {"on": "https://evil.example/on.png"}, "entities": []}]}]},
     "data: non-image": {"views": [{"cards": [{"type": "picture-glance", "image": "data:text/html;base64,PHNjcmlwdD4=", "entities": []}]}]},
+    # Security review 04.11: an inline SVG is a document — only shapes; no encoded way out of /local/.
+    "svg with a script (04.11)": {"views": [{"cards": [{"type": "picture-glance", "image": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxzY3JpcHQ+YWxlcnQoMSk8L3NjcmlwdD48L3N2Zz4=", "entities": []}]}]},
+    "svg with a handler (04.11)": {"views": [{"cards": [{"type": "picture-glance", "image": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIG9ubG9hZD0iYWxlcnQoMSkiPjxyZWN0IHdpZHRoPSIxIiBoZWlnaHQ9IjEiLz48L3N2Zz4=", "entities": []}]}]},
+    "svg with an outside picture (04.11)": {"views": [{"cards": [{"type": "picture-glance", "image": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHhtbG5zOnhsaW5rPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5L3hsaW5rIj48aW1hZ2UgeGxpbms6aHJlZj0iaHR0cHM6Ly9ldmlsLmV4YW1wbGUvcC5wbmciLz48L3N2Zz4=", "entities": []}]}]},
+    "svg linking out (04.11)": {"views": [{"cards": [{"type": "picture-glance", "image": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxhIGhyZWY9Imh0dHBzOi8vZXZpbC5leGFtcGxlIj48cmVjdCB3aWR0aD0iMSIgaGVpZ2h0PSIxIi8+PC9hPjwvc3ZnPg==", "entities": []}]}]},
+    "svg use by href (04.11)": {"views": [{"cards": [{"type": "picture-glance", "image": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGhyZWY9Imh0dHBzOi8vZXZpbC5leGFtcGxlL3guc3ZnI2EiLz48L3N2Zz4=", "entities": []}]}]},
+    "svg with a style (04.11)": {"views": [{"cards": [{"type": "picture-glance", "image": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxyZWN0IHN0eWxlPSJmaWxsOnVybChodHRwczovL2V2aWwuZXhhbXBsZS90KSIvPjwvc3ZnPg==", "entities": []}]}]},
+    "svg fill from outside (04.11)": {"views": [{"cards": [{"type": "picture-glance", "image": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxyZWN0IGZpbGw9InVybChodHRwczovL2V2aWwuZXhhbXBsZS90I2cpIi8+PC9zdmc+", "entities": []}]}]},
+    "svg foreignObject (04.11)": {"views": [{"cards": [{"type": "picture-glance", "image": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxmb3JlaWduT2JqZWN0PjxkaXYgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzE5OTkveGh0bWwiPng8L2Rpdj48L2ZvcmVpZ25PYmplY3Q+PC9zdmc+", "entities": []}]}]},
+    "svg entity (04.11)": {"views": [{"cards": [{"type": "picture-glance", "image": "data:image/svg+xml;base64,PCFET0NUWVBFIHN2ZyBbPCFFTlRJVFkgYSAieCI+XT48c3ZnIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHRpdGxlPiZhOzwvdGl0bGU+PC9zdmc+", "entities": []}]}]},
+    "encoded dots (04.11)": {"views": [{"cards": [{"type": "custom:hauflo-room", "name": "x", "picture": "/local/%2e%2e/%2e%2e/api/x"}]}]},
+    "encoded slash (04.11)": {"views": [{"cards": [{"type": "custom:hauflo-room", "name": "x", "picture": "/local/a%2F..%2Fb.jpg"}]}]},
+    "encoded backslash (04.11)": {"views": [{"cards": [{"type": "custom:hauflo-room", "name": "x", "picture": "/local/a%5c..%5cb.jpg"}]}]},
+    "double encoded (04.11)": {"views": [{"cards": [{"type": "custom:hauflo-room", "name": "x", "picture": "/local/%252e%252e/x.jpg"}]}]},
+    "svg not base64 (04.11)": {"views": [{"cards": [{"type": "custom:hauflo-room", "name": "x", "picture": "data:image/svg+xml,<svg onload=alert(1)>"}]}]},
 }
 BLOCKER_ACCEPTED = {
     "own light by entity_id": _btn(_PA("light.turn_off", target={"entity_id": "light.knx_1"})),
@@ -406,6 +427,8 @@ BLOCKER_ACCEPTED = {
     "local picture": {"views": [{"cards": [{"type": "custom:hauflo-room", "name": "x", "picture": "/local/rooms/kukhnia.jpg"}]}]},
     "area picture": {"views": [{"cards": [{"type": "picture-glance", "image": "/api/image/serve/0a1b2c/512x512", "entities": []}]}]},
     "inline svg": {"views": [{"cards": [{"type": "picture-glance", "image": "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=", "entities": []}]}]},
+    "room stand-in picture (roomPicture.ts)": {"views": [{"cards": [{"type": "picture-glance", "image": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMjAgMTgwIj48ZGVmcz48bGluZWFyR3JhZGllbnQgaWQ9ImciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj48c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiNkOWQ0ZWEiLz48c3RvcCBvZmZzZXQ9IjEiIHN0b3AtY29sb3I9IiNhOTljYzkiLz48L2xpbmVhckdyYWRpZW50PjwvZGVmcz48cmVjdCB3aWR0aD0iMzIwIiBoZWlnaHQ9IjE4MCIgZmlsbD0idXJsKCNnKSIvPjxwYXRoIHRyYW5zZm9ybT0idHJhbnNsYXRlKDEyNCAzNCkgc2NhbGUoMykiIGZpbGw9IiNmZmYiIGZpbGwtb3BhY2l0eT0iMC45IiBkPSJNMSAxaDJ2MnoiLz48L3N2Zz4=", "entities": []}]}]},
+    "local picture with a Cyrillic name": {"views": [{"cards": [{"type": "custom:hauflo-room", "name": "x", "picture": "/local/rooms/%D0%BA%D1%83%D1%85%D0%BD%D1%8F.jpg"}]}]},
 }
 
 

@@ -40,6 +40,7 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
+from . import stock as stock_cards
 from .storage import HaufloStore
 _LOGGER = logging.getLogger(__name__)
 
@@ -698,9 +699,11 @@ class DashboardMerge:
             return {"base": False, "exists": False}
         base = self.bases.get(url_path) if current is not None else None
         _, out = plan_and_merge(ensure_ids(copy.deepcopy(config)), current, base)
-        return {**out, "exists": True}
+        # «Заменить на Hauflo»: the integrator's stock cards here, offered — made only by his ticks (`save` … `stock`).
+        offers = stock_cards.offers(current, stock_cards.hass_info(self.hass)) if base is not None and current is not None else []
+        return {**out, "exists": True, **({"stock": offers[:200]} if offers else {})}
 
-    async def save(self, url_path: str, config: dict[str, Any], take: Any, restore: Any, replace: bool, title: str | None, local_ws: Callable[[list[dict[str, Any]]], Any], lang: str | None = None) -> dict[str, Any]:
+    async def save(self, url_path: str, config: dict[str, Any], take: Any, restore: Any, replace: bool, title: str | None, local_ws: Callable[[list[dict[str, Any]]], Any], lang: str | None = None, stock: Any = ()) -> dict[str, Any]:
         exists, current = await self._current(url_path)
         if not exists:
             raise MergeError("not_found", "no such storage dashboard")
@@ -711,7 +714,11 @@ class DashboardMerge:
             # Nothing known of what is Hauflo's here: no merge can tell the integrator's cards — refused, the cloud
             # decides (a hand-edited dashboard stays, or is rebuilt with a copy) as with an older agent.
             raise MergeError("no_base", "the agent has no Hauflo version of this dashboard to merge against")
-        merged, report = plan_and_merge(new, current, base, take, restore)
+        # The integrator's ticked stock cards become Hauflo's cards (still his: no Hauflo id), then the merge as always.
+        src, made = stock_cards.apply(current, list(stock), stock_cards.hass_info(self.hass)) if base is not None and current is not None and stock else (current, 0)
+        merged, report = plan_and_merge(new, src, base, take, restore)
+        if made:
+            report["stock"] = made
         if report.get("lost"):
             # Whatever the cloud sent: an item of the integrator's would go — nothing is written (security re-review 28.10).
             _LOGGER.warning("Hauflo: dashboard %s not saved — %s of the integrator's items would be lost", url_path, report["lost"])
@@ -736,10 +743,10 @@ class DashboardMerge:
         # Seconds and a random tail (security re-review 28.10): two saves a minute apart (or less) never meet one copy,
         # and the cloud can't guess a name ahead.
         prefix = f"{url_path[:40]}-copy-"
-        # The dashboard's language (the deploy's), else HA's; HA's own time zone (dt_util.now()), no year: «Дом (копия 28.10 02:59)».
+        # The dashboard's language (the deploy's), else HA's; HA's own time zone (dt_util.now()), no year: «Панель (копия 28.10 02:59)».
         ru = str(lang or self.hass.config.language or "").startswith("ru")
         shown = now.strftime("%d.%m %H:%M") if ru else f"{now.day} {_MONTHS[now.month - 1]} {now.strftime('%H:%M')}"
-        name = f"{title or ('Дом' if ru else 'Home')} ({'копия' if ru else 'copy'} {shown})"
+        name = f"{title or ('Панель' if ru else 'Dashboard')} ({'копия' if ru else 'copy'} {shown})"
         listed = await local_ws([{"type": "lovelace/dashboards/list"}])
         dashboards = listed[0] if listed and isinstance(listed[0], list) else []
         taken = {str(d.get("url_path")) for d in dashboards if isinstance(d, dict)}
@@ -864,6 +871,7 @@ async def handle(agent: Any, ch: int, msg: dict[str, Any], validate: Callable[[A
             title[:60] if title else None,
             lambda cmds: local_ws(agent.local_session, f"{agent.local_base}/api/websocket", agent.token, cmds),
             lang[:5] if lang else None,
+            [] if plain else [x for x in (msg.get("stock") if isinstance(msg.get("stock"), list) else [])[:200] if isinstance(x, str) and len(x) <= 64],
         )
         await reply(None if plain else res)
     except MergeError as err:

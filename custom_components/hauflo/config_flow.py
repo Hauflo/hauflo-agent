@@ -15,11 +15,16 @@ from homeassistant.data_entry_flow import section
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import BooleanSelector, SelectSelector, SelectSelectorConfig, SelectSelectorMode, TextSelector, TextSelectorConfig
 
-from . import relinked as _relinked, service
+from . import relinked as _relinked, servers, service
 from . import ranges as ranges_mod
 from .const import CONF_CARDS_VIEW_OLD, CONF_INDEPENDENT, CONF_ACCEPT_PENDING, CONF_ALLOW_CHANGES, CONF_CODE, CONF_CONFIRM_TAKEOVER, CONF_RANGES, CONF_SECRET, CONF_SERVER, DATA_PENDING_RANGES, DATA_UNLINKED, DEFAULT_SERVER, DOMAIN, FALLBACK_SERVER, REGION_SERVERS
 from .ranges import parse_ranges
 from .ranges import range_key as _range_key
+from .tuning import TUNING
+
+# Pairing: a host that doesn't even take the connection gives way to the next one of its region within this time.
+CONNECT_TIMEOUT = TUNING["link"]["connect_timeout_s"]
+PAIR_TIMEOUT = TUNING["link"]["pair_timeout_s"]
 
 
 def _secure(server: str) -> bool:
@@ -66,7 +71,7 @@ class HaufloConfigFlow(ConfigFlow, domain=DOMAIN):
         """The server field left as it was: the code's region decides (owner 25.10: only the code to type)."""
         region = code.split("-", 1)[0]
         # Any of Hauflo's own servers counts as «as it was» — a re-link with an RU code from an AE entry goes to RU.
-        if typed in ("", DEFAULT_SERVER, *REGION_SERVERS.values()) and region in REGION_SERVERS:
+        if (typed == "" or servers.ours(typed)) and region in REGION_SERVERS:
             return REGION_SERVERS[region]
         return typed
 
@@ -81,37 +86,48 @@ class HaufloConfigFlow(ConfigFlow, domain=DOMAIN):
         in HTML read as «no connection» instead of «wrong code»)."""
         if not _secure(server):
             return None, {CONF_SERVER: "https_required"}
+        session = async_get_clientsession(self.hass)
+        payload = {"code": code, **({"previous": previous} if previous else {}), **({"confirmTakeover": True} if confirm else {}), **({"confirmTransfer": True} if transfer else {})}
+
+        async def at(host: str) -> tuple[dict[str, Any] | None, dict[str, str]]:
+            timeout = aiohttp.ClientTimeout(total=PAIR_TIMEOUT, sock_connect=CONNECT_TIMEOUT)
+            async with session.post(f"{host}/api/agent/pair", json=payload, timeout=timeout) as res:
+                return await self._pair_answer(res)
+
         try:
-            session = async_get_clientsession(self.hass)
-            payload = {"code": code, **({"previous": previous} if previous else {}), **({"confirmTakeover": True} if confirm else {}), **({"confirmTransfer": True} if transfer else {})}
-            async with session.post(f"{server}/api/agent/pair", json=payload, timeout=aiohttp.ClientTimeout(total=20)) as res:
-                if res.status == 404:
-                    return None, {CONF_CODE: "invalid_code"}
-                if res.status == 409:
-                    try:
-                        why = await res.json(content_type=None)
-                    except ValueError:
-                        why = None
-                    code_ = why.get("code") if isinstance(why, dict) else None
-                    if code_ in ("pair_transfer", "pair_transfer_recorded"):
-                        self._transfer_company = str(why.get("company") or "")[:120]
-                    if code_ == "pair_transfer":
-                        return None, {"base": "transfer_ask"}
-                    # Hauflo 0.16.19+: a house goes to another company only by Hauflo support's decision on a request;
-                    # the owner's «yes» here is recorded on it as evidence, this HA keeps its link.
-                    if code_ == "pair_transfer_recorded":
-                        return None, {"base": "transfer_recorded"}
-                    if code_ == "pair_transfer_request":
-                        return None, {"base": "transfer_via_request"}
-                    return None, {"base": "takeover_confirm"}
-                if res.status >= 400:
-                    return None, {"base": "cannot_connect"}
-                body = await res.json(content_type=None)
-                if not isinstance(body, dict) or not body.get("secret"):
-                    return None, {"base": "cannot_connect"}
-                return body, {}
-        except (aiohttp.ClientError, TimeoutError, ValueError):
+            # The hosts of the server's own region in turn (servers.py): one blocked host gives way to the next.
+            _host, answer = await servers.first_answer(servers.same_region(server), at)
+        except (aiohttp.ClientError, TimeoutError, OSError, ValueError):
             return None, {"base": "cannot_connect"}
+        return answer
+
+    async def _pair_answer(self, res: aiohttp.ClientResponse) -> tuple[dict[str, Any] | None, dict[str, str]]:
+        """What the server said to a pairing code. Raises ValueError on a body that isn't JSON."""
+        if res.status == 404:
+            return None, {CONF_CODE: "invalid_code"}
+        if res.status == 409:
+            try:
+                why = await res.json(content_type=None)
+            except ValueError:
+                why = None
+            code_ = why.get("code") if isinstance(why, dict) else None
+            if code_ in ("pair_transfer", "pair_transfer_recorded"):
+                self._transfer_company = str(why.get("company") or "")[:120]
+            if code_ == "pair_transfer":
+                return None, {"base": "transfer_ask"}
+            # Hauflo 0.16.19+: a house goes to another company only by Hauflo support's decision on a request;
+            # the owner's «yes» here is recorded on it as evidence, this HA keeps its link.
+            if code_ == "pair_transfer_recorded":
+                return None, {"base": "transfer_recorded"}
+            if code_ == "pair_transfer_request":
+                return None, {"base": "transfer_via_request"}
+            return None, {"base": "takeover_confirm"}
+        if res.status >= 400:
+            return None, {"base": "cannot_connect"}
+        body = await res.json(content_type=None)
+        if not isinstance(body, dict) or not body.get("secret"):
+            return None, {"base": "cannot_connect"}
+        return body, {}
 
     def _schema(self, server: str) -> vol.Schema:
         extra: dict[Any, Any] = {}

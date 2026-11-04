@@ -250,3 +250,74 @@ def test_misc_pure(hass):
     c = m.knx_conn({"connection_type": "tunneling_secure", "host": "10.0.0.1", "port": 3671, "route_back": True, "user_password": "s", "individual_address": 5})
     assert c["secure"] and c["host"] == "10.0.0.1" and "user_password" not in str(c)
     assert not m.knx_conn({"connection_type": "tunneling"})["secure"] and m.knx_conn({"knxkeys_filename": "f"})["secure"]
+
+
+async def test_a_gate_stays_protected_whatever_the_cloud_does(hass, hass_storage):
+    """Security review 04.11 (MEDIUM-2): a gate Hauflo made could lose its protection — retyped, or deleted and made
+    again on its addresses as a blind or a switch — and then reach scenes, voice, guest links. Once seen, its entity and
+    the addresses that open it stay protected (protect.py) until HA's own admin clears them."""
+    from datetime import timedelta
+
+    from homeassistant.core import Context
+    from homeassistant.exceptions import Unauthorized
+    from homeassistant.util import dt as dt_util
+    from pytest_homeassistant_custom_component.common import async_fire_time_changed
+
+    from custom_components.hauflo import protect
+
+    reg = er.async_get(hass)
+    gate_cfg = {"knx": {"ga_up_down": {"write": "7/6/1", "passive": ["7/6/9"]}, "ga_stop": {"write": "7/6/2"}, "ga_position_set": {"write": "7/6/3"}}}
+    store = {"cover": {"u-gate": gate_cfg, "u-blind": {"knx": {"ga_up_down": {"write": "1/1/1"}, "ga_stop": {"write": "7/6/2"}}}}, "switch": {}}
+    hass.data["knx"] = knx(store)
+    reg.async_get_or_create("cover", "knx", "u-gate", suggested_object_id="gate")
+    reg.async_update_entity("cover.gate", device_class="gate")
+    reg.async_get_or_create("cover", "knx", "u-blind", suggested_object_id="blind")
+    owned = {"u-gate", "u-blind", "u-new", "u-sw"}
+    await protect.async_setup(hass, lambda eid: m._protect_marks_of(hass, eid), m._ga_key, lambda: m._protect_refresh(hass))
+    m._protect_refresh(hass)
+    marks = protect.marks(hass)
+    opening = {str(ga(7, 6, 1)), str(ga(7, 6, 9)), str(ga(7, 6, 3))}
+    assert marks.uids == {"u-gate"} and marks.gas == opening  # its stop (shared with the blinds) opens nothing
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=1))
+    await hass.async_block_till_done()
+    assert set(hass_storage[protect.STORE_KEY]["data"]["gas"]) == opening
+    again = protect.Marks(hass)  # after a restart
+    await again.async_load()
+    assert again.uids == {"u-gate"} and again.gas == opening
+
+    def W(msg):
+        return m._ws_allowed(msg, hass, owned, set())
+
+    # Retyped through the registry or the KNX panel: refused.
+    for dc in ("blind", None, "door"):
+        assert not W({"type": "config/entity_registry/update", "entity_id": "cover.gate", "device_class": dc}), dc
+    assert not W({"type": "knx/update_entity", "entity_id": "cover.gate", "platform": "cover", "data": {"entity": {"device_class": "blind"}, "knx": gate_cfg["knx"]}})
+    # Retyped locally by HA's admin: still protected (sticky) until he clears it.
+    reg.async_update_entity("cover.gate", device_class="shutter")
+    assert m._protected(hass, "cover.gate") and not m._hauflo_entity(hass, "cover.gate", owned, set())
+    # Deleted and made again on its addresses — as a classless cover, a blind moved onto it, a switch: protected.
+    del store["cover"]["u-gate"]
+    reg.async_remove("cover.gate")
+    store["cover"]["u-new"] = {"knx": {"ga_up_down": {"write": "07/06/001"}}}
+    reg.async_get_or_create("cover", "knx", "u-new", suggested_object_id="new")
+    store["switch"]["u-sw"] = {"knx": {"ga_switch": {"write": str(ga(7, 6, 3))}}}
+    reg.async_get_or_create("switch", "knx", "u-sw", suggested_object_id="relay")
+    assert m._protected(hass, "cover.new") and m._protected(hass, "switch.relay")
+    assert not m._hauflo_entity(hass, "switch.relay", owned, set())
+    assert not m._protected(hass, "cover.blind")  # it shares only the stop
+    store["cover"]["u-blind"]["knx"]["ga_up_down"]["write"] = "7/6/9"
+    assert m._protected(hass, "cover.blind")
+    # A deploy types the remade gate as one (it has no class yet) — never as anything else.
+    assert W({"type": "config/entity_registry/update", "entity_id": "cover.new", "device_class": "gate"})
+    assert not W({"type": "config/entity_registry/update", "entity_id": "cover.new", "device_class": "blind"})
+    assert not W({"type": "knx/update_entity", "entity_id": "cover.new", "platform": "cover", "data": {"entity": {"device_class": "blind"}, "knx": {}}})
+    # Only HA's admin clears it — never the agent's own (tunnel) user, nor a plain user.
+    admin = await hass.auth.async_create_user("Owner", group_ids=["system-admin"])
+    agent = await hass.auth.async_create_system_user("Hauflo agent", group_ids=["system-admin"])
+    for who in (agent, await hass.auth.async_create_user("Kid", group_ids=["system-users"])):
+        with pytest.raises(Unauthorized):
+            await hass.services.async_call("hauflo", "unprotect", {"group_address": ["7/6/1"]}, blocking=True, context=Context(user_id=who.id))
+    assert marks.gas == opening
+    await hass.services.async_call("hauflo", "unprotect", {"entity_id": ["cover.new"], "group_address": ["7/6/3", "7/6/9"]}, blocking=True, context=Context(user_id=admin.id))
+    assert not marks.gas and marks.uids == {"u-gate"}
+    assert not m._protected(hass, "cover.new") and not m._protected(hass, "switch.relay") and not m._protected(hass, "cover.blind")

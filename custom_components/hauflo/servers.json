@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "about": "Hauflo's servers — the one list (owner 04.11: «если с одного сервера не скачивается — автоматом с другого, в РФ могут блочить»). regions: the app hosts of each region in the order they are tried; the agent's link (pairing, tunnel, unpair) moves only between hosts of its OWN region — a Russian house's data never goes to the EU server or back (servers.py). default_region: where a pairing code without a region goes first; pair_fallback_region: where such a code is tried next (a code is known by one server only, so this never moves a house). mirrors: the public agent mirrors (/agent/hauflo.zip, .sha256, version.txt, install.sh — scripts/deploy-region.sh) — any region's will do, the sha256 decides; github_zip: the release zip HACS takes. scripts/agent-install.sh and backend/src/agent/updateNotice.ts carry the same lists as their defaults: scripts/check-contracts.py keeps them equal.",
+  "regions": {
+    "EU": ["https://app.hauflo.com"],
+    "RU": ["https://app.hauflo.ru"],
+    "AE": ["https://app.hauflo.com"]
+  },
+  "default_region": "EU",
+  "pair_fallback_region": "RU",
+  "mirrors": ["https://app.hauflo.ru/agent", "https://app.hauflo.com/agent"],
+  "github_zip": "https://github.com/Hauflo/hauflo-agent/releases/latest/download/hauflo.zip"
+}

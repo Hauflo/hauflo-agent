@@ -40,6 +40,7 @@
       { "id": "hauflo", "path": "/api/hauflo/alarms", "methods": ["GET", "POST"] },
       { "id": "hauflo", "path": "/api/hauflo/sidebar", "methods": ["POST"] },
       { "id": "hauflo", "path": "/api/hauflo/owned", "methods": ["GET"] },
+      { "id": "hauflo", "path": "/api/hauflo/protect", "methods": ["POST"] },
       { "id": "hauflo", "path": "/api/hauflo/ranges", "methods": ["GET", "POST"] },
       { "id": "hauflo", "path": "/api/hauflo/ownership", "methods": ["GET", "POST"] },
       { "id": "hauflo", "path": "/api/hauflo/season/config", "methods": ["GET", "POST"] },
@@ -54,8 +55,9 @@
       { "id": "entry_delete", "path": "/api/config/config_entries/entry/{entry_id}", "methods": ["DELETE"] },
       { "id": "diagnostics", "path": "/api/diagnostics/config_entry/{entry_id}", "methods": ["GET"] }
     ],
-    "locked_ok": [["/api/hauflo/notify", "POST"], ["/api/hauflo/notify/test", "POST"], ["/api/hauflo/ownership", "POST"], ["/api/hauflo/alarms", "POST"]],
-    "locked_read_ops": [{ "path": "/api/hauflo/rules", "method": "POST", "ops": ["preview"] }]
+    "locked_ok": [["/api/hauflo/notify", "POST"], ["/api/hauflo/notify/test", "POST"], ["/api/hauflo/ownership", "POST"], ["/api/hauflo/alarms", "POST"], ["/api/hauflo/protect", "POST"]],
+    "locked_read_ops": [{ "path": "/api/hauflo/rules", "method": "POST", "ops": ["preview"] }],
+    "locked_never_keys": [{ "path": "/api/hauflo/protect", "method": "POST", "keys": ["unmark"] }]
   },
   "flows": {
     "setup": ["knx", "group", "homekit", "yandex_smart_home", "template", "switch_as_x"],
