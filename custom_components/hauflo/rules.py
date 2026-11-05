@@ -117,6 +117,19 @@ def purpose(name: str) -> dict[str, Any]:
     return C("purposes", name)
 
 
+def client_locked(rule: dict[str, Any]) -> bool:
+    """A protective rule (safety priority: frost, leak) or one that works a valve is never the client's to switch or tune,
+    whatever the integrator ticked (docs/acceptance.md C6: lock / alarm / valve / gate never; the engine itself never
+    targets a lock, the alarm or a gate)."""
+    return rule.get("priority") == "safety" or any(str(a.get("entity_id", "")).startswith("valve.") for a in rule.get("actions") or [])
+
+
+def client_can(rule: dict[str, Any]) -> dict[str, bool]:
+    """What a client's card may offer on a rule the integrator left him: the switch, the threshold."""
+    c, locked = rule["client"], client_locked(rule)
+    return {"toggle": c.get("toggle", True) is not False and not locked, "tune": "lo" in c and not locked}
+
+
 def _fmt(v: float | None, unit: str | None) -> str:
     if v is None:
         return "—"
@@ -1793,6 +1806,9 @@ class Rules:
             "hold_until": st["hold_until"],
             "since": st["since"],
             "client": rule["client"],
+            "client_can": client_can(rule),
+            "purpose": rule["purpose"],
+            "priority": rule.get("priority"),
             "owner": rule.get("owner", "integrator"),
             "entities": {"active": b.entity_id if b else None, "switch": s.entity_id if s else None},
             **{k: rule[k] for k in ("when", "x", "lo", "hi", "y") if k in rule},
@@ -1955,7 +1971,7 @@ class Rules:
         new = {**rule, **{k: _number(body[k], k) for k in keys if k in body}}
         c = rule["client"]
         if client and rule.get("owner") != "client":
-            if "lo" not in c:
+            if "lo" not in c or client_locked(rule):
                 raise Invalid("not_allowed", "rules_tune_not_allowed")
             if any(not c["lo"] <= new[k] <= c["hi"] for k in keys):
                 raise Invalid("out_of_range", "rules_out_of_range", lo=_fmt(c["lo"], None), hi=_fmt(c["hi"], None))
@@ -2305,7 +2321,7 @@ class RulesView(HomeAssistantView):
             await engine.delete(rule["id"])
             return {"deleted": rule["id"]}
         if op == "enable":
-            if client and rule.get("owner") != "client" and not rule["client"].get("toggle", True):
+            if client and rule.get("owner") != "client" and not client_can(rule)["toggle"]:
                 raise Invalid("not_allowed", "rules_toggle_not_allowed")
             return await engine.set_enabled(rule["id"], body.get("enabled"), tunnel)
         return await engine.tune(rule["id"], body, client=client, tunnel=tunnel)

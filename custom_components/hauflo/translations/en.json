@@ -16,10 +16,10 @@
           "advanced": {
             "name": "Advanced",
             "data": {
-              "server": "Hauflo server (leave as is — the code picks the server)"
+              "server": "Own server (empty = by the code)"
             },
             "data_description": {
-              "server": "Only for your own Hauflo server. Leave it as is: the code's region picks Hauflo's server."
+              "server": "Leave empty: the code's region (RU-, EU-) picks Hauflo's server itself — a code with RU- goes to the Russian server. Fill in only for your own Hauflo server."
             }
           }
         }
@@ -39,10 +39,10 @@
           "advanced": {
             "name": "Advanced",
             "data": {
-              "server": "Hauflo server (leave as is — the code picks the server)"
+              "server": "Own server (empty = by the code)"
             },
             "data_description": {
-              "server": "Only for your own Hauflo server. Leave it as is: the code's region picks Hauflo's server."
+              "server": "Leave empty: the code's region (RU-, EU-) picks Hauflo's server itself — a code with RU- goes to the Russian server. Fill in only for your own Hauflo server."
             }
           }
         }
@@ -62,17 +62,17 @@
           "advanced": {
             "name": "Advanced",
             "data": {
-              "server": "Hauflo server (leave as is — the code picks the server)"
+              "server": "Own server (empty = by the code)"
             },
             "data_description": {
-              "server": "Only for your own Hauflo server. Leave it as is: the code's region picks Hauflo's server."
+              "server": "Leave empty: the code's region (RU-, EU-) picks Hauflo's server itself — a code with RU- goes to the Russian server. Fill in only for your own Hauflo server."
             }
           }
         }
       },
       "ranges": {
         "title": "Group addresses for Hauflo",
-        "description": "Hauflo will send commands only to these KNX group addresses of project “{project}” — the ones its entities write: {ranges}. Remove any Hauflo must not control (a gate, a lock), then continue. You can change this later in the integration's options.",
+        "description": "Hauflo will send commands only to these KNX group addresses of project “{project}” — the ones its entities write (listed in the field below). Remove any Hauflo must not control (a gate, a lock), then continue. You can change this later in the integration's options.",
         "data": {
           "ranges": "Allowed addresses (1/1/5, a span 1/1/1-21 or a whole group 1/1; comma-separated or one per line)"
         },
@@ -90,7 +90,7 @@
       },
       "relink_ranges": {
         "title": "Group addresses of the new project",
-        "description": "Hauflo will send commands only to these KNX group addresses of project “{project}” — the ones its entities write: {ranges}. The previous allowed list is replaced; these go: {removed}. Remove any Hauflo must not control (a gate, a lock), then continue.",
+        "description": "Hauflo will send commands only to these KNX group addresses of project “{project}” — the ones its entities write (listed in the field below). The previous allowed list is replaced; these go: {removed}. Remove any Hauflo must not control (a gate, a lock), then continue.",
         "data": {
           "ranges": "Allowed addresses (1/1/5, a span 1/1/1-21 or a whole group 1/1; comma-separated or one per line)"
         },

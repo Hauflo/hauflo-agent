@@ -3,7 +3,7 @@ Runs without Home Assistant installed: python3 agent/tests/test_tunnel_allowlist
 import ast, contextlib, glob, ipaddress, json, pathlib, re, sys, types
 src = open(pathlib.Path(__file__).parents[1] / "custom_components/hauflo/__init__.py").read()
 tree = ast.parse(src)
-HELPERS = ("_ws_allowed", "_ga_key", "_knx_listens", "_entry_domain", "_flow_handler", "_http_allowed", "_own_entity", "_own_device", "_owned_knx", "_forbidden", "_lan_host", "_flow_input_ok", "_unused_label", "_device_entities_owned", "_protected", "_sticky", "_class_protected", "_own_dashboard", "_alice_labels", "_homekit_step_ok", "_hauflo_entity", "_knx_writes", "_foreign_knx_writes", "_knx_config_ok", "_flow_step", "_platform", "_lovelace_ok", "_area_lights_owned", "_image_ok", "_svg_ok", "_owned_knx_writes", "_owned_scene_sends", "_protected_writes", "_shown_protected", "_words", "_named_as", "_wrapped_source", "_label_ok", "_scrub_states", "_scrub_devices", "_scrub_entities", "_phone_ids", "_scrub_monitor", "_scrub_notes", "_ws_changes", "_http_changes", "_owns", "_area_floor_empty", "_foreign_holders", "_scrub_diagnostics", "_overlap_kind", "knx_data", "_knx_store", "_route", "_owned_entry", "_template_entities", "_rule_reads_ok", "_template_step_ok", "_switch_as_x_step_ok", "_theme_ok")
+HELPERS = ("_ws_allowed", "_ga_key", "_knx_listens", "_entry_domain", "_flow_handler", "_http_allowed", "_own_entity", "_own_device", "_owned_knx", "_forbidden", "_lan_host", "_flow_input_ok", "_unused_label", "_device_entities_owned", "_protected", "_sticky", "_class_protected", "_own_dashboard", "_alice_labels", "_homekit_step_ok", "_hauflo_entity", "_knx_writes", "_foreign_knx_writes", "_knx_config_ok", "_flow_step", "_platform", "_lovelace_ok", "_area_lights_owned", "_image_ok", "_svg_ok", "_owned_knx_writes", "_owned_scene_sends", "_protected_writes", "_shown_protected", "_words", "_named_as", "_wrapped_source", "_label_ok", "_scrub_states", "_scrub_devices", "_scrub_entities", "_phone_ids", "_scrub_monitor", "_scrub_notes", "_ws_changes", "_http_changes", "_owns", "_area_floor_empty", "_foreign_holders", "_scrub_diagnostics", "_overlap_kind", "knx_data", "_knx_store", "_route", "_owned_entry", "_template_entities", "_rule_reads_ok", "_template_step_ok", "_switch_as_x_step_ok", "_theme_ok", "_foreign_device_placeable")
 keep = [n for n in tree.body if (isinstance(n, ast.Assign) and any(getattr(t, "id", "").startswith("_") for t in n.targets)) or (isinstance(n, ast.FunctionDef) and n.name in HELPERS)]
 import logging
 sys.path.insert(0, str(pathlib.Path(__file__).parents[1] / "custom_components/hauflo"))
@@ -52,6 +52,17 @@ ents_reg["valve.front_garden"] = _Ent("template", "valve")
 ns["er"].async_entries_for_area = lambda reg, a: _area_ents.get(a, [])
 ns["dr"].async_entries_for_area = lambda reg, a: _area_devs.get(a, [])
 ns["DOMAIN"] = "hauflo"
+# Other integrations' devices (п.56): a leak sensor in no room, one in the family's own room, a KNX one, a service.
+_areas = {"kitchen", "hall", "a1"}
+ns["ar"] = types.SimpleNamespace(async_get=lambda h: types.SimpleNamespace(async_get_area=lambda a: types.SimpleNamespace(id=a) if a in _areas else None))
+devs_reg["dleak"] = types.SimpleNamespace(config_entries=["z1"], area_id=None, entry_type=None)
+devs_reg["dleak_hall"] = types.SimpleNamespace(config_entries=["z1"], area_id="hall", entry_type=None)
+devs_reg["dsvc"] = types.SimpleNamespace(config_entries=["z1"], area_id=None, entry_type="service")
+devs_reg["dmix"] = types.SimpleNamespace(config_entries=["z1", "k1"], area_id=None, entry_type=None)
+dev_ents["dleak"] = [_Ent("neptun", "binary_sensor")]
+dev_ents["dleak_hall"] = [_Ent("neptun", "binary_sensor")]
+dev_ents["dsvc"] = [_Ent("sun", "sensor")]
+dev_ents["dmix"] = [_Ent("zwave_js", "sensor"), _Ent("knx", "switch", "u-hand")]
 # KNX UI store: Hauflo's light and the integrator's gate relay by hand.
 class _GA:  # xknx's GroupAddress: hashable, its number as .raw
     def __init__(s, raw): s.raw = raw
@@ -255,6 +266,17 @@ cases = [
  (W({"type": "config/device_registry/update", "device_id": "dk", "area_id": "kitchen"}), True),
  (W({"type": "config/device_registry/update", "device_id": "dk2", "area_id": "kitchen"}), False),
  (W({"type": "config/device_registry/update", "device_id": "dz", "area_id": "kitchen"}), False),
+ # п.56: another integration's device put in a room by a click — its area only, a blank filled or into Hauflo's room.
+ (W({"type": "config/device_registry/update", "device_id": "dleak", "area_id": "kitchen"}), True),
+ (ns["_ws_allowed"]({"type": "config/device_registry/update", "device_id": "dleak_hall", "area_id": "a1"}, hass, {"u-hauflo"}, {"area:a1"}), True),
+ (W({"type": "config/device_registry/update", "device_id": "dleak_hall", "area_id": "kitchen"}), False),
+ (W({"type": "config/device_registry/update", "device_id": "dleak", "area_id": None}), False),
+ (W({"type": "config/device_registry/update", "device_id": "dleak", "area_id": "nowhere"}), False),
+ (W({"type": "config/device_registry/update", "device_id": "dleak", "area_id": "kitchen", "name_by_user": "x"}), False),
+ (W({"type": "config/device_registry/update", "device_id": "dleak", "area_id": "kitchen", "disabled_by": "user"}), False),
+ (W({"type": "config/device_registry/update", "device_id": "dsvc", "area_id": "kitchen"}), False),
+ (W({"type": "config/device_registry/update", "device_id": "dmix", "area_id": "kitchen"}), False),
+ (W({"type": "config/device_registry/update", "device_id": "nodev", "area_id": "kitchen"}), False),
  (ns["_ws_allowed"]({"type": "config/area_registry/update", "area_id": "a1", "name": "Кухня", "aliases": ["кухня"]}, hass, {"u-hauflo"}, {"area:a1"}), True),
  (W({"type": "config/area_registry/update", "area_id": "kitchen", "name": "Кухня-PWNED", "aliases": ["открой ворота"]}), False),
  (W({"type": "config/area_registry/update", "area_id": "kitchen", "aliases": ["открой ворота"]}), False),

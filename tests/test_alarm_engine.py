@@ -520,3 +520,18 @@ async def test_alarm_views(hass, rig) -> None:
     await alarms.post(Tunnel(hass, body={"ack": "r1|binary_sensor.k1", "by": "Mallory"}, user=NS(name="Mallory", system_generated=False)))
     assert eng.active["r1|binary_sensor.k1"]["acked_by"] == "Mallory"  # a "by" from anyone else is not trusted: their own name
     await rig.tick(10)
+
+
+async def test_label_prefers_friendly_name_then_registry_then_device_then_raw_id(hass) -> None:
+    hass.states.async_set("binary_sensor.leak_bathroom", "on", {"friendly_name": "Протечка ванная"})
+    assert notify.label(hass, "binary_sensor.leak_bathroom") == "Протечка ванная"
+    # No friendly name in the state: the registry's name, then the device's, the raw id last.
+    reg = er.async_get(hass)
+    entry = MockConfigEntry(domain="x")
+    entry.add_to_hass(hass)
+    dev = dr.async_get(hass).async_get_or_create(config_entry_id=entry.entry_id, identifiers={("x", "1")}, name="Датчик ванной")
+    reg.async_get_or_create("binary_sensor", "x", "1", suggested_object_id="leak_bathroom2", device_id=dev.id, config_entry=entry)
+    hass.states.async_set("binary_sensor.leak_bathroom2", "on", {})
+    assert notify.label(hass, "binary_sensor.leak_bathroom2") == "Датчик ванной"
+    hass.states.async_set("binary_sensor.leak_other", "on", {})
+    assert notify.label(hass, "binary_sensor.leak_other") == "binary_sensor.leak_other"

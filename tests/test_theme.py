@@ -166,3 +166,21 @@ async def test_an_extra_theme_is_injected_and_allowed(hass: HomeAssistant, monke
     await _setup(hass, themes)
     assert themes["Studio"] == {"a": "1"} and theme.THEME in themes and "Studio" in theme.names()
     theme.async_unload(hass)
+
+
+async def test_reload_hint_is_short_neutral_in_ha_language_and_goes_by_itself(hass: HomeAssistant) -> None:
+    from datetime import timedelta
+
+    from homeassistant.components import persistent_notification
+    from homeassistant.util import dt as dt_util
+    from pytest_homeassistant_custom_component.common import async_fire_time_changed
+
+    for lang, word in (("ru", "обновите страницу"), ("en", "refresh the page")):
+        hass.config.language = lang
+        theme._say_reload(hass)
+        note = hass.data["persistent_notification"][theme.RELOAD_NOTE]
+        assert word in note["message"] and "onfiguration" not in note["message"] and "конфигурации" not in note["message"]
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=theme.RELOAD_NOTE_S + 5))
+    await hass.async_block_till_done()
+    assert theme.RELOAD_NOTE not in hass.data["persistent_notification"]
+    assert persistent_notification is not None

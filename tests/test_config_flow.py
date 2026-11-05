@@ -366,3 +366,14 @@ async def test_reauth_to_a_project_also_asks_for_its_addresses(hass: HomeAssista
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {"ranges": "2/2/2, 7/7/1"})
     # The owner may keep an old one on purpose — typed by hand, never kept silently.
     assert result["reason"] == "reauth_successful" and entry.options["ranges"] == ["2/2/2", "7/7/1"]
+
+
+async def test_server_field_is_empty_and_the_code_picks_the_server(hass: HomeAssistant, aioclient_mock) -> None:
+    """Owner 04.11: «app.hauflo.com при коде RU-…» misled — the field shows nothing, a RU code goes to RU, even with an EU text typed."""
+    aioclient_mock.post("https://app.hauflo.ru/api/agent/pair", json={"secret": "s", "project": "P"})
+    result = await _start(hass, advanced=True)
+    section_schema = next(v for k, v in result["data_schema"].schema.items() if str(k) == "advanced").schema.schema
+    assert next(k for k in section_schema if str(k) == "server").default() == ""
+    result = await _code(hass, result["flow_id"], {"code": "RU-ABC-DEF-GHK", "advanced": {"server": ""}})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_SERVER] == "https://app.hauflo.ru"

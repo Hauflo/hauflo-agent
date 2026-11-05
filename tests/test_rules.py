@@ -650,6 +650,22 @@ async def test_client_rights_and_restricted_profile(hass: HomeAssistant, hass_cl
     assert (await kid.get(URL)).status == 200
 
 
+async def test_client_never_switches_or_tunes_a_protective_or_valve_rule(hass: HomeAssistant, hass_client, hass_read_only_access_token, entry, calls) -> None:
+    """C6: whatever the integrator ticked, a safety rule (frost, leak) and a valve rule stay out of the client's hands."""
+    admin = await hass_client()
+    kid = await hass_client(hass_read_only_access_token)
+    open_to_client = {"toggle": True, "lo": 0, "hi": 8}
+    await _post(admin, {"op": "save", "rule": heater(id="frost", name="Мороз", purpose="frost", actions=[{"do": "on", "entity_id": HEATER2}], interlock=None, client=open_to_client)})
+    await _post(admin, {"op": "save", "rule": heater(id="cozy", name="Уют", x=4, client=open_to_client)})
+    seen = {r["id"]: r for r in (await (await kid.get(URL)).json())["rules"]}
+    assert seen["frost"]["client_can"] == {"toggle": False, "tune": False} and seen["frost"]["priority"] == "safety"
+    assert seen["cozy"]["client_can"] == {"toggle": True, "tune": True} and seen["cozy"]["priority"] == "comfort"
+    assert (await _post(kid, {"op": "enable", "id": "frost", "enabled": False}, 403))["code"] == "not_allowed"
+    assert (await _post(kid, {"op": "tune", "id": "frost", "x": 4}, 403))["code"] == "not_allowed"
+    assert (await _post(kid, {"op": "enable", "id": "cozy", "enabled": False}))["enabled"] is False
+    assert (await _post(admin, {"op": "enable", "id": "frost", "enabled": False}))["enabled"] is False  # the integrator may
+
+
 async def test_tunnel_reaches_it_and_the_owner_lock_refuses_writes() -> None:
     assert ("/api/hauflo/rules", "GET") in hauflo._HAUFLO_VIEWS and ("/api/hauflo/rules", "POST") in hauflo._HAUFLO_VIEWS
     assert hauflo._http_locked("POST", "/api/hauflo/rules") is True  # the owner closed the house: no rule changes

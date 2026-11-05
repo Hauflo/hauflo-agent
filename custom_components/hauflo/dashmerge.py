@@ -33,6 +33,7 @@ import json
 import logging
 import re
 import secrets
+import unicodedata
 from collections import Counter
 from collections.abc import Callable
 from typing import Any
@@ -60,11 +61,17 @@ LOCAL = "hauflo-local"  # a placeholder of the integrator's item in a read throu
 _ENTITY_RE = re.compile(r"^[a-z_]+\.[a-z0-9_]+$")
 _TITLE_KEYS = ("title", "heading", "name", "text")
 ROOT = "\x00root"
+# A view for HA's administrators (owner 04.11 п.21: the «Сервис» floor): the cloud says this marker, the agent puts the
+# admins' user ids in here, in the house — and a read through the tunnel says the marker again (no user ids leave it).
+ADMINS = "hauflo:admins"
 _MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
 
 # --- the tree ---------------------------------------------------------------------------------------------------------
 # Levels: 0 the config (views), 1 a view (sections, or cards in a masonry / panel view), 2 a section (cards), 3 a card.
+# Hauflo's page layout (`custom:hauflo-layout`, agent 0.21: every block of a page once, owner 05.11 п.49) is a card that
+# holds cards: its blocks are cards of the page (level 3) like any other — each its own id, kept, edited, removed, moved.
+LAYOUT = "custom:hauflo-layout"
 
 
 def _kids_key(node: dict[str, Any], level: int) -> str | None:
@@ -74,7 +81,14 @@ def _kids_key(node: dict[str, Any], level: int) -> str | None:
         return "sections" if isinstance(node.get("sections"), list) or node.get("type") == "sections" else "cards"
     if level == 2:
         return "cards"
+    if level == 3 and node.get("type") == LAYOUT:
+        return "cards"
     return None
+
+
+def _holds(node: dict[str, Any], level: int) -> bool:
+    """A node with children of its own (a view, a section, a layout card) — not a plain card."""
+    return _kids_key(node, level) is not None
 
 
 def _child_level(level: int, key: str | None) -> int:
@@ -135,7 +149,7 @@ class _Index:
             else:
                 # A local container: its children's parent is itself (by python id) — never a Hauflo id.
                 here = f"\x00local{id(c)}"
-            if cl < 3:
+            if _holds(c, cl):
                 self._walk(c, cl, here, (h if here == h else None) if cl == 1 else view)
 
 
@@ -154,7 +168,7 @@ def ensure_ids(cfg: dict[str, Any]) -> dict[str, Any]:
             seen.add(h)
             c[ID] = h
             cl = _child_level(level, _kids_key(node, level))
-            if cl < 3:
+            if _holds(c, cl):
                 walk(c, cl, h)
 
     walk(cfg, 0, "")
@@ -181,7 +195,7 @@ def rekey(cfg: dict[str, Any], base: Any) -> dict[str, Any]:
                     k += 1
                 c[ID] = f"{h}~{k}"
                 used.add(c[ID])
-            if cl < 3:
+            if _holds(c, cl):
                 walk(c, cl)
 
     walk(cfg, 0)
@@ -189,7 +203,8 @@ def rekey(cfg: dict[str, Any], base: Any) -> dict[str, Any]:
 
 
 def _leaves(idx: _Index) -> dict[str, dict[str, Any]]:
-    return {h: n for h, n in idx.node.items() if idx.level[h] == 3}
+    """The cards (a layout card is its blocks, not one more card)."""
+    return {h: n for h, n in idx.node.items() if idx.level[h] == 3 and not _holds(n, 3)}
 
 
 # --- the merge --------------------------------------------------------------------------------------------------------
@@ -211,9 +226,39 @@ def _title(node: dict[str, Any], level: int) -> str | None:
 
 
 def _count_cards(node: dict[str, Any], level: int) -> int:
-    if level == 3:
+    if level == 3 and not _holds(node, 3):
         return 1
     return sum(_count_cards(c, _child_level(level, _kids_key(node, level))) for c in _kids(node, level) if isinstance(c, dict))
+
+
+def _inner(node: dict[str, Any], level: int, n: int = 3) -> list[str]:
+    """What a page / block / stack holds, for a label (tester 05.11: «по одной» said only «блок», «блок», «блок»):
+    the types of its first cards, never their content."""
+    out: list[str] = []
+
+    def walk(c: dict[str, Any], lvl: int) -> None:
+        for x in _kids(c, lvl):
+            if len(out) >= n or not isinstance(x, dict):
+                continue
+            cl = _child_level(lvl, _kids_key(c, lvl))
+            if _holds(x, cl):
+                walk(x, cl)
+            elif isinstance(x.get("type"), str) and x["type"] != "heading":
+                out.append(x["type"][:60])
+
+    walk(node, level)
+    return out
+
+
+def _card_entity(node: dict[str, Any]) -> str | None:
+    """A Hauflo card's first entity (its own config, never the integrator's): the server names it from the project."""
+    for k in ("entity", "entities"):
+        v = node.get(k)
+        v = v[0] if isinstance(v, list) and v else v
+        v = v.get("entity") if isinstance(v, dict) else v
+        if isinstance(v, str) and _ENTITY_RE.match(v):
+            return v
+    return None
 
 
 def _strip_ids(node: Any) -> Any:
@@ -228,8 +273,10 @@ def _strip_ids(node: Any) -> Any:
 
 
 class Merge:
-    def __init__(self, new: dict[str, Any], current: Any, base: dict[str, Any], take: Any = (), restore: Any = ()) -> None:
+    def __init__(self, new: dict[str, Any], current: Any, base: dict[str, Any], take: Any = (), restore: Any = (), skip: Any = ()) -> None:
         self.new, self.current, self.base = new, current if isinstance(current, dict) else {"views": []}, base
+        # The old layout's extra copies of a block (`upgrade`): Hauflo's layout going, not a change to say.
+        self.skip: set[str] = set(skip)
         self.B = _Index(base)
         # HA's items of another kind than the base's under its id are the integrator's; the new config's are new ids.
         self.new = rekey(new, base)
@@ -254,7 +301,7 @@ class Merge:
             if isinstance(c, dict):
                 self.on_view[id(c)] = title
                 cl = _child_level(level, _kids_key(node, level))
-                if cl < 3:
+                if _holds(c, cl):
                     self._mark_view(c, cl, title)
 
     # what a current node is
@@ -284,6 +331,12 @@ class Merge:
             out["type"] = node["type"][:60]
         if t := _title(node, lvl):
             out["title"] = t
+        if _holds(node, lvl):
+            out["cards"] = _count_cards(node, lvl)
+            if inner := _inner(node, lvl):
+                out["inner"] = inner
+        elif e := _card_entity(node):
+            out["entity"] = e
         if w := self._where(idx, h):
             out["where"] = w
         return {**out, **extra}
@@ -403,7 +456,7 @@ class Merge:
         key = _kids_key(c, level)
         out = {k: copy.deepcopy(v) for k, v in c.items() if k not in (ID, key)}
         if key is None:
-            return _strip_ids(c) if level == 3 else out
+            return _strip_ids(c)
         kids: list[Any] = []
         cl = _child_level(level, key)
         for x in _kids(c, level):
@@ -414,8 +467,11 @@ class Merge:
             if h is None:
                 kids.append(self._local(x, cl))
             elif h in self.N.node:
-                self.moved.append(self._label(self.B, h))
-                kids.append(self._build(h))
+                if self._moved(h):
+                    self.moved.append(self._label(self.B, h))
+                    kids.append(self._build(h))
+                # else: still under its Hauflo parent in HA — built there by Hauflo's order, not twice (a Hauflo
+                # section the integrator edited and Hauflo dropped, its card now in another of Hauflo's sections).
             elif self._edited(h):
                 kids.append(self._local(x, cl))
             else:
@@ -425,7 +481,7 @@ class Merge:
 
     def _orphans(self, c: dict[str, Any], level: int) -> list[tuple[int, dict[str, Any]]]:
         """What a Hauflo item Hauflo dropped still holds that must stay: the integrator's, and Hauflo's moved into it."""
-        if level == 3:
+        if not _holds(c, level):
             return []
         out: list[tuple[int, dict[str, Any]]] = []
         cl = _child_level(level, _kids_key(c, level))
@@ -492,8 +548,10 @@ class Merge:
             out["type"] = c["type"][:60]
         if t := _title(c, level):
             out["title"] = t
-        if level < 3:
+        if _holds(c, level):
             out["cards"] = _count_cards(c, level)
+            if inner := _inner(c, level):
+                out["inner"] = inner
         if level > 1 and (w := self.on_view.get(id(c))):
             out["where"] = w
         if dropped:
@@ -503,7 +561,7 @@ class Merge:
     # the integrator's items: all still there
     @staticmethod
     def _fp(node: dict[str, Any], level: int) -> str:
-        if level == 3:
+        if not _holds(node, level):
             return json.dumps(_strip_ids(node), sort_keys=True, ensure_ascii=False, default=str)
         key = _kids_key(node, level)
         return json.dumps([level, {k: v for k, v in node.items() if k not in (ID, key)}], sort_keys=True, ensure_ascii=False, default=str)
@@ -518,7 +576,7 @@ class Merge:
                 cl = _child_level(level, _kids_key(node, level))
                 if not local_only or self._hauflo(c) is None:
                     out[self._fp(c, cl)] += 1
-                if cl < 3:
+                if _holds(c, cl):
                     walk(c, cl)
 
         walk(cfg, 0)
@@ -536,8 +594,92 @@ class Merge:
         return {
             "added": sum(1 for h in nn if h not in nb),
             "changed": sum(1 for h in nn if h in nb and nn[h] != nb[h]),
-            "removed": sum(1 for h in nb if h not in nn),
+            "removed": sum(1 for h in nb if h not in nn and h not in self.skip),
         }
+
+    def pages(self) -> list[dict[str, Any]]:
+        """What this save changes in HA, page by page (owner 05.11 п.54б: «изменится N блоков на страницах …», the rest
+        stays as it is): Hauflo's new blocks (and ones brought back), its blocks with a new version where HA holds
+        them as Hauflo saved them (or the integrator took Hauflo's), its blocks gone that HA still held unedited. What
+        the integrator removed and keeps removed, his edits he keeps, his own cards: no change."""
+        nb, nn = _leaves(self.B), _leaves(self.N)
+        rows: dict[str, dict[str, Any]] = {}
+
+        def bump(idx: _Index, h: str, what: str) -> None:
+            v = idx.view.get(h)
+            if not v or v not in idx.node:
+                return
+            row = rows.setdefault(v, {"id": v, "added": 0, "changed": 0, "removed": 0})
+            if "title" not in row and (t := _title(idx.node[v], 1)):
+                row["title"] = t
+            row[what] += 1
+
+        taken, restored = set(self.taken), set(self.restored)
+        for h in nn:
+            if h not in nb:
+                bump(self.N, h, "added")
+            elif not self._in_current(h):
+                if h in restored or any(self._is_under(h, r) for r in restored):
+                    bump(self.N, h, "added")
+            elif nn[h] != nb[h] and (not self._edited(h) or h in taken):
+                bump(self.N, h, "changed")
+        for h in nb:
+            if h not in nn and h not in self.skip and self._in_current(h) and not self._edited(h):
+                bump(self.B, h, "removed")
+        # Before / after: the cards on that page in HA now and once saved (his included).
+        R = _Index(self.result)
+        for v, row in rows.items():
+            row["before"] = _count_cards(self.C.node[v], 1) if v in self.C.node else 0
+            row["after"] = _count_cards(R.node[v], 1) if v in R.node else 0
+        return list(rows.values())[:200]
+
+    def _is_under(self, h: str, top: str) -> bool:
+        p = self.N.parent.get(h)
+        while p and p != ROOT:
+            if p == top:
+                return True
+            p = self.N.parent.get(p)
+        return False
+
+    def untouched(self) -> list[str]:
+        """Owner 05.11 п.54а — the agent's own check before a save: every Hauflo item of HA's this save does not change
+        (not updated by Hauflo, not taken, not brought back, not dropped) is in what is saved exactly as HA holds it,
+        once; an edited one Hauflo dropped is kept as his. Returns the ids that aren't — above none, nothing is saved."""
+        R = _Index(self.result)
+        count: Counter[str] = Counter()
+
+        def walk(node: dict[str, Any], level: int) -> None:
+            for c in _kids(node, level):
+                if isinstance(c, dict):
+                    cl = _child_level(level, _kids_key(node, level))
+                    if (h := _hid(c)) is not None:
+                        count[h] += 1
+                    if _holds(c, cl):
+                        walk(c, cl)
+
+        walk(self.result, 0)
+        kept = self._prints(self.result, False)
+        taken = set(self.taken)
+        bad: list[str] = []
+        for h, c in self.C.node.items():
+            if h not in self.B.node or id(c) not in self.C.first:
+                continue
+            lvl = self.B.level[h]
+            cur = _own(c, lvl)
+            if h in self.N.node:
+                if count[h] > 1:
+                    bad.append(h)
+                    continue
+                if h in taken or (not self._edited(h) and _own(self.N.node[h], lvl) != _own(self.B.node[h], lvl)):
+                    continue  # Hauflo's new version: in the plan
+                r = R.node.get(h)
+                if r is None or _own(r, lvl) != cur:
+                    bad.append(h)
+            elif self._edited(h):
+                # Dropped by Hauflo, edited by him: his, as he has it (no id now).
+                if self._fp(c, lvl) not in kept:
+                    bad.append(h)
+        return bad
 
     def summary(self) -> dict[str, Any]:
         return {
@@ -548,6 +690,7 @@ class Merge:
             "restored": len(self.restored),
             "taken": len(self.taken),
             "updates": self.updates(),
+            "pages": self.pages(),
         }
 
 
@@ -582,6 +725,405 @@ def unpanel(cfg: Any, new: dict[str, Any]) -> Any:
     return {**cfg, "views": out_views} if changed else cfg
 
 
+def _same_name(t: Any) -> str:
+    return " ".join(t.split()).casefold() if isinstance(t, str) else ""
+
+
+def _leads_to(card: dict[str, Any], path: str) -> bool:
+    """A card of the integrator's that opens this page: its `path` / `navigation_path` (a tap's too) is the page's."""
+    ways = [card.get("path"), card.get("navigation_path")]
+    for k in ("tap_action", "hold_action"):
+        a = card.get(k)
+        if isinstance(a, dict):
+            ways.append(a.get("navigation_path"))
+    return any(isinstance(w, str) and (w.strip("/") == path or w.rstrip("/").endswith(f"/{path}")) for w in ways)
+
+
+def _stack(card: dict[str, Any]) -> list[Any] | None:
+    """The cards a card holds (a stack, a grid card, Hauflo's layout) — the integrator's tile may sit in one."""
+    v = card.get("cards")
+    return v if isinstance(v, list) else None
+
+
+def _tiles_to(cfg: dict[str, Any], path: str) -> int:
+    n = 0
+
+    def card(c: dict[str, Any]) -> None:
+        nonlocal n
+        n += _hid(c) is None and _leads_to(c, path)
+        for x in (_stack(c) if _hid(c) is None or c.get("type") == LAYOUT else None) or []:
+            if isinstance(x, dict):
+                card(x)
+
+    def walk(node: dict[str, Any], level: int) -> None:
+        for c in _kids(node, level):
+            if isinstance(c, dict):
+                cl = _child_level(level, _kids_key(node, level))
+                if cl == 3:
+                    card(c)
+                else:
+                    walk(c, cl)
+
+    walk(cfg, 0)
+    return n
+
+
+def twins(current: Any, new: Any) -> list[dict[str, Any]]:
+    """The integrator's own EMPTY pages named as one of Hauflo's (owner 04.11 п.51, Горького 3: his «Протечки» page and
+    tile, then the room made in Hauflo — two «Протечки» on «Сервис»). Offered for removal with the tiles that open them;
+    nothing is lost (no card on the page) and nothing goes without his tick."""
+    if not isinstance(current, dict) or not isinstance(new, dict):
+        return []
+    names = {_same_name(_title(v, 1)) for v in _kids(new, 0) if isinstance(v, dict) and _hid(v)} - {""}
+    out: list[dict[str, Any]] = []
+    for v in _kids(current, 0):
+        if not isinstance(v, dict) or _hid(v) is not None:
+            continue
+        path, title = v.get("path"), _title(v, 1)
+        if isinstance(path, str) and path.strip() and _same_name(title) in names and _count_cards(v, 1) == 0:
+            out.append({"id": path.strip()[:128], "title": title, "tiles": _tiles_to(current, path.strip())})
+    return out[:50]
+
+
+def drop_twins(current: Any, new: Any, ids: Any) -> tuple[Any, int]:
+    """`current` less the ticked twins (only what `twins` offers now) and the integrator's tiles that open them."""
+    want = {x for x in ids if isinstance(x, str)} if isinstance(ids, list) else set()
+    gone = {t["id"] for t in twins(current, new) if t["id"] in want}
+    if not gone:
+        return current, 0
+
+    def emptied(before: dict[str, Any], after: dict[str, Any], key: str) -> bool:
+        """The integrator's own section / stack that held something and holds nothing now — because of the tiles
+        removed here (tester 05.11: an empty `{"type": "grid", "cards": []}` was left). One of Hauflo's stays (an
+        empty Hauflo section gone from HA would read as removed by him)."""
+        b, a = before.get(key), after.get(key)
+        return _hid(before) is None and isinstance(b, list) and bool(b) and isinstance(a, list) and not a
+
+    def card(c: dict[str, Any]) -> dict[str, Any] | None:
+        if _hid(c) is None and any(_leads_to(c, p) for p in gone):
+            return None
+        # His stacks and Hauflo's layout (its blocks are cards of the page); a Hauflo card's own content is Hauflo's.
+        inner = _stack(c) if _hid(c) is None or c.get("type") == LAYOUT else None
+        if inner is None:
+            return c
+        out = {**c, "cards": [y for y in (card(x) if isinstance(x, dict) else x for x in inner) if y is not None]}
+        return None if emptied(c, out, "cards") else out
+
+    def keep(node: dict[str, Any], level: int) -> dict[str, Any]:
+        key = _kids_key(node, level)
+        if key is None:
+            return node
+        cl = _child_level(level, key)
+        kids = []
+        for c in _kids(node, level):
+            if not isinstance(c, dict):
+                kids.append(c)
+                continue
+            if level == 0 and _hid(c) is None and isinstance(c.get("path"), str) and c["path"].strip() in gone:
+                continue
+            if cl == 3:
+                x = card(c)
+            else:
+                x = keep(c, cl)
+                # A page stays (his page, its title and path); a section of his emptied by us goes.
+                if cl == 2 and emptied(c, x, "cards"):
+                    x = None
+            if x is not None:
+                kids.append(x)
+        return {**node, key: kids}
+
+    return keep(copy.deepcopy(current), 0), len(gone)
+
+
+# --- a dashboard of the old ids and layout moved over (agent 0.21, owner 05.11 п.49 / п.54в) -----------------------------
+# Before: a card's id hung on its section and its words (`v/<page>/s:<first card>/<kind>:<title>`), and a room page held
+# each block up to three times — one section per screen width (phone / tablet / desktop) — HA's edit mode showed all.
+# Now: one block once (Hauflo's layout card lays the page out by the screen), its id from what it shows. The first save
+# with the new ids reads the old base and HA's config in the new ids, then merges as always:
+# - each new block's old copies are found (the same content but the size, else the same thing shown — `_skey`); one
+#   copy becomes the block (one the integrator edited, else the phone's, else the first), the other copies are Hauflo's
+#   old layout — they go, unless he edited one into something else (kept as his card);
+# - removed in HA: a block stays while any copy of it is there; all copies gone — removed by him, stays removed;
+# - his cards in a copy section go to the block's section, after the block they followed (the same card in two copies:
+#   once); his own sections, pages and edits stay as they are.
+
+
+def _slug(v: Any) -> str:
+    """haufloIds.ts `slug`."""
+    s = unicodedata.normalize("NFC", "" if v is None else str(v))
+    return re.sub(r"[^\w.-]+", "-", s).strip("-")[:48]
+
+
+def _str(v: Any) -> str | None:
+    return v if isinstance(v, str) and v else None
+
+
+def _entity_of(v: Any) -> str | None:
+    return v if isinstance(v, str) else _str(v.get("entity")) if isinstance(v, dict) else None
+
+
+def _first_of(v: Any) -> str | None:
+    return _entity_of(v[0]) if isinstance(v, list) and v else None
+
+
+def _skey(c: dict[str, Any]) -> str:
+    """haufloIds.ts `stableKey`: what a card shows, in no language."""
+    kids = c.get("cards")
+    inner = kids[0] if isinstance(kids, list) and kids and isinstance(kids[0], dict) else None
+    tap = c.get("tap_action")
+    nav = _str(tap.get("navigation_path")) if isinstance(tap, dict) else None
+    key: Any
+    if c.get("type") == LAYOUT:
+        key = _skey(inner) if inner else ""
+    else:
+        key = next(
+            (
+                x
+                for x in (
+                    _str(c.get("entity")),
+                    _first_of(c.get("entities")),
+                    _str(c.get("block")),
+                    _str(c.get("area")),
+                    _str(c.get("room")),
+                    _str(c.get("floor")),
+                    _str(c.get("path")),
+                    nav,
+                    _first_of(c.get("scenes")),
+                    _first_of(c.get("alarms")),
+                    (_entity_of(inner) or _str(inner.get("block"))) if inner else None,
+                    _str(c.get("icon")) if c.get("type") == "heading" else None,
+                )
+                if x is not None
+            ),
+            "",
+        )
+    t = c.get("type")
+    kind = _slug(re.sub(r"^custom:(hauflo-)?", "", "card" if t is None else str(t)))
+    sub = f"{_slug(c['kind'])}/" if _str(c.get("kind")) and key != c.get("kind") else ""
+    return f"{kind}:{sub}{_slug(key)}"
+
+
+def _sizeless(node: dict[str, Any]) -> str:
+    """A card's content without its id and size: the copies of one block differ only there."""
+    return json.dumps({k: v for k, v in node.items() if k not in (ID, "grid_options")}, sort_keys=True, ensure_ascii=False, default=str)
+
+
+def _old_ids(idx: _Index) -> bool:
+    """A card's id under its section's: the old scheme."""
+    return any(idx.level[h] == 3 and idx.level.get(idx.parent[h]) == 2 and h.startswith(f"{idx.parent[h]}/") for h in idx.node)
+
+
+def _new_ids(idx: _Index) -> bool:
+    cards = [h for h in idx.node if idx.level[h] == 3 and idx.level.get(idx.parent[h]) == 2]
+    return bool(cards) and not any(h.startswith(f"{idx.parent[h]}/") for h in cards)
+
+
+def upgrade(base: dict[str, Any], current: Any, new: dict[str, Any]) -> tuple[dict[str, Any], Any, dict[str, Any]] | None:
+    """(the base, HA's config — copies, in the new ids and blocks; what it did) when the base has the old ids and the
+    new version the new ones, else None. Nothing of HA's is dropped here: only Hauflo's ids are renamed, Hauflo's copy
+    sections read as the block's section and his cards in them moved next to the block (an exact repeat of his card in
+    another copy of the same section — once: `allow` says how many of which)."""
+    if not isinstance(base, dict) or not isinstance(current, dict):
+        return None
+    B0, N = _Index(base), _Index(new)
+    if not _old_ids(B0) or not _new_ids(N):
+        return None
+    base, current = copy.deepcopy(base), copy.deepcopy(current)
+    B = _Index(base)
+    C = _Index(current, expect=B)
+
+    def media(h: str) -> str:
+        p = B.parent.get(h, ROOT)
+        return json.dumps(B.node[p].get("visibility"), sort_keys=True, default=str) if B.level.get(p) == 2 and B.node[p].get("visibility") else ""
+
+    def phone(h: str) -> bool:
+        """A card (or a section) shown on a phone: no screen condition, or the phone's."""
+        node = B.node[h] if B.level.get(h) == 2 else B.node.get(B.parent.get(h, ROOT), {})
+        m = json.dumps(node.get("visibility") or "", default=str)
+        return "media_query" not in m or "max-width" in m
+
+    # Old card → new block: the same content on the page (the k-th of its kind in its screen's copy), else the same thing.
+    by_content: dict[tuple[str | None, str], list[str]] = {}
+    for h, n in _leaves(N).items():
+        by_content.setdefault((N.view.get(h), _sizeless(n)), []).append(h)
+    seen_c: Counter[tuple[Any, ...]] = Counter()
+    seen_k: Counter[tuple[Any, ...]] = Counter()
+    used: set[tuple[str | None, str, str]] = set()
+    target: dict[str, str] = {}
+    for h, n in _leaves(B).items():
+        v, m, c = B.view.get(h), media(h), _sizeless(n)
+        seen_c[(v, m, c)] += 1
+        options = by_content.get((v, c), [])
+        i = seen_c[(v, m, c)] - 1
+        t = options[i] if i < len(options) else None
+        if t is None or (v, m, t) in used:
+            k = _skey(n)
+            seen_k[(v, m, k)] += 1
+            j = seen_k[(v, m, k)]
+            cand = f"{v}/{k}" if j == 1 else f"{v}/{k}#{j}"
+            t = cand if cand in N.node and N.view.get(cand) == v and N.level.get(cand) == 3 and (v, m, cand) not in used else None
+        if t is not None and t not in B.node:
+            used.add((v, m, t))
+            target[h] = t
+    groups: dict[str, list[str]] = {}
+    for h, t in target.items():
+        groups.setdefault(t, []).append(h)
+    # A block Hauflo drops: its copies are one block gone, not three.
+    copies: set[str] = set()
+    gone: dict[tuple[str | None, str], set[str]] = {}
+    for h, n in _leaves(B).items():
+        if h not in target:
+            media_seen = gone.setdefault((B.view.get(h), _sizeless(n)), set())
+            if media_seen and media(h) not in media_seen:
+                copies.add(h)
+            media_seen.add(media(h))
+
+    def here(h: str) -> bool:
+        return h in C.node and id(C.node[h]) in C.first
+
+    def edited(h: str) -> bool:
+        return _sizeless(C.node[h]) != _sizeless(B.node[h])
+
+    def same(h: str) -> None:
+        """HA's copy read as Hauflo saved it (its size or a repeat of the block's edit): not an edit of his."""
+        B.node[h].clear()
+        B.node[h].update(copy.deepcopy(C.node[h]))
+
+    survivor: dict[str, str] = {}  # old id → new id
+    for t, olds in groups.items():
+        present = [h for h in olds if here(h)]
+        changed = [h for h in present if edited(h)]
+        if changed:
+            keep = changed[0]
+        elif present:
+            keep = next((h for h in present if phone(h)), present[0])
+        else:
+            keep = next((h for h in olds if phone(h)), olds[0])
+        survivor[keep] = t
+        for h in olds:
+            if h == keep:
+                continue
+            copies.add(h)
+            if here(h) and (not edited(h) or (keep in C.node and _sizeless(C.node[h]) == _sizeless(C.node[keep]))):
+                same(h)
+        if here(keep) and not edited(keep):
+            # A size only: the layout card lays the block out now — Hauflo's, not an edit to keep.
+            same(keep)
+            for node in (B.node[keep], C.node[keep]):
+                node.pop("grid_options", None)
+                if "grid_options" in N.node[t]:
+                    node["grid_options"] = copy.deepcopy(N.node[t]["grid_options"])
+
+    # Sections: an old section → the new section its first block is in; of a section's copies, one (the phone's, else
+    # one HA still has) becomes it, his cards in the others move to it.
+    def new_section(t: str) -> str | None:
+        p = N.parent.get(t)
+        while p and p != ROOT and N.level.get(p, 0) > 2:
+            p = N.parent.get(p)
+        return p if p and N.level.get(p) == 2 else None
+
+    sec_groups: dict[str, list[str]] = {}
+    for h in B.node:
+        if B.level[h] != 2:
+            continue
+        first = next((x for x in (_hid(c) for c in _kids(B.node[h], 2) if isinstance(c, dict)) if x in target), None)
+        ns = new_section(target[first]) if first else None
+        if ns and ns not in B.node and N.view.get(ns) == B.view.get(h):
+            sec_groups.setdefault(ns, []).append(h)
+    allow: Counter[str] = Counter()
+    moved_local = 0
+    for ns, olds in sec_groups.items():
+        present = [h for h in olds if here(h)]
+        keep = next((h for h in present if phone(h)), present[0] if present else next((h for h in olds if phone(h)), olds[0]))
+        others = [h for h in present if h != keep]
+        survivor[keep] = ns
+        if not here(keep):
+            continue
+        dest = _kids(C.node[keep], 2)
+        prints = {Merge._fp(x, 3) for x in dest if isinstance(x, dict) and _hid(x) not in B.node}
+        for o in others:
+            if _own(C.node[o], 2) != _own(B.node[o], 2):
+                continue  # a section he edited: his, as it is
+            stay: list[Any] = []
+            anchor: str | None = None
+            for x in _kids(C.node[o], 2):
+                hx = _hid(x) if isinstance(x, dict) else None
+                if isinstance(x, dict) and hx in B.node and id(x) in C.first:
+                    anchor = hx
+                    stay.append(x)
+                    continue
+                if not isinstance(x, dict):
+                    stay.append(x)
+                    continue
+                fp = Merge._fp(x, 3) if not _holds(x, 3) else None
+                if fp is not None and fp in prints:
+                    allow[fp] += 1  # the same card of his in another copy: once
+                    continue
+                if fp is not None:
+                    prints.add(fp)
+                # After the copy of the block it followed in the kept section; none — at the section's end.
+                t = target.get(anchor or "")
+                at = next((i + 1 for i, y in enumerate(dest) if isinstance(y, dict) and target.get(_hid(y) or "") == t), len(dest)) if t else len(dest)
+                dest.insert(at, x)
+                moved_local += 1
+            C.node[o]["cards"] = stay
+
+    # The new ids on the base's and HA's copies alike.
+    for old, t in survivor.items():
+        for node in (B.node.get(old), C.node.get(old) if here(old) else None):
+            if node is not None:
+                node[ID] = t
+    # A new section of one layout card: the old section's cards are that card's blocks (base and HA alike), so his
+    # cards in it stay after the block they followed — inside the layout.
+    for ns in sec_groups:
+        kids = _kids(N.node[ns], 2)
+        if len(kids) != 1 or not isinstance(kids[0], dict) or kids[0].get("type") != LAYOUT or _hid(kids[0]) in B.node:
+            continue
+        lay = _own(kids[0], 3)
+        for cfg_node in (_find(base, ns), _find(current, ns)):
+            if cfg_node is not None and isinstance(cfg_node.get("cards"), list):
+                cfg_node["cards"] = [{**copy.deepcopy(lay), "cards": cfg_node["cards"]}]
+    return base, current, {"copies": copies, "allow": allow, "blocks": len(groups), "moved": moved_local}
+
+
+def _find(cfg: dict[str, Any], h: str) -> dict[str, Any] | None:
+    found: dict[str, Any] | None = None
+
+    def walk(node: dict[str, Any], level: int) -> None:
+        nonlocal found
+        for c in _kids(node, level):
+            if found is None and isinstance(c, dict):
+                cl = _child_level(level, _kids_key(node, level))
+                if _hid(c) == h:
+                    found = c
+                elif _holds(c, cl):
+                    walk(c, cl)
+
+    walk(cfg, 0)
+    return found
+
+
+def _local_prints(cfg: Any, base: dict[str, Any]) -> Counter[str]:
+    """The integrator's items of a config (no Hauflo id the base knows), as `Merge.lost` counts them."""
+    B = _Index(base)
+    C = _Index(cfg, expect=B)
+    out: Counter[str] = Counter()
+
+    def walk(node: dict[str, Any], level: int) -> None:
+        for c in _kids(node, level):
+            if isinstance(c, dict):
+                cl = _child_level(level, _kids_key(node, level))
+                h = _hid(c)
+                if h is None or h not in B.node or id(c) not in C.first:
+                    out[Merge._fp(c, cl)] += 1
+                if _holds(c, cl):
+                    walk(c, cl)
+
+    if isinstance(cfg, dict):
+        walk(cfg, 0)
+    return out
+
+
 def plan_and_merge(new: dict[str, Any], current: Any, base: dict[str, Any] | None, take: Any = (), restore: Any = ()) -> tuple[dict[str, Any], dict[str, Any]]:
     """(the config to save, what the plan says). No base: Hauflo's config as it is, nothing known about HA's."""
     new = ensure_ids(copy.deepcopy(new))
@@ -591,8 +1133,61 @@ def plan_and_merge(new: dict[str, Any], current: Any, base: dict[str, Any] | Non
     new = rekey(new, base)  # unique ids whatever the cloud sent, none of another kind
     if base is None:
         return new, {"base": False}
-    m = Merge(new, seen, base, take, restore)
-    return m.result, {**m.summary(), "base": True, "edited": seen != base, "changes": m.result != current, "lost": m.lost()}
+    up = upgrade(base, seen, new)
+    b2, c2, info = up if up is not None else (base, seen, None)
+    m = Merge(new, c2, b2, take, restore, skip=info["copies"] if info else ())
+    # His items against HA's config as it is (not only as `upgrade` read it): an exact repeat of his card in another
+    # copy of a section is the only thing allowed to go.
+    lost = sum((_local_prints(seen, base) - m._prints(m.result, False) - (info["allow"] if info else Counter())).values())
+    report = {**m.summary(), "base": True, "edited": seen != base, "changes": m.result != current, "lost": max(m.lost(), lost), "untouched": len(m.untouched())}
+    if info:
+        report["layout"] = {"blocks": info["blocks"], "copies": len(info["copies"]), "moved": info["moved"]}
+    return m.result, report
+
+
+def _walk_admins(node: Any, fix: Callable[[str, Any], Any]) -> Any:
+    """Every view's `visible` and every card's / section's «user» visibility condition, through the whole config."""
+    if isinstance(node, list):
+        for x in node:
+            _walk_admins(x, fix)
+    elif isinstance(node, dict):
+        if isinstance(node.get("visible"), list):
+            node["visible"] = fix("visible", node["visible"])
+        if node.get("condition") == "user" and isinstance(node.get("users"), list):
+            node["users"] = fix("users", node["users"])
+        for k, x in node.items():
+            if k not in ("visible", "users"):
+                _walk_admins(x, fix)
+    return node
+
+
+def expand_admins(cfg: Any, ids: list[str]) -> Any:
+    """The marker (a view's `visible: [{user: ADMINS}]`, a card's `{condition: user, users: [ADMINS]}`) → HA's
+    administrators (`ids`); none known — the marker stays, a list no user matches (seen in edit mode only)."""
+    if not ids:
+        return cfg
+
+    def fix(key: str, v: list[Any]) -> list[Any]:
+        if key == "visible" and any(isinstance(x, dict) and x.get("user") == ADMINS for x in v):
+            return [x for x in v if not (isinstance(x, dict) and x.get("user") == ADMINS)] + [{"user": i} for i in ids]
+        if key == "users" and ADMINS in v:
+            return [x for x in v if x != ADMINS] + list(ids)
+        return v
+
+    return _walk_admins(cfg, fix)
+
+
+def collapse_admins(cfg: Any) -> Any:
+    """A read for the cloud: Hauflo's own lists of users (as saved) say the marker again — no user ids leave the house."""
+
+    def fix(key: str, v: list[Any]) -> list[Any]:
+        if key == "visible" and v and all(isinstance(x, dict) and set(x) == {"user"} for x in v):
+            return [{"user": ADMINS}]
+        if key == "users" and v:
+            return [ADMINS]
+        return v
+
+    return _walk_admins(cfg, fix)
 
 
 # --- the agent's side -------------------------------------------------------------------------------------------------
@@ -691,24 +1286,34 @@ class DashboardMerge:
             raise MergeError("not_found", "no such storage dashboard")
         if current is None:
             raise MergeError("config_not_found", "no config yet")
-        return redact(current, self.bases[url_path], self.key)
+        return collapse_admins(redact(current, self.bases[url_path], self.key))
+
+    async def _admin_ids(self) -> list[str]:
+        """HA's administrators (active people, not HA's own system users), read here — never sent to the cloud."""
+        try:
+            users = await self.hass.auth.async_get_users()
+        except Exception:  # noqa: BLE001 — not knowable: the marker stays (edit mode only)
+            return []
+        return sorted(u.id for u in users if u.is_admin and u.is_active and not u.system_generated)
 
     async def plan(self, url_path: str, config: dict[str, Any]) -> dict[str, Any]:
         exists, current = await self._current(url_path)
         if not exists:
             return {"base": False, "exists": False}
         base = self.bases.get(url_path) if current is not None else None
-        _, out = plan_and_merge(ensure_ids(copy.deepcopy(config)), current, base)
+        _, out = plan_and_merge(expand_admins(ensure_ids(copy.deepcopy(config)), await self._admin_ids()), current, base)
         # «Заменить на Hauflo»: the integrator's stock cards here, offered — made only by his ticks (`save` … `stock`).
         offers = stock_cards.offers(current, stock_cards.hass_info(self.hass)) if base is not None and current is not None else []
-        return {**out, "exists": True, **({"stock": offers[:200]} if offers else {})}
+        # His empty pages named as Hauflo's (п.51): offered, removed only by his tick (`save` … `twins`).
+        pairs = twins(current, config) if base is not None else []
+        return {**out, "exists": True, **({"stock": offers[:200]} if offers else {}), **({"twins": pairs} if pairs else {})}
 
-    async def save(self, url_path: str, config: dict[str, Any], take: Any, restore: Any, replace: bool, title: str | None, local_ws: Callable[[list[dict[str, Any]]], Any], lang: str | None = None, stock: Any = ()) -> dict[str, Any]:
+    async def save(self, url_path: str, config: dict[str, Any], take: Any, restore: Any, replace: bool, title: str | None, local_ws: Callable[[list[dict[str, Any]]], Any], lang: str | None = None, stock: Any = (), drop: Any = ()) -> dict[str, Any]:
         exists, current = await self._current(url_path)
         if not exists:
             raise MergeError("not_found", "no such storage dashboard")
         base = self.bases.get(url_path) if current is not None else None
-        new = ensure_ids(copy.deepcopy(config))
+        new = expand_admins(ensure_ids(copy.deepcopy(config)), await self._admin_ids())
         new = rekey(new, unpanel(base, new) if base is not None else None)
         if base is None and current is not None and not replace:
             # Nothing known of what is Hauflo's here: no merge can tell the integrator's cards — refused, the cloud
@@ -716,13 +1321,22 @@ class DashboardMerge:
             raise MergeError("no_base", "the agent has no Hauflo version of this dashboard to merge against")
         # The integrator's ticked stock cards become Hauflo's cards (still his: no Hauflo id), then the merge as always.
         src, made = stock_cards.apply(current, list(stock), stock_cards.hass_info(self.hass)) if base is not None and current is not None and stock else (current, 0)
+        # His ticked empty twins of Hauflo's pages (and his tiles to them) go before the merge — checked again here.
+        src, dropped = drop_twins(src, new, list(drop)) if base is not None and src is not None and drop else (src, 0)
         merged, report = plan_and_merge(new, src, base, take, restore)
         if made:
             report["stock"] = made
+        if dropped:
+            report["twins"] = dropped
         if report.get("lost"):
             # Whatever the cloud sent: an item of the integrator's would go — nothing is written (security re-review 28.10).
             _LOGGER.warning("Hauflo: dashboard %s not saved — %s of the integrator's items would be lost", url_path, report["lost"])
             raise MergeError("merge_lost_local", f"{report['lost']} of the integrator's own items would be lost; nothing saved")
+        if report.get("untouched"):
+            # Owner 05.11 п.54а: something of HA's the plan doesn't change would change — the agent's own check, whatever
+            # the cloud sent or the merge did; nothing is written.
+            _LOGGER.warning("Hauflo: dashboard %s not saved — %s blocks outside the plan would change", url_path, report["untouched"])
+            raise MergeError("merge_untouched_changed", f"{report['untouched']} blocks the plan doesn't change would change; nothing saved")
         copy_url = None
         if current is not None and merged != current and (base is None or current != base):
             # What the integrator made is in it: kept as a hidden copy before anything is written.
@@ -732,6 +1346,11 @@ class DashboardMerge:
             copy_url = await self._copy(url_path, current, title, local_ws, lang, before_take=bool(report.get("taken")))
         if merged != current:
             await self._dashboard(url_path).async_save(merged)
+            # Owner 05.11 п.54д: read back from HA — exactly what was planned is there, or the alarm.
+            _, back = await self._current(url_path)
+            report["verify"] = "ok" if back == merged else "mismatch"
+            if back != merged:
+                _LOGGER.warning("Hauflo: dashboard %s reads back other than saved", url_path)
         self.bases[url_path] = new
         await self.store.async_save(self.bases)
         # «upgrade»: no Hauflo version stored yet (first save by this agent) — the copy is only a precaution, nobody is
@@ -872,6 +1491,7 @@ async def handle(agent: Any, ch: int, msg: dict[str, Any], validate: Callable[[A
             lambda cmds: local_ws(agent.local_session, f"{agent.local_base}/api/websocket", agent.token, cmds),
             lang[:5] if lang else None,
             [] if plain else [x for x in (msg.get("stock") if isinstance(msg.get("stock"), list) else [])[:200] if isinstance(x, str) and len(x) <= 64],
+            [] if plain else [x for x in (msg.get("twins") if isinstance(msg.get("twins"), list) else [])[:50] if isinstance(x, str) and len(x) <= 128],
         )
         await reply(None if plain else res)
     except MergeError as err:

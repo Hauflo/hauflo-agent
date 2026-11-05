@@ -40,7 +40,7 @@ import statistics
 from datetime import date, datetime, time as dtime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from homeassistant.const import PERCENTAGE, STATE_UNAVAILABLE
+from homeassistant.const import PERCENTAGE, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import State
 from homeassistant.util import dt as dt_util
 
@@ -311,6 +311,21 @@ class HaHost(Series):
             return "free"
         return None
 
+    def _watch(self, st: State) -> str | None:
+        # The backup sensor says «unknown» until the first automatic backup ever: that silence is the finding («never»).
+        if st.state == STATE_UNKNOWN and self.ctx.visible(st.entity_id, self.diagnostic):
+            return "backup" if self.kind_of(st) == "backup" else None
+        return super()._watch(st)
+
+    def on_state(self, new: State, now: float) -> None:
+        if new.state == STATE_UNKNOWN and self._watch(new) == "backup":
+            rec = self.recs.get(new.entity_id)
+            if rec is None or rec["kind"] != "backup":
+                self.recs[new.entity_id] = {"kind": "backup", "pts": [], "day": day_of(now), "today": None, "ring": [], "last": None, "open": None, "since": now}
+                self.ctx.dirty()
+            return
+        super().on_state(new, now)
+
     def reading(self, st: State, kind: str) -> float | None:
         if kind == "backup":
             at = dt_util.parse_datetime(st.state)
@@ -326,6 +341,10 @@ class HaHost(Series):
     def assess(self, eid: str, rec: dict[str, Any], now: float) -> dict[str, Any] | None:
         kind, last = rec["kind"], rec["last"]
         if last is None:
+            # No backup has ever been made (sensor unknown for backup_never_days): a finding without a date.
+            st = self.ctx.hass.states.get(eid)
+            if kind == "backup" and st is not None and st.state == STATE_UNKNOWN and now - rec["since"] >= _P["backup_never_days"] * DAY_S:
+                return {"limit": _P["backup_max_days"]}
             return None
         if kind == "backup":
             age = (now - last) / DAY_S

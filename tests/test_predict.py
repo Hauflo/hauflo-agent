@@ -377,8 +377,23 @@ async def test_disk_free_in_mib_and_unknown_backup(hass, ins):
         await step(hass, ins, local(d, 12), free, (12 - 0.8 * d) * 1024, {"unit_of_measurement": "MiB"})
         await step(hass, ins, local(d + 1, 0.1))
     got = kinds(ins)
-    assert set(got) == {f"disk_full|{free}"}, got
+    # A sensor «unknown» for backup_never_days = no backup was ever made: a finding without days / date.
+    assert set(got) == {f"disk_full|{free}", f"backup_old|{backup}"}, got
     assert got[f"disk_full|{free}"]["limit"] == _P["disk_min_free_gb"]
+    assert "days" not in got[f"backup_old|{backup}"] and "date" not in got[f"backup_old|{backup}"]
+    # The first backup closes it.
+    await step(hass, ins, local(10, 4), backup, dt_util.utc_from_timestamp(local(10, 3)).isoformat(), {"device_class": "timestamp"})
+    assert f"backup_old|{backup}" not in kinds(ins)
+
+
+async def test_unknown_backup_is_quiet_at_first(hass, ins):
+    backup = reg_entity(hass, "sensor", "backup_last", platform="backup", translation_key="last_successful_automatic_backup")
+    hass.states.async_set(backup, "unknown", {})
+    await step(hass, ins, local(0, 12))
+    assert not kinds(ins)  # a fresh install: not yet
+    hass.states.async_set(backup, "unavailable", {})
+    await step(hass, ins, local(5, 12))
+    assert not kinds(ins)  # unavailable is the integration's silence, not «never»
 
 
 # --- night water ---------------------------------------------------------------------------------------------------------

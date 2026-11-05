@@ -316,7 +316,9 @@ class Season:
         self.config = clean_config(raw)[0]
         self.legacy = isinstance(raw, dict) and "include" not in raw  # no saved config = a new install: the new default
         self.season = data.get("season") if data.get("season") in MODES else None
-        self.at, self.by = data.get("at"), data.get("by")
+        at = data.get("at")
+        self.at = at if isinstance(at, (int, float)) and not isinstance(at, bool) else None  # a broken store must not break the sensor
+        self.by = data.get("by")
         self.migrated = data.get("migrated") is True
         self.suggest_applied = data.get("suggest_applied") if isinstance(data.get("suggest_applied"), dict) else None
         self.last_resend = data.get("last_resend") if isinstance(data.get("last_resend"), (int, float)) else None

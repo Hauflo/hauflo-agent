@@ -132,7 +132,7 @@ async def test_snapshot_only_safe_hauflo_entities(hass: HomeAssistant, entry, pe
     assert status == 200
     ids = {i["id"] for r in view["rooms"] for i in r["items"]}
     assert ids == {AC, BLIND, DIM, LAMP}
-    assert set(view) == {"label", "expires", "rooms"}  # no house, no people, no log
+    assert set(view) == {"label", "expires", "timeZone", "rooms"}  # no house, no people, no log
     ac = next(i for r in view["rooms"] for i in r["items"] if i["id"] == AC)
     assert (ac["min"], ac["max"], ac["target"]) == (16.0, 28.0, 22)  # the entity's 5–35 narrowed to the guest's band
 

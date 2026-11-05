@@ -214,6 +214,20 @@ async def test_device_and_entity_ownership(hass):
     assert not W({"type": "config/device_registry/remove_config_entry", "device_id": dz.id})
     assert W({"type": "config/device_registry/update", "device_id": dk.id, "id": 1, "area_id": "x"}, {"u-1", "u-hand"})
     assert not W({"type": "config/device_registry/update", "device_id": dk.id, "disabled_by": "user"}, {"u-1", "u-hand"})
+    # п.56: another integration's device (a leak sensor) put in a room on a click — real HA registries.
+    from homeassistant.helpers import area_registry as ar_
+
+    areas = ar_.async_get(hass)
+    ours, theirs = areas.async_create("Протечки"), areas.async_create("Bathroom")
+    dl = d.async_get_or_create(config_entry_id=z.entry_id, identifiers={("z", "leak")})
+    reg.async_get_or_create("binary_sensor", "zwave_js", "leak-1", device_id=dl.id, config_entry=z, suggested_object_id="leak", original_device_class="moisture")
+    up = lambda dev, area, entries=frozenset(), **kw: m._ws_allowed({"type": "config/device_registry/update", "device_id": dev, "area_id": area, **kw}, hass, {"u-1"}, set(entries))
+    assert up(dl.id, theirs.id)  # no room yet: a blank filled in
+    assert not up(dl.id, "nope") and not up(dl.id, None) and not up(dl.id, ours.id, name_by_user="x")
+    assert not up(dz.id, ours.id)  # nothing on it the family sees
+    d.async_update_device(dl.id, area_id=theirs.id)
+    assert not up(dl.id, ours.id)  # the family's room: not taken out of it into another
+    assert up(dl.id, ours.id, {f"area:{ours.id}"})  # into a room Hauflo made
     # entity registry updates: only Hauflo's own, never a lock, never a hand-made KNX one
     reg.async_get_or_create("lock", "template", "lk", suggested_object_id="front")
     reg.async_get_or_create("cover", "knx", "u-gate", config_entry=k, suggested_object_id="gate", original_device_class="gate")

@@ -404,7 +404,7 @@ class GuestAccess:
             if items:
                 rooms.append({"name": _clean(names.get(r, ""), 60), "items": items})
         # No house name, no people, no other rooms: what the guest may touch and when it ends.
-        return {"label": grant.get("label") or "", "expires": grant.get("expires"), "rooms": rooms}
+        return {"label": grant.get("label") or "", "expires": grant.get("expires"), "timeZone": str(self.hass.config.time_zone or ""), "rooms": rooms}
 
     async def _act(self, grant: dict[str, Any], allowed: list[str], eid: Any, action: Any, value: Any) -> tuple[int, dict[str, Any]]:
         if not isinstance(eid, str) or eid not in allowed:

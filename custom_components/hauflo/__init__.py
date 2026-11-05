@@ -28,7 +28,7 @@ from homeassistant.components.http import KEY_HASS, HomeAssistantView
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP, __version__ as HA_VERSION
 from homeassistant.core import Event, HomeAssistant, callback
-from homeassistant.helpers import device_registry as dr, entity_registry as er, label_registry as lr
+from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er, label_registry as lr
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
@@ -44,6 +44,10 @@ from .tuning import TUNING
 from .tunnel import TUNNEL
 
 _LOGGER = logging.getLogger(__name__)
+# HA's state reads come in rounds (sync_state, every 60 min): reads closer than this belong to one round.
+KNX_ROUND_GAP = TUNING["link"]["knx_round_gap_s"]
+# Fewer unanswered reads than this say nothing about the bus (one address without a read flag).
+KNX_ROUND_MIN_READS = TUNING["link"]["knx_round_min_reads"]
 PROBLEM_ON = {"problem", "safety", "smoke", "gas", "moisture", "battery", "heat", "cold", "carbon_monoxide", "tamper", "vibration"}
 
 
@@ -873,6 +877,26 @@ def _device_entities_owned(hass: HomeAssistant | None, device_id: Any, owned: se
     return all(e.platform != "knx" or e.unique_id in owned for e in ents)
 
 
+def _foreign_device_placeable(hass: HomeAssistant | None, device_id: Any, area_id: Any, owned_entries: set[str] | None) -> bool:
+    """Another integration's device (a leak sensor, a camera…) put in a room on the integrator's click («Изменения в HA»,
+    п.56): its area only (the caller checked the keys), into a room that exists — a blank filled in (it has no room yet)
+    or into a room Hauflo made. Never taken out of the family's own room into theirs, never a KNX one, never cleared."""
+    if hass is None or not isinstance(device_id, str) or not isinstance(area_id, str) or not area_id:
+        return False
+    device = dr.async_get(hass).async_get(device_id)
+    if device is None or getattr(device, "entry_type", None) is not None:
+        return False
+    ents = er.async_entries_for_device(er.async_get(hass), device_id, include_disabled_entities=True)
+    if not ents or any(getattr(e, "platform", None) in ("knx", DOMAIN) for e in ents):
+        return False
+    try:
+        if ar.async_get(hass).async_get_area(area_id) is None:
+            return False
+    except Exception:  # noqa: BLE001 — not knowable: not allowed
+        return False
+    return getattr(device, "area_id", None) is None or _owns(owned_entries, "area", area_id)
+
+
 def _owns(owned_entries: set[str] | None, kind: str, item_id: Any) -> bool:
     """A room / floor / label Hauflo created through the tunnel (kept with its config entries as «kind:id»)."""
     return owned_entries is not None and isinstance(item_id, str) and f"{kind}:{item_id}" in owned_entries
@@ -899,6 +923,42 @@ def _empty_area(hass: HomeAssistant | None, area_id: Any) -> bool:
     if ar.async_get(hass).async_get_area(area_id) is None:
         return False
     return not er.async_entries_for_area(er.async_get(hass), area_id) and not dr.async_entries_for_area(dr.async_get(hass), area_id)
+
+
+_STOCK_AREAS = f"{DOMAIN}_stock_area_names"
+
+
+async def _load_stock_area_names(hass: HomeAssistant) -> dict[str, str]:
+    """The rooms HA's onboarding makes («Гостиная», «Кухня», «Спальня»): name in the house's language and English → icon."""
+    from homeassistant.components.onboarding.const import DEFAULT_AREAS  # noqa: PLC0415
+    from homeassistant.helpers.translation import async_get_translations  # noqa: PLC0415
+
+    names: dict[str, str] = {}
+    for lang in {hass.config.language or "en", "en"}:
+        tr = await async_get_translations(hass, lang, "area", {"onboarding"})
+        for area in DEFAULT_AREAS:
+            if name := tr.get(f"component.onboarding.area.{area.key}"):
+                names[name] = area.icon
+    hass.data[_STOCK_AREAS] = names
+    return names
+
+
+def _stock_area(hass: HomeAssistant | None, area_id: Any) -> bool:
+    """A room HA's onboarding made and nobody touched (owner 04.11: «Гостиная/Кухня/Спальня» beside the real rooms):
+    its stock name and icon, no floor, alias, picture, label or sensor, nothing in it."""
+    names = hass.data.get(_STOCK_AREAS) if hass is not None else None
+    if not names or not isinstance(area_id, str):
+        return False
+    from homeassistant.helpers import area_registry as ar  # noqa: PLC0415
+
+    area = ar.async_get(hass).async_get_area(area_id)
+    if area is None or area.name not in names or names[area.name] != area.icon:
+        return False
+    if area.floor_id or area.aliases or area.picture or area.labels:
+        return False
+    if getattr(area, "temperature_entity_id", None) or getattr(area, "humidity_entity_id", None):
+        return False
+    return _empty_area(hass, area_id)
 
 
 def _unused_label(hass: HomeAssistant | None, label_id: Any) -> bool:
@@ -1190,6 +1250,8 @@ _LOVELACE_TYPES = {
     "custom:hauflo-title",
     # What HA put in an area (0.14.7): only the area id comes from the cloud; the card reads HA and opens HA's own dialog.
     "custom:hauflo-area",
+    # Hauflo's page layout (0.21.0, п.49): the page's cards once, its columns name them by their hauflo_id.
+    "custom:hauflo-layout",
 }
 # What a card may only show: anyone's (weather on the floor, an alarm source of a monitoring rule).
 _READ_ONLY_DOMAINS = {"sensor", "binary_sensor", "weather", "sun", "person", "zone", "device_tracker", "calendar", "image", "camera", "event"}
@@ -1570,9 +1632,13 @@ def _ws_allowed(msg: dict[str, Any], hass: HomeAssistant | None = None, owned: s
         # each of them is Hauflo's (security re-review round 4).
         return _own_device(hass, msg.get("device_id")) and _device_entities_owned(hass, msg.get("device_id"), owned)
     if t == "config/device_registry/update":
-        # Only placing a device of Hauflo's own in a room (security expert 25.10: «disabled_by» on the KNX interface
-        # reloaded KNX — the house lost the bus).
-        return set(msg) <= {"id", "type", "device_id", "area_id"} and _own_device(hass, msg.get("device_id")) and _device_entities_owned(hass, msg.get("device_id"), owned)
+        # Only placing a device in a room (security expert 25.10: «disabled_by» on the KNX interface reloaded KNX — the
+        # house lost the bus): Hauflo's own, or another integration's one the integrator put there by a click (п.56).
+        if not set(msg) <= {"id", "type", "device_id", "area_id"}:
+            return False
+        if _own_device(hass, msg.get("device_id")):
+            return _device_entities_owned(hass, msg.get("device_id"), owned)
+        return _foreign_device_placeable(hass, msg.get("device_id"), msg.get("area_id"), owned_entries)
     if t in ("config/area_registry/update", "config/floor_registry/update"):
         kind = "area" if t.startswith("config/area") else "floor"
         key = f"{kind}_id"
@@ -1597,7 +1663,9 @@ def _ws_allowed(msg: dict[str, Any], hass: HomeAssistant | None = None, owned: s
     if t == "config/area_registry/delete":
         # Only a room Hauflo made (for this or an earlier project here) with nothing left in it — the plan's «лишние
         # комнаты», ticked by the integrator (service review 29.10: «Kitchen», «Room 201» beside the real rooms).
-        return set(msg) <= {"id", "type", "area_id"} and _owns(owned_entries, "area", msg.get("area_id")) and _empty_area(hass, msg.get("area_id"))
+        # Or an untouched stock room of HA's onboarding (owner 04.11) — the same «empty» check inside.
+        aid = msg.get("area_id")
+        return set(msg) <= {"id", "type", "area_id"} and ((_owns(owned_entries, "area", aid) and _empty_area(hass, aid)) or _stock_area(hass, aid))
     if t == "config/label_registry/delete":
         # Only a label Hauflo made and nothing carries (its category labels of the other language).
         return _owns(owned_entries, "label", msg.get("label_id")) and _unused_label(hass, msg.get("label_id"))
@@ -1873,9 +1941,12 @@ class Agent:
         self._knx_heard: float | None = None
         self._knx_since = time.monotonic()
         # A quiet flat is quiet for hours (Горького 3, 04.11: «шина молчит» every hour between HA's hourly state
-        # reads), so silence alone isn't a dead bus. Dead = HA asked (GroupValueRead) and nothing came back:
-        # the time of the first read still unanswered.
-        self._knx_asked: float | None = None
+        # reads), so silence alone isn't a dead bus. Dead = a whole round of HA's reads (GroupValueRead) and nothing
+        # came back. A round = reads less than KNX_ROUND_GAP s apart. One answer in a round settles it: an address
+        # without a read flag at the round's end isn't a dead bus (0.20 counted that one read — an alarm every hour).
+        self._knx_asked: float | None = None  # the first read of the rounds still without any answer
+        self._knx_asked_n = 0  # reads since then
+        self._knx_read_last: float | None = None
         # Names of the house's HA administrators (the service passport, service review r2 D5) — read in the status loop.
         self._admins: list[str] = []
         self._unsub_knx = None
@@ -1887,11 +1958,19 @@ class Agent:
             def _heard(_telegram, telegram_dict) -> None:
                 t = telegram_dict or {}
                 direction = str(t.get("direction", "")).lower()
+                now = time.monotonic()
                 if direction.startswith("incoming"):
-                    self._knx_heard = time.monotonic()
+                    self._knx_heard = now
                     self._knx_asked = None
-                elif direction.startswith("outgoing") and str(t.get("telegramtype", "")) == "GroupValueRead" and self._knx_asked is None:
-                    self._knx_asked = time.monotonic()
+                    self._knx_asked_n = 0
+                elif direction.startswith("outgoing") and str(t.get("telegramtype", "")) == "GroupValueRead":
+                    new_round = self._knx_read_last is None or now - self._knx_read_last > KNX_ROUND_GAP
+                    self._knx_read_last = now
+                    if self._knx_asked is not None:
+                        self._knx_asked_n += 1
+                    elif new_round:
+                        # A round already answered stays answered — only a new round can open the question.
+                        self._knx_asked, self._knx_asked_n = now, 1
 
             self._unsub_knx = async_dispatcher_connect(hass, SIGNAL_KNX_TELEGRAM, _heard)
         except Exception as err:  # noqa: BLE001
@@ -2364,9 +2443,9 @@ class Agent:
         # Minutes the bus has been silent (since the agent started when nothing came yet).
         now = time.monotonic()
         silent = int((now - (self._knx_heard or self._knx_since)) // 60)
-        # Minutes HA's read has waited for any answer from the bus (None: nothing asked since the bus last spoke).
-        unanswered = int((now - self._knx_asked) // 60) if self._knx_asked is not None else None
-        return {"loaded": loaded, "connected": connected, "state": entries[0].state.value if entries else "missing", "silentMin": silent, "unansweredMin": unanswered, "heard": self._knx_heard is not None}
+        # Minutes HA's reads have waited for any answer from the bus (None: answered, or too few reads to judge).
+        unanswered = int((now - self._knx_asked) // 60) if self._knx_asked is not None and self._knx_asked_n >= KNX_ROUND_MIN_READS else None
+        return {"loaded": loaded, "connected": connected, "state": entries[0].state.value if entries else "missing", "silentMin": silent, "unansweredMin": unanswered, "unansweredReads": self._knx_asked_n, "heard": self._knx_heard is not None}
 
     def _knx_conn(self) -> dict[str, Any] | None:
         """How HA talks to the bus, for the service passport (service review r2 D5): the connection type, the gateway's
@@ -2505,6 +2584,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
     agent = Agent(hass, entry)
     await agent.async_load()
     entry.runtime_data = agent
+    # The stock onboarding room names, so a removal the cloud sends is checked without a plan before it (owner 04.11).
+    try:
+        await _load_stock_area_names(hass)
+    except Exception as err:  # noqa: BLE001 — never stops the agent; such rooms are then just kept
+        degrade("stock rooms", err)
     # Gates / garage doors / doors stay protected once seen (protect.py): marked now, on every registry change and
     # before each change the cloud sends.
     await protect.async_setup(hass, lambda eid: _protect_marks_of(hass, eid), _ga_key, lambda: _protect_refresh(hass))
@@ -2699,7 +2783,16 @@ class OwnedView(HomeAssistantView):
             entries |= {e for e in entry.runtime_data.owned_entries if ":" not in e}
             # Rooms it made: a plan offers to remove the empty ones no project here uses (service review 29.10).
             areas |= {e.split(":", 1)[1] for e in entry.runtime_data.owned_entries if e.startswith("area:")}
-        return self.json({"unique_ids": sorted(owned), "entries": sorted(entries), "areas": sorted(areas)})
+        # HA's own untouched onboarding rooms: the plan offers them with the leftovers, by name (owner 04.11).
+        stock: list[str] = []
+        try:
+            from homeassistant.helpers import area_registry as ar  # noqa: PLC0415
+
+            await _load_stock_area_names(hass)
+            stock = sorted(a.id for a in ar.async_get(hass).async_list_areas() if a.id not in areas and _stock_area(hass, a.id))
+        except Exception as err:  # noqa: BLE001 — never breaks the plan
+            degrade("stock rooms", err)
+        return self.json({"unique_ids": sorted(owned), "entries": sorted(entries), "areas": sorted(areas), "stock_areas": stock})
 
 
 class RangesView(HomeAssistantView):

@@ -14,6 +14,7 @@ from custom_components.hauflo.diagnostics import async_get_config_entry_diagnost
 
 from custom_components.hauflo import _http_allowed, _http_locked, _ws_allowed
 from custom_components.hauflo import ownership as own_mod
+import custom_components.hauflo as m
 from custom_components.hauflo.const import CONF_ALLOW_CHANGES, CONF_SECRET, CONF_SERVER, DOMAIN, MONITOR_LABEL_EN
 
 
@@ -254,3 +255,34 @@ async def test_only_empty_rooms_hauflo_made_may_be_removed(hass: HomeAssistant, 
     client = await hass_client()
     body = await (await client.get("/api/hauflo/owned")).json()
     assert set(body["areas"]) == {ours_empty.id, ours_used.id}
+
+
+async def test_untouched_onboarding_rooms_may_be_removed(hass: HomeAssistant, entry, hass_client) -> None:
+    """HA's stock «Living Room / Kitchen / Bedroom» (owner 04.11): only untouched and empty ones, by name and icon."""
+    ids = _make(hass, entry)
+    agent = entry.runtime_data
+    areas = ar.async_get(hass)
+    stock = areas.async_create("Living Room", icon="mdi:sofa")
+    used = areas.async_create("Bedroom", icon="mdi:bed")
+    renamed_icon = areas.async_create("Kitchen", icon="mdi:fridge")  # the integrator changed its icon: his now
+    not_stock = areas.async_create("Kitchen 2", icon="mdi:stove")  # not a stock name
+    lookalike = areas.async_create("Гараж", icon="mdi:sofa")
+    er.async_get(hass).async_update_entity(ids["ours"], area_id=used.id)
+    await m._load_stock_area_names(hass)
+
+    def ok(area_id: str, **extra) -> bool:
+        return _ws_allowed({"id": 1, "type": "config/area_registry/delete", "area_id": area_id, **extra}, hass, agent.owned, agent.owned_entries)
+
+    assert ok(stock.id)
+    assert not ok(used.id)  # something in it
+    assert not ok(renamed_icon.id) and not ok(not_stock.id) and not ok(lookalike.id)
+    assert not ok(stock.id, name="x")
+    areas.async_update(stock.id, aliases={"зал"})
+    assert not ok(stock.id)  # touched: an alias is a voice phrase
+    areas.async_update(stock.id, aliases=set())
+    assert ok(stock.id)
+    hass.data.pop(m._STOCK_AREAS)
+    assert not ok(stock.id)  # names unknown: kept
+    client = await hass_client()
+    body = await (await client.get("/api/hauflo/owned")).json()
+    assert body["stock_areas"] == [stock.id]

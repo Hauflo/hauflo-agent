@@ -127,7 +127,7 @@ def test_edited_hauflo_card_is_a_conflict_kept_by_default_or_taken():
     cards_of(new, 0, 1)[1]["name"] = "Кондиционер"
     merged, plan = plan_and_merge(new, cur, base)
     assert cards_of(merged, 0, 1)[1] == cards_of(cur, 0, 1)[1]
-    assert plan["conflicts"] == [{"id": "v/living/s:climate/c:t", "kind": "card", "type": "tile", "where": "Гостиная", "kept": "yours", "updated": True}]
+    assert plan["conflicts"] == [{"id": "v/living/s:climate/c:t", "kind": "card", "type": "tile", "entity": "climate.living", "where": "Гостиная", "kept": "yours", "updated": True}]
     merged, plan = plan_and_merge(new, cur, base, take=["v/living/s:climate/c:t"])
     assert cards_of(merged, 0, 1)[1] == cards_of(new, 0, 1)[1]
     assert plan["taken"] == 1
@@ -767,3 +767,60 @@ def test_stock_offer_only_on_the_integrators_cards_and_kept_his_after_the_merge(
     assert {k: v for k, v in got[2].items() if k != stock.WAS} == {"type": "custom:hauflo-lights", "entities": ["light.garden", "switch.path"], "title": "Свет сада"}
     assert got[2][stock.WAS] == mine and ID not in got[2]
     assert got[1]["name"] == "Люстра"
+
+
+def test_admins_view_marker_expanded_in_the_house_and_said_again_on_a_read():
+    """Owner 04.11 п.21: the «Сервис» floor for HA's administrators — the cloud says a marker, the agent puts the
+    admins' ids in, a read through the tunnel shows the marker again (no user id leaves the house)."""
+    marker = [{"user": dashmerge.ADMINS}]
+    tile = {"type": "custom:hauflo-room", ID: "c:srv", "visibility": [{"condition": "screen", "media_query": "(min-width: 700px)"}, {"condition": "user", "users": [dashmerge.ADMINS]}]}
+    cfg = {"views": [{"title": "Дом", ID: "v:home", "sections": [{"type": "grid", ID: "s:home", "cards": [tile]}]}, {"title": "Сервис", ID: "v:srv", "visible": marker, "sections": []}]}
+    out = dashmerge.expand_admins(copy.deepcopy(cfg), ["a1", "b2"])
+    assert out["views"][1]["visible"] == [{"user": "a1"}, {"user": "b2"}]
+    assert out["views"][0]["sections"][0]["cards"][0]["visibility"][1]["users"] == ["a1", "b2"]
+    assert out["views"][0]["sections"][0]["cards"][0]["visibility"][0]["condition"] == "screen"
+    assert "visible" not in out["views"][0]
+    # No admin known: the marker stays — a list no user matches.
+    assert dashmerge.expand_admins(copy.deepcopy(cfg), [])["views"][1]["visible"] == marker
+    # Saved with ids; the read of that very config says the marker, never the ids.
+    merged, _ = plan_and_merge(copy.deepcopy(out), None, None)
+    read = dashmerge.collapse_admins(dashmerge.redact(copy.deepcopy(merged), copy.deepcopy(merged), b"k" * 32))
+    assert read["views"][1]["visible"] == marker
+    assert read["views"][0]["sections"][0]["cards"][0]["visibility"][1]["users"] == [dashmerge.ADMINS]
+    assert "a1" not in json.dumps(read) and "b2" not in json.dumps(read)
+    # The same deploy again: nothing changes (base and HA hold the ids, the cloud's marker expands to the same).
+    again, report = plan_and_merge(dashmerge.expand_admins(copy.deepcopy(cfg), ["a1", "b2"]), merged, copy.deepcopy(out))
+    assert again == merged and not report["changes"]
+
+
+def test_twins_his_empty_page_named_as_hauflos_offered_and_dropped_only_ticked_with_his_tiles():
+    """п.51 (Горького 3): his empty «Протечки» page + his tile to it next to Hauflo's «Протечки» — offered; only a
+    ticked, still-empty one goes (with his tiles that open it); a page with cards is never offered."""
+    hauflo_room = {"type": "custom:hauflo-room", "name": "Протечки", "path": "/hauflo-x/servis_protechki", ID: "v/servis/s/room:p"}
+    new = {"views": [
+        {"title": "Сервис", "path": "servis", "type": "sections", ID: "v/servis", "sections": [{"type": "grid", ID: "v/servis/s", "cards": [hauflo_room]}]},
+        {"title": "Протечки", "path": "servis_protechki", "type": "sections", ID: "v/servis_protechki", "sections": []},
+        {"title": "Котельная", "path": "servis_kotelnaia", "type": "sections", ID: "v/servis_kotelnaia", "sections": []},
+    ]}
+    mine_tile = {"type": "custom:hauflo-room", "name": "Протечки", "icon": "hauflo:leak", "path": "protechki"}
+    other_tile = {"type": "button", "name": "Котельная", "tap_action": {"action": "navigate", "navigation_path": "/hauflo-x/kotelnaia"}}
+    current = copy.deepcopy(new)
+    current["views"][0]["sections"][0]["cards"] += [mine_tile, other_tile]
+    current["views"] += [
+        {"title": " протечки ", "path": "protechki", "subview": True, "type": "sections", "sections": []},
+        {"title": "Котельная", "path": "kotelnaia", "type": "sections", "sections": [{"type": "grid", "cards": [{"type": "tile", "entity": "switch.zont"}]}]},
+    ]
+    offered = dashmerge.twins(current, new)
+    assert offered == [{"id": "protechki", "title": "протечки", "tiles": 1}]  # «Котельная» of his holds a card: never
+    # Not ticked: nothing goes.
+    same, n = dashmerge.drop_twins(current, new, [])
+    assert n == 0 and same is current
+    # Ticked — and a name the cloud makes up (his full page) is ignored.
+    out, n = dashmerge.drop_twins(current, new, ["protechki", "kotelnaia"])
+    assert n == 1
+    assert [v["path"] for v in out["views"]] == ["servis", "servis_protechki", "servis_kotelnaia", "kotelnaia"]
+    assert mine_tile not in out["views"][0]["sections"][0]["cards"] and other_tile in out["views"][0]["sections"][0]["cards"]
+    assert hauflo_room in out["views"][0]["sections"][0]["cards"]
+    # The merge after it loses none of his other items.
+    _, report = plan_and_merge(new, out, copy.deepcopy(new))
+    assert report["lost"] == 0

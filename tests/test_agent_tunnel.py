@@ -447,7 +447,7 @@ async def test_status_reports_knx_monitoring_and_alarms(hass: HomeAssistant, ent
     reg = er.async_get(hass)
     reg.async_get_or_create("light", "knx", "u-1", config_entry=k, suggested_object_id="gone")
     hass.states.async_set("light.gone", "unavailable")
-    assert agent._knx() == {"loaded": False, "connected": None, "state": "not_loaded", "silentMin": 0, "unansweredMin": None, "heard": False}
+    assert agent._knx() == {"loaded": False, "connected": None, "state": "not_loaded", "silentMin": 0, "unansweredMin": None, "unansweredReads": 0, "heard": False}
     k.mock_state(hass, ConfigEntryState.LOADED)
     hass.data["knx"] = NS(xknx=NS(connection_manager=NS(connected=NS(is_set=lambda: True))))
     assert agent._knx()["connected"] is True
@@ -617,18 +617,32 @@ async def test_knx_heard_only_from_the_bus(hass: HomeAssistant, entry, monkeypat
     async_dispatcher_send(hass, "knx_telegram_test", None, {"direction": "Outgoing", "telegramtype": "GroupValueWrite"})
     await hass.async_block_till_done()
     assert agent._knx_asked is None  # a write isn't a question
-    async_dispatcher_send(hass, "knx_telegram_test", None, {"direction": "Outgoing", "telegramtype": "GroupValueRead"})
-    await hass.async_block_till_done()
+    async def send(direction: str, kind: str) -> None:
+        async_dispatcher_send(hass, "knx_telegram_test", None, {"direction": direction, "telegramtype": kind})
+        await hass.async_block_till_done()
+
+    # A dead bus: a whole round of reads, nothing back — counted from the round's first read.
+    for _ in range(3):
+        await send("Outgoing", "GroupValueRead")
     first = agent._knx_asked
-    assert first is not None
-    async_dispatcher_send(hass, "knx_telegram_test", None, {"direction": "Outgoing", "telegramtype": "GroupValueRead"})
-    await hass.async_block_till_done()
-    assert agent._knx_asked == first  # the oldest unanswered read counts
+    assert first is not None and agent._knx_asked_n == 3
     agent._knx_asked -= 6 * 60
-    assert agent._knx()["unansweredMin"] == 6
-    async_dispatcher_send(hass, "knx_telegram_test", None, {"direction": "Incoming", "telegramtype": "GroupValueResponse"})
-    await hass.async_block_till_done()
+    assert agent._knx()["unansweredMin"] == 6 and agent._knx()["unansweredReads"] == 3
+    await send("Incoming", "GroupValueResponse")
+    assert agent._knx_asked is None and agent._knx()["unansweredMin"] is None and agent._knx()["unansweredReads"] == 0
+    # A live quiet bus (Горького 3, 04.11): the round got answers; addresses without a read flag at its end don't
+    # reopen it — 0.20 counted that last read and alarmed every hour.
+    await send("Outgoing", "GroupValueRead")
+    await send("Incoming", "GroupValueResponse")
+    for _ in range(5):
+        await send("Outgoing", "GroupValueRead")
     assert agent._knx_asked is None and agent._knx()["unansweredMin"] is None
+    # The next round (past the gap) asks again; one or two reads alone say nothing about the bus.
+    agent._knx_read_last -= hauflo.KNX_ROUND_GAP + 1
+    await send("Outgoing", "GroupValueRead")
+    assert agent._knx_asked is not None and agent._knx_asked_n == 1
+    agent._knx_asked -= 30 * 60
+    assert agent._knx()["unansweredMin"] is None
     await agent.stop()
     assert agent._unsub_knx is None
 
@@ -656,7 +670,7 @@ async def test_views_are_admin_only_and_validate(hass: HomeAssistant, entry) -> 
     entry.runtime_data.owned.add("u-1")
     entry.runtime_data.owned_entries |= {"area:a1", "g1", "label:l"}
     got = json.loads((await owned.get(Req(hass))).body)
-    assert got == {"unique_ids": ["u-1"], "entries": ["g1"], "areas": ["a1"]}
+    assert got == {"unique_ids": ["u-1"], "entries": ["g1"], "areas": ["a1"], "stock_areas": []}
     got = json.loads((await rng.get(Req(hass))).body)
     assert got["allowed"] == []
     ok = json.loads((await rng.post(Req(hass, body={"addresses": ["9/9/9"], "project": "P"}))).body)

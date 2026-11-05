@@ -260,6 +260,22 @@ _EN_WORDS = {"Принято": "Accept", "Авария": "Alarm"}
 _EN_TITLES = {"Протечка": "Water leak", "Дым": "Smoke", "Газ": "Gas", "Авария котла": "Boiler alarm", "Авария оборудования": "Equipment alarm", "Температура": "Temperature", "Батарейка": "Battery", "Двери и окна": "Doors and windows", "Своё": "Custom", "Связь со щитом": "Panel link lost", "Авария": "Alarm"}
 
 
+def label(hass: HomeAssistant, entity_id: str, state: State | None = None) -> str:
+    """What a person calls the device: HA's friendly name, else the registry's name, else its device's name — the raw
+    object id («leak_bathroom») only when nothing else exists (stage 10 round 3)."""
+    state = state or hass.states.get(entity_id)
+    if name := (str(state.attributes.get("friendly_name") or "").strip() if state else ""):
+        return name
+    entry = er.async_get(hass).async_get(entity_id)
+    if entry:
+        if name := (entry.name or entry.original_name or ""):
+            return str(name)
+        if entry.device_id and (device := dr.async_get(hass).async_get(entry.device_id)):
+            if name := (device.name_by_user or device.name or ""):
+                return str(name)
+    return entity_id
+
+
 def _en(text: str) -> str:
     if text in _EN_WORDS:
         return _EN_WORDS[text]
@@ -557,8 +573,7 @@ class NotifyEngine:
         return area.name if area else ""
 
     def _name(self, entity_id: str) -> str:
-        state = self.hass.states.get(entity_id)
-        return (state.attributes.get("friendly_name") if state else None) or entity_id
+        return label(self.hass, entity_id)
 
     def _where_list(self, keys: list[str]) -> str:
         """«Гостиная: Ошибка тёплого пола 3; Холл: Ошибка тёплого пола 1» — every device with its room,
@@ -806,7 +821,7 @@ class NotifyEngine:
         inc["last"] = dt_util.utcnow().isoformat()
         inc["own"] = True  # its own message is on the phones: taken back by its own tag too
         where = self._where(state)
-        name = state.attributes.get("friendly_name") or state.entity_id
+        name = label(self.hass, state.entity_id, state)
         title = f"🚨 {rule['title']}" + (f" — {where}" if where else "")
         at = self._hhmm(inc["since"])
         message = f"{name}: авария в {at}." if inc["count"] == 1 else f"{name}: авария с {at}, никто не подтвердил. Повтор {inc['count']}."
@@ -1196,7 +1211,7 @@ class NotifyEngine:
                     "key": key,
                     "entityId": entity_id,
                     "title": rule["title"] if rule else "Авария",
-                    "name": (state.attributes.get("friendly_name") if state else None) or entity_id,
+                    "name": label(self.hass, entity_id, state),
                     "since": inc["since"],
                     "ackedBy": inc.get("acked_by"),
                     "area": self._where(state) if state else "",

@@ -18,7 +18,7 @@ Free during the beta; needs a Hauflo account ([request access](https://app.haufl
 
 ## Project in. Home out.
 
-The agent connects a home's Home Assistant to [Hauflo](https://hauflo.com), where the KNX integrator plans the home from the ETS project.
+The agent connects a site's Home Assistant to [Hauflo](https://hauflo.com), where the KNX integrator plans the site from the ETS project.
 
 <img src="https://raw.githubusercontent.com/Hauflo/hauflo-agent/main/docs/images/from-ets.webp" width="840" alt="On the left, the living room's lights as group addresses in a demo ETS project. On the right, the same lights as the family's room card in Home Assistant.">
 
@@ -33,7 +33,7 @@ No hand-built cards. Change the ETS project, re-import: the dashboard follows.
 
 <img src="https://raw.githubusercontent.com/Hauflo/hauflo-agent/main/docs/images/family.webp" width="840" alt="Three phone screens of the demo home: a room with lights, scenes and blinds; air conditioning with a 24-hour chart in the dark theme; the family's own automations.">
 
-- **The house at a glance.** “All quiet”, or what needs attention.
+- **Everything at a glance.** “All quiet”, or what needs attention.
 - **Rooms that glow** when something is on. One tap opens a room.
 - **Climate** with a 24-hour chart. Heat and cool setpoints where the thermostat has both. Floor heating says “heating” or “holding”.
 - **Blinds** for the whole room or one by one.
@@ -54,7 +54,7 @@ Rules only use Hauflo’s own lights, blinds and scenes. They never touch locks,
 - **A backup before every change.** No backup, no deploy.
 - **Re-import without starting over.** Rooms, names and scenes stay. A second deploy with no changes changes nothing.
 - **No ports, no tokens.** One outgoing encrypted connection. No port forwarding.
-- **Every site on one screen.** Link to the home, KNX bus, devices gone quiet, an event log.
+- **Every site on one screen.** Connection to each site, KNX bus, devices gone quiet, an event log.
 - **Alarms the way you set them.** Push, Telegram and email, repeated until someone accepts.
 
 ## Install
@@ -83,7 +83,7 @@ Rules only use Hauflo’s own lights, blinds and scenes. They never touch locks,
 
 **Settings → Devices & services → Hauflo → Configure.** Saved at once, no restart.
 
-- **Allow Hauflo to change this home's setup** (on by default). Off: Hauflo changes nothing in Home Assistant. Deploys, dashboards, rooms, KNX entities and backups started by Hauflo are refused. Monitoring, alarms and voice keep working.
+- **Allow Hauflo to change this site's setup** (on by default). Off: Hauflo changes nothing in Home Assistant. Deploys, dashboards, rooms, KNX entities and backups started by Hauflo are refused. Monitoring, alarms and voice keep working.
 - **Allowed addresses.** The KNX group addresses Hauflo may send commands to: `1/1/5`, a span `1/1/1-21` or a whole middle group `1/1`, comma-separated or one per line. Remove any Hauflo must not control, such as a gate or a lock.
 - **Allow these requested addresses.** Shown only when Hauflo asked for addresses outside the list (Repairs says so too). Unticked ones are declined when you save.
 - **Make the site independent of Hauflo.** A tick that opens its own step: what it does, what stops, then your confirm. See [Leaving Hauflo](#leaving-hauflo).
@@ -96,16 +96,18 @@ All of them belong to one service device, **Hauflo**.
 
 | Entity | What it is | When |
 | --- | --- | --- |
-| `binary_sensor.hauflo_link` (**Link**, diagnostic) | On while the agent is connected to Hauflo. Attribute `server`: which Hauflo server. | Always |
-| `sensor.hauflo_made_in_this_home` (**Made in this home**, diagnostic) | How many entities Hauflo made or took over here. Attributes: `by_kind`, `hand_edited` (renamed or disabled in Home Assistant, or kept as a hand edit by the last plan), `next_deploy` (what the next deploy would create, update, offer to remove, and when Hauflo said it). Read only. | Always |
+| `binary_sensor.hauflo_link` (**Connection**, diagnostic) | On while the agent is connected to Hauflo. Attribute `server`: which Hauflo server. | Always |
+| `sensor.hauflo_made_in_this_home` (**Made at this site**, diagnostic) | How many entities Hauflo made or took over here. Attributes: `by_kind`, `hand_edited` (renamed or disabled in Home Assistant, or kept as a hand edit by the last plan), `next_deploy` (what the next deploy would create, update, offer to remove, and when Hauflo said it). Read only. | Always |
+| **Recommended season** / **Current season** (sensors), **Switch automatically** (switch) | Winter / Summer (or Heating / Cooling): the mode in force, what the outdoor temperature suggests, and whether the mode is switched once a day by itself. The switch can be changed only by staff, not by the family. | After Winter / Summer is set up in Hauflo |
+| **Rule · name** (switch), **Rule active · name** (binary sensor) | One on / off switch and one “has fired” sensor for each value rule (for example ventilation by CO₂). | After a deploy with value rules |
 
-**The label “Hauflo”.** Every entity Hauflo made or took over carries the label **Hauflo** (**Settings → Areas, labels & zones → Labels**, or the label filter on the entities page). The agent puts it on and takes it off itself, only on Hauflo’s own; a label set by hand on anything else is taken off. Entity ids never change. While **Allow Hauflo to change this home's setup** is off, the label isn’t touched. **Hauflo monitoring** is a different label: you put it on devices Hauflo didn’t make, to watch them.
+**The label “Hauflo”.** Every entity Hauflo made or took over carries the label **Hauflo** (**Settings → Areas, labels & zones → Labels**, or the label filter on the entities page). The agent puts it on and takes it off itself, only on Hauflo’s own; a label set by hand on anything else is taken off. Entity ids never change. While **Allow Hauflo to change this site's setup** is off, the label isn’t touched. **Hauflo monitoring** is a different label: you put it on devices Hauflo didn’t make, to watch them.
 
 Everything else a deploy makes (rooms, KNX entities, light groups, scenes, dashboards) belongs to Home Assistant's own integrations, not to this one.
 
 ## How data updates
 
-No polling. The agent keeps one outgoing WebSocket to Hauflo, reconnecting by itself with backoff. **Link** changes the moment the connection does. Every minute the agent sends Hauflo a short status (see [What leaves the house](#what-leaves-the-house)).
+No polling. The agent keeps one outgoing WebSocket to Hauflo, reconnecting by itself with backoff. **Connection** changes the moment the connection does. Every minute the agent sends Hauflo a short status (see [What leaves the house](#what-leaves-the-house)).
 
 ## What leaves the house
 
@@ -135,7 +137,7 @@ Hauflo can ask only for what is on the agent's fixed list, and the agent edits s
 
 - **One outgoing encrypted connection.** Nothing listens on the home network. Hauflo keeps no Home Assistant token: the agent is its own system user, removed together with the integration.
 - **A fixed list of what Hauflo may do,** checked inside this Home Assistant. KNX commands go only to the addresses you confirmed.
-- **The owner’s switch.** In the integration’s options: **Allow Hauflo to change this home’s setup**. Off, and Hauflo changes nothing. Monitoring, alarms and voice keep working.
+- **The owner’s switch.** In the integration’s options: **Allow Hauflo to change this site’s setup**. Off, and Hauflo changes nothing. Monitoring, alarms and voice keep working.
 - **A backup before changes.** Deploying without one is only an explicit choice, and then a notice stays in Home Assistant. Restore it from **Settings → System → Backups**, with or without Hauflo.
 - **Open to read.** The source code is here, so you can check what runs in the home.
 
@@ -172,7 +174,7 @@ Hauflo can ask only for what is on the agent's fixed list, and the agent edits s
 
 Set up in Hauflo → **Alarms**. A rule is: what happened → which sensors → who gets it → how.
 
-- **Push to the residents’ phones** through the Home Assistant app. Critical alarms ring even in silent mode (iOS Critical Alerts, the Android alarm stream). They repeat until someone taps **Accept**. An action button does the obvious thing, such as “Shut off water”.
+- **Push to the family’s phones** through the Home Assistant app. Critical alarms ring even in silent mode (iOS Critical Alerts, the Android alarm stream). They repeat until someone taps **Accept**. An action button does the obvious thing, such as “Shut off water”.
 - **Telegram** through [@hauflo_bot](https://t.me/hauflo_bot), and **email**, for you, the engineer on duty or the client. Each person gets only the alarms of their own sites.
 - The push rules live in this Home Assistant, so they keep working when Hauflo or the internet is down.
 
@@ -250,7 +252,7 @@ After the update in HACS and a restart, the Hauflo cards and theme refresh thems
 
 ## Examples
 
-Tell yourself when the home lost Hauflo for a while (the house keeps working; monitoring and deploys wait):
+Tell yourself when the site lost Hauflo for a while (the site keeps working; monitoring and deploys wait):
 
 ```yaml
 automation:
@@ -267,7 +269,7 @@ automation:
           message: "No link to Hauflo for 30 minutes."
 ```
 
-Switch the whole house to summer from your own automation: `select.select_option` on `select.hauflo_house_mode` with `option: summer`.
+Winter or summer is chosen in the dashboard (**Settings**) or in Hauflo, not by an entity you can set: `sensor.hauflo_season_current` shows the mode in force and `sensor.hauflo_season_recommended` the suggestion, so your own automation can react to either.
 
 ## Known limitations
 

@@ -71,7 +71,9 @@
     "big_frame_bytes": 262144,
     "connect_timeout_s": 8,
     "pair_timeout_s": 20,
-    "unpair_timeout_s": 10
+    "unpair_timeout_s": 10,
+    "knx_round_gap_s": 120,
+    "knx_round_min_reads": 3
   },
   "ownership": {
     "sync_delay_s": 20,
@@ -237,6 +239,7 @@
     "backup_platforms": ["backup"],
     "backup_keys": ["last_successful_automatic_backup"],
     "backup_max_days": 7,
+    "backup_never_days": 2,
     "water_units": ["L", "m³", "gal", "ft³"],
     "water_unit_l": [1, 1000, 3.785, 28.317],
     "water_state_classes": ["total_increasing", "total"],
@@ -248,5 +251,8 @@
     "night_factor": 2,
     "night_min_l": 5,
     "night_close_grace_h": 2
+  },
+  "theme": {
+    "reload_note_s": 600
   }
 }

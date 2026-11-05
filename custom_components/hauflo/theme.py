@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from typing import Any
 
 from aiohttp import web
 from homeassistant.components.frontend import add_extra_js_url
@@ -18,7 +19,9 @@ from homeassistant.components.http import KEY_HASS, HomeAssistantView
 
 from homeassistant.components import persistent_notification
 from homeassistant.core import CoreState, Event, HomeAssistant, callback
+from homeassistant.helpers.event import async_call_later
 
+from .tuning import TUNING
 from .const import ASSET_TAG, CARDS_FILE, DATA_CARDS_FILE, DATA_CARDS_LOCAL, DATA_THEME_DEFAULTS, DATA_THEME_LISTENER, DATA_THEME_FIRING, DATA_WWW
 
 _LOGGER = logging.getLogger(__name__)
@@ -235,6 +238,9 @@ class StaticView(HomeAssistantView):
 
 
 RELOAD_NOTE = "hauflo_cards_reload"
+# A hint for the tabs that were open while the agent was set up: it goes by itself (everyone in the household sees HA's bell).
+RELOAD_NOTE_S = TUNING["theme"]["reload_note_s"]
+DATA_RELOAD_TIMER = "hauflo_reload_note_timer"
 
 
 def _say_reload(hass: HomeAssistant) -> None:
@@ -242,14 +248,21 @@ def _say_reload(hass: HomeAssistant) -> None:
     try:
         persistent_notification.async_create(
             hass,
-            "Агент Hauflo подключён. В уже открытых вкладках Home Assistant обновите страницу, чтобы загрузились карточки "
-            "Hauflo — иначе панель Hauflo покажет «Ошибка конфигурации»."
+            "Агент Hauflo подключён. Если панель Hauflo не загрузилась, обновите страницу в браузере."
             if ru
-            else "The Hauflo agent is connected. Reload Home Assistant tabs that are already open so the Hauflo cards load — "
-            "otherwise the Hauflo dashboard shows «Configuration error».",
+            else "The Hauflo agent is connected. If the Hauflo dashboard doesn't load, refresh the page in your browser.",
             "Hauflo",
             RELOAD_NOTE,
         )
+        if callable(old := hass.data.pop(DATA_RELOAD_TIMER, None)):
+            old()
+
+        @callback
+        def _gone(_now: Any) -> None:
+            hass.data.pop(DATA_RELOAD_TIMER, None)
+            persistent_notification.async_dismiss(hass, RELOAD_NOTE)
+
+        hass.data[DATA_RELOAD_TIMER] = async_call_later(hass, RELOAD_NOTE_S, _gone)
     except Exception:  # noqa: BLE001 — a hint, never stops the agent
         _LOGGER.debug("Hauflo: reload hint not shown", exc_info=True)
 
@@ -260,5 +273,7 @@ def async_unload(hass: HomeAssistant) -> None:
     JS stays registered — dashboards keep working until HA restarts (keep.py makes copies on removal)."""
     if callable(unsub := hass.data.pop(DATA_THEME_LISTENER, None)):
         unsub()
+    if callable(timer := hass.data.pop(DATA_RELOAD_TIMER, None)):
+        timer()
     hass.data.pop(DATA_THEME_FIRING, None)
     hass.data.pop(DATA_THEME_DEFAULTS, None)

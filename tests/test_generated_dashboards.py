@@ -57,7 +57,7 @@ def check(path: str) -> None:
     # A KNX scene's address (its tile's «hold») is one a Hauflo entity sends to.
     ns["_owned_scene_sends"] = lambda h, o: {ns["_ga_key"](a): set(range(0x80, 0xC0)) for a in sends}
     assert ns["_lovelace_ok"](hass, cfg, owned, set()), f"the agent would refuse {path}"
-    agent = pathlib.Path(path).stem.rsplit("_", 1)[1]
+    agent = re.search(r"_(\d+\.\d+\.\d+)(?:_[a-z]+)?$", pathlib.Path(path).stem).group(1)  # «…_0.21.0_en»: a language
     newer = {t for t in kinds if t in NEW_IN and _v(agent) < _v(NEW_IN[t])}
     assert not newer, f"{path}: {newer} only from agent {[NEW_IN[t] for t in newer]}"
     unknown = kinds - ns["_LOVELACE_TYPES"]

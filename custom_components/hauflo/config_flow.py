@@ -70,6 +70,7 @@ class HaufloConfigFlow(ConfigFlow, domain=DOMAIN):
     def _server_for(code: str, typed: str) -> str:
         """The server field left as it was: the code's region decides (owner 25.10: only the code to type)."""
         region = code.split("-", 1)[0]
+        typed = typed.strip().rstrip("/")
         # Any of Hauflo's own servers counts as «as it was» — a re-link with an RU code from an AE entry goes to RU.
         if (typed == "" or servers.ours(typed)) and region in REGION_SERVERS:
             return REGION_SERVERS[region]
@@ -136,11 +137,13 @@ class HaufloConfigFlow(ConfigFlow, domain=DOMAIN):
             extra[vol.Optional(CONF_CONFIRM_TAKEOVER, default=False)] = bool
         # The server folded away under «Дополнительно»: the region in the code picks it (security re-review round 4:
         # «type this address» is how someone else's server would get an admin tunnel into the house).
+        # Empty = «by the code» (owner 04.11: «app.hauflo.com при коде RU-…» misled); only a server that isn't Hauflo's is shown.
+        shown = "" if servers.ours(server) else server
         return vol.Schema(
             {
                 vol.Required(CONF_CODE, **({"default": self._typed_code} if self._typed_code else {})): str,
                 **extra,
-                vol.Optional("advanced"): section(vol.Schema({vol.Required(CONF_SERVER, default=server): str}), {"collapsed": True}),
+                vol.Optional("advanced"): section(vol.Schema({vol.Optional(CONF_SERVER, default=shown): str}), {"collapsed": True}),
             }
         )
 
@@ -151,7 +154,9 @@ class HaufloConfigFlow(ConfigFlow, domain=DOMAIN):
             confirm = user_input.get(CONF_CONFIRM_TAKEOVER) is True
             self._typed_code = user_input[CONF_CODE]
             typed = (user_input.get("advanced") or {}).get(CONF_SERVER, server)
-            server = self._server_for(code, str(typed).strip().rstrip("/"))
+            typed = str(typed or "").strip().rstrip("/")
+            # Empty field: the code's region decides; a code without a region keeps the server the flow started with.
+            server = self._server_for(code, typed) or server
             # The old secret only to the server that issued it: there the old project lets this agent go.
             previous = entry.data.get(CONF_SECRET) if entry is not None and entry.data.get(CONF_SERVER) == server else None
             body, errors = await self._pair(server, code, previous, confirm)

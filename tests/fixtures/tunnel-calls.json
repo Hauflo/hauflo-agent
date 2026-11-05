@@ -363,6 +363,12 @@
   {
    "file": "ha/deploy.ts",
    "kind": "ws",
+   "call": "config/device_registry/list",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "ws",
    "call": "config/device_registry/remove_config_entry",
    "params": {}
   },
@@ -910,6 +916,18 @@
   {
    "file": "index.ts",
    "kind": "ws",
+   "call": "config/device_registry/update",
+   "params": {}
+  },
+  {
+   "file": "index.ts",
+   "kind": "ws",
+   "call": "config/entity_registry/list",
+   "params": {}
+  },
+  {
+   "file": "index.ts",
+   "kind": "ws",
    "call": "knx/get_knx_project",
    "params": {}
   },
@@ -918,6 +936,14 @@
    "kind": "ws",
    "call": "knx/project_file_process",
    "params": {}
+  },
+  {
+   "file": "index.ts",
+   "kind": "ws",
+   "call": "manifest/get",
+   "params": {
+    "integration": "hauflo"
+   }
   }
  ],
  "templates": [
