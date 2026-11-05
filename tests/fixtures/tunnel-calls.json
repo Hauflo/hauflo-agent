@@ -549,6 +549,36 @@
    }
   },
   {
+   "file": "ha/foreignDeploy.ts",
+   "kind": "rest",
+   "call": "POST /api/hauflo/foreign",
+   "params": {}
+  },
+  {
+   "file": "ha/foreignDeploy.ts",
+   "kind": "ws",
+   "call": "config/device_registry/list",
+   "params": {}
+  },
+  {
+   "file": "ha/foreignDeploy.ts",
+   "kind": "ws",
+   "call": "config/entity_registry/list",
+   "params": {}
+  },
+  {
+   "file": "ha/foreignDeploy.ts",
+   "kind": "ws",
+   "call": "config/entity_registry/update",
+   "params": {}
+  },
+  {
+   "file": "ha/foreignDeploy.ts",
+   "kind": "ws",
+   "call": "get_states",
+   "params": {}
+  },
+  {
    "file": "ha/haBackup.ts",
    "kind": "rest",
    "call": "GET /api/hauflo/backup",

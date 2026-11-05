@@ -9,6 +9,12 @@
       }
     },
     "binary_sensor": {
+      "daylight": {
+        "default": "mdi:weather-night",
+        "state": {
+          "on": "mdi:weather-sunny"
+        }
+      },
       "rule": {
         "default": "mdi:thermometer-auto",
         "state": {

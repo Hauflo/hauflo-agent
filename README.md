@@ -10,11 +10,11 @@ Free during the beta; needs a Hauflo account ([request access](https://app.haufl
 
 **Try it without installing:** the [demo house](https://hauflo.com/demo/), the real cards on a made-up home, in your browser.
 
-[![HACS custom](https://img.shields.io/badge/HACS-custom-41BDF5)](https://github.com/Hauflo/hauflo-agent#install) [![Home Assistant 2026.9+](https://img.shields.io/badge/Home%20Assistant-2026.9%2B-18BCF2)](https://github.com/Hauflo/hauflo-agent#install) [![Release](https://img.shields.io/github/v/release/Hauflo/hauflo-agent)](https://github.com/Hauflo/hauflo-agent/releases)
+[![Marketplace / HACS custom](https://img.shields.io/badge/Marketplace%20%2F%20HACS-custom-41BDF5)](https://github.com/Hauflo/hauflo-agent#install) [![Home Assistant 2026.9+](https://img.shields.io/badge/Home%20Assistant-2026.9%2B-18BCF2)](https://github.com/Hauflo/hauflo-agent#install) [![Release](https://img.shields.io/github/v/release/Hauflo/hauflo-agent)](https://github.com/Hauflo/hauflo-agent/releases)
 
-**Install:** HACS → ⋮ → **Custom repositories** → `https://github.com/Hauflo/hauflo-agent` (Integration). [Full steps](#install).
+**Install:** Settings → **Marketplace** → **Add from link** → `https://github.com/Hauflo/hauflo-agent` (Integration); on Home Assistant before 2026.11 — HACS → ⋮ → **Custom repositories**. [Full steps](#install).
 
-[![Open your Home Assistant instance and open this repository inside HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Hauflo&repository=hauflo-agent&category=integration)
+[![Open your Home Assistant instance and open this repository in the Marketplace (HACS).](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Hauflo&repository=hauflo-agent&category=integration)
 
 ## Project in. Home out.
 
@@ -59,13 +59,17 @@ Rules only use Hauflo’s own lights, blinds and scenes. They never touch locks,
 
 ## Install
 
-**You need** Home Assistant 2026.9 or newer, [HACS](https://hacs.xyz), outbound HTTPS, and a KNX IP interface or router that Home Assistant’s KNX integration supports.
+**You need** Home Assistant 2026.9 or newer, a GitHub account for the [Marketplace](https://www.home-assistant.io/integrations/marketplace/) (built in since Home Assistant 2026.11; [HACS](https://hacs.xyz) on older versions), outbound HTTPS, and a KNX IP interface or router that Home Assistant’s KNX integration supports.
 
-1. **Add the repository to HACS.** Use the button, or in HACS open ⋮ → **Custom repositories**, paste `https://github.com/Hauflo/hauflo-agent` and choose **Integration**.
+1. **Add the repository.** Use the button (it opens the Marketplace, or HACS on older Home Assistant), or by hand:
 
-   [![Open your Home Assistant instance and open this repository inside HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Hauflo&repository=hauflo-agent&category=integration)
+   **Home Assistant 2026.11 and newer:** **Settings → Marketplace**. On the first visit tick **I understand the risks and agree** → **Continue**. Then **Add from link**, paste `https://github.com/Hauflo/hauflo-agent`, type **Integration**. Home Assistant asks to **Connect GitHub**: **Continue**, open the link and enter the code shown. Hauflo is not in the Marketplace catalog yet, so adding it by link needs this connection; it reads public data only.
 
-2. **Download Hauflo** in HACS and **restart Home Assistant**.
+   **Before 2026.11:** in HACS open ⋮ → **Custom repositories**, paste `https://github.com/Hauflo/hauflo-agent` and choose **Integration**.
+
+   [![Open your Home Assistant instance and open this repository in the Marketplace (HACS).](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Hauflo&repository=hauflo-agent&category=integration)
+
+2. Open **Hauflo** → **Install** (in HACS — **Download**) and **restart Home Assistant**.
 
    **GitHub doesn't open** (happens in some regions): in the Home Assistant terminal (Terminal & SSH add-on) run
    `wget -qO- https://app.hauflo.com/agent/install.sh | sh` and restart Home Assistant. The script takes the same
@@ -98,6 +102,7 @@ All of them belong to one service device, **Hauflo**.
 | --- | --- | --- |
 | `binary_sensor.hauflo_link` (**Connection**, diagnostic) | On while the agent is connected to Hauflo. Attribute `server`: which Hauflo server. | Always |
 | `sensor.hauflo_made_in_this_home` (**Made at this site**, diagnostic) | How many entities Hauflo made or took over here. Attributes: `by_kind`, `hand_edited` (renamed or disabled in Home Assistant, or kept as a hand edit by the last plan), `next_deploy` (what the next deploy would create, update, offer to remove, and when Hauflo said it). Read only. | Always |
+| `binary_sensor.hauflo_daylight` (**Daylight outside**) | On while it is light outside: by an outdoor lux sensor an administrator chose, otherwise by the sun’s elevation; a change holds 10 minutes. While it is on, a Hauflo scene leaves off the lights the family marked **Leave off in scenes by day** (a niche, a shelf). Attributes: `source`, `value`, `threshold`, `since`. | Always |
 | **Recommended season** / **Current season** (sensors), **Switch automatically** (switch) | Winter / Summer (or Heating / Cooling): the mode in force, what the outdoor temperature suggests, and whether the mode is switched once a day by itself. The switch can be changed only by staff, not by the family. | After Winter / Summer is set up in Hauflo |
 | **Rule · name** (switch), **Rule active · name** (binary sensor) | One on / off switch and one “has fired” sensor for each value rule (for example ventilation by CO₂). | After a deploy with value rules |
 
@@ -246,7 +251,7 @@ Open the group monitor (**Settings → Devices & services → KNX → Monitor**)
 <details>
 <summary><b>“What changes in the panel when the agent updates?”</b></summary>
 
-After the update in HACS and a restart, the Hauflo cards and theme refresh themselves; your manual dashboard edits are kept. If cards look old, hard-reload the page (Ctrl+F5) or the HA app.
+After the update (Settings → Updates) and a restart, the Hauflo cards and theme refresh themselves; your manual dashboard edits are kept. If cards look old, hard-reload the page (Ctrl+F5) or the HA app.
 
 </details>
 
@@ -284,9 +289,9 @@ Winter or summer is chosen in the dashboard (**Settings**) or in Hauflo, not by 
 
 ## Updating and removing
 
-**Update** in HACS when it shows a new version, then restart Home Assistant. What changed is in the [releases](https://github.com/Hauflo/hauflo-agent/releases).
+**Update** in **Settings → Updates** when Hauflo shows a new version (the Marketplace checks a repository added by link every 48 hours; to check now: Marketplace → Hauflo → ⋮ → **Refresh information**; on older Home Assistant — HACS), then restart Home Assistant. What changed is in the [releases](https://github.com/Hauflo/hauflo-agent/releases).
 
-**Remove** in **Settings → Devices & services → Hauflo → Delete**, then in HACS. In Hauflo the project shows “agent offline”. Disconnect it there, or connect again later.
+**Remove** in **Settings → Devices & services → Hauflo → Delete**, then in the Marketplace (Hauflo → **Uninstall**; Home Assistant may offer it itself when the entry is deleted; on older Home Assistant — HACS). In Hauflo the project shows “agent offline”. Disconnect it there, or connect again later.
 
 **Removal takes with it:** the agent’s system user, its voice sentences (`custom_sentences/ru/hauflo.yaml`), the alarm rules and the Winter/Summer settings, the guest links and the guest log, who services the home and its access history (`.storage/hauflo.service`), the last plan shown on **Made in this home**, and the hidden sidebar panels come back for everyone. The lights “Away” turned on are switched off. Alarms stop with the agent: to keep them, run **Make the site independent** first.
 

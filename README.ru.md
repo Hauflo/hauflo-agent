@@ -10,11 +10,11 @@
 
 **Попробовать без установки:** [демо-дом](https://hauflo.ru/demo/) — настоящие карточки на выдуманном доме, прямо в браузере.
 
-[![HACS custom](https://img.shields.io/badge/HACS-custom-41BDF5)](https://github.com/Hauflo/hauflo-agent#install) [![Home Assistant 2026.9+](https://img.shields.io/badge/Home%20Assistant-2026.9%2B-18BCF2)](https://github.com/Hauflo/hauflo-agent#install) [![Release](https://img.shields.io/github/v/release/Hauflo/hauflo-agent)](https://github.com/Hauflo/hauflo-agent/releases)
+[![Marketplace / HACS custom](https://img.shields.io/badge/Marketplace%20%2F%20HACS-custom-41BDF5)](https://github.com/Hauflo/hauflo-agent#install) [![Home Assistant 2026.9+](https://img.shields.io/badge/Home%20Assistant-2026.9%2B-18BCF2)](https://github.com/Hauflo/hauflo-agent#install) [![Release](https://img.shields.io/github/v/release/Hauflo/hauflo-agent)](https://github.com/Hauflo/hauflo-agent/releases)
 
-**Установка:** HACS → ⋮ → **Пользовательские репозитории** → `https://github.com/Hauflo/hauflo-agent` (Интеграция). [Подробные шаги](#установка).
+**Установка:** Настройки → **Marketplace** → **Добавить по ссылке** → `https://github.com/Hauflo/hauflo-agent` (Интеграция); на Home Assistant до 2026.11 — HACS → ⋮ → **Пользовательские репозитории**. [Подробные шаги](#установка).
 
-[![Открыть этот репозиторий в HACS вашего Home Assistant.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Hauflo&repository=hauflo-agent&category=integration)
+[![Открыть этот репозиторий в Marketplace (HACS) вашего Home Assistant.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Hauflo&repository=hauflo-agent&category=integration)
 
 ## Проект на входе. Объект на выходе.
 
@@ -59,13 +59,17 @@
 
 ## Установка
 
-**Нужно:** Home Assistant 2026.9 или новее, [HACS](https://hacs.xyz), исходящий HTTPS и KNX IP интерфейс или роутер, который поддерживает KNX-интеграция Home Assistant.
+**Нужно:** Home Assistant 2026.9 или новее, аккаунт GitHub для [Marketplace](https://www.home-assistant.io/integrations/marketplace/) (встроен в Home Assistant с 2026.11; на более старых — [HACS](https://hacs.xyz)), исходящий HTTPS и KNX IP интерфейс или роутер, который поддерживает KNX-интеграция Home Assistant.
 
-1. **Добавьте репозиторий в HACS.** Кнопкой ниже или в HACS: ⋮ → **Пользовательские репозитории** (Custom repositories), вставьте `https://github.com/Hauflo/hauflo-agent`, тип **Интеграция**.
+1. **Добавьте репозиторий.** Кнопкой ниже (она откроет Marketplace, на старом Home Assistant — HACS) или вручную:
 
-   [![Открыть этот репозиторий в HACS вашего Home Assistant.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Hauflo&repository=hauflo-agent&category=integration)
+   **Home Assistant 2026.11 и новее:** **Настройки → Marketplace**. При первом входе отметьте **Я понимаю риски и согласен** → **Продолжить**. Затем **Добавить по ссылке**, вставьте `https://github.com/Hauflo/hauflo-agent`, тип **Интеграция**. Home Assistant попросит **Подключить GitHub**: **Продолжить**, откройте ссылку и введите показанный код. Hauflo пока нет в каталоге Marketplace, поэтому для добавления по ссылке нужно это подключение; оно читает только публичные данные.
 
-2. **Скачайте Hauflo** в HACS и **перезапустите Home Assistant**.
+   **До 2026.11:** в HACS: ⋮ → **Пользовательские репозитории** (Custom repositories), вставьте `https://github.com/Hauflo/hauflo-agent`, тип **Интеграция**.
+
+   [![Открыть этот репозиторий в Marketplace (HACS) вашего Home Assistant.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=Hauflo&repository=hauflo-agent&category=integration)
+
+2. Откройте **Hauflo** → **Установить** (в HACS — **Скачать**) и **перезапустите Home Assistant**.
 
    **GitHub не открывается** (бывает в РФ): в терминале Home Assistant (дополнение Terminal & SSH) выполните
    `wget -qO- https://app.hauflo.ru/agent/install.sh | sh` и перезапустите Home Assistant. Скрипт берёт тот же архив
@@ -98,6 +102,7 @@
 | --- | --- | --- |
 | `binary_sensor.hauflo_link` (**Связь**, диагностика) | Включена, пока агент на связи с Hauflo. Атрибут `server` — какой сервер Hauflo. | Всегда |
 | `sensor.hauflo_made_in_this_home` (**Создано на этом объекте**, диагностика) | Сколько сущностей Hauflo создал или перенял здесь. Атрибуты: `by_kind`, `hand_edited` (переименованы или отключены в Home Assistant либо оставлены последним планом как правка человека), `next_deploy` (что следующая выкатка создаст, обновит, предложит убрать и когда Hauflo это сказал). Только просмотр. | Всегда |
+| `binary_sensor.hauflo_daylight` (**На улице светло**) | Включён, пока на улице светло: по уличному датчику освещённости, который выбрал администратор, иначе по высоте солнца; смена держится 10 минут. Пока он включён, сцена Hauflo не включает свет, отмеченный семьёй **«Днём не включать в сценах»** (ниша, полка). Атрибуты: `source`, `value`, `threshold`, `since`. | Всегда |
 | **Рекомендуемый сезон** / **Текущий сезон** (сенсоры), **Переключать автоматически** (переключатель) | «Зима / Лето» (или «Обогрев / Охлаждение»): действующий режим, подсказка по уличной температуре и признак, что режим раз в день переключается сам. Переключатель меняет только обслуживающий, не семья. | После настройки «Зима / Лето» в Hauflo |
 | **Правило · имя** (переключатель), **Сработало · имя** (бинарный сенсор) | Для каждого правила по значениям (например, вентиляция по CO₂) — переключатель и датчик «сработало». | После выкатки с правилами по значениям |
 
@@ -246,7 +251,7 @@ Hauflo может спросить только то, что есть в фик�
 <details>
 <summary><b>«Что меняется в панели при обновлении агента?»</b></summary>
 
-После обновления в HACS и перезапуска карточки и тема Hauflo обновляются сами, ваши ручные правки панели сохраняются. Если карточки выглядят по-старому — обновите страницу (Ctrl+F5) или приложение HA.
+После обновления (Настройки → Обновления) и перезапуска карточки и тема Hauflo обновляются сами, ваши ручные правки панели сохраняются. Если карточки выглядят по-старому — обновите страницу (Ctrl+F5) или приложение HA.
 
 </details>
 
@@ -284,9 +289,9 @@ automation:
 
 ## Обновление и удаление
 
-**Обновление** — в HACS, когда он покажет новую версию, затем перезапуск Home Assistant. Что изменилось — в [релизах](https://github.com/Hauflo/hauflo-agent/releases).
+**Обновление** — в **Настройки → Обновления**, когда Hauflo покажет новую версию (Marketplace проверяет добавленный по ссылке репозиторий раз в 48 часов; проверить сейчас: Marketplace → Hauflo → ⋮ → **Обновить информацию**; на старом Home Assistant — HACS), затем перезапуск Home Assistant. Что изменилось — в [релизах](https://github.com/Hauflo/hauflo-agent/releases).
 
-**Удаление** — **Настройки → Устройства и службы → Hauflo → Удалить**, затем в HACS. В Hauflo проект покажет «агент офлайн» — отключите его там или подключите заново позже.
+**Удаление** — **Настройки → Устройства и службы → Hauflo → Удалить**, затем в Marketplace (Hauflo → **Удалить**; Home Assistant может сам предложить это при удалении интеграции; на старом Home Assistant — HACS). В Hauflo проект покажет «агент офлайн» — отключите его там или подключите заново позже.
 
 **Вместе с агентом уходят:** его системный пользователь, голосовые фразы (`custom_sentences/ru/hauflo.yaml`), правила аварий и настройки «Зима/Лето», гостевые ссылки и журнал гостей, кто обслуживает объект, и история доступа (`.storage/hauflo.service`), последний план на «Создано на этом объекте»; скрытые пункты меню возвращаются всем. Свет, который зажгла «Нет дома», гаснет. Аварии уходят вместе с агентом: чтобы сохранить их, сначала выполните «Сделать объект независимым».
 

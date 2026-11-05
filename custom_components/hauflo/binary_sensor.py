@@ -12,6 +12,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .daylight import HaufloDaylight
 from .device import device_info
 from .const import CONF_SERVER, DOMAIN, VERSION
 
@@ -21,7 +22,8 @@ PARALLEL_UPDATES = 0
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEntitiesCallback) -> None:
-    add([HaufloLink(entry)])
+    # «На улице светло» (daylight.py) for the adaptive scenes and the integrator's own automations.
+    add([HaufloLink(entry), HaufloDaylight(entry, lambda: getattr(entry.runtime_data, "daylight", None))])
     # «Правила по значениям»: one «сработало» sensor per rule (rules.py).
     if (engine := getattr(entry.runtime_data, "rules", None)) is not None:
         engine.add_binary = add

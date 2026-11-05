@@ -7,7 +7,7 @@ again: those resources are taken off — the agent serves the files.
 
 «Сделать дом независимым» (independent.py) makes it permanent: the copy and the resources stay while the agent is
 installed too (refreshed on every start, the agent no longer adds its own copy), so the dashboard doesn't depend on
-the agent however it is removed (HACS first, a restart, a broken update).
+the agent however it is removed (Marketplace/HACS first, a restart, a broken update).
 
 Installed (not independent): the agent's own addresses (/hauflo_static/…) are Lovelace resources too, besides HA's
 extra JS. HA's frontend reads the extra JS only when a page loads, the resources when its first dashboard opens: a

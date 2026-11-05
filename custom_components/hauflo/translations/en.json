@@ -118,6 +118,9 @@
   },
   "entity": {
     "binary_sensor": {
+      "daylight": {
+        "name": "Daylight outside"
+      },
       "link": {
         "name": "Connection"
       },
@@ -245,11 +248,11 @@
     },
     "degraded": {
       "title": "Some Hauflo features are off on this Home Assistant version",
-      "description": "Home Assistant changed an internal part these features use, so the agent skipped them: {features}. Everything else works. Update the Hauflo agent (HACS → Hauflo → Update); if it is already the latest, tell your integrator."
+      "description": "Home Assistant changed an internal part these features use, so the agent skipped them: {features}. Everything else works. Update the Hauflo agent (Settings → Updates → Hauflo → Install); if it is already the latest, tell your integrator."
     },
     "outdated": {
       "title": "The Hauflo agent needs an update",
-      "description": "This agent is version {version}; Hauflo needs at least {minimum} (latest: {latest}). Deploys and some features may fail until it is updated: HACS → Hauflo → Update, then restart Home Assistant."
+      "description": "This agent is version {version}; Hauflo needs at least {minimum} (latest: {latest}). Deploys and some features may fail until it is updated: Settings → Updates → Hauflo → Install, then restart Home Assistant."
     },
     "rule_fault": {
       "title": "Value rule “{name}”: its sensor gives no data",
@@ -265,6 +268,12 @@
     }
   },
   "exceptions": {
+    "daylight_sensor_missing": {
+      "message": "Home Assistant has no such sensor."
+    },
+    "daylight_sensor_unit": {
+      "message": "The sensor is not in lux (lx) — an outdoor illuminance sensor is needed."
+    },
     "no_backup_location": {
       "message": "This Home Assistant has no local backup location, so the agent can't make a backup before a change."
     },

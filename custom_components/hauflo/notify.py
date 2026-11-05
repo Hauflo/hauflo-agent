@@ -35,6 +35,7 @@ from homeassistant.util import dt as dt_util, slugify
 from .natural import natural_key
 from .storage import HaufloStore
 from .const import LOCKED_CODE, MONITOR_LABELS
+from . import foreign
 from .tuning import TUNING
 
 _LOGGER = logging.getLogger(__name__)
@@ -105,9 +106,11 @@ SOURCE_DOMAINS = ("binary_sensor.", "sensor.")
 
 def labelled(hass: HomeAssistant | None, eid: str) -> bool:
     """The integrator marked it «Hauflo мониторинг» in HA (on the entity or its device) — HA's admin's say, not the
-    cloud's."""
+    cloud's. The integrator's «Уведомлять» switch in Hauflo's list (foreign.py, п.63.6) says it first."""
     if hass is None:
         return False
+    if (said := foreign.notify_flag(hass, eid)) is not None:
+        return said
     try:
         entry = er.async_get(hass).async_get(eid)
         if entry is None:
@@ -133,7 +136,12 @@ def _source_ok(hass: HomeAssistant | None, eid: str, owns: Callable[[str], bool]
         return False
     # «Picked»: the integrator chose it in Hauflo from the entities this agent reported (any integration — Zigbee, MQTT,
     # Z-Wave…); the cloud checked it against that list. Never a phone's, never a person's (filtered above).
-    return bool(owns is not None and owns(eid)) or labelled(hass, eid) or eid in picked
+    if owns is not None and owns(eid):
+        return True
+    # «Уведомлять» off in Hauflo's list (п.63.6): no alarm from it, a rule picking it included.
+    if foreign.notify_flag(hass, eid) is False:
+        return False
+    return labelled(hass, eid) or eid in picked
 
 
 def _device_class(hass: HomeAssistant | None, eid: str) -> str | None:

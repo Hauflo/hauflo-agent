@@ -33,7 +33,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
 
-from . import automations, backup, dashmerge, guest, house, insight, issues, keep, notify, ownership, presence, protect, ranges, retired, rules, scenes, season, servers, service, sidebar, stock, theme, timers, titles, voice
+from . import automations, backup, dashmerge, daylight, foreign, guest, house, insight, issues, keep, notify, ownership, presence, protect, ranges, retired, rules, scenes, season, servers, service, sidebar, stock, theme, timers, titles, voice
 from . import derived as dv
 from . import order as block_order
 from . import habits as habits_mod
@@ -897,6 +897,29 @@ def _foreign_device_placeable(hass: HomeAssistant | None, device_id: Any, area_i
     return getattr(device, "area_id", None) is None or _owns(owned_entries, "area", area_id)
 
 
+_FOREIGN_NAME_MAX = TUNING["ownership"]["foreign_name_max"]
+
+
+def _foreign_entity_shown(hass: HomeAssistant | None, eid: str, msg: dict[str, Any]) -> bool:
+    """Another integration's entity on a device in the house (a thermostat's, a leak kit's): hidden from / shown on the
+    panel and named, from the integrator's list in Hauflo (п.63.5/7) — nothing else of it (its class, labels, area,
+    voice, id), never Hauflo's or KNX's, never a phone's, never one without a device (a helper, a template)."""
+    if hass is None or not set(msg) <= {"id", "type", "entity_id", "hidden_by", "name"} or not set(msg) & {"hidden_by", "name"}:
+        return False
+    if "hidden_by" in msg and msg["hidden_by"] not in ("user", None):
+        return False
+    if "name" in msg and msg["name"] is not None and not (isinstance(msg["name"], str) and msg["name"].strip() and len(msg["name"]) <= _FOREIGN_NAME_MAX):
+        return False
+    entry = er.async_get(hass).async_get(eid)
+    if entry is None or not getattr(entry, "device_id", None) or entry.platform in ("knx", DOMAIN, "mobile_app"):
+        return False
+    device = dr.async_get(hass).async_get(entry.device_id)
+    if device is None or getattr(device, "entry_type", None) is not None:
+        return False
+    ents = er.async_entries_for_device(er.async_get(hass), entry.device_id, include_disabled_entities=True)
+    return not any(getattr(e, "platform", None) in ("knx", DOMAIN) for e in ents)
+
+
 def _owns(owned_entries: set[str] | None, kind: str, item_id: Any) -> bool:
     """A room / floor / label Hauflo created through the tunnel (kept with its config entries as «kind:id»)."""
     return owned_entries is not None and isinstance(item_id, str) and f"{kind}:{item_id}" in owned_entries
@@ -1613,8 +1636,10 @@ def _ws_allowed(msg: dict[str, Any], hass: HomeAssistant | None = None, owned: s
         # Hauflo's own only (a KNX one only if it created it), never a lock / the alarm / a valve, and never handed
         # to a voice assistant through the registry's options (security re-review round 4).
         eid = msg.get("entity_id")
-        if not isinstance(eid, str) or eid.startswith(_NEVER_EXPOSE) or not _own_entity(hass, eid, owned_entries):
+        if not isinstance(eid, str) or eid.startswith(_NEVER_EXPOSE):
             return False
+        if not _own_entity(hass, eid, owned_entries):
+            return _foreign_entity_shown(hass, eid, msg)
         # A garage door / gate keeps its class and never gets Alice's label (security re-review round 5). One protected
         # only by its addresses (protect.py: remade by a deploy, no class yet) may be given a protected class.
         if _protected(hass, eid) and set(msg.get("labels") or []) & _alice_labels(hass):
@@ -1918,6 +1943,7 @@ class Agent:
         self.automations: Any = None  # the dashboard's «Автоматизации» (automations.py), made on first use
         self.presence: presence.Presence | None = None  # «Нет дома — имитация присутствия» (presence.py)
         self.habits: habits_mod.Habits | None = None  # «Предложения по привычкам» (habits.py)
+        self.daylight: daylight.Daylight | None = None  # «На улице светло» for the adaptive scenes (daylight.py)
         self.season: season.Season | None = None  # «Зима / Лето»: the switch, the resend, the suggestion (season.py)
         self.rules: rules.Rules | None = None  # «Правила по значениям» and the derived values (rules.py, derived.py)
         self.guest: guest.GuestAccess | None = None  # «Гостевой доступ» (guest.py), set up with the entry
@@ -2426,10 +2452,13 @@ class Agent:
             reg.async_create(MONITOR_LABEL if ru else MONITOR_LABEL_EN, icon="mdi:bell-alert", color="red", description=ownership.MONITOR_TEXT["ru" if ru else "en"])
 
     def _monitored_ids(self) -> list[str]:
+        # The «Hauflo мониторинг» label, and the integrator's «Уведомлять» switch in Hauflo's list over it (п.63.6).
         label = next((l for l in lr.async_get(self.hass).async_list_labels() if l.name.casefold() in MONITOR_LABELS), None)
-        if label is None:
-            return []
-        return [e.entity_id for e in er.async_entries_for_label(er.async_get(self.hass), label.label_id)]
+        reg = er.async_get(self.hass)
+        ids = [e.entity_id for e in er.async_entries_for_label(reg, label.label_id)] if label is not None else []
+        off = foreign.notify_off(self.hass)
+        on = sorted(i for i in foreign.notify_on(self.hass) if i not in ids and reg.async_get(i) is not None)
+        return [i for i in ids if i not in off] + on
 
     def _knx(self) -> dict[str, Any]:
         entries = self.hass.config_entries.async_entries("knx")
@@ -2592,6 +2621,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
     # Gates / garage doors / doors stay protected once seen (protect.py): marked now, on every registry change and
     # before each change the cloud sends.
     await protect.async_setup(hass, lambda eid: _protect_marks_of(hass, eid), _ga_key, lambda: _protect_refresh(hass))
+    await foreign.async_setup(hass)
     _protect_refresh(hass)
     entry.async_on_unload(hass.bus.async_listen(er.EVENT_ENTITY_REGISTRY_UPDATED, callback(lambda _e: _protect_refresh(hass))))
     owns = lambda eid: _own_entity(hass, eid, agent.owned_entries) and (_platform(hass, eid) != "knx" or _owned_knx(hass, eid, agent.owned))  # noqa: E731
@@ -2599,6 +2629,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
     # taken away cleanly — its own entities and store only, the KNX thermostats untouched (retired.py).
     agent.season = season.Season(hass, lambda: agent.engine, lambda: agent.rules, owns)
     await agent.season.async_load()
+    # «На улице светло» (daylight.py): before the platforms — its binary sensor reads it.
+    agent.daylight = daylight.Daylight(hass)
     try:
         await retired.async_retire_comfort(hass, entry.entry_id, agent.season.async_seed)
     except Exception as err:  # noqa: BLE001 — never stops the agent
@@ -2649,6 +2681,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
         await agent.season.async_start()
     except Exception as err:  # noqa: BLE001 — never stops the agent
         degrade("season", err)
+    try:
+        await agent.daylight.async_start()
+    except Exception as err:  # noqa: BLE001 — never stops the agent; the scenes then do all they hold
+        degrade("daylight", err)
     try:
         await agent.rules.async_start()
     except Exception as err:  # noqa: BLE001 — never stops the agent
@@ -2731,6 +2767,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
         hass.http.register_view(house.HouseView())
         hass.http.register_view(stock.StockView())
         hass.http.register_view(protect.ProtectView(_protect_mark, _protect_unmark))
+        hass.http.register_view(foreign.ForeignView())
 
     async def _stop(_event: Event) -> None:
         if agent.presence is not None:
@@ -2881,6 +2918,7 @@ def _scenes(hass: HomeAssistant) -> scenes.FamilyScenes | None:
                     target=lambda eid: _knx_scene_target(hass, agent.owned, agent.allowed_ranges(), eid),
                     locked=lambda: agent.locked,
                 ),
+                daylight=lambda: agent.daylight,
             )
         return agent.family_scenes
     return None
@@ -2907,6 +2945,8 @@ def _rules(hass: HomeAssistant) -> rules.Rules | None:
 async def async_unload_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bool:
     if not await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         return False
+    if (dl := entry.runtime_data.daylight) is not None:
+        dl.async_stop()
     if (sn := entry.runtime_data.season) is not None:
         sn.async_stop()
         await sn.store.async_save(sn.data())  # the last resend kept (a delayed save would be lost)
@@ -2966,6 +3006,9 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         await HaufloStore(hass, retired.COMFORT_STORE).async_remove()
     with contextlib.suppress(Exception):
         await HaufloStore(hass, season.STORE_KEY).async_remove()
+    with contextlib.suppress(Exception):
+        await HaufloStore(hass, foreign.STORE_KEY).async_remove()
+    hass.data.pop(foreign.DATA, None)  # the integrator's «Уведомлять» flags: gone with the agent, not kept until a restart
     with contextlib.suppress(Exception):
         await HaufloStore(hass, rules.STORE_KEY).async_remove()
     with contextlib.suppress(Exception):

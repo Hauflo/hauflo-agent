@@ -15,6 +15,13 @@ scene may hold: Hauflo's own lights and blinds only (owns() leaves out locks, th
 scenes.yaml: like automations.yaml, written only while it is plain (what HA's own scene editor writes), with a copy
 scenes.yaml.hauflo-bak-<time> before each write (the last 3), one read-modify-write at a time.
 
+Adaptive scenes (п.60, owner 05.11): a tap on a Hauflo HA scene runs it through `apply` — while it is light outside
+(daylight.py) the lights the family marked «Днём не включать в сценах» (`daylight_skip`) are left out where the scene
+would switch them ON (a niche lit by day is not seen); what the scene switches off still goes off. Nothing left out —
+HA's own scene.turn_on. Any other scene (KNX, made in HA by hand) — scene.turn_on as it is. Running a scene is open to
+every signed-in person (a restricted profile too, as HA's scene.turn_on); marking a light is a setting (not a restricted
+profile), the sensor and the threshold (`daylight_config`) are an HA admin's.
+
 KNX scenes (Д19, owner 28.10: «сцены KNX тоже должны пересохраняться»): a long press on a KNX scene Hauflo made →
 «Переименовать» (a name on the panel only, kept here — HA, voice and the switches keep theirs) and «Запомнить как
 сейчас» = KNX scene learn: one telegram, DPT 18.001 with the learn bit, 0x80 | (number − 1), to that scene's address.
@@ -42,6 +49,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 
+from .daylight import Daylight, Invalid as DayInvalid, SensorRefused
 from .house import refuse
 from .storage import HaufloStore
 from .const import LOCKED_CODE, wants_ru
@@ -139,10 +147,11 @@ def _plain(text: str) -> list[Any]:
 
 
 class FamilyScenes:
-    def __init__(self, hass: HomeAssistant, owns: Callable[[str], bool], knx: KnxScenes | None = None) -> None:
+    def __init__(self, hass: HomeAssistant, owns: Callable[[str], bool], knx: KnxScenes | None = None, daylight: Callable[[], Daylight | None] | None = None) -> None:
         self.hass = hass
         self.owns = owns
         self.knx = knx
+        self.daylight = daylight or (lambda: None)
         self.store = HaufloStore(hass, STORE_KEY)
         self._learned: dict[str, float] = {}
         self._learn_times: list[float] = []
@@ -263,7 +272,65 @@ class FamilyScenes:
             out["knx"] = numbers
             names = data.get("names") if isinstance(data.get("names"), dict) else {}
             out["names"] = {k: v for k, v in names.items() if k in numbers and isinstance(v, str)}
+        if (day := self.daylight()) is not None:
+            out["daylight"] = await day.answer()
         return out
+
+    # --- adaptive scenes (daylight.py) ---------------------------------------------------------------------------------
+    async def _entities_in(self, scene_id: str) -> dict[str, Any] | None:
+        """What a Hauflo scene holds, from scenes.yaml — read only, so a hand-formatted file is read too; None when it
+        can't be read (the scene then runs as HA's own)."""
+        import yaml  # noqa: PLC0415
+
+        path = self.hass.config.path(SCENES)
+
+        def read() -> Any:
+            with open(path, encoding="utf-8") as f:
+                return yaml.safe_load(f)
+
+        try:
+            data = await self.hass.async_add_executor_job(read)
+        except (OSError, yaml.YAMLError):
+            return None
+        mine = next((x for x in data if isinstance(x, dict) and x.get("id") == scene_id), None) if isinstance(data, list) else None
+        ents = mine.get("entities") if isinstance(mine, dict) else None
+        return ents if isinstance(ents, dict) else None
+
+    async def apply(self, entity_id: Any) -> dict[str, Any]:
+        """A tap on a scene: a Hauflo HA scene without the lights left off by day (only while it is light outside and
+        only where the scene would switch them on); any other — HA's scene.turn_on."""
+        if not isinstance(entity_id, str) or not entity_id.startswith("scene.") or self.hass.states.get(entity_id) is None:
+            raise Invalid("entity_id")
+        try:
+            scene_id: str | None = self._scene_id_of(entity_id)
+        except PermissionError:
+            scene_id = None  # a KNX scene, one made in HA by hand: HA's own
+        day = self.daylight()
+        ents = await self._entities_in(scene_id) if scene_id and day is not None and day.is_light() else None
+        skip = set((await day.config())["skip"]) if ents and day is not None else set()
+        # «on» written by hand (no quotes) is YAML's true.
+        dropped = sorted(e for e, v in (ents or {}).items() if e in skip and (v.get("state") if isinstance(v, dict) else v) in ("on", True))
+        if not dropped:
+            await self.hass.services.async_call("scene", "turn_on", {"entity_id": entity_id}, blocking=True)
+            return {"applied": len(ents) if ents else None, "skipped": []}
+        rest = {e: v for e, v in ents.items() if e not in dropped}
+        if rest:
+            await self.hass.services.async_call("scene", "apply", {"entities": rest}, blocking=True)
+        _LOGGER.debug("Hauflo: scene %s by day, left off: %s", entity_id, dropped)
+        return {"applied": len(rest), "skipped": dropped}
+
+    async def daylight_skip(self, entity_id: Any, on: Any) -> dict[str, Any]:
+        if (day := self.daylight()) is None:
+            raise PermissionError("daylight: not set up")
+        return {"skip": await day.set_skip(entity_id, on)}
+
+    async def daylight_config(self, body: dict[str, Any]) -> dict[str, Any]:
+        if (day := self.daylight()) is None:
+            raise PermissionError("daylight: not set up")
+        if set(body) - {"op", "lang", "sensor", "lux"}:
+            raise DayInvalid("daylight_config: sensor and / or lux only")
+        await day.set_config({k: body[k] for k in ("sensor", "lux") if k in body})
+        return await day.answer()
 
     # --- KNX scenes ---------------------------------------------------------------------------------------------------
     def _knx_scene(self, entity_id: Any) -> str:
@@ -432,9 +499,17 @@ class ScenesView(HomeAssistantView):
         op = body.get("op")
         # Every op here changes the house's scenes (create, rename, re-learn on the KNX actuators, delete): not a restricted
         # (child) profile (house.py, family review round 3). Running a scene is HA's own scene.turn_on — open to everyone.
-        if op in ("add", "rename", "recapture", "delete", "unhide", "knx_name", "knx_learn") and (no := await refuse(request)) is not None:
+        if op in ("add", "rename", "recapture", "delete", "unhide", "knx_name", "knx_learn", "daylight_skip") and (no := await refuse(request)) is not None:
             return no
+        if op == "daylight_config" and not (user and user.is_admin):
+            return self.json_message("only an administrator sets the daylight sensor", 403)
         try:
+            if op == "apply":
+                return self.json(await engine.apply(body.get("entity_id")))
+            if op == "daylight_skip":
+                return self.json(await engine.daylight_skip(body.get("entity_id"), body.get("on")))
+            if op == "daylight_config":
+                return self.json(await engine.daylight_config(body))
             if op == "add":
                 return self.json(await engine.add(body.get("room"), body.get("kind"), body.get("name"), body.get("entities"), user.name if user else None))
             if op == "rename":
@@ -450,7 +525,9 @@ class ScenesView(HomeAssistantView):
             if op == "knx_learn":
                 # The scene entity only: anything else in the body (an address, a payload) is never read.
                 return self.json(await engine.learn(body.get("entity_id"), user.name if user else None))
-        except Invalid as err:
+        except SensorRefused as err:
+            return self.json({"message": await err.text(engine.hass, ru), "code": err.key}, 400)
+        except (Invalid, DayInvalid) as err:
             return self.json_message(str(err), 400)
         except NotPlain as err:
             _LOGGER.warning("Hauflo scenes: scenes.yaml left as it is (%s)", err)
@@ -469,4 +546,4 @@ class ScenesView(HomeAssistantView):
         except Exception as err:  # noqa: BLE001 — HA refused the file / reload: said, not a 500 page
             _LOGGER.warning("Hauflo scenes: %s failed: %s", op, err)
             return self.json_message(f"Home Assistant: {err}", 500)
-        return self.json_message("op: add, rename, recapture, delete, unhide, knx_name or knx_learn", 400)
+        return self.json_message("op: apply, add, rename, recapture, delete, unhide, knx_name, knx_learn, daylight_skip or daylight_config", 400)

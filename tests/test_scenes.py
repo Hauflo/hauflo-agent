@@ -11,7 +11,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
 from homeassistant.util.yaml import dump, load_yaml
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.common import MockConfigEntry, async_mock_service
 
 from custom_components.hauflo import _http_allowed
 from custom_components.hauflo.const import CONF_SECRET, CONF_SERVER, DOMAIN
@@ -154,3 +154,137 @@ async def test_tunnel_cannot_reach(hass: HomeAssistant) -> None:
     # Nor the family's scenes through HA's scene editor.
     for method in ("GET", "POST", "DELETE"):
         assert not _http_allowed(hass, method, "/api/config/scene/config/hauflo_fam_bed_l_6720a1b2c3", {"id": "x", "entities": {}})
+
+
+# --- adaptive scenes (п.60): a light marked «Днём не включать в сценах» stays off while it is light outside ----------------
+def _sun(hass: HomeAssistant, elevation: float) -> None:
+    hass.states.async_set("sun.sun", "above_horizon" if elevation > 0 else "below_horizon", {"elevation": elevation})
+
+
+def _fam_eid(hass: HomeAssistant) -> str:
+    fam = next(s for s in _file(hass) if str(s["id"]).startswith("hauflo_fam_"))
+    return er.async_get(hass).async_get_entity_id("scene", "homeassistant", fam["id"])
+
+
+async def _two_light_scene(hass: HomeAssistant, client, state: str = "on") -> str:
+    """A family scene with both lights in `state`; LAMP marked «Днём не включать в сценах»; both lights off after."""
+    for eid in (LIGHT, LAMP):
+        hass.states.async_set(eid, state, {"supported_color_modes": ["onoff"]})
+    res = await client.post(URL, json={"op": "add", "room": "bed", "kind": "l", "name": "Вечер", "entities": [LIGHT, LAMP]})
+    assert res.status == 200, await res.text()
+    for eid in (LIGHT, LAMP):
+        hass.states.async_set(eid, "off", {"supported_color_modes": ["onoff"]})
+    res = await client.post(URL, json={"op": "daylight_skip", "entity_id": LAMP, "on": True})
+    assert res.status == 200 and (await res.json()) == {"skip": [LAMP]}, await res.text()
+    return _fam_eid(hass)
+
+
+async def test_apply_by_day_and_by_night(hass: HomeAssistant, hass_client, entry) -> None:
+    client = await hass_client()
+    eid = await _two_light_scene(hass, client)
+    on = async_mock_service(hass, "light", "turn_on")
+    day = entry.runtime_data.daylight
+
+    _sun(hass, 30)
+    await day.refresh(force=True)
+    res = await client.post(URL, json={"op": "apply", "entity_id": eid})
+    assert res.status == 200, await res.text()
+    assert await res.json() == {"applied": 1, "skipped": [LAMP]}
+    assert [c.data["entity_id"] for c in on] == [LIGHT]  # the main light only
+
+    on.clear()
+    _sun(hass, -10)
+    await day.refresh(force=True)
+    res = await client.post(URL, json={"op": "apply", "entity_id": eid})
+    assert (await res.json())["skipped"] == []
+    assert sorted(c.data["entity_id"] for c in on) == sorted([LAMP, LIGHT])  # dark: the whole scene
+
+    # Unknown outside (no sun, no sensor): the whole scene too.
+    on.clear()
+    hass.states.async_remove("sun.sun")
+    await day.refresh(force=True)
+    assert day.on is None
+    assert (await (await client.post(URL, json={"op": "apply", "entity_id": eid})).json())["skipped"] == []
+    assert sorted(c.data["entity_id"] for c in on) == sorted([LAMP, LIGHT])
+
+    # GET tells the cards the skip list.
+    got = (await (await client.get(URL)).json())["daylight"]
+    assert got["skip"] == [LAMP] and got["lux"] == 1000 and got["sensor"] is None
+
+
+async def test_apply_keeps_switching_off(hass: HomeAssistant, hass_client, entry) -> None:
+    """A skip light a scene switches OFF is still switched off by day (an «all off» scene must stay an «all off»)."""
+    client = await hass_client()
+    eid = await _two_light_scene(hass, client, "off")
+    off = async_mock_service(hass, "light", "turn_off")
+    _sun(hass, 30)
+    await entry.runtime_data.daylight.refresh(force=True)
+    for e in (LIGHT, LAMP):
+        hass.states.async_set(e, "on", {"supported_color_modes": ["onoff"]})
+    res = await client.post(URL, json={"op": "apply", "entity_id": eid})
+    assert (await res.json())["skipped"] == []
+    assert sorted(c.data["entity_id"] for c in off) == sorted([LAMP, LIGHT])
+
+
+async def test_apply_foreign_scene_is_turn_on(hass: HomeAssistant, hass_client, entry) -> None:
+    """The integrator's hand-made / KNX scene: HA's scene.turn_on, nothing filtered, even with a skip light in it."""
+    client = await hass_client()
+    assert (await client.post(URL, json={"op": "daylight_skip", "entity_id": HAND, "on": True})).status == 200
+    _sun(hass, 30)
+    await entry.runtime_data.daylight.refresh(force=True)
+    theirs = er.async_get(hass).async_get_entity_id("scene", "homeassistant", THEIRS["id"])
+    calls = async_mock_service(hass, "scene", "turn_on")
+    res = await client.post(URL, json={"op": "apply", "entity_id": theirs})
+    assert await res.json() == {"applied": None, "skipped": []}
+    assert [c.data["entity_id"] for c in calls] == [theirs]
+    er.async_get(hass).async_get_or_create("scene", "knx", "u-knx-scene", suggested_object_id="knx_evening")
+    hass.states.async_set("scene.knx_evening", "unknown")
+    res = await client.post(URL, json={"op": "apply", "entity_id": "scene.knx_evening"})
+    assert res.status == 200 and (await res.json())["skipped"] == []
+    assert calls[-1].data["entity_id"] == "scene.knx_evening"
+    for bad in ("light.bed_ceiling", "scene.nope", None, 5):
+        assert (await client.post(URL, json={"op": "apply", "entity_id": bad})).status == 400, bad
+
+
+async def test_restricted_may_apply_not_change(hass: HomeAssistant, hass_client, hass_read_only_user, hass_read_only_access_token, entry) -> None:
+    admin = await hass_client()
+    eid = await _two_light_scene(hass, admin)
+    async_mock_service(hass, "light", "turn_on")
+    _sun(hass, 30)
+    await entry.runtime_data.daylight.refresh(force=True)
+    assert (await admin.post("/api/hauflo/house", json={"restricted": [hass_read_only_user.id]})).status == 200
+    child = await hass_client(hass_read_only_access_token)
+    res = await child.post(URL, json={"op": "apply", "entity_id": eid})
+    assert res.status == 200 and (await res.json())["skipped"] == [LAMP]
+    assert (await child.post(URL, json={"op": "daylight_skip", "entity_id": LAMP, "on": False})).status == 403
+    assert (await child.post(URL, json={"op": "daylight_config", "lux": 500})).status == 403
+    assert (await (await child.get(URL)).json())["daylight"]["skip"] == [LAMP]
+
+
+async def test_config_admin_only(hass: HomeAssistant, hass_client, hass_read_only_access_token, entry) -> None:
+    hass.states.async_set("sensor.outdoor_lux", "300", {"unit_of_measurement": "lx"})
+    hass.states.async_set("sensor.temp", "5", {"unit_of_measurement": "°C"})
+    user = await hass_client(hass_read_only_access_token)  # signed in, not an admin, not restricted
+    assert (await user.post(URL, json={"op": "daylight_config", "sensor": "sensor.outdoor_lux"})).status == 403
+    admin = await hass_client()
+    for body in ({"sensor": "sensor.temp"}, {"lux": 50}, {"lux": 20001}, {"skip": []}, {}, {"sensor": "light.x"}):
+        res = await admin.post(URL, json={"op": "daylight_config", **body})
+        assert res.status == 400, (body, await res.text())
+    # A sensor HA does not have / not in lx (tester D2 / D3): said to the person in their language, with a code.
+    for lang, eid, code, word in (("ru", "sensor.nowhere", "daylight_sensor_missing", "нет такого датчика"), ("en", "sensor.temp", "daylight_sensor_unit", "not in lux")):
+        res = await admin.post(URL, json={"op": "daylight_config", "sensor": eid, "lang": lang})
+        got = await res.json()
+        assert res.status == 400 and got["code"] == code and word in got["message"], got
+    res = await admin.post(URL, json={"op": "daylight_config", "sensor": "sensor.outdoor_lux", "lux": 200})
+    assert res.status == 200, await res.text()
+    got = await res.json()
+    assert (got["on"], got["source"], got["sensor"], got["lux"]) == (True, "sensor", "sensor.outdoor_lux", 200)
+    await hass.async_block_till_done()
+    assert hass.states.get("binary_sensor.hauflo_daylight").attributes["source"] == "sensor"
+    for body in ({"entity_id": BLIND, "on": True}, {"entity_id": LAMP, "on": "yes"}, {"entity_id": "light.nope", "on": True}):
+        assert (await admin.post(URL, json={"op": "daylight_skip", **body})).status == 400, body
+
+
+async def test_tunnel_cannot_reach_daylight(hass: HomeAssistant) -> None:
+    for body in ({"op": "apply", "entity_id": "scene.x"}, {"op": "daylight_skip", "entity_id": LAMP, "on": True}, {"op": "daylight_config", "lux": 500}):
+        assert not _http_allowed(hass, "POST", URL, body)

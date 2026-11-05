@@ -20,7 +20,7 @@ it talks to. Out of scope: Home Assistant itself, KNX hardware, third-party inte
 
 ## Supported versions
 
-Security fixes go into the latest released agent version; the agent updates through HACS. Older versions are not patched.
+Security fixes go into the latest released agent version; the agent updates through the Home Assistant Marketplace (HACS before HA 2026.11). Older versions are not patched.
 
 ## Сообщение об уязвимости
 

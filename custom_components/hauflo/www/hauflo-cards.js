@@ -285,7 +285,7 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
   };
   /** What a failed call to the agent's own API means (HA expert 28.10): "gone" — the agent isn't installed (HA answers
    * 404 and has no «hauflo» integration, or the views are left from a removed one: 503 «not set up»); "old" — the agent is
-   * there but has no such view (an older version: «обновите в HACS»); "" — anything else (no link, an error). */
+   * there but has no such view (an older version: «обновите в Marketplace/HACS»); "" — anything else (no link, an error). */
   const agentErr = (e, h) => {
     const m = String(e?.body?.message || "");
     if (e?.status_code === 503 && /not set up/i.test(m)) return "gone";
@@ -843,6 +843,15 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
   const tempOf = (s) => (s ? (s.entity_id.startsWith("climate.") ? num(s.attributes.current_temperature) : num(s.state)) : undefined);
   /** A card's extra readings: `sensors: ["sensor.x", {entity, name}]`. */
   const readingsOf = (c) => (c?.sensors || []).map((x) => (typeof x === "string" ? { entity: x } : x)).filter((x) => x && x.entity);
+  /** One spelling of a unit for every comparison in the cards (п.63): «℃», «° C», «°c», «ºC» → «°C», «℉» likewise; any
+   * other unit as written (mW ≠ MW), spaces out. */
+  const unitKey = (u) =>
+    String(u ?? "")
+      .replace(/\s+/g, "")
+      .replace(/℃/g, "°C")
+      .replace(/℉/g, "°F")
+      .replace(/º/g, "°")
+      .replace(/^°([cf])$/i, (m, x) => `°${x.toUpperCase()}`);
   /** A fan's own stages (percentage_step 10 → 10 speeds): up to FAN_SPEEDS_MAX they are shown as the unit's speed «3/10»
    * everywhere, never «%» (owner 03.11: GTC Syberia is 1…10); more stages (or none) — a stepless fan in %. `at(i)` is the
    * percentage of speed i as HA's fanSpeedToPercentage. */
@@ -1014,7 +1023,8 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
       if (u) ackShow(b, u);
     });
   };
-  const sendAck = (card, b, domain, service, data, ok) => {
+  /** `send` (optional): the call itself instead of `domain.service` (a Hauflo scene through the agent); its answer → `ok`. */
+  const sendAck = (card, b, domain, service, data, ok, send) => {
     if (b) {
       const until = Date.now() + 1500;
       (card._acks ??= {})[ackKey(b)] = until;
@@ -1028,12 +1038,12 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
     };
     const t = setTimeout(fail, 10000);
     Promise.resolve()
-      .then(() => card._hass.callService(domain, service, data, undefined, false))
+      .then(() => (send ? send() : card._hass.callService(domain, service, data, undefined, false)))
       .then(
-        () => {
+        (r) => {
           done = true;
           clearTimeout(t);
-          ok?.();
+          ok?.(r);
         },
         () => {
           clearTimeout(t);
@@ -1043,7 +1053,7 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
   };
   /** A scene ran (family review round 3, Apple Home / Yandex Дом): «Сценарий «Вечер» включён» at the bottom of the screen and
    * the chip lit for a few seconds (kept over the card's re-render: `card._sceneLit`). */
-  const sceneDone = (card, id) => {
+  const sceneDone = (card, id, skipped) => {
     const s = st(card._hass, id);
     const name = (FAM.names?.[id]) || (s ? nameOf(s, id) : id);
     card._sceneLit = { id, until: Date.now() + 4000 };
@@ -1054,6 +1064,8 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
         card.shadowRoot?.querySelectorAll("button[data-scene].lit").forEach((x) => x.classList.remove("lit"));
       }
     }, 4000);
+    // By day the agent left the marked lights off (adaptive scenes, п.60): said instead of «включена».
+    if (Array.isArray(skipped) && skipped.length) return okToast(tr("Подсветка не включена: на улице светло"));
     okToast(LANG === "ru" ? `Сцена «${name}» включена` : `Scene “${name}” is on`);
   };
   const navigate = (path) => {
@@ -1103,6 +1115,15 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
       return zone;
     };
     return (want && look(views.filter((v) => v.path === want))) || look(views) || null;
+  };
+  /** A page's path as compared (decoded, no query, no trailing slash): `/dash/view`. */
+  const pagePath = (p) => {
+    const x = String(p || "").split(/[?#]/)[0].replace(/\/+$/, "");
+    try {
+      return decodeURIComponent(x);
+    } catch {
+      return x;
+    }
   };
   /** After «Открыть в комнате»: the card of the room page that shows `entity` is scrolled to and lit (≤ 5 s to appear). */
   let FOCUS = null;
@@ -1605,6 +1626,7 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
     const t = String(c.type || "").replace(/^custom:hauflo-/, "");
     const own = c.block && TITLES.data?.[c.block];
     if (own) return own;
+    if (t === "area" && Object.hasOwn(AREA_BLOCK, c.block || "")) return c.title || AREA_BLOCK[c.block][langOf(card._hass) === "en" ? 1 : 0];
     if (t === "area") return c.title || devName(card._hass, c.device) || card._hass?.areas?.[c.area]?.name || w.names.area;
     if (t === "sliders") return JSON.stringify(c.entities || []).includes('"cover.') ? w.names.covers : w.names.lights;
     return c.title || c.label || w.names[t] || t;
@@ -1803,7 +1825,8 @@ button:focus-visible{outline:2px solid var(--hf-ice);outline-offset:1px}
   // or the cards without their agent); null until asked. «+ Сцена» shows only with it.
   // `knx`: Hauflo's own KNX scenes the agent can learn (entity → scene number; agent ≥ 0.16.5), `names`: the family's
   // names of KNX scenes on the panel.
-  const FAM = { hidden: null, state: "", cards: new Set(), api: null, knx: {}, names: {} };
+  // `day`: adaptive scenes (п.60, agent daylight.py) — {on, source, skip, sensor, lux}; null on an agent without them.
+  const FAM = { hidden: null, state: "", cards: new Set(), api: null, knx: {}, names: {}, day: null, p: null };
   const famRerender = () => {
     for (const c of FAM.cards) {
       c._sig = "";
@@ -1811,24 +1834,56 @@ button:focus-visible{outline:2px solid var(--hf-ice);outline-offset:1px}
     }
   };
   const loadFam = (h) => {
-    if (FAM.state || !h?.callApi) return;
+    if (FAM.state || !h?.callApi) return FAM.p;
     FAM.state = "loading";
-    h.callApi("GET", "hauflo/scenes")
+    FAM.p = h.callApi("GET", "hauflo/scenes")
       .then((r) => {
         FAM.hidden = Array.isArray(r?.hidden) ? r.hidden : [];
         FAM.knx = r?.knx && typeof r.knx === "object" ? r.knx : {};
         FAM.names = r?.names && typeof r.names === "object" ? r.names : {};
+        FAM.day = r?.daylight && typeof r.daylight === "object" && Array.isArray(r.daylight.skip) ? r.daylight : null;
         FAM.api = true;
       })
       .catch(() => {
         FAM.hidden = [];
+        FAM.day = null;
         FAM.api = false;
       })
       .finally(() => {
         FAM.state = "done";
         famRerender();
       });
+    return FAM.p;
   };
+  // Adaptive scenes (п.60): a Hauflo HA scene runs through the agent (op apply), which leaves the lights marked «Днём не
+  // включать в сценах» off while it is light outside; any other scene, or an agent without it, is HA's scene.turn_on.
+  const hfScene = (h, id) => /^scene\./.test(id) && /^(?:hauflo|easyha)_/.test(String(st(h, id)?.attributes?.id || ""));
+  const famScene = (h, id) => FAM.api === true && !!FAM.day && hfScene(h, id);
+  const daySkip = (id) => !!FAM.day && FAM.day.skip.includes(id);
+  /** A Hauflo scene that holds a light left off by day: its chip says «Адаптивная». */
+  const adaptive = (h, id) => hfScene(h, id) && (st(h, id)?.attributes?.entity_id || []).some(daySkip);
+  /** The light / switch is in some Hauflo HA scene: only then the sheet offers «Днём не включать в сценах». */
+  const inHfScene = (h, id) => Object.values(h?.states || {}).some((s) => s.entity_id.startsWith("scene.") && hfScene(h, s.entity_id) && (s.attributes.entity_id || []).includes(id));
+  const FAM_WAIT_MS = 4000; // a scene tap waits this long for the agent's first answer, then runs as HA's own
+  const RUNNING = new Map(); // scene id → its run in flight: a second tap joins it, never a second request (tester D7)
+  /** Every scene tap (chips, the sheet's «Включить», the entity tile) runs here, so all three behave the same: a Hauflo
+   * scene waits for the agent's answer if the page has only just loaded (the first tap is adaptive too), goes through
+   * op apply, and falls back to HA's scene.turn_on when the agent fails (500 / no link) — the scene still runs (D6).
+   * The wait for that first answer is bounded (FAM_WAIT_MS): on a bad link the tap is scene.turn_on, not a tap that
+   * never runs (retest 3). Known and accepted (retest note 4): a 500 after HA's scene.apply already ran part of the
+   * scene → the fallback's scene.turn_on also lights the lamps left off by day — a scene that does too much, not none. */
+  const runScene = (h, id) => {
+    if (RUNNING.has(id)) return RUNNING.get(id);
+    const plain = () => h.callService(id.split(".")[0] === "script" ? "script" : "scene", "turn_on", { entity_id: id }, undefined, false);
+    const go = () => (famScene(h, id) ? h.callApi("POST", "hauflo/scenes", { op: "apply", entity_id: id, lang: LANG }).catch(plain) : plain());
+    const first = () => Promise.race([Promise.resolve(loadFam(h)), new Promise((r) => setTimeout(r, FAM_WAIT_MS))]);
+    const p = Promise.resolve().then(() => (hfScene(h, id) && FAM.api === null && h?.callApi ? first().then(go, go) : go()));
+    const clear = () => RUNNING.delete(id);
+    RUNNING.set(id, p);
+    p.then(clear, clear);
+    return p;
+  };
+  Object.assign(EN, { "Днём не включать в сценах": "Leave off in scenes by day", "Адаптивная": "Adaptive", "Подсветка не включена: на улице светло": "Backlight left off: daylight outside" });
   /** The room's scenes the family saved on the dashboard (`hauflo_fam_<room>_<l|c>_<time>`), oldest first. */
   // All of them once per states object (HA replaces it on any change) — not a walk over every state per card and update.
   const FAM_ALL = new WeakMap();
@@ -1985,7 +2040,8 @@ button:focus-visible{outline:2px solid var(--hf-ice);outline-offset:1px}
         const src = sceneSource(hass, x.entity);
         const label = sceneLabel(hass, x);
         const editable = src === "knx" ? FAM.api === true && FAM.knx?.[x.entity] !== undefined : /^hauflo_/.test(String(s.attributes.id || "")) && !!room;
-        const tag = mixedSrc ? `<i class="src" aria-hidden="true">${src === "knx" ? "KNX" : "HA"}</i>` : "";
+        // «Адаптивная»: the scene leaves a marked light off by day (п.60) — the same sub-caption as the KNX / HA tag.
+        const tag = (mixedSrc ? `<i class="src" aria-hidden="true">${src === "knx" ? "KNX" : "HA"}</i>` : "") + (adaptive(hass, x.entity) ? `<i class="src">Адаптивная</i>` : "");
         // The tag's meaning on hover (blind review 03.11: «HA» read as an unknown badge) — admins only.
         const tip = admin ? `${label} · ${src === "knx" ? "сцена в KNX" : "сцена в Home Assistant"}` : label;
         const lit = card?._sceneLit?.id === x.entity && card._sceneLit.until > Date.now();
@@ -2265,6 +2321,11 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
   };
   const bindScenes = (card) => {
     const root = card.shadowRoot;
+    // A Hauflo HA scene here: the agent is asked once whether it runs scenes by daylight (FAM.day).
+    if ([...root.querySelectorAll("button[data-scene]")].some((b) => hfScene(card._hass, b.dataset.scene))) {
+      FAM.cards.add(card);
+      loadFam(card._hass);
+    }
     root.querySelectorAll("button[data-scene]").forEach((b) => {
       const scn = b.closest(".scn")?.classList;
       const kind = scn?.contains("cover") ? "cover" : "light";
@@ -2298,7 +2359,7 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
         haptic(card);
         card._busy = true;
         // A tick and «отправлено» where its icon and name were: the tap took (persona round 5, final review 28.10).
-        sendAck(card, b, id.split(".")[0] === "script" ? "script" : "scene", "turn_on", { entity_id: id }, () => sceneDone(card, id));
+        sendAck(card, b, id.split(".")[0] === "script" ? "script" : "scene", "turn_on", { entity_id: id }, (r) => sceneDone(card, id, r?.skipped), () => runScene(card._hass, id));
         setTimeout(() => (card._busy = false), 1600);
       });
     });
@@ -2529,26 +2590,34 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
     const end = new Date();
     const start = new Date(end.getTime() - hours * 3600000);
     let pts = [];
-    try {
+    const stats = async () => {
+      try {
+        const r = await hass.callWS({ type: "recorder/statistics_during_period", start_time: start.toISOString(), end_time: end.toISOString(), statistic_ids: [id], period: "hour", types: ["mean"] });
+        return (r?.[id] || []).map((p) => [typeof p.start === "number" ? p.start : Date.parse(p.start), Number(p.mean)]).filter(([, v]) => !isNaN(v));
+      } catch (e) {
+        return []; // no statistics for it
+      }
+    };
+    // A week or a month (the sheet's period, п.63.11): the hourly statistics when the sensor has them — the recorder keeps
+    // ~10 days of detail and a month of it is tens of thousands of rows; the detail otherwise.
+    const long = hours > CHART_DETAIL_HOURS && !attr;
+    if (long) pts = await stats();
+    if (!long || pts.length < 4) try {
       const r = await hass.callWS({ type: "history/history_during_period", start_time: start.toISOString(), end_time: end.toISOString(), entity_ids: [id], minimal_response: !attr, no_attributes: !attr, significant_changes_only: false });
       // A missing value (an attribute not reported yet, «unknown») is a gap, not a zero.
       const val = (p) => {
         const v = attr ? (p.a || p.attributes || {})[attr] : p.s ?? p.state;
         return v === null || v === undefined || v === "" ? NaN : Number(v);
       };
-      pts = (r[id] || []).map((p) => [(p.lu ?? p.lc) ? (p.lu ?? p.lc) * 1000 : Date.parse(p.last_updated || p.last_changed), val(p)]).filter(([t, v]) => !isNaN(t) && !isNaN(v));
+      const det = (r?.[id] || []).map((p) => [(p.lu ?? p.lc) ? (p.lu ?? p.lc) * 1000 : Date.parse(p.last_updated || p.last_changed), val(p)]).filter(([t, v]) => !isNaN(t) && !isNaN(v));
+      if (det.length > pts.length) pts = det;
     } catch (e) {
-      pts = [];
+      /* no detail for it */
     }
     // A young or restarted HA has minutes of detail but hours of statistics: then the statistics.
-    if ((pts.length < 4 || pts[0][0] > start.getTime() + (hours * 3600000) / 2) && !attr) {
-      try {
-        const r = await hass.callWS({ type: "recorder/statistics_during_period", start_time: start.toISOString(), end_time: end.toISOString(), statistic_ids: [id], period: "hour", types: ["mean"] });
-        const stat = (r[id] || []).map((p) => [typeof p.start === "number" ? p.start : Date.parse(p.start), Number(p.mean)]).filter(([, v]) => !isNaN(v));
-        if (stat.length > pts.length) pts = stat;
-      } catch (e) {
-        /* no statistics for it */
-      }
+    if (!long && (pts.length < 4 || pts[0][0] > start.getTime() + (hours * 3600000) / 2) && !attr) {
+      const stat = await stats();
+      if (stat.length > pts.length) pts = stat;
     }
     const data = { pts, range: [start.getTime(), end.getTime()] };
     HIST.set(key, { at: Date.now(), data });
@@ -2579,22 +2648,68 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
     return { line, area: `${line}L${W},${H}L${xy[0][0].toFixed(1)},${H}Z`, lo: vlo, hi: vhi, hours: hoursIn, yOf };
   };
 
+  /** The periods a sheet's chart reads (owner 05.11, п.63.11: «За сутки» is not enough): a day, a week, a month — the day
+   * by default, the last choice remembered in this browser (in memory when the browser keeps nothing). Hours each. */
+  const CHART_PERIODS = { day: 24, week: 168, month: 720 };
+  /** Up to this many hours a chart reads the recorder's detail; longer — its hourly statistics where there are some. */
+  const CHART_DETAIL_HOURS = 48;
+  const CHART_PERIOD_KEY = "hauflo_chart_period";
+  let chartPeriodMem = "";
+  const chartPeriod = () => {
+    let v = chartPeriodMem;
+    try {
+      v = localStorage.getItem(CHART_PERIOD_KEY) || v;
+    } catch (e) {
+      /* no storage: the choice of this page */
+    }
+    return CHART_PERIODS[v] ? v : "day";
+  };
+  const setChartPeriod = (v) => {
+    if (!CHART_PERIODS[v]) return;
+    chartPeriodMem = v;
+    try {
+      localStorage.setItem(CHART_PERIOD_KEY, v);
+    } catch (e) {
+      /* private mode: kept for this page only */
+    }
+  };
+  const chartPeriodWord = (k) => ({ day: LL("Сутки", "Day"), week: LL("Неделя", "Week"), month: LL("Месяц", "Month") })[k];
+  /** The words over a chart for the stretch it covers: the period asked when it's all there, else what there is. */
+  const chartSpanWord = (span, want = 24) => {
+    const hours = Math.round(span / 3600000);
+    const days = Math.round(span / 86400000);
+    if (span >= want * 0.92 * 3600000) return want <= 24 ? "За сутки" : want <= CHART_PERIODS.week ? LL("За неделю", "Last 7 days") : LL("За месяц", "Last 30 days");
+    return hours < CHART_DETAIL_HOURS ? (hours >= 1 ? `За ${hours} ч` : "") : LL(`За ${days} дн.`, `Last ${days} days`);
+  };
+  /** «05.11» — a day on a long chart's scale and in its reading. */
+  const dayMonth = (t) => {
+    const d = new Date(t);
+    return `${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")}`;
+  };
+
   // --- a thermostat's day: its reading and its setpoint from HA's recorder (one call, attributes), cached 5 minutes --
   const CHIST = new Map();
+  // How far back the recorder answered a thermostat (a row later than asked = its horizon): a longer ask starts there.
+  const CHORIZON = new Map();
   const climateSeries = async (hass, id, hours = 24, sensor) => {
     const key = `${id}|${sensor || ""}|${hours}`;
     const c = CHIST.get(key);
     if (c && Date.now() - c.at < 5 * 60000) return c.data;
     const end = new Date();
     const start = new Date(end.getTime() - hours * 3600000);
+    // A week or a month (п.63.11): the thermostat alone, its significant changes, from where the recorder still has it.
+    const long = hours > CHART_DETAIL_HOURS;
+    const from = long && CHORIZON.get(id) > start.getTime() ? new Date(CHORIZON.get(id)) : start;
+    const at = (p) => ((p.lu ?? p.lc) ? (p.lu ?? p.lc) * 1000 : Date.parse(p.last_updated || p.last_changed));
     let r = {};
     try {
-      r = await hass.callWS({ type: "history/history_during_period", start_time: start.toISOString(), end_time: end.toISOString(), entity_ids: [id], minimal_response: false, no_attributes: false, significant_changes_only: false });
+      r = await hass.callWS({ type: "history/history_during_period", start_time: from.toISOString(), end_time: end.toISOString(), entity_ids: [id], minimal_response: false, no_attributes: false, significant_changes_only: long });
     } catch (e) {
       r = {};
     }
+    const first = r[id]?.[0] && at(r[id][0]);
+    if (long && first > start.getTime() + 3600000) CHORIZON.set(id, first);
     const n = (v) => (v === null || v === undefined || v === "" ? NaN : Number(v));
-    const at = (p) => ((p.lu ?? p.lc) ? (p.lu ?? p.lc) * 1000 : Date.parse(p.last_updated || p.last_changed));
     const of = (k) => (r[id] || []).map((p) => [at(p), n((p.a || p.attributes || {})[k])]).filter(([t, v]) => !isNaN(t) && !isNaN(v));
     // A room sensor of its own (`history`) is the reading; the thermostat's attribute otherwise.
     const cur = sensor ? (await series(hass, sensor, hours)).pts : of("current_temperature");
@@ -2607,7 +2722,7 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
   /** The temperature chart beside a thermostat's number (owner 27.10: «рисовать рядом с текущей температурой
    * график»): the reading as a line over the day, the setpoint dashed, degrees on the right, hours under it.
    * Always the same height — loading, no history or a chart — so the page doesn't move. `data` undefined: loading. */
-  const tchart = (data, live, { H = 88, label = "В комнате", tone = "" } = {}) => {
+  const tchart = (data, live, { H = 88, label = "В комнате", tone = "", want = 24 } = {}) => {
     const total = H + 44;
     const shell = (inner) => `<div class="tch ${tone}" style="height:${total}px">${inner}</div>`;
     if (data === undefined) return shell(`<div class="tno">загрузка…</div>`);
@@ -2623,7 +2738,7 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
     const spIn = (data.sp || []).filter((p) => p[0] > t0);
     const spBefore = [...(data.sp || [])].reverse().find((p) => p[0] <= t0);
     const sp = [...(spBefore ? [[t0, spBefore[1]]] : []), ...spIn, ...(live.sp !== undefined ? [[now, live.sp]] : spIn.length || spBefore ? [[now, (spIn[spIn.length - 1] || spBefore)[1]]] : [])];
-    // A day of readings every few seconds: averaged into ≤ 240 points.
+    // A day of readings every few seconds (a week, a month — of hours): averaged into ≤ 240 points.
     const B = 240;
     let pts = cur;
     if (cur.length > B) {
@@ -2662,19 +2777,28 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
     // Hours: every 6 on a day, 2 / 1 / ½ on a shorter history; none at the very edges (the labels would collide).
     const hstep = span >= 12 * 3600000 ? 6 : span >= 5 * 3600000 ? 2 : span >= 2 * 3600000 ? 1 : 0.5;
     const ticksX = [];
-    const d0 = new Date(t0);
-    d0.setMinutes(0, 0, 0);
-    for (let t = d0.getTime(); t < now; t += 1800000) {
-      const d = new Date(t);
-      const h = d.getHours() + d.getMinutes() / 60;
-      if (t > t0 && Math.abs((h / hstep) - Math.round(h / hstep)) < 1e-6 && (t - t0) / span > 0.06 && (t - t0) / span < 0.84) ticksX.push(t);
+    const inner = (t) => t > t0 && (t - t0) / span > 0.06 && (t - t0) / span < 0.84;
+    // Longer than two days: midnights, every day on a week, every 7th on a month, «05.11».
+    const long = span > CHART_DETAIL_HOURS * 3600000;
+    if (long) {
+      const dstep = span > 9 * 86400000 ? 7 : 1;
+      const d = new Date(t0);
+      d.setHours(24, 0, 0, 0);
+      for (let i = 0; d.getTime() < now; i++, d.setDate(d.getDate() + 1)) if (i % dstep === 0 && inner(d.getTime())) ticksX.push(d.getTime());
+    } else {
+      const d0 = new Date(t0);
+      d0.setMinutes(0, 0, 0);
+      for (let t = d0.getTime(); t < now; t += 1800000) {
+        const d = new Date(t);
+        const h = d.getHours() + d.getMinutes() / 60;
+        if (inner(t) && Math.abs((h / hstep) - Math.round(h / hstep)) < 1e-6) ticksX.push(t);
+      }
     }
     const hm = (t) => {
       const d = new Date(t);
-      return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+      return long ? dayMonth(t) : `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
     };
-    const hours = Math.round(span / 3600000);
-    const period = span >= 22 * 3600000 ? "За сутки" : hours >= 1 ? `За ${hours} ч` : "";
+    const period = chartSpanWord(span, want);
     const digits = step < 1 ? 1 : 0;
     // No value labels at the lines' ends (owner 04.11: «задано 22°» / «20,3°» crowded the lines; the big number says
     // «сейчас», the scale «задано»): a finger or a pointer on the chart reads any moment — the points already drawn.
@@ -2734,7 +2858,7 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
         const p = tchartAt(d, f);
         const set = [...d.s].reverse().find((s) => s[0] <= p[0]);
         const t = new Date(p[0] * 1000);
-        const hm = `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`;
+        const hm = `${d.w?.[1] > CHART_DETAIL_HOURS * 3600 ? `${dayMonth(t)} ` : ""}${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`;
         if (!ui) {
           ui = ["scx", "scd", "sct"].map((c) => Object.assign(document.createElement("div"), { className: c }));
           ui[2].setAttribute("data-own", "");
@@ -3533,7 +3657,8 @@ ${rows.map((r) => `<div class="rw"><span class="caps sub"${r.kind === "mixed" ? 
     const { compact: _c, size_class: _s, hauflo_id: _h, grid_options: _g, visibility: _v, ...rest } = cfg;
     el.setConfig({ ...rest, popup: true });
     sr.querySelector(".sh").appendChild(el);
-    if (room) {
+    // «Открыть в комнате» only from another page: on the room's own page it led back to where the user already is (п.63.12).
+    if (room && pagePath(room) !== pagePath(location.pathname)) {
       const go = document.createElement("button");
       go.className = "go";
       go.dataset.room = room;
@@ -3632,19 +3757,27 @@ ${rows.map((r) => `<div class="rw"><span class="caps sub"${r.kind === "mixed" ? 
       const c = this._config;
       return c.zones?.length ? (c.zones[this._zi || 0] || c.zones[0]).entity : c.entity;
     }
+    /** The hours its chart reads: the sheet's period (Сутки · Неделя · Месяц, п.63.11), a day on a dashboard card. */
+    chartHours() {
+      return this._config?.popup ? CHART_PERIODS[chartPeriod()] : CHART_PERIODS.day;
+    }
     async _loadHist() {
       const c = this._config;
       const id = c && this.chartOf();
-      if (!id || c.chart === false || (this._histId === id && this._histAt > Date.now() - 5 * 60000)) return;
+      const key = id && `${id}|${this.chartHours()}`;
+      if (!id || c.chart === false || (this._histId === key && this._histAt > Date.now() - 5 * 60000)) return;
       this._histAt = Date.now();
-      this._histId = id;
+      this._histId = key;
       let data;
       try {
-        data = await climateSeries(this._hass, id, 24, c.zones?.length ? undefined : c.history);
+        // A week or a month of the reading: the room sensor's, else the device's own temperature sensor's (its hourly statistics).
+        const hours = this.chartHours();
+        const own = c.zones?.length ? undefined : c.history || (hours > CHART_DETAIL_HOURS ? climateCurSensor(this._hass, id) : undefined);
+        data = await climateSeries(this._hass, id, hours, own);
       } catch (e) {
         data = null;
       }
-      if (this._histId !== id) return;
+      if (this._histId !== key) return;
       this._hist = data;
       this._sig = "";
       this._update();
@@ -3656,11 +3789,26 @@ ${rows.map((r) => `<div class="rw"><span class="caps sub"${r.kind === "mixed" ? 
       const a = s?.attributes || {};
       const cur = this._config.history && !this._config.zones?.length ? num(st(this._hass, this._config.history)?.state) : num(a.current_temperature);
       const frost = frostOf(s);
-      const data = this._histId === id ? (frost && this._hist ? { ...this._hist, sp: [] } : this._hist) : undefined;
-      return tchart(data, { cur, sp: frost ? undefined : num(a.temperature) }, { H, label, tone });
+      const data = this._histId === `${id}|${this.chartHours()}` ? (frost && this._hist ? { ...this._hist, sp: [] } : this._hist) : undefined;
+      return tchart(data, { cur, sp: frost ? undefined : num(a.temperature) }, { H, label, tone, want: this.chartHours() });
+    }
+    /** In the sheet: the chart's period over it and «История в HA» under it — HA's history of all the sheet's entities
+     * (the thermostat, its room sensor, the floor's) for a deeper look (п.63.11). Nothing on a dashboard card. */
+    chartPeriods() {
+      if (!this._config.popup || this._config.chart === false) return "";
+      const on = chartPeriod();
+      return `<div class="seg tper" role="group" aria-label="${esc(LL("Период графика", "Chart period"))}">${Object.keys(CHART_PERIODS).map((k) => `<button data-per="${k}" aria-pressed="${k === on}">${esc(chartPeriodWord(k))}</button>`).join("")}</div>`;
+    }
+    chartHistory() {
+      const c = this._config;
+      if (!c.popup || c.chart === false) return "";
+      const ids = [...new Set([c.entity, c.history, ...readingsOf(c).map((r) => r.entity)].filter(Boolean))];
+      return `<a class="thist" data-own href="/history?entity_id=${esc(ids.map(encodeURIComponent).join(","))}">${esc(LL("История в HA", "History in HA"))}<ha-icon icon="mdi:chevron-right"></ha-icon></a>`;
     }
     css() {
-      return `${TCHART_CSS}${VALVE_CSS}${TONE_CSS}.sub .act{margin-right:6px}.sub.one{display:flex;align-items:center;gap:6px;white-space:nowrap;min-width:0}.sub.one>*{flex:none}.sub.one .act{margin:0}.sub.one>.hm,.sub.one>.vwrap,.sub.one .vch{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}.sub.one .vwrap{position:relative;overflow:visible}.sub.one .vt{min-width:0;overflow:hidden;text-overflow:ellipsis}.sub.one .vpop{position:absolute;top:100%;left:0;z-index:2;white-space:nowrap;background:var(--hf-card-bg);box-shadow:0 8px 24px rgba(0,0,0,.25)}.c{padding:var(--hf-pad-climate)}.nr{display:flex;justify-content:space-between;align-items:flex-end;gap:12px}.st{flex:none}.act.k-idle i{background:var(--mint);box-shadow:0 0 8px var(--mint)}
+      return `${TCHART_CSS}${VALVE_CSS}${TONE_CSS}.seg{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:4px;padding:4px;border-radius:var(--hf-r-md);background:var(--hf-track)}.seg button{font:500 14px Onest,sans-serif;color:inherit;border:0;border-radius:var(--hf-r-sm);min-height:44px;padding:6px 4px;background:none;cursor:pointer}.seg button[aria-pressed="true"]{background:var(--hf-card-bg);box-shadow:0 1px 3px var(--hf-shade-18);font-weight:600}
+.tper{margin-top:16px}.tper+.tch{margin-top:12px}.thist+.scale{margin-top:0}.thist{position:relative;z-index:1;display:flex;align-items:center;gap:2px;width:max-content;min-height:44px;margin:-12px 0 -14px auto;font:500 13px Onest,sans-serif;color:var(--ink2);text-decoration:none;cursor:pointer}.thist ha-icon{--mdc-icon-size:var(--hf-icon-s);opacity:.7}
+.sub .act{margin-right:6px}.sub.one{display:flex;align-items:center;gap:6px;white-space:nowrap;min-width:0}.sub.one>*{flex:none}.sub.one .act{margin:0}.sub.one>.hm,.sub.one>.vwrap,.sub.one .vch{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}.sub.one .vwrap{position:relative;overflow:visible}.sub.one .vt{min-width:0;overflow:hidden;text-overflow:ellipsis}.sub.one .vpop{position:absolute;top:100%;left:0;z-index:2;white-space:nowrap;background:var(--hf-card-bg);box-shadow:0 8px 24px rgba(0,0,0,.25)}.c{padding:var(--hf-pad-climate)}.nr{display:flex;justify-content:space-between;align-items:flex-end;gap:12px}.st{flex:none}.act.k-idle i{background:var(--mint);box-shadow:0 0 8px var(--mint)}
 .t{font-size:76px;line-height:.9}.t sup{font:300 20px Onest,sans-serif;vertical-align:top;position:relative;top:8px;color:var(--ink2);margin-left:2px}
 .sub{font:400 13px Onest,sans-serif;color:var(--ink2);margin-top:8px}.st{display:flex;flex-direction:column;gap:8px}
 .none{font:300 20px/1.2 Onest,sans-serif;color:var(--ink2);margin:6px 0}
@@ -3684,7 +3832,7 @@ ${rows.map((r) => `<div class="rw"><span class="caps sub"${r.kind === "mixed" ? 
 .prs{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}.pr{display:inline-flex;align-items:center;gap:7px;min-height:44px;margin-block:-4px;border-block:4px solid transparent;background-clip:padding-box;padding:0 12px;border-radius:var(--hf-r-sm)/calc(var(--hf-r-sm) + 4px);font:500 13px Onest,sans-serif;color:var(--ink2);box-shadow:inset 0 0 0 1px var(--line)}
 .pr::before{content:"";width:8px;height:8px;border-radius:4px;opacity:.45}.pr.heat::before{background:var(--amber)}.pr.cool::before{background:var(--ice)}
 .pr.on{color:var(--ink);background:var(--track);box-shadow:none}.pr.on::before{opacity:1}.pr.act::after{content:"●";font-size:8px;color:var(--ink3);margin-left:2px}
-.ccn[data-open]{cursor:pointer;position:relative}.ccn[data-open]::before,.zs .zr .ccn::before{content:"";position:absolute;inset:min(0px,(100% - var(--hf-hit))/2) 0}.ccn[data-open] .caps::after{content:"›";margin-left:6px;font-size:14px;letter-spacing:0;color:var(--ink3)}
+[data-open],.zs .zr{cursor:pointer}[data-open] .ccn{position:relative}[data-open] .ccn::before,.zs .zr .ccn::before{content:"";position:absolute;inset:min(0px,(100% - var(--hf-hit))/2) 0}[data-open] .ccn .caps::after{content:"›";margin-left:6px;font-size:14px;letter-spacing:0;color:var(--ink3)}
 .pair2{font:400 12px/1.3 Onest,sans-serif;color:var(--ink3)}
 .modes{display:flex;gap:6px;margin-top:16px}.modes.fan{margin-top:8px;align-items:center}.modes.fan button{white-space:nowrap;padding:0 4px;font-size:12px;min-width:0}.modes .fl{flex:0 0 auto;color:var(--ink3);--mdc-icon-size:var(--hf-icon-m);padding:0 2px}.modes button{flex:1;min-height:44px;padding:0 6px;border-radius:var(--hf-r-sm);font:500 13px Onest,sans-serif;color:var(--ink2);box-shadow:inset 0 0 0 1px var(--line)}
 .modes .on{color:var(--ink);background:var(--track);box-shadow:none}.modes .arm{color:var(--alertT);background:color-mix(in srgb,var(--alert) 14%,transparent);box-shadow:inset 0 0 0 1.5px var(--alert)}
@@ -3771,7 +3919,7 @@ ${rows.map((r) => `<div class="rw"><span class="caps sub"${r.kind === "mixed" ? 
       const opts = useModes ? modes.map((m) => [m, HVAC[m], known && s.state === m]) : presets.map((p) => [p, PRESET[p] || p, known && a.preset_mode === p && !(p === "standby" && now === "heat")]);
       const digits = step < 1 && target !== undefined && target % 1 ? 1 : 0;
       const readings = this.readings();
-      const chart = this.chart(this._config.entity, this._config.floor ? "Пол" : "В комнате", tone ? `${tone}${calm ? " calm" : ""}` : "", 96);
+      const chart = `${this.chartPeriods()}${this.chart(this._config.entity, this._config.floor ? "Пол" : "В комнате", tone ? `${tone}${calm ? " calm" : ""}` : "", 96)}${this.chartHistory()}`;
       // A thermostat of another integration may take no setpoint at all (features: TARGET_TEMPERATURE 1, RANGE 2): no hint, no scale.
       const fixed = target === undefined && !pair && num(a.supported_features) !== undefined && (num(a.supported_features) & 3) === 0 && !["unavailable", "unknown"].includes(s.state);
       const noTarget = target === undefined && !fixed ? `<div class="nos">${["unavailable", "unknown"].includes(s.state) ? "нет связи с термостатом" : "нужная температура ещё не пришла от системы"}</div>` : "";
@@ -3803,7 +3951,7 @@ ${fans.length > 1 || swing ? `<div class="mh">Вентилятор</div><div cla
         const heating = nowZ === "heat";
         const zt = cur === undefined && target === undefined ? "" : climateTone(s, nowZ);
         const zWord = s && faultOf(this, z.entity, true) ? "Авария" : frostOf(s) ? "Защита от замерзания" : "";
-        return `<div class="zr ${heating ? "heat" : ""}${i === zi ? " sel" : ""}${zt ? ` m-${zt} toned${toneCalm(zt, nowZ) ? " calm" : ""}` : ""}"><div class="ccn" data-z="${i}"><span class="zn">${esc(z.name || nameOf(s, z.entity))}</span><span class="sub">${!s || ["unavailable", "unknown"].includes(s.state) ? "нет связи" : cur === undefined ? "нет данных" : zWord || climateSay(nowZ, target, s.state) || "пол сейчас"}${s &&!["unavailable", "unknown"].includes(s.state) && target === undefined ? " · нужная температура ещё не пришла" : ""}</span>${valveIcons(this._hass, z.activity?.valves, s)}</div>
+        return `<div class="zr ${heating ? "heat" : ""}${i === zi ? " sel" : ""}${zt ? ` m-${zt} toned${toneCalm(zt, nowZ) ? " calm" : ""}` : ""}" data-z="${i}"><div class="ccn" role="button" tabindex="0"><span class="zn">${esc(z.name || nameOf(s, z.entity))}</span><span class="sub">${!s || ["unavailable", "unknown"].includes(s.state) ? "нет связи" : cur === undefined ? "нет данных" : zWord || climateSay(nowZ, target, s.state) || "пол сейчас"}${s &&!["unavailable", "unknown"].includes(s.state) && target === undefined ? " · нужная температура ещё не пришла" : ""}</span>${valveIcons(this._hass, z.activity?.valves, s)}</div>
 ${this.cct(cur, target, step, z.entity)}
 <div class="st row2"><button data-e="${esc(z.entity)}" data-d="${-step}" aria-label="Холоднее на ${fmt(step, step % 1 ? 1 : 0)}°"${target === undefined ? " disabled" : ""}>−</button><button data-e="${esc(z.entity)}" data-d="${step}" aria-label="Теплее на ${fmt(step, step % 1 ? 1 : 0)}°"${target === undefined ? " disabled" : ""}>+</button></div></div>`;
       });
@@ -3820,9 +3968,16 @@ ${this.cct(cur, target, step, z.entity)}
     }
     /** The other readings the card shows (a floor's sensors), each with its value. */
     readings() {
+      // An unnamed one equal to «Сейчас» in its unit is the same number twice — left out (п.63, as `dedupeDeviceIds`).
+      const c = st(this._hass, this._config.entity);
+      const cur = num(c?.attributes?.current_temperature);
+      const same = (r) => {
+        const s = st(this._hass, r.entity);
+        return !r.name && cur !== undefined && s && !r.entity.startsWith("climate.") && Math.abs(r.v - cur) <= DUP_EPS && unitKey(s.attributes?.unit_of_measurement) === dupTempUnit(this._hass, c);
+      };
       return readingsOf(this._config)
         .map((r) => ({ ...r, v: tempOf(st(this._hass, r.entity)) }))
-        .filter((r) => r.v !== undefined);
+        .filter((r) => r.v !== undefined && !same(r));
     }
     readingsRow(list) {
       return `<span class="sens">${list.map((r) => `<b>${r.name ? `<i>${esc(r.name)}</i>` : ""}${fmt(r.v, 1)}°</b>`).join("")}</span>`;
@@ -3843,8 +3998,8 @@ ${this.cct(cur, target, step, z.entity)}
       // A floor with several sensors: each one's reading, by its name (owner 2026-10-25, 27.10).
       const sensors = this.readings();
       // The line is always there (no data says so): a card that grows and shrinks with the state moves the page.
-      return `<div class="glass cc${ct ? ` m-${ct} toned${toneCalm(ct, nowC) ? " calm" : ""}` : ""}"><div class="glow"></div><div class="ccrow">
-<div class="ccn" data-open="1" role="button" tabindex="0"><span class="caps">${esc(this._config.label || nameOf(s, this._config.entity))}</span><span class="sub">${cur === undefined ? "нет данных" : cWord || climateSay(nowC, target, s.state) || (this._config.floor ? "пол сейчас" : "сейчас")}${target === undefined && !["unavailable", "unknown"].includes(s.state) ? " · нужная температура ещё не пришла" : ""}${cur === undefined || target === undefined ? "" : `<span class="nw"> · Сейчас ${fmt(cur, 1)}°</span>`}</span>${valveIcons(this._hass, this._config.activity?.valves, this._config.floor && s)}${pair ? `<span class="pair2">${["heat", "cool"].filter((k) => pair[k] !== undefined).map((k) => `${k === "heat" ? "обогрев до" : "охлаждение от"} ${fmt(pair[k])}°`).join(" · ")}</span>` : ""}${sensors.length > 1 ? this.readingsRow(sensors) : ""}</div>
+      return `<div class="glass cc${ct ? ` m-${ct} toned${toneCalm(ct, nowC) ? " calm" : ""}` : ""}"><div class="glow"></div><div class="ccrow" data-open="1">
+<div class="ccn" role="button" tabindex="0"><span class="caps">${esc(this._config.label || nameOf(s, this._config.entity))}</span><span class="sub">${cur === undefined ? "нет данных" : cWord || climateSay(nowC, target, s.state) || (this._config.floor ? "пол сейчас" : "сейчас")}${target === undefined && !["unavailable", "unknown"].includes(s.state) ? " · нужная температура ещё не пришла" : ""}${cur === undefined || target === undefined ? "" : `<span class="nw"> · Сейчас ${fmt(cur, 1)}°</span>`}</span>${valveIcons(this._hass, this._config.activity?.valves, this._config.floor && s)}${pair ? `<span class="pair2">${["heat", "cool"].filter((k) => pair[k] !== undefined).map((k) => `${k === "heat" ? "обогрев до" : "охлаждение от"} ${fmt(pair[k])}°`).join(" · ")}</span>` : ""}${sensors.length > 1 ? this.readingsRow(sensors) : ""}</div>
 ${this.cct(cur, target, step, this._config.entity)}
 <div class="st row2"><button data-d="${-step}" aria-label="Холоднее на ${fmt(step, step % 1 ? 1 : 0)}°"${target === undefined ? " disabled" : ""}>−</button><button data-d="${step}" aria-label="Теплее на ${fmt(step, step % 1 ? 1 : 0)}°"${target === undefined ? " disabled" : ""}>+</button></div></div>${fixedRows(this._config) !== undefined && fixedRows(this._config) <= CLIMATE_LINE_ROWS ? "" : this.chart(this._config.entity, this._config.floor ? "Пол" : "Температура", ctc, 56)}</div>`;
     }
@@ -3955,6 +4110,22 @@ ${this.cct(cur, target, step, this._config.entity)}
           if (b.dataset.m === "off" && prev && !["off", "unavailable", "unknown"].includes(prev)) undoToast("Климат выключен", () => call(this._hass, "climate", "set_hvac_mode", { entity_id: id, hvac_mode: prev }));
         }),
       );
+      // The sheet's chart period (п.63.11): remembered, the chart reloads; its history link opens HA's own page.
+      this.shadowRoot.querySelectorAll(".tper button[data-per]").forEach((b) =>
+        b.addEventListener("click", () => {
+          if (b.getAttribute("aria-pressed") === "true") return;
+          setChartPeriod(b.dataset.per);
+          this._sig = "";
+          this._loadHist();
+          this._update();
+        }),
+      );
+      this.shadowRoot.querySelectorAll("a.thist").forEach((a) =>
+        a.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          navigate(a.getAttribute("href"));
+        }),
+      );
       // «Защита» (frost protection, the room cools to ~7°) asks «Точно?» for everyone (family review round 3: one tap of a
       // child): the first tap arms the button, the second within 4 s sets it.
       this.shadowRoot.querySelectorAll("button[data-p]").forEach((b) =>
@@ -3992,20 +4163,26 @@ ${this.cct(cur, target, step, this._config.entity)}
           this._update();
         }),
       );
+      // The thermostat's whole row opens its big control — the name, the number, the row (owner 05.11 п.63); − / + stay theirs.
       this.shadowRoot.querySelectorAll("[data-open]").forEach((el) => {
-        el.addEventListener("click", () => !GST.lp && openClimateSheet(this));
+        el.addEventListener("click", (e) => !GST.lp && ownPress(e, el) && openClimateSheet(this));
         longPress(el, () => openClimateSheet(this)); // a hold is our big control too, never HA's more-info
-        el.addEventListener("keydown", (e) => (e.key === "Enter" || e.key === " ") && openClimateSheet(this));
+        el.addEventListener("keydown", (e) => (e.key === "Enter" || e.key === " ") && ownPress(e, el) && (e.preventDefault(), openClimateSheet(this)));
       });
-      this.shadowRoot.querySelectorAll("[data-z]").forEach((el) =>
-        el.addEventListener("click", () => {
-          if (Number(el.dataset.z) === (this._zi || 0)) return !GST.lp && this.openZone(Number(el.dataset.z)); // the zone's own sheet (item 34)
-          this._zi = Number(el.dataset.z);
+      // A zone's row, whole: a tap picks it (picked: its sheet), a hold — its sheet at once.
+      this.shadowRoot.querySelectorAll(".zr[data-z]").forEach((el) => {
+        const i = Number(el.dataset.z);
+        const pick = () => {
+          if (i === (this._zi || 0)) return this.openZone(i); // the zone's own sheet (item 34)
+          this._zi = i;
           this._sig = "";
           this._update();
           this._loadHist();
-        }),
-      );
+        };
+        el.addEventListener("click", (e) => !GST.lp && ownPress(e, el) && pick());
+        el.addEventListener("keydown", (e) => (e.key === "Enter" || e.key === " ") && ownPress(e, el) && (e.preventDefault(), pick()));
+        longPress(el, () => this.openZone(i));
+      });
     }
     /** The sheet of one floor-heating zone — never HA's dialog (item 34). */
     openZone(i) {
@@ -4060,7 +4237,7 @@ ${this.cct(cur, target, step, this._config.entity)}
 .n{font:500 12px Onest,sans-serif;line-height:1.25;white-space:normal;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere;hyphens:auto;hyphenate-limit-chars:12 6 6;margin-top:4px;min-height:2.5em}
 .ic{color:var(--ink2)}.unavail{opacity:.45}
 .v.alarm{box-shadow:inset 0 0 0 2px var(--alert),0 0 24px color-mix(in srgb,var(--alert) 35%,transparent)}.v.alarm .ic,.v.alarm .n{color:var(--alertT)}.v.alarm .n{font-weight:600}
-.sc{padding:2px 16px 16px;margin-bottom:12px;border-radius:var(--hf-r-lg)}.ud3{display:flex;gap:6px;margin-top:10px}.ud3 button{flex:1;height:44px;border-radius:var(--hf-r-sm);display:grid;place-items:center;color:var(--ink);box-shadow:inset 0 0 0 1px var(--line);background:var(--eh-glass,transparent)}.ud3 button ha-icon{--mdc-icon-size:var(--hf-icon-m)}.ud3 button{min-width:0}
+.sc{padding:2px 16px 16px;margin-bottom:12px;border-radius:var(--hf-r-lg)}.sc>.tt{display:block;margin-top:16px}.sc.ttl{padding-bottom:14px}.ud3{display:flex;gap:6px;margin-top:10px}.ud3 button{flex:1;height:44px;border-radius:var(--hf-r-sm);display:grid;place-items:center;color:var(--ink);box-shadow:inset 0 0 0 1px var(--line);background:var(--eh-glass,transparent)}.ud3 button ha-icon{--mdc-icon-size:var(--hf-icon-m)}.ud3 button{min-width:0}
 .v{container-type:inline-size}@container (max-width:100px){.n{-webkit-line-clamp:3;min-height:3.75em;font-size:11px;letter-spacing:-.01em;hyphens:auto;hyphenate-limit-chars:auto}.ud3{gap:2px;margin-inline:-8px}.ud3 button ha-icon{--mdc-icon-size:var(--hf-icon-s)}}`;
     }
     model(e) {
@@ -4130,7 +4307,9 @@ ${this.cct(cur, target, step, this._config.entity)}
       // Its scenes above the sliders (a light / blinds block of up to three).
       this.kind = items.some((x) => x.m.dom === "cover") ? "cover" : "light";
       const scenes = this.sceneRow();
-      return `${scenes ? `<div class="glass sc">${scenes}</div>` : ""}<div class="wrap" style="--cols:${cols}">${items
+      // A block's caption inside its own glass (owner 05.11, п.63: never HA's heading card over a Hauflo block) — with its scenes under it.
+      const cap = this._config.title ? `<span class="caps tt">${blockTitle(this, "")}</span>` : "";
+      return `${scenes || cap ? `<div class="glass sc${cap ? " ttl" : ""}">${cap}${scenes}</div>` : ""}<div class="wrap" style="--cols:${cols}">${items
         .map(({ e, m }) => {
           const unavailable = m.s.state === "unavailable";
           const moving = m.dom === "cover" && ["opening", "closing"].includes(m.s.state);
@@ -4732,7 +4911,7 @@ ${top.key && !top.ackedBy ? `<button class="ack" data-ack="${esc(top.key)}">Пр
 .bar span{position:absolute;left:14px;top:11px;font:500 12px Onest,sans-serif}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px}
 .chips button{flex:0 0 auto;min-height:44px;padding:0 15px;display:inline-flex;align-items:center;border-radius:var(--hf-r-sm);font:500 12px Onest,sans-serif;color:var(--ink2);box-shadow:inset 0 0 0 1px var(--line)}
-.chips button.on{color:var(--ink);background:var(--track);box-shadow:none}.chips em{font-style:normal;color:var(--amberT);margin-left:5px}
+.chips button.on{color:var(--ink);background:var(--track);box-shadow:none}.chips em{font-style:normal;color:var(--amberT);margin-left:5px;display:inline-grid;text-align:right}.chips em>*{grid-area:1/1}.chips em .sz{visibility:hidden}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}.grid:empty{display:none}
 .pill{position:relative;min-height:56px;padding-top:7px;padding-bottom:7px;border-radius:var(--hf-r-md);overflow:hidden;display:flex;align-items:center;gap:10px;padding:0 12px;box-shadow:inset 0 0 0 1px var(--hair);touch-action:pan-y;user-select:none;-webkit-user-select:none;cursor:pointer}
 .pill .f{position:absolute;left:0;top:0;bottom:0;transition:width .25s}
@@ -4874,11 +5053,14 @@ ${this.sceneRow()}
 ${this.groupsRow()}
 ${zones.length > 1 && !sec ? `<div class="chips"><button data-z="" class="${this._zone ? "" : "on"}">Все</button>${zones
         .map((z) => {
-          const k = onCount(all.filter((e) => e.z === z));
-          return `<button data-z="${esc(z)}" class="${this._zone === z ? "on" : ""}">${esc(z)}${k ? `<em>${k}</em>` : ""}</button>`;
+          const mem = all.filter((e) => e.z === z);
+          const k = onCount(mem);
+          // The count's slot is always laid out, as wide as the zone's member count: the chip keeps its box lit or not,
+          // so the row doesn't wrap and the tiles below don't jump (owner 05.11, п.65).
+          return `<button data-z="${esc(z)}" class="${this._zone === z ? "on" : ""}">${esc(z)}<em><span>${k || ""}</span><span class="sz" aria-hidden="true">${mem.length}</span></em></button>`;
         })
         .join("")}</div>` : ""}
-${sec ? zones.map((z, zi) => { const mem = shown.filter((e) => e.z === z); if (!mem.length) return ""; const k = onCount(mem); return `<div class="zs"><div class="zh"><span class="zt">${esc(z)}<small>${k} из ${mem.length}</small></span><button data-zall="${zi}" data-zop="${k ? "turn_off" : "turn_on"}" class="${k ? "on" : ""}">${k ? "Выкл. всё" : "Вкл. всё"}</button></div><div class="grid">${mem.map(pill).join("")}</div></div>`; }).join("") : `<div class="grid">${shown.map(pill).join("")}</div>`}
+${sec ? zones.map((z, zi) => { const mem = shown.filter((e) => e.z === z); if (!mem.length) return ""; const k = onCount(mem); return `<div class="zs"><div class="zh"><span class="zt">${esc(z)}<small>${k} из ${mem.length}</small></span><button data-zall="${zi}" data-zop="${k ? "turn_off" : "turn_on"}" class="${k ? "on" : ""}" data-gh="${k ? "Вкл. всё" : "Выкл. всё"}">${k ? "Выкл. всё" : "Вкл. всё"}</button></div><div class="grid">${mem.map(pill).join("")}</div></div>`; }).join("") : `<div class="grid">${shown.map(pill).join("")}</div>`}
 ${hidden ? `<button class="more" data-more="1">${coversFolded ? `Каждая отдельно (${zoneItems.length})` : `Показать все (${total})`}</button>` : this._expanded && (total > LIMIT || coversFolded) ? `<button class="more" data-more="0">Свернуть</button>` : ""}</div>`;
     }
     /** Commands for several devices at once («Шторы 4, 6», «Подсветка (вся)») on their own row. */
@@ -5131,7 +5313,7 @@ ${hidden ? `<button class="more" data-more="1">${coversFolded ? `Каждая о
     };
     el.addEventListener("pointerdown", (ev) => {
       if (ev.pointerType === "mouse" && ev.button !== 0) return; // the right button is contextmenu's
-      if (ev.target.closest?.("button") && ev.target.closest("button") !== el) return;
+      if (!ownPress(ev, el)) return; // − / + / a chip / a switch inside the row: theirs
       at = [ev.clientX, ev.clientY];
       clearTimeout(t);
       t = setTimeout(() => {
@@ -5146,12 +5328,28 @@ ${hidden ? `<button class="more" data-more="1">${coversFolded ? `Каждая о
     el.addEventListener("pointercancel", stop);
     el.addEventListener("pointerleave", stop);
     el.addEventListener("contextmenu", (ev) => {
+      if (!ownPress(ev, el)) return;
       ev.preventDefault();
       if (GST.type !== "mouse" || GST.lp) return; // a finger's long press (or a held left button) is the timer's
       stop();
       fn();
     });
   };
+  /** The controls inside a row that keep their own press: the row's tap / hold is everywhere else on it (owner 05.11 п.63 — a
+   * thermostat's row opens its sheet from its number or its body too, − / + / a mode chip / a switch only do their own). */
+  const ROW_CTL = "button,select,input,textarea,a,label,ha-switch,[data-ck]";
+  const ownPress = (ev, el) => {
+    const c = ev.target?.closest?.(ROW_CTL);
+    return !c || c === el || !el.contains(c);
+  };
+  /** Every `[data-info]` row of a card: a tap — moreInfo (a thermostat: our climate sheet), a hold — openTile, Enter / Space
+   * from the keyboard; a press on a control inside the row stays that control's. */
+  const bindInfo = (card, root) =>
+    root.querySelectorAll("[data-info]").forEach((el) => {
+      longPress(el, () => openTile(card, el.dataset.info));
+      el.addEventListener("click", (ev) => !GST.lp && ownPress(ev, el) && moreInfo(card, el.dataset.info));
+      el.addEventListener("keydown", (ev) => (ev.key === "Enter" || ev.key === " ") && ownPress(ev, el) && (ev.preventDefault(), moreInfo(card, el.dataset.info)));
+    });
   /** A reading / player / camera / weather row: a tap — HA's history (more-info), a hold — our sheet (openTile), on every
    * card alike (item 5, 04.11: a hold never opens HA's more-info). `id`: the entity or a function giving it at the time. */
   const holdInfo = (card, el, id) => {
@@ -5256,9 +5454,13 @@ ${hidden ? `<button class="more" data-more="1">${coversFolded ? `Каждая о
         body = ctl ? `<div class="ctl" style="--acc:${(TONE[k?.tone] || TONE.mint)[0]}">${ctl}</div>` : k?.tap ? `<button class="b" data-tg><span>${on ? "Выключить" : "Включить"}</span></button>` : "";
       }
       const fav = !HOUSE.off;
+      // «Днём не включать в сценах» (п.60): a light / switch in a Hauflo scene, for whoever may change the house.
+      const dayOn = daySkip(id);
+      const dayBtn = FAM.day && (dom === "light" || dom === "switch") && canEdit(h) && inHfScene(h, id) ? `<button class="b fav" data-day aria-pressed="${dayOn}"><ha-icon icon="${dayOn ? "mdi:weather-sunny-off" : "mdi:weather-sunny"}"></ha-icon><span>Днём не включать в сценах</span></button>` : "";
       sr.innerHTML = `<style>${TZ(TILE_CSS)}${body.includes('class="ctl"') ? TILE_CTL_CSS() : ""}</style><div class="sh" role="dialog" aria-modal="true" aria-label="${esc(name)}">
 <div class="hd"><b><span data-own>${esc(name)}</span>${state ? `<small>${esc(state)}</small>` : ""}</b><button class="x" data-x aria-label="Закрыть"><ha-icon icon="mdi:close"></ha-icon></button></div>
 ${body}
+${dayBtn}
 ${fav ? `<button class="b fav" data-fav aria-pressed="${favHas(id)}"><ha-icon icon="${favHas(id) ? "mdi:star" : "mdi:star-outline"}"></ha-icon><span>${favHas(id) ? "Убрать из избранного" : "В избранное"}</span></button>` : ""}
 ${body.includes('class="mem"') ? "" : `<button class="b lnk" data-more>Подробнее</button>`}</div>`;
       if (LANG !== "ru") translate(sr);
@@ -5286,12 +5488,24 @@ ${body.includes('class="mem"') ? "" : `<button class="b lnk" data-more>Подр�
       sr.querySelector("[data-run]")?.addEventListener("click", (ev) => {
         haptic(card);
         const s0 = st(h, id);
-        sendAck(card, ev.currentTarget, id.split(".")[0], "turn_on", { entity_id: id }, () => okToast(LANG === "ru" ? `Сцена «${nameOf(s0, id)}» включена` : `Scene “${nameOf(s0, id)}” is on`));
+        sendAck(card, ev.currentTarget, id.split(".")[0], "turn_on", { entity_id: id }, (r) => okToast(r?.skipped?.length ? tr("Подсветка не включена: на улице светло") : LANG === "ru" ? `Сцена «${nameOf(s0, id)}» включена` : `Scene “${nameOf(s0, id)}” is on`), () => runScene(h, id));
       });
       sr.querySelectorAll("[data-cv]").forEach((b) => b.addEventListener("click", () => {
         haptic(card);
         sendAck(card, b, "cover", b.dataset.cv, { entity_id: id });
       }));
+      const day = sr.querySelector("[data-day]");
+      if (day)
+        day.onclick = async () => {
+          day.disabled = true;
+          const r = await famCall(card, { op: "daylight_skip", entity_id: id, on: !daySkip(id) });
+          if (r.ok && Array.isArray(r.ok.skip)) {
+            FAM.day = { ...FAM.day, skip: r.ok.skip };
+            haptic(card, "success");
+            famRerender();
+          } else card.dispatchEvent(new CustomEvent("hass-notification", { bubbles: true, composed: true, detail: { message: tr("Не сохранилось — проверьте связь с Home Assistant") } }));
+          draw();
+        };
       const fav = sr.querySelector("[data-fav]");
       if (fav)
         fav.onclick = async () => {
@@ -5356,6 +5570,8 @@ ${body.includes('class="mem"') ? "" : `<button class="b lnk" data-more>Подр�
     draw();
     document.body.appendChild(carryTheme(host, card));
     sr.querySelector("[data-x]")?.focus({ preventScroll: true });
+    // A light's «Днём не включать в сценах» needs the agent's answer (FAM.day): asked once, the sheet redrawn with it.
+    if (FAM.state !== "done" && /^(?:light|switch)\./.test(id)) Promise.resolve(loadFam(h0)).then(() => TILE === host && draw(), () => {});
   };
   Object.assign(EN, { "Выкл. всё": "All off", "Вкл. всё": "All on", "Светильники группы": "Lights in the group", "Этот светильник только включается и выключается": "This light only switches on and off", "В избранное": "Add to favourites", "Убрать из избранного": "Remove from favourites", "Подробнее": "More details", "Включить": "Turn on", "Выключить": "Turn off", "сцена": "scene", "Положение": "Position", "Скорость": "Speed", "Не сохранилось — проверьте связь с Home Assistant": "Not saved — check the link to Home Assistant", "Избранное": "Favourites", "Моя комната": "My room",
     "Всё хорошо": "All is well", "авария останется, пока причина не устранена; видно, кто принял": "the alarm stays until the cause is gone; everyone sees who accepted",
@@ -5625,7 +5841,7 @@ svg{display:block;width:100%;height:70px;margin-top:6px;overflow:visible}`;
           const dc = s?.attributes.device_class;
           const range = { carbon_dioxide: [300, 5000], humidity: [0, 100], temperature: [-50, 70], pm25: [0, 1000], atmospheric_pressure: [870, 1085] }[dc];
           const data = raw && range ? { ...raw, pts: raw.pts.filter(([, v]) => v >= range[0] && v <= range[1]) } : raw;
-          const whole = ["ppm", "%", "ppb", "W", "Вт"].includes(unitOf(s));
+          const whole = ["ppm", "%", "ppb", "W", "Вт"].includes(unitKey(unitOf(s)));
           const W = 300;
           const H = 64;
           const sp = data ? spark(data, W, H, 4, 0, 2, 0.5) : null;
@@ -5703,6 +5919,8 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
       if (d === "binary_sensor") {
         if (dc === "battery") return s.state === "on" ? ["батарея садится", "warn"] : ["батарея в норме", "ok"];
         // «Ошибка тёплого пола» without a device class is a fault, not «вкл» (persona round 3: «всё в норме» during it).
+        // «Угроза протечки» / «Warning» without a class: a warning (amber), not an alarm and not «вкл» (п.63 sweep).
+        if (!dc && WARN_NAME.test(s.attributes.friendly_name || s.entity_id)) return s.state === "on" ? [LL("внимание", "warning"), "warn"] : ["в норме", "ok"];
         const faulty = ["problem", "smoke", "gas", "moisture", "safety", "carbon_monoxide", "heat", "tamper"].includes(dc) || (!dc && /ошибк|авари|неисправ|протечк|утечк|перегрев|fault|error|alarm|leak|failure/i.test(s.attributes.friendly_name || s.entity_id));
         if (faulty) return s.state === "on" ? ["авария", "fault"] : ["в норме", "ok"];
         if (dc === "connectivity") return s.state === "on" ? ["на связи", "ok"] : ["нет связи", "fault"];
@@ -5765,6 +5983,10 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
   // the card; what can open the house (locks, gates, garage doors, valves, alarm panels) only opens HA's own dialog, and a
   // button another integration made (ZONT «Аварийный») presses on a second tap — unless Hauflo's own items on this
   // dashboard name it (`ownedOnDashboard`, security re-review 28.10).
+  // п.63 (05.11): `block: control|readings|diagnostics` draws one part as its own card titled by the block (none — all of
+  // it, as deployed before); a device's name over its part when the room has two or it isn't the page's title; what one
+  // device says twice is drawn once (`dedupeDeviceIds`); the checks fold into one pill «Аварий нет · N проверок», a fault
+  // a tile on top; devices by name. A row opens its entity as a whole (`bindInfo`): − / +, chips and fields keep their press.
   const AREA_ICON = { climate: "mdi:thermostat", water_heater: "mdi:water-boiler", sensor: "mdi:gauge", number: "mdi:knob", input_number: "mdi:knob", select: "mdi:format-list-bulleted", input_select: "mdi:format-list-bulleted", switch: "mdi:toggle-switch-outline", input_boolean: "mdi:toggle-switch-outline", light: "mdi:lightbulb-outline", fan: "mdi:fan", binary_sensor: "mdi:checkbox-blank-circle-outline", valve: "mdi:valve", cover: "mdi:window-shutter", lock: "mdi:lock-outline", camera: "mdi:cctv", media_player: "mdi:speaker", button: "mdi:gesture-tap-button", humidifier: "mdi:air-humidifier", vacuum: "mdi:robot-vacuum" };
   const SENSOR_ICON = { temperature: "mdi:thermometer", humidity: "mdi:water-percent", pressure: "mdi:gauge", power: "mdi:flash", energy: "mdi:lightning-bolt", voltage: "mdi:sine-wave", current: "mdi:current-ac", carbon_monoxide: "mdi:molecule-co", carbon_dioxide: "mdi:molecule-co2", gas: "mdi:meter-gas", water: "mdi:water", battery: "mdi:battery", illuminance: "mdi:brightness-5", motion: "mdi:motion-sensor", occupancy: "mdi:home-account", door: "mdi:door", window: "mdi:window-closed-variant", moisture: "mdi:water-alert", smoke: "mdi:smoke-detector", connectivity: "mdi:lan-connect" };
   const AREA_ORDER = ["climate", "status", "switches", "settings", "buttons", "values", "other"];
@@ -5774,9 +5996,318 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
     return ["lock", "valve", "alarm_control_panel", "siren", "camera"].includes(d) || (d === "cover" && ["gate", "garage", "door"].includes(s.attributes.device_class));
   };
   // A text sensor that reports a fault («Ошибок нет» / «E04 перегрев»): a chip, red unless it says all is well.
-  const FAULT_NAME = /ошибк|авари|неисправ|fault|error|failure|alarm/i;
+  const FAULT_NAME = /ошибк|авари|неисправ|угроз|fault|error|failure|alarm|warning|threat/i;
+  // Of those, a warning (amber), not an alarm (red).
+  const WARN_NAME = /угроз|предупрежд|warning|threat/i;
   const FAULT_OK = /^(|ok|ок|норма|в норме|нет|none|no errors?|no faults?|ошибок нет|нет ошибок|аварий нет|0|false|off|normal)$/i;
   const LL = (ru, en) => (LANG === "ru" ? ru : en);
+  // Russian plural by the number: 1 проверка, 2 проверки, 5 проверок, 21 проверка.
+  const plural = (n, one, few, many) => (n % 10 === 1 && n % 100 !== 11 ? one : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? few : many);
+  // The three blocks a room's other-integration devices are split into (owner 05.11, п.63), in this order on the page:
+  // what is done, what is read, what is checked. A card without `block` shows them all (dashboards already deployed).
+  const AREA_PARTS = { control: ["climate", "settings", "switches", "buttons", "other"], readings: ["status", "values"], diagnostics: ["checks"] };
+  const AREA_BLOCK = { control: ["Управление", "Controls"], readings: ["Показания", "Readings"], diagnostics: ["Диагностика", "Diagnostics"] };
+  // One device says the same twice (GTC: the thermostat's 23° and «Уставка 23», «Целевая температура 23», «Текущая
+  // температура 22,9», «Целевая скорость 2» = the fan's «2»): the copy is left out. Equal within DUP_EPS; a change of
+  // «is it a copy» holds DUP_HOLD_MS first — a setpoint being changed (the number a second behind) doesn't flicker a tile.
+  const DUP_EPS = 0.05;
+  const DUP_HOLD_MS = 30000;
+  const DUP_SPEED = /скорост|speed/i;
+  // What a name says it copies: the setpoint, the reading (owner tester 05.11: equal values alone are no copy —
+  // «Температура подачи» 23 under a setpoint of 23 stays).
+  const DUP_SET = /уставк|целев|задан|target|setpoint/i;
+  const DUP_CUR = /текущ|current|комнат|помещ|room|ambient|indoor/i;
+  const dupNum = (v) => {
+    const x = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v.replace(",", ".")) : NaN;
+    return Number.isFinite(x) ? x : undefined;
+  };
+  const dupTemp = (s) => !!s && (s.attributes?.device_class === "temperature" || ["°C", "°F"].includes(unitKey(s.attributes?.unit_of_measurement)));
+  const dupTempUnit = (h, c) => unitKey(c?.attributes?.temperature_unit || h?.config?.unit_system?.temperature || "°C");
+  /** An entity's own words: its name without its device's («GTC Уставка» → «Уставка»; a device «Living room …» names
+   * no reading «room»). */
+  const dupOwnName = (h, id) => {
+    const n = String(h?.states?.[id]?.attributes?.friendly_name || id);
+    const dn = devName(h, h?.entities?.[id]?.device_id);
+    return dn && n.toLowerCase().startsWith(dn.toLowerCase()) ? n.slice(dn.length) : n;
+  };
+  /** The device's temperature sensors / settings (`sensor`, `number`, `input_number`), by device id, for `devs`. */
+  const dupTemps = (h, devs) => {
+    const out = new Map([...devs].map((d) => [d, []]));
+    for (const [id, e] of Object.entries(h?.entities || {})) {
+      const l = out.get(e?.device_id);
+      if (l && ["sensor", "number", "input_number"].includes(id.split(".")[0]) && dupTemp(h.states?.[id])) l.push(id);
+    }
+    return out;
+  };
+  /** Is `id` a copy of thermostat `c`'s reading: equal in its unit, and named so or the device's only temperature sensor. */
+  const dupCurOf = (h, id, c, temps) => {
+    const s = h?.states?.[id];
+    const ca = c?.attributes || {};
+    if (!s || !id.startsWith("sensor.") || unitKey(s.attributes?.unit_of_measurement) !== dupTempUnit(h, c)) return false;
+    const v = dupNum(s.state);
+    const x = dupNum(ca.current_temperature);
+    if (v === undefined || x === undefined || Math.abs(v - x) > DUP_EPS) return false;
+    return DUP_CUR.test(dupOwnName(h, id)) || temps.filter((t) => t.startsWith("sensor.")).length === 1;
+  };
+  /** The sensor on a thermostat's own device that is its reading (the copy `dedupeDeviceIds` leaves out): a week or a
+   * month of it from its hourly statistics, not the thermostat's history (п.63.11). */
+  const climateCurSensor = (h, cid) => {
+    const c = h?.states?.[cid];
+    const dev = h?.entities?.[cid]?.device_id;
+    if (!c || !dev) return undefined;
+    const temps = dupTemps(h, [dev]).get(dev);
+    return temps.find((id) => dupCurOf(h, id, c, temps));
+  };
+  // Word stems of a name (5 letters of each word over 3): «Уставка температуры» ~ «Температура уставки».
+  const dupStems = (t) => new Set(String(t || "").toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length > 3).map((w) => w.slice(0, 5)));
+  /** Which of `ids` are copies of what the same device already shows: (a) a number / reading in the thermostat's unit
+   * equal to its setpoint or its temperature — named so («Уставка», «Текущая температура») or the device's only
+   * temperature one; (b) a reading equal to a setting of the device, same unit and a common word in the names (the
+   * same class alone is no proof: a supply 23° beside «Уставка» 23° stays); (c) a «speed» equal to the thermostat's
+   * numeric fan mode, named as its target / current one or the device's only speed. Only within one device_id. `mem` (the card's) keeps each id's verdict for the hold; `wake` — when a
+   * pending change is due (0 — none). */
+  const dedupeDeviceIds = (h, ids, mem = new Map(), now = Date.now()) => {
+    const S = (id) => h?.states?.[id];
+    const dom = (id) => id.split(".")[0];
+    const near = (a, b) => a !== undefined && b !== undefined && Math.abs(a - b) <= DUP_EPS;
+    const byDev = new Map();
+    for (const id of ids) {
+      const d = h?.entities?.[id]?.device_id;
+      if (!d) continue;
+      if (!byDev.has(d)) byDev.set(d, []);
+      byDev.get(d).push(id);
+    }
+    const hit = new Set();
+    const tempsBy = dupTemps(h, byDev.keys());
+    for (const [dev, list] of byDev) {
+      const climates = list.filter((id) => dom(id) === "climate" && S(id));
+      const settings = list.filter((id) => ["number", "input_number"].includes(dom(id)) && dupNum(S(id)?.state) !== undefined);
+      const temps = tempsBy.get(dev) || [];
+      const speeds = list.filter((id) => ["sensor", "number", "input_number"].includes(dom(id)) && DUP_SPEED.test(dupOwnName(h, id)));
+      for (const id of list) {
+        const d = dom(id);
+        const s = S(id);
+        if (!s || !["sensor", "number", "input_number"].includes(d)) continue;
+        const v = dupNum(s.state);
+        if (v === undefined) continue;
+        const a = s.attributes || {};
+        const u = unitKey(a.unit_of_measurement);
+        const name = a.friendly_name || id;
+        const own = dupOwnName(h, id);
+        const tempCopy = climates.some((c) => {
+          if (!u || u !== dupTempUnit(h, S(c))) return false;
+          const target = near(v, dupNum(S(c).attributes?.temperature)) && (DUP_SET.test(own) || (temps.length === 1 && temps[0] === id));
+          return target || dupCurOf(h, id, S(c), temps);
+        });
+        const fanCopy = DUP_SPEED.test(own) && (DUP_SET.test(own) || DUP_CUR.test(own) || speeds.length === 1) && climates.some((c) => near(v, dupNum(S(c).attributes?.fan_mode)));
+        const stems = dupStems(name);
+        const setCopy =
+          d === "sensor" &&
+          settings.some((x) => {
+            const xa = S(x).attributes || {};
+            if (!near(v, dupNum(S(x).state)) || u !== unitKey(xa.unit_of_measurement)) return false;
+            return [...dupStems(xa.friendly_name || x)].some((w) => stems.has(w));
+          });
+        if (tempCopy || fanCopy || setCopy) hit.add(id);
+      }
+    }
+    const out = [];
+    let wake = 0;
+    for (const id of ids) {
+      const want = hit.has(id);
+      let m = mem.get(id);
+      if (!m) mem.set(id, (m = { hid: want, since: 0 }));
+      else if (m.hid === want) m.since = 0;
+      else {
+        if (!m.since) m.since = now;
+        if (now - m.since >= DUP_HOLD_MS) {
+          m.hid = want;
+          m.since = 0;
+        } else wake = wake ? Math.min(wake, m.since + DUP_HOLD_MS) : m.since + DUP_HOLD_MS;
+      }
+      if (!m.hid) out.push(id);
+    }
+    return { ids: out, wake };
+  };
+  /** The checks' list by the part of the name before «:» («Котёл: перегрев», «Котёл: нет пламени» → «Котёл» over
+   * «Перегрев», «Нет пламени»); those without one first, under no caption. `pairs`: [id, name]. */
+  const checkGroups = (pairs) => {
+    const out = [];
+    const at = new Map();
+    for (const [id, name] of pairs) {
+      const m = /^([^:]{1,30}):\s*(\S.*)$/.exec(String(name));
+      const head = m ? m[1].trim() : "";
+      const label = m ? m[2][0].toUpperCase() + m[2].slice(1) : String(name);
+      if (!at.has(head)) {
+        at.set(head, { head, items: [] });
+        out.push(at.get(head));
+      }
+      at.get(head).items.push([id, label]);
+    }
+    return out.sort((a, b) => (a.head ? 1 : 0) - (b.head ? 1 : 0));
+  };
+  // --- п.63.8: a sensor's battery and link — small marks in its tiles' heads; its tile's short name.
+  /** A Zigbee «linkquality» / LQI (0…255), by its id or name. */
+  const MI_LQI = /linkquality|link_quality|(^|[^a-z])lqi([^a-z]|$)/i;
+  /** «batt» — a device's battery (a `sensor` in %, a `binary_sensor` «low»); «link» — its link (a `binary_sensor`
+   * connectivity, a `sensor` signal_strength in dBm / %, an LQI); "" — neither. */
+  const miKind = (h, id) => {
+    const s = h?.states?.[id];
+    if (!s) return "";
+    const d = id.split(".")[0];
+    const dc = s.attributes?.device_class;
+    if ((d === "sensor" || d === "binary_sensor") && dc === "battery") return "batt";
+    if (d === "binary_sensor" && dc === "connectivity") return "link";
+    if (d === "sensor" && (dc === "signal_strength" || MI_LQI.test(`${id} ${s.attributes?.friendly_name || ""}`))) return "link";
+    return "";
+  };
+  /** A link's bars, 0…4: connectivity on / off → 4 / 0; dBm ≥ −60 / −70 / −80 → 4 / 3 / 2, else 1; LQI ≥ 200 / 150 / 100;
+   * % ≥ 75 / 50 / 25; no link (unavailable) → 0; undefined — not a number. */
+  const linkBars = (s) => {
+    if (!s) return undefined;
+    if (nd(s)) return 0;
+    if (s.entity_id.startsWith("binary_sensor.")) return s.state === "on" ? 4 : 0;
+    const v = dupNum(s.state);
+    if (v === undefined) return undefined;
+    const u = unitKey(s.attributes?.unit_of_measurement).toLowerCase();
+    const by = (a, b, c) => (v >= a ? 4 : v >= b ? 3 : v >= c ? 2 : 1);
+    if (u.startsWith("db") || v < 0) return by(-60, -70, -80);
+    if (u === "%") return by(75, 50, 25);
+    if (MI_LQI.test(`${s.entity_id} ${s.attributes?.friendly_name || ""}`) || v > 100) return by(200, 150, 100);
+    return by(75, 50, 25);
+  };
+  /** A device's battery and link entities (shown in HA: not hidden, not disabled — diagnostic ones too). */
+  const deviceMarks = (h, dev) => {
+    const out = { batt: [], link: [] };
+    if (!dev) return out;
+    for (const [id, e] of Object.entries(h?.entities || {})) {
+      if (e?.device_id !== dev || e.hidden || e.disabled_by) continue;
+      const k = miKind(h, id);
+      if (k) out[k].push(id);
+    }
+    return out;
+  };
+  /** The battery mark: its level (the % sensor), low (< 20 % or the «low» sensor on), all of it offline. */
+  const battMark = (h, ids) => {
+    const ss = ids.map((id) => h?.states?.[id]).filter(Boolean);
+    const pct = ss.find((s) => s.entity_id.startsWith("sensor.") && !nd(s) && dupNum(s.state) !== undefined);
+    const lowS = ss.find((s) => s.entity_id.startsWith("binary_sensor.") && s.state === "on");
+    const v = pct ? dupNum(pct.state) : undefined;
+    return { id: (pct || lowS || ss[0])?.entity_id || ids[0], v, low: (v !== undefined && v < 20) || !!lowS, off: ss.every(nd) };
+  };
+  /** The link mark: connectivity off wins (0, lost); else the signal's bars; else connectivity on (4); all offline — 0. */
+  const linkMark = (h, ids) => {
+    const ss = ids.map((id) => h?.states?.[id]).filter(Boolean);
+    const con = ss.find((s) => s.entity_id.startsWith("binary_sensor."));
+    const sig = ss.find((s) => !s.entity_id.startsWith("binary_sensor.") && !nd(s) && linkBars(s) !== undefined);
+    const pick = con && con.state === "off" ? con : sig || con || ss[0];
+    return { id: pick?.entity_id || ids[0], n: (pick && linkBars(pick)) || 0, lost: con?.state === "off", off: ss.every(nd) };
+  };
+  /** A sensor device's main tiles (the battery and link go on them): a leak / smoke / gas / CO / safety / tamper / door /
+   * window / motion / presence / vibration state, a temperature / humidity reading. */
+  const MI_MAIN_BIN = ["moisture", "smoke", "gas", "carbon_monoxide", "safety", "tamper", "door", "window", "garage_door", "opening", "motion", "occupancy", "presence", "vibration"];
+  const miMain = (s) => {
+    const d = s?.entity_id?.split(".")[0];
+    const dc = s?.attributes?.device_class;
+    return (d === "binary_sensor" && MI_MAIN_BIN.includes(dc)) || (d === "sensor" && ["temperature", "humidity"].includes(dc));
+  };
+  // The marks' glyphs: a battery filled to its level `p` (0…1), four bars of which `n` are lit.
+  const miBatt = (p) =>
+    `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="7" width="18" height="10" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="21" y="10" width="2" height="4" rx="1"/><rect x="4.2" y="9.2" width="${(13.6 * Math.max(0, Math.min(1, p))).toFixed(1)}" height="5.6" rx="1.2"/></svg>`;
+  const miBars = (n) => `<svg viewBox="0 0 24 24" aria-hidden="true">${[0, 1, 2, 3].map((i) => `<rect x="${3 + i * 5}" y="${15 - 3 * i}" width="3.6" height="${5 + 3 * i}" rx="1"${i < n ? "" : ' opacity=".28"'}/>`).join("")}</svg>`;
+  /** A tile's short name (owner 05.11: «Датчик протечки Кухня» on a small tile is just «Протечка»): the room, the device,
+   * its maker / model / integration and the words «датчик», «sensor»… out, the class's own word out; nothing left — the
+   * class's noun; something left — «Протечка · мойка» («Температура в помещении» after a preposition). By device_class;
+   * another class keeps its name. */
+  const TILE_GENERIC = /^(датчик|сенсор|детектор|контакт|sensor|detector|contact)/i;
+  const TILE_WORDS = {
+    moisture: [/^(протечк|утечк|leak|water$|вод(а|ы|у|ой)?$)/i, "Протечка", "Leak"],
+    smoke: [/^(дым|smoke)/i, "Дым", "Smoke"],
+    gas: [/^(газ|gas$)/i, "Газ", "Gas"],
+    carbon_monoxide: [/^(co|со|угарн|carbon|monoxide)/i, "CO", "CO"],
+    motion: [/^(движени|motion)/i, "Движение", "Motion"],
+    door: [/^(двер|door)/i, "Дверь", "Door"],
+    window: [/^(окн|окон|window)/i, "Окно", "Window"],
+    occupancy: [/^(присутстви|occupancy|presence)/i, "Присутствие", "Presence"],
+    presence: [/^(присутстви|occupancy|presence)/i, "Присутствие", "Presence"],
+    vibration: [/^(вибраци|vibration)/i, "Вибрация", "Vibration"],
+    tamper: [/^(вскрыти|tamper)/i, "Вскрытие", "Tamper"],
+    temperature: [/^(температур|temperature$|temp$)/i, "Температура", "Temperature"],
+    humidity: [/^(влажност|humidity$)/i, "Влажность", "Humidity"],
+  };
+  const TILE_PREP = /^(в|во|на|под|над|у|за|при|возле|около|in|on|at|under|near|by|behind)$/i;
+  const tileToks = (t) => {
+    const out = String(t || "").split(/[\s_·:;,()/|]+/u);
+    return out.map((w) => w.replace(/^[-.–—]+|[-.–—]+$/g, "")).filter(Boolean);
+  };
+  // `toks` without the words of `phrase` in a row, wherever they stand.
+  const tileCut = (toks, phrase) => {
+    const p = tileToks(phrase).map((w) => w.toLowerCase());
+    const out = [...toks];
+    if (!p.length) return out;
+    for (let i = 0; i + p.length <= out.length; ) {
+      if (p.every((w, j) => out[i + j].toLowerCase() === w)) out.splice(i, p.length);
+      else i++;
+    }
+    return out;
+  };
+  // A rest after «·» goes on lowercase («Протечка · мойка»); an acronym («ГВС», «WC») stays.
+  const tileRest = (toks) => toks.join(" ").replace(/^(\p{Lu})(?=\p{Ll})/u, (c) => c.toLowerCase());
+  const tileName = (name, dc, strip = []) => {
+    const cls = TILE_WORDS[dc];
+    if (!cls) return name;
+    let toks = tileToks(name);
+    for (const p of strip.filter(Boolean).sort((a, b) => tileToks(b).length - tileToks(a).length)) toks = tileCut(toks, p);
+    toks = toks.filter((w) => !TILE_GENERIC.test(w) && !cls[0].test(w));
+    const noun = LL(cls[1], cls[2]);
+    if (!toks.length) return noun;
+    return `${noun}${TILE_PREP.test(toks[0]) ? " " : " ·\u00a0"}${tileRest(toks)}`;
+  };
+  /** Tiles alike in one room told apart: by what their devices' names differ in, else their own names, else « 1», « 2».
+   * `items`: [id, short name, device's name, own name] → Map id → name. */
+  const tileNamesUnique = (items) => {
+    const out = new Map(items.map(([id, n]) => [id, n]));
+    const groups = new Map();
+    for (const it of items) {
+      const k = it[1].toLowerCase();
+      groups.set(k, [...(groups.get(k) || []), it]);
+    }
+    const low = (w) => w.toLowerCase();
+    for (const g of groups.values()) {
+      if (g.length < 2) continue;
+      const n = g[0][1];
+      let done = false;
+      for (const k of [2, 3]) {
+        const toks = g.map((x) => tileToks(x[k]).filter((w) => !TILE_GENERIC.test(w)));
+        const common = toks.reduce((a, t) => a.filter((w) => t.some((v) => low(v) === low(w))));
+        const names = toks.map((t) => {
+          const r = tileRest(t.filter((w) => !common.some((c) => low(c) === low(w))));
+          return r ? `${n} ·\u00a0${r}` : n;
+        });
+        if (new Set(names.map(low)).size === names.length) {
+          g.forEach((x, i) => out.set(x[0], names[i]));
+          done = true;
+          break;
+        }
+      }
+      if (!done) g.forEach((x, i) => out.set(x[0], `${n} ${i + 1}`));
+    }
+    return out;
+  };
+  /** A state tile in alarm (the red frame): a leak, smoke, gas, CO, safety, a problem, a tamper — on. */
+  const TILE_ALARM = ["moisture", "smoke", "gas", "carbon_monoxide", "safety", "problem", "tamper"];
+  /** The open view of the dashboard (HA's lovelace panel): its title is not said again over a card. */
+  const curView = () => {
+    const views = lovelacePanel()?.lovelace?.config?.views || [];
+    let path = "";
+    try {
+      path = decodeURIComponent(location.pathname.split("/")[2] || "");
+    } catch {
+      path = location.pathname.split("/")[2] || "";
+    }
+    return views.find((x, i) => (x.path || String(i)) === path) || (!path ? views[0] : undefined);
+  };
+  const sameText = (a, b) => !!a && !!b && String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
   /** Entity ids on the open Hauflo dashboard's config: the agent let them through as Hauflo's own (or read-only).
    * Only what an item of Hauflo's (a view / section / card with a `hauflo_id`) names as its entity — `entity`,
    * `entity_id`, `entities[]` — never free text (a heading's «name: switch.ac») and never the integrator's own cards
@@ -5830,10 +6361,7 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
   };
   /** Cards on this page besides Hauflo's area cards: what the family (or HA's «Добавить на панель») put there. */
   const othersOnPage = () => {
-    const panel = document.querySelector("home-assistant")?.shadowRoot?.querySelector("home-assistant-main")?.shadowRoot?.querySelector("ha-drawer partial-panel-resolver ha-panel-lovelace");
-    const views = panel?.lovelace?.config?.views || [];
-    const path = decodeURIComponent(location.pathname.split("/")[2] || "");
-    const v = views.find((x, i) => (x.path || String(i)) === path) || (!path ? views[0] : undefined);
+    const v = curView();
     if (!v) return 0;
     const cards = [...(v.cards || []), ...(v.sections || []).flatMap((s) => s.cards || [])];
     return cards.filter((c) => c && c.type !== "custom:hauflo-area").length;
@@ -5896,16 +6424,37 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
       const d = s.entity_id.split(".")[0];
       if (["switch", "light", "fan", "input_boolean"].includes(d) && !nd(s)) return s.state === "on" ? ["вкл", "run"] : ["выкл", "stop"];
       if (d === "cover" && !nd(s)) return [s.state === "open" ? "открыта" : s.state === "closed" ? "закрыта" : s.state === "opening" ? "открывается…" : s.state === "closing" ? "закрывается…" : s.state, s.state === "open" ? "run" : "stop"];
-      if (d === "sensor" && !nd(s) && num(s.state) === undefined) return FAULT_NAME.test(`${s.attributes.device_class || ""} ${s.attributes.friendly_name || s.entity_id}`) ? [s.state, FAULT_OK.test(s.state.trim()) ? "ok" : "fault"] : [s.state, "val"];
+      if (d === "sensor" && !nd(s) && num(s.state) === undefined) {
+        const nm = `${s.attributes.device_class || ""} ${s.attributes.friendly_name || s.entity_id}`;
+        return FAULT_NAME.test(nm) ? [s.state, FAULT_OK.test(s.state.trim()) ? "ok" : WARN_NAME.test(nm) ? "warn" : "fault"] : [s.state, "val"];
+      }
+      // «Авария котла» / «Угроза» without a class (another integration's): a fault / a warning when on — never «вкл».
+      if (d === "binary_sensor" && !nd(s) && !s.attributes.device_class && FAULT_NAME.test(`${s.attributes.friendly_name || s.entity_id} ${this.label(s.entity_id)}`))
+        return s.state === "on" ? (WARN_NAME.test(s.attributes.friendly_name || s.entity_id) ? [LL("внимание", "warning"), "warn"] : ["авария", "fault"]) : ["в норме", "ok"];
       if (d === "lock" && !nd(s)) return [s.state === "locked" ? "заперт" : s.state === "unlocked" ? "не заперт" : s.state, s.state === "locked" ? "ok" : "warn"];
       return super.word(s);
+    }
+    /** A check of a device, not a thing it measures (п.63): a diagnostic, a problem / safety / battery / link / tamper,
+     * a fault by its name («Авария», «Ошибка», «Угроза», «Alarm», «Warning»…), a boiler's «Ошибок нет». A leak, a door,
+     * a motion are things — readings. */
+    isCheck(id) {
+      const s = this._hass.states[id];
+      const d = id.split(".")[0];
+      const a = s.attributes || {};
+      const dc = a.device_class || "";
+      const diag = this._hass.entities?.[id]?.entity_category === "diagnostic";
+      const nm = `${a.friendly_name || id} ${this.label(id)}`;
+      if (d === "binary_sensor") return diag || ["problem", "safety", "battery", "connectivity", "tamper"].includes(dc) || (!dc && FAULT_NAME.test(nm));
+      if (d === "sensor") return diag || dc === "battery" || (num(s.state) === undefined && !nd(s) && FAULT_NAME.test(`${dc} ${nm}`));
+      return false;
     }
     /** Which block an entity goes in. */
     kind(id) {
       const s = this._hass.states[id];
       const d = id.split(".")[0];
       if (d === "climate" || d === "water_heater") return "climate";
-      if (d === "binary_sensor" || (d === "sensor" && !nd(s) && num(s.state) === undefined && FAULT_NAME.test(`${s.attributes.device_class || ""} ${s.attributes.friendly_name || id}`))) return "status";
+      if (this.isCheck(id)) return "checks";
+      if (d === "binary_sensor") return "status";
       if (d === "sensor") return "values";
       if (["number", "input_number", "select", "input_select"].includes(d)) return "settings";
       if (["switch", "light", "fan", "input_boolean", "cover", "humidifier"].includes(d) && !AREA_GUARDED(s)) return "switches";
@@ -5915,7 +6464,7 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
     css() {
       return `${super.css()}${TONE_CSS}${STEP_CSS}.d{padding:var(--hf-pad-title)}.d .sub{display:block;margin:18px 0 0 2px}.r ha-icon{--mdc-icon-size:var(--hf-icon-m);color:var(--ink3);flex:0 0 auto}.r.run ha-icon{color:var(--amberT)}.r.fault ha-icon{color:var(--alertT)}
 .empty{font:400 14px/1.5 Onest,sans-serif;color:var(--ink2);margin:6px 2px 2px}.hint{font:400 13px/1.45 Onest,sans-serif;color:var(--ink3);margin:8px 2px 0}.hint b{font-weight:500;color:var(--ink2)}.r{min-height:56px}
-.cl{display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px solid var(--hair)}.sub+.cl,.cl:first-of-type{border-top:0}
+.cl{display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px solid var(--hair);cursor:pointer}.sub+.cl,.cl:first-of-type{border-top:0}
 .cl .ccn{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;cursor:pointer;position:relative}.cl .ccn::before{content:"";position:absolute;inset:min(0px,(100% - var(--hf-hit))/2) 0}.cl .zn{font:500 15px/1.25 Onest,sans-serif;color:var(--ink);overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .cl .cs{font:400 13px Onest,sans-serif;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.cl.heat .zn::after{content:"";display:inline-block;width:6px;height:6px;border-radius:3px;background:var(--amber);margin-left:7px;vertical-align:middle;box-shadow:0 0 8px var(--amber)}
 .cct{font-size:34px;line-height:1;text-align:right;white-space:nowrap}.cct small{font:300 14px Onest,sans-serif;color:var(--ink2);margin-left:1px;vertical-align:top;position:relative;top:2px}.cct .tgc{display:block;margin-top:4px;font:400 12px/1.2 Onest,sans-serif;color:var(--ink2);letter-spacing:0}.cl.off .cct{color:var(--ink3)}
@@ -5933,7 +6482,13 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
 .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}.chip{display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:var(--hf-r-sm);box-shadow:inset 0 0 0 1px var(--line);cursor:pointer;min-width:0;max-width:100%}.chip .nm{-webkit-line-clamp:1}.chips .chip{position:relative}.chips .chip::before{content:"";position:absolute;inset:min(0px,(100% - var(--hf-hit))/2)}.chip .w{white-space:nowrap}
 .v.st .vt{display:flex;align-items:center;gap:7px}.v.st i{width:8px;height:8px;border-radius:4px;flex:0 0 auto;background:var(--mint)}.v.st.warn i{background:var(--amber)}.v.st.fault i{background:var(--alert)}.v.st.fault .vt{color:var(--alertT)}.chip i{width:8px;height:8px;border-radius:4px;flex:0 0 auto}.chip.fault{box-shadow:none}.chip.warn{box-shadow:none}
 .btns{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}.btns button{min-height:44px;padding:0 15px 0 12px;border-radius:var(--hf-r-sm);display:flex;align-items:center;gap:8px;max-width:100%;color:var(--ink);box-shadow:var(--eh-edge,inset 0 0 0 1px var(--line));background:var(--eh-glass,transparent);font:500 13px Onest,sans-serif}.btns button ha-icon{color:var(--mintT);--mdc-icon-size:var(--hf-icon-s)}
-.btns button.arm{background:color-mix(in srgb,var(--amber) 22%,transparent)}.btns button.go{background:color-mix(in srgb,var(--mint) 26%,transparent)}`;
+.btns button.arm{background:color-mix(in srgb,var(--amber) 22%,transparent)}.btns button.go{background:color-mix(in srgb,var(--mint) 26%,transparent)}
+.d>.sub:first-child,.d>.dv:first-child>.sub:first-child{margin-top:0}.dv+.dv>.sub{margin-top:22px}.vals+.chips,.vals+.vals,.vals+.btns,.btns+.vals,.chips+.vals{margin-top:12px}
+.ckp{position:relative}.ckp::before{content:"";position:absolute;inset:min(0px,(100% - var(--hf-hit))/2) 0}.ckp ha-icon{--mdc-icon-size:var(--hf-icon-s);color:var(--ink3);transition:transform .2s}.ckp[aria-expanded="true"] ha-icon{transform:rotate(180deg)}.ckl .sub{margin-top:12px}
+.v .vh .vn{flex:1}.mi{display:flex;align-items:center;gap:6px;flex:0 0 auto;margin-left:auto;align-self:flex-start;color:var(--ink3);font:500 11px/1 Onest,sans-serif}.v .vh .mi>:is(.mb,.mg){display:inline-flex;align-items:center;gap:4px;width:auto;height:auto;min-height:14px;padding:0;border:0;border-radius:0;box-shadow:none;background:none;color:inherit;font:inherit;cursor:pointer;position:relative;transform:none}
+.mi button::before{content:"";position:absolute;inset:min(0px,(100% - var(--hf-hit))/2) -3px}.mi svg{width:14px;height:14px;fill:currentColor;display:block;flex:0 0 auto}.mi em{font-style:normal;white-space:nowrap}.v .vh .mi>.lo{color:var(--amberT)}
+.v.st.alarm{box-shadow:inset 0 0 0 2px var(--alert),0 0 24px color-mix(in srgb,var(--alert) 35%,transparent)}.v.st.alarm .vn,.v.st.alarm .vh>ha-icon{color:var(--alertT)}.v.st.alarm .vt{font-weight:600}
+.v.st.nolink .vn,.v.st.nolink .vt{color:var(--ink3)}.v.st.nolink i{background:var(--ink3);box-shadow:none}`;
     }
     /** A thermostat / boiler circuit: name, now, mode, its setpoint large with ±; HA's dialog on the name. */
     climateRow(id) {
@@ -5967,7 +6522,7 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
           : "";
       // The mode's colour on ± and the mode chip, softer at target; grey only off / no link (owner 29.10).
       const tn = wh || nd(s) ? "" : climateTone(s, nowC);
-      return `<div class="cl${heating ? " heat" : ""}${off ? " off" : ""}${tn ? ` m-${tn} toned${toneCalm(tn, nowC) ? " calm" : ""}` : ""}"><div class="ccn" data-info="${esc(id)}" role="button" tabindex="0"><span class="zn">${esc(this.label(id))}</span><span class="cs">${sub}</span></div>
+      return `<div class="cl${heating ? " heat" : ""}${off ? " off" : ""}${tn ? ` m-${tn} toned${toneCalm(tn, nowC) ? " calm" : ""}` : ""}" data-info="${esc(id)}"><div class="ccn" role="button" tabindex="0"><span class="zn">${esc(this.label(id))}</span><span class="cs">${sub}</span></div>
 <div class="cct thin">${big}<span class="tgc">${tgtTxt && cur !== undefined ? `Сейчас ${fmt(cur, 1)}°` : ""}</span></div>
 <div class="pm"><button data-e="${esc(id)}" data-d="${-step}" aria-label="Холоднее на ${fmt(step, step % 1 ? 1 : 0)}°"${can ? "" : " disabled"}>−</button><button data-e="${esc(id)}" data-d="${step}" aria-label="Теплее на ${fmt(step, step % 1 ? 1 : 0)}°"${can ? "" : " disabled"}>+</button></div></div>${chips}`;
     }
@@ -5980,7 +6535,7 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
       const unit = unitOf(s);
       const digits = v === undefined ? 0 : Math.abs(v) < 10 && v % 1 ? (Math.abs(v * 10) % 1 ? 2 : 1) : v % 1 ? 1 : 0;
       const val = nd(s) ? `<span class="vv">—</span>` : v === undefined ? `<span class="vt">${esc(haState(s))}</span>` : `<span class="vv thin">${fmt(v, Math.min(digits, 2))}${unit ? `<small>${esc(unit)}</small>` : ""}</span>`;
-      return `<div class="v${nd(s) ? " nolink" : ""}" data-info="${esc(id)}" role="button" tabindex="0"><span class="vh"><ha-icon icon="${esc(icon)}"></ha-icon><span class="vn">${esc(this.label(id))}</span></span>${val}</div>`;
+      return `<div class="v${nd(s) ? " nolink" : ""}" data-info="${esc(id)}" role="button" tabindex="0"><span class="vh"><ha-icon icon="${esc(icon)}"></ha-icon><span class="vn">${esc(this.tileLabel(id))}</span>${this.marks(id)}</span>${val}</div>`;
     }
     /** A number (± by its step, inside its range) or a list (its options). */
     settingTile(id) {
@@ -5989,14 +6544,14 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
       const a = s.attributes;
       if (d === "select" || d === "input_select") {
         const opts = a.options || [];
-        return `<div class="v"><span class="vh"><ha-icon icon="${esc(a.icon || AREA_ICON[d])}"></ha-icon><span class="vn" data-info="${esc(id)}">${esc(this.label(id))}</span></span><select data-sel="${esc(id)}"${nd(s) ? " disabled" : ""}>${opts.map((o) => `<option value="${esc(o)}"${o === s.state ? " selected" : ""}>${esc(o)}</option>`).join("")}</select></div>`;
+        return `<div class="v" data-info="${esc(id)}"><span class="vh"><ha-icon icon="${esc(a.icon || AREA_ICON[d])}"></ha-icon><span class="vn">${esc(this.label(id))}</span></span><select data-sel="${esc(id)}"${nd(s) ? " disabled" : ""}>${opts.map((o) => `<option value="${esc(o)}"${o === s.state ? " selected" : ""}>${esc(o)}</option>`).join("")}</select></div>`;
       }
       const v = num(s.state);
       const step = num(a.step) || 1;
       const min = num(a.min);
       const max = num(a.max);
       const dg = String(step).includes(".") ? String(step).split(".")[1].length : 0;
-      return `<div class="v"><span class="vh"><ha-icon icon="${esc(a.icon || AREA_ICON[d])}"></ha-icon><span class="vn" data-info="${esc(id)}">${esc(this.label(id))}</span></span><div class="set"><button data-num="${esc(id)}" data-d="${-step}" aria-label="−"${v === undefined || (min !== undefined && v <= min) ? " disabled" : ""}>−</button><span class="vv thin">${v === undefined ? "—" : fmt(v, dg)}${unitOf(s) ? `<small>${esc(unitOf(s))}</small>` : ""}</span><button data-num="${esc(id)}" data-d="${step}" aria-label="+"${v === undefined || (max !== undefined && v >= max) ? " disabled" : ""}>+</button></div></div>`;
+      return `<div class="v" data-info="${esc(id)}"><span class="vh"><ha-icon icon="${esc(a.icon || AREA_ICON[d])}"></ha-icon><span class="vn">${esc(this.label(id))}</span></span><div class="set"><button data-num="${esc(id)}" data-d="${-step}" aria-label="−"${v === undefined || (min !== undefined && v <= min) ? " disabled" : ""}>−</button><span class="vv thin">${v === undefined ? "—" : fmt(v, dg)}${unitOf(s) ? `<small>${esc(unitOf(s))}</small>` : ""}</span><button data-num="${esc(id)}" data-d="${step}" aria-label="+"${v === undefined || (max !== undefined && v >= max) ? " disabled" : ""}>+</button></div></div>`;
     }
     /** On / off (a switch, a lamp, a fan, a humidifier) — or a blind's open / stop / close. */
     toggleRow(id) {
@@ -6007,81 +6562,219 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
       if (d === "cover") {
         const f = s.attributes.supported_features || 0;
         const b = (svc, ic, label) => `<button data-cover="${esc(id)}" data-svc="${svc}" aria-label="${label}"${nd(s) ? " disabled" : ""}><ha-icon icon="${ic}"></ha-icon></button>`;
-        return `<div class="tg${s.state === "open" ? " on" : ""}"><ha-icon icon="${esc(s.attributes.icon || coverIcon({ entity: id, s }))}"></ha-icon><div class="tx" data-info="${esc(id)}"><div class="nm">${esc(this.label(id))}</div><div class="w">${esc(w)}</div></div><div class="cv">${f & 1 ? b("open_cover", coverBtnIcon(s, "open_cover"), "Открыть") : ""}${f & 8 ? b("stop_cover", "mdi:stop", "Стоп") : ""}${f & 2 ? b("close_cover", coverBtnIcon(s, "close_cover"), "Закрыть") : ""}</div></div>`;
+        return `<div class="tg${s.state === "open" ? " on" : ""}" data-info="${esc(id)}"><ha-icon icon="${esc(s.attributes.icon || coverIcon({ entity: id, s }))}"></ha-icon><div class="tx"><div class="nm">${esc(this.label(id))}</div><div class="w">${esc(w)}</div></div><div class="cv">${f & 1 ? b("open_cover", coverBtnIcon(s, "open_cover"), "Открыть") : ""}${f & 8 ? b("stop_cover", "mdi:stop", "Стоп") : ""}${f & 2 ? b("close_cover", coverBtnIcon(s, "close_cover"), "Закрыть") : ""}</div></div>`;
       }
       const on = s.state === "on";
-      return `<div class="tg${on ? " on" : ""}"><ha-icon icon="${esc(icon)}"></ha-icon><div class="tx" data-info="${esc(id)}"><div class="nm">${esc(this.label(id))}</div><div class="w">${esc(nd(s) ? this.word(s)[0] : w)}</div></div><button class="sw" data-tog="${esc(id)}" aria-label="Вкл/выкл"${nd(s) ? " disabled" : ""}><i></i></button></div>`;
+      return `<div class="tg${on ? " on" : ""}" data-info="${esc(id)}"><ha-icon icon="${esc(icon)}"></ha-icon><div class="tx"><div class="nm">${esc(this.label(id))}</div><div class="w">${esc(nd(s) ? this.word(s)[0] : w)}</div></div><button class="sw" data-tog="${esc(id)}" aria-label="Вкл/выкл"${nd(s) ? " disabled" : ""}><i></i></button></div>`;
+    }
+    /** The short name of a tile (п.63.8): `tileName` by its class, told apart from the room's alike ones in render. */
+    shortName(id) {
+      const h = this._hass;
+      const e = h.entities?.[id];
+      const dv = e?.device_id ? h.devices?.[e.device_id] : undefined;
+      return tileName(this.label(id), h.states[id]?.attributes?.device_class, [h.areas?.[this._config.area]?.name, dv?.name_by_user, dv?.name, dv?.manufacturer, dv?.model, e?.platform]);
+    }
+    tileLabel(id) {
+      return this._names?.get(id) || this.shortName(id);
+    }
+    /** The device's battery and link in a tile's head (п.63.8): a battery to its level — amber with its % when low (always
+     * with `battery_percent`), the link's four bars; grey when offline. Each opens its own entity. */
+    marks(id) {
+      const h = this._hass;
+      const m = this._marks?.get(h.entities?.[id]?.device_id || "");
+      if (!m) return "";
+      let out = "";
+      if (m.batt.length) {
+        const b = battMark(h, m.batt);
+        const txt = b.v !== undefined ? `${fmt(b.v)}\u00a0%` : b.low ? LL("садится", "low") : "";
+        const lvl = b.off ? 0 : b.v !== undefined ? b.v / 100 : b.low ? 0.15 : 1;
+        const say = !b.off && txt && (b.low || this._config.battery_percent === true);
+        out += `<button class="mb${b.low && !b.off ? " lo" : ""}${b.off ? " na" : ""}" data-info="${esc(b.id)}" aria-label="${esc(`${LL("Батарея", "Battery")}${b.off ? ` · ${LL("нет связи", "offline")}` : txt ? ` ${txt}` : ""}`)}">${miBatt(lvl)}${say ? `<em>${esc(txt)}</em>` : ""}</button>`;
+      }
+      if (m.link.length) {
+        const l = linkMark(h, m.link);
+        out += `<button class="mg${l.lost && !l.off ? " lo" : ""}${l.off ? " na" : ""}" data-info="${esc(l.id)}" aria-label="${esc(`${LL("Связь", "Link")} ${l.n}/4`)}">${miBars(l.n)}</button>`;
+      }
+      return `<span class="mi">${out}</span>`;
     }
     statusTile(id) {
       const s = this._hass.states[id];
       const [w, k] = this.word(s);
       const icon = s.attributes.icon || SENSOR_ICON[s.attributes.device_class] || AREA_ICON.sensor;
-      return `<div class="v st ${k}${nd(s) ? " nolink" : ""}" data-info="${esc(id)}" role="button" tabindex="0"><span class="vh"><ha-icon icon="${esc(icon)}"></ha-icon><span class="vn">${esc(this.label(id))}</span></span><span class="vt"><i></i>${esc(w)}</span></div>`;
+      const alarm = k === "fault" && s.state === "on" && TILE_ALARM.includes(s.attributes.device_class);
+      return `<div class="v st ${k}${alarm ? " alarm" : ""}${nd(s) ? " nolink" : ""}" data-info="${esc(id)}" role="button" tabindex="0"><span class="vh"><ha-icon icon="${esc(icon)}"></ha-icon><span class="vn">${esc(this.tileLabel(id))}</span>${this.marks(id)}</span><span class="vt"><i></i>${esc(w)}</span></div>`;
     }
-    chip(id) {
+    chip(id, name) {
       const s = this._hass.states[id];
       const [w, k] = this.word(s);
-      return `<div class="chip ${k}" data-info="${esc(id)}" role="button" tabindex="0"><i></i><span class="nm">${esc(this.label(id))}</span><span class="w">${esc(w)}</span></div>`;
+      return `<div class="chip ${k}" data-info="${esc(id)}" role="button" tabindex="0"><i></i><span class="nm">${esc(name ?? this.label(id))}</span><span class="w">${esc(w)}</span></div>`;
+    }
+    /** A device's checks (п.63): what is in fault / warning — tiles, on top; the rest — one pill «Аварий нет · 12
+     * проверок» (or «Ещё 11 в норме» under the faults) that opens the list, by the part of the name before «:». */
+    checksHtml(list, key) {
+      if (!list.length) return "";
+      const k = (id) => this.word(this._hass.states[id])[1];
+      const bad = list.filter((id) => k(id) === "fault" || k(id) === "warn");
+      const rest = list.filter((id) => !bad.includes(id));
+      const n = rest.length;
+      const off = rest.filter((id) => k(id) === "nolink").length;
+      const open = !!this._ckOpen?.has(key);
+      const word = LL(plural(n, "проверка", "проверки", "проверок"), n === 1 ? "check" : "checks");
+      const link = off && off < n ? ` · ${LL("без связи", "offline")}: ${off}` : "";
+      const head = bad.length ? (link ? `${LL(`Ещё ${n}`, `${n} more`)}${link}` : LL(`Ещё ${n} в норме`, `${n} more OK`)) : off === n ? LL(`Нет связи · ${n} ${word}`, `Offline · ${n} ${word}`) : `${LL(`Аварий нет · ${n} ${word}`, `No alarms · ${n} ${word}`)}${link}`;
+      // Green only when every check answers: one offline greys the dot (owner tester 05.11), all offline — hollow.
+      const pill = n ? `<div class="chips"><div class="chip ${off === n ? "nolink" : off ? "stop" : "ok"} ckp" data-ck="${esc(key)}" role="button" tabindex="0" aria-expanded="${open}"><i></i><span class="nm" data-own>${esc(head)}</span><ha-icon icon="mdi:chevron-down"></ha-icon></div></div>` : "";
+      const items = open
+        ? `<div class="ckl">${checkGroups(rest.map((id) => [id, this.tileLabel(id)]))
+            .map((g) => `${g.head ? `<span class="caps sub" data-own>${esc(g.head)}</span>` : ""}<div class="chips">${g.items.map(([id, nm]) => this.chip(id, nm)).join("")}</div>`)
+            .join("")}</div>`
+        : "";
+      return `${bad.length ? `<div class="vals">${bad.map((id) => this.statusTile(id)).join("")}</div>` : ""}${pill}${items}`;
     }
     render() {
       const h = this._hass;
-      const ids = orderIds(this, this.members()).filter((id) => h.states[id]);
+      // `block` (п.63): this card is one of the room's three — «Управление», «Показания», «Диагностика»; none — all of it.
+      const part = Object.hasOwn(AREA_PARTS, this._config.block || "") ? this._config.block : "";
+      const all = orderIds(this, this.members()).filter((id) => h.states[id]);
       const dev = this._config.device;
       const areaName = dev ? devName(h, dev) : h.areas?.[this._config.area]?.name;
       const title = this._config.title || areaName || (dev ? LL("Устройство", "Device") : LL("Комната", "Room"));
       const admin = h.user?.is_admin === true;
       // How a device of another integration gets here — said to whoever can do it (an admin), with the room's name.
       const how = `<p class="hint">${LL("Чтобы устройство другой интеграции появилось здесь в стиле Hauflo, укажите у него комнату", "To show another integration's device here in the Hauflo style, set its area to")} «<b data-own>${esc(areaName || title)}</b>» ${LL("в Home Assistant: Настройки → Устройства и службы → устройство → ✎.", "in Home Assistant: Settings → Devices & services → the device → ✎.")}</p>`;
-      // Under Hauflo's own items: nothing of other integrations — no card at all.
-      if (!ids.length && this._config.others) {
+      // Under Hauflo's own items: nothing of other integrations — no card at all; «Показания» / «Диагностика» of an empty
+      // room say nothing (the «Управление» card says what there is to say).
+      if (!all.length && (this._config.others || (part && part !== "control"))) {
         this.hideCard(true);
         return "";
       }
-      if (!ids.length) {
+      if (!all.length) {
         // The family's own cards are on the page (HA's «Добавить на панель»): no «nothing here» above them.
         const others = othersOnPage();
         this.hideCard(others > 0 && !admin);
         if (others > 0) return admin && !dev ? `<div class="glass d"><span class="caps">${esc(title)}</span>${how}</div>` : "";
         return `<div class="glass d"><span class="caps">${esc(title)}</span><p class="empty">${LL("Здесь пока ничего нет", "Nothing here yet")}</p>${admin && !dev ? how : ""}</div>`;
       }
+      // What a device says twice (п.63) is out — over the whole room, so its three blocks agree; a pending change wakes the card.
+      this._dup = this._dup || new Map();
+      const dd = dedupeDeviceIds(h, all, this._dup);
+      if (dd.wake) this.wakeAt(dd.wake);
+      // п.63.8: a sensor device (only states, readings, checks) with a main tile — its battery and link are marks in its
+      // tiles' heads, not tiles or checks of their own; over the whole room, so the three blocks agree.
+      this._marks = new Map();
+      const fold = new Set();
+      const byDev = new Map();
+      for (const id of dd.ids) {
+        const d = h.entities?.[id]?.device_id;
+        if (d) byDev.set(d, [...(byDev.get(d) || []), id]);
+      }
+      for (const [d, list] of byDev) {
+        const m = deviceMarks(h, d);
+        if (!m.batt.length && !m.link.length) continue;
+        const rest = list.filter((id) => !miKind(h, id));
+        if (!rest.every((id) => ["status", "values", "checks"].includes(this.kind(id)))) continue;
+        if (!rest.some((id) => miMain(h.states[id]) && ["status", "values"].includes(this.kind(id)))) continue;
+        this._marks.set(d, m);
+        list.filter((id) => miKind(h, id)).forEach((id) => fold.add(id));
+      }
+      const vis = dd.ids.filter((id) => !fold.has(id));
+      // The tiles' short names, the room's alike ones told apart.
+      this._names = tileNamesUnique(vis.filter((id) => TILE_WORDS[h.states[id]?.attributes?.device_class]).map((id) => [id, this.shortName(id), devName(h, h.entities?.[id]?.device_id), nameOf(h.states[id], id)]));
+      const kinds = (list) => {
+        const b = { climate: [], values: [], settings: [], switches: [], status: [], checks: [], buttons: [], other: [] };
+        list.forEach((id) => b[this.kind(id)].push(id));
+        return b;
+      };
+      const keys = part ? AREA_PARTS[part] : null;
+      const ids = keys ? vis.filter((id) => keys.includes(this.kind(id))) : vis;
+      if (!ids.length) {
+        this.hideCard(true);
+        return "";
+      }
       this.hideCard(false);
       const owned = ownedOnDashboard(this);
       this._owned = owned;
-      const by = { climate: [], values: [], settings: [], switches: [], status: [], buttons: [], other: [] };
-      ids.forEach((id) => by[this.kind(id)].push(id));
       const faults = ids.filter((id) => this.word(h.states[id])[1] === "fault").length;
-      const block = (label, body) => `<span class="caps sub">${esc(label)}</span>${body}`;
-      const blk = {};
-      if (by.climate.length) blk.climate = (block("Климат", by.climate.map((id) => this.climateRow(id)).join("")));
-      // «Состояние» (item 43): a sensor that is a thing (a leak, a door, a window, a battery) is a tile like the readings; a text status of a
-      // device (a boiler's «Ошибок нет», «на связи») is a pill. One rule: a binary sensor → tile, a text sensor → pill.
-      if (by.status.length) {
-        const tiles = by.status.filter((id) => id.startsWith("binary_sensor."));
-        const pills = by.status.filter((id) => !id.startsWith("binary_sensor."));
-        blk.status = block("Состояние", `${tiles.length ? `<div class="vals">${tiles.map((id) => this.statusTile(id)).join("")}</div>` : ""}${pills.length ? `<div class="chips">${pills.map((id) => this.chip(id)).join("")}</div>` : ""}`);
+      const sum = faults ? `<span class="sum"><i class="fault"></i>аварий: ${faults}</span>` : "";
+      const viewTitle = curView()?.title;
+      const devOf = (id) => h.entities?.[id]?.device_id || "";
+      // A device's caption: its name, else its model, maker or integration, else «Устройство» — never an empty line; two
+      // alike get the model after them when it tells them apart (п.63).
+      const caps = new Map();
+      for (const d of new Set(vis.map(devOf))) {
+        const dv = h.devices?.[d] || {};
+        const any = vis.find((id) => devOf(id) === d);
+        caps.set(d, d ? devName(h, d) || dv.model || dv.manufacturer || h.entities?.[any]?.platform || LL("Устройство", "Device") : LL("Прочее", "Other"));
       }
-      if (by.switches.length) blk.switches = (block("Управление", `<div class="vals tgs">${by.switches.map((id) => this.toggleRow(id)).join("")}</div>`));
-      if (by.settings.length) blk.settings = (block("Настройки", `<div class="vals sets">${by.settings.map((id) => this.settingTile(id)).join("")}</div>`));
-      if (by.values.length) blk.values = (block("Показания", `<div class="vals">${by.values.map((id) => this.valueTile(id)).join("")}</div>`));
-      if (by.buttons.length)
-        blk.buttons = (block("Кнопки", `<div class="btns">${by.buttons.map((id) => `<button data-press="${esc(id)}" data-ask="${esc(LL(`${this.label(id)} — ещё раз`, `${this.label(id)} — tap again`))}"><ha-icon icon="${esc(h.states[id].attributes.icon || "hauflo:play")}"></ha-icon><span>${esc(this.label(id))}</span></button>`).join("")}</div>`));
-      if (by.other.length)
-        blk.other =
-          block(
-            "Прочее",
-            `<div class="grid">${by.other
+      const capCount = new Map();
+      for (const c of caps.values()) capCount.set(c, (capCount.get(c) || 0) + 1);
+      for (const [d, c] of caps) {
+        const model = h.devices?.[d]?.model;
+        if (capCount.get(c) > 1 && model && !sameText(model, c)) caps.set(d, `${c} · ${model}`);
+      }
+      // The room's devices by name, what has no device last («Прочее»).
+      const devs = [...caps.keys()].sort((a, b) => (a ? 0 : 1) - (b ? 0 : 1) || caps.get(a).localeCompare(caps.get(b), undefined, { numeric: true, sensitivity: "base" }));
+      // Each kind's markup; a sensor that is a thing (a leak, a door) is a tile like the readings, a device's checks fold into one pill.
+      const bodies = (b, key) => ({
+        climate: b.climate.map((id) => this.climateRow(id)).join(""),
+        settings: b.settings.length ? `<div class="vals sets">${b.settings.map((id) => this.settingTile(id)).join("")}</div>` : "",
+        switches: b.switches.length ? `<div class="vals tgs">${b.switches.map((id) => this.toggleRow(id)).join("")}</div>` : "",
+        buttons: b.buttons.length
+          ? `<div class="btns">${b.buttons.map((id) => `<button data-press="${esc(id)}" data-ask="${esc(LL(`${this.label(id)} — ещё раз`, `${this.label(id)} — tap again`))}"><ha-icon icon="${esc(h.states[id].attributes.icon || "hauflo:play")}"></ha-icon><span>${esc(this.label(id))}</span></button>`).join("")}</div>`
+          : "",
+        other: b.other.length
+          ? `<div class="grid">${b.other
               .map((id) => {
                 const s = h.states[id];
                 const [w, k] = this.word(s);
                 const d = id.split(".")[0];
                 return `<div class="r ${k}" data-info="${esc(id)}" role="button" tabindex="0"><ha-icon icon="${esc(s.attributes.icon || AREA_ICON[d] || "mdi:circle-medium")}"></ha-icon><div class="tx"><div class="nm">${esc(this.label(id))}</div><div class="w">${esc(w)}</div></div></div>`;
               })
-              .join("")}</div>`,
-          );
+              .join("")}</div>`
+          : "",
+        status: b.status.length ? `<div class="vals">${b.status.map((id) => this.statusTile(id)).join("")}</div>` : "",
+        values: b.values.length ? `<div class="vals">${b.values.map((id) => this.valueTile(id)).join("")}</div>` : "",
+        readings: b.status.length || b.values.length ? `<div class="vals">${b.status.map((id) => this.statusTile(id)).join("")}${b.values.map((id) => this.valueTile(id)).join("")}</div>` : "",
+        checks: this.checksHtml(b.checks, key),
+      });
+      if (part) {
+        // The block's name is the title (never the room's — the page says it); a device's name over its part when the
+        // room has more than one, or when it isn't the page's own title.
+        const html = devs
+          .map((d) => {
+            const list = ids.filter((id) => devOf(id) === d);
+            if (!list.length) return "";
+            const x = bodies(kinds(list), d || "-");
+            const name = caps.get(d);
+            const cap = devs.length > 1 || (d && !sameText(name, viewTitle)) ? `<span class="caps sub" data-own>${esc(name)}</span>` : "";
+            const body = part === "readings" ? x.readings : AREA_PARTS[part].map((k) => x[k]).join("");
+            return `<div class="dv">${cap}${body}</div>`;
+          })
+          .join("");
+        return `<div class="glass d"><div class="hd"><span class="caps">${blockTitle(this, LL(...AREA_BLOCK[part]))}</span>${sum}</div>${html}</div>`;
+      }
+      // All in one card (no `block`, dashboards already deployed): by kind, each under its word. The title: the device
+      // when the card shows one, else the room — not when the page's title says it already (п.63).
+      const b = kinds(ids);
+      const x = bodies(b, "all");
+      const blk = {
+        climate: x.climate,
+        status: x.status || x.checks ? `${x.status}${x.checks}` : "",
+        switches: x.switches,
+        settings: x.settings,
+        values: x.values,
+        buttons: x.buttons,
+        other: x.other,
+      };
+      const WORD = { climate: "Климат", status: "Состояние", switches: "Управление", settings: "Настройки", values: "Показания", buttons: "Кнопки", other: "Прочее" };
       // The order of the blocks (item 35): what is done comes before what is read; the integrator's `order` (a list of
       // block names) puts any block anywhere — the ones it leaves out follow in the default order.
-      const parts = [...(Array.isArray(this._config.order) ? this._config.order : []), ...AREA_ORDER].filter((k, n, a) => a.indexOf(k) === n).map((k) => blk[k]).filter(Boolean);
-      return `<div class="glass d"><div class="hd"><span class="caps">${esc(title)}</span>${faults ? `<span class="sum"><i class="fault"></i>аварий: ${faults}</span>` : ""}</div>${parts.join("")}</div>`;
+      const order = [...(Array.isArray(this._config.order) ? this._config.order : []), ...AREA_ORDER].filter((k, n, a) => a.indexOf(k) === n && blk[k]);
+      // «Климат» first needs no word: the thermostat says it.
+      const parts = order.map((k, n) => (k === "climate" && n === 0 ? blk[k] : `<span class="caps sub">${esc(WORD[k])}</span>${blk[k]}`));
+      const head = this._config.title || (devs.length === 1 && devs[0] ? devName(h, devs[0]) : "") || title;
+      const showHead = !sameText(head, viewTitle);
+      return `<div class="glass d">${showHead || sum ? `<div class="hd">${showHead ? `<span class="caps">${esc(head)}</span>` : "<span></span>"}${sum}</div>` : ""}${parts.join("")}</div>`;
     }
     /** Only a member of this area (HA's registry, read here) is ever acted on — whatever the markup says. */
     member(id) {
@@ -6090,9 +6783,25 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
     bind() {
       const root = this.shadowRoot;
       const h = () => this._hass;
-      // Any row: a long press opens our sheet («В избранное», its controls) — never HA's more-info (owner 03.11).
-      root.querySelectorAll("[data-info]").forEach((el) => longPress(el, () => openTile(this, el.dataset.info)));
-      root.querySelectorAll("[data-info]").forEach((el) => el.addEventListener("click", () => !GST.lp && moreInfo(this, el.dataset.info)));
+      // Any row: a long press opens our sheet («В избранное», its controls) — never HA's more-info (owner 03.11); the whole row.
+      bindInfo(this, root);
+      // The checks' pill: opens / folds its list (п.63) — a tap, Enter or Space.
+      root.querySelectorAll("[data-ck]").forEach((el) => {
+        const go = () => {
+          this._ckOpen = this._ckOpen || new Set();
+          const k = el.dataset.ck;
+          if (this._ckOpen.has(k)) this._ckOpen.delete(k);
+          else this._ckOpen.add(k);
+          this._sig = "";
+          this._update();
+        };
+        el.addEventListener("click", go);
+        el.addEventListener("keydown", (e) => {
+          if (e.key !== "Enter" && e.key !== " ") return;
+          e.preventDefault();
+          go();
+        });
+      });
       root.querySelectorAll("button[data-d][data-e]").forEach((b) =>
         b.addEventListener("click", () => {
           const id = b.dataset.e;
@@ -6239,7 +6948,7 @@ ${locks.length || opens.length ? `<div class="lst">${locks
           call(this._hass, "lock", s.state === "locked" ? "unlock" : "lock", { entity_id: el.dataset.lock });
         }),
       );
-      this.shadowRoot.querySelectorAll("[data-info]").forEach((el) => (longPress(el, () => openTile(this, el.dataset.info)), el.addEventListener("click", () => !GST.lp && moreInfo(this, el.dataset.info))));
+      bindInfo(this, this.shadowRoot);
     }
     getGridOptions() {
       return { columns: 12, rows: "auto" };
@@ -6288,7 +6997,7 @@ ${locks.length || opens.length ? `<div class="lst">${locks
 .lst{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-top:12px}.it{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:var(--hf-r-sm);background:var(--track);cursor:pointer;min-width:0}
 .it .rm,.vl2 .rm{font:400 11px/1.3 Onest,sans-serif;color:var(--ink3)}.it .nm{font:500 13px/1.25 Onest,sans-serif;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}.it .w{font:400 13px Onest,sans-serif;color:var(--ink2)}.w>.ackx{place-items:start}.vl2 button.vh{visibility:hidden}
 .it.bad{background:color-mix(in srgb,var(--alert) 18%,transparent)}.it.bad .w{color:var(--alertT);font-weight:600}.it.deaf{opacity:.6}
-.vl2{display:flex;align-items:center;gap:10px;margin-top:12px;padding:10px 12px;border-radius:var(--hf-r-sm);box-shadow:inset 0 0 0 1px var(--hair)}.vl2 .tx{flex:1;min-width:0}
+.vl2{cursor:pointer;display:flex;align-items:center;gap:10px;margin-top:12px;padding:10px 12px;border-radius:var(--hf-r-sm);box-shadow:inset 0 0 0 1px var(--hair)}.vl2 .tx{flex:1;min-width:0}
 .vl2 button{height:44px;padding:0 16px;border-radius:var(--hf-r-sm);font:500 13px Onest,sans-serif;box-shadow:inset 0 0 0 1px var(--line);color:var(--ink);white-space:nowrap}
 .vl2 button.arm{background:color-mix(in srgb,var(--amber) 22%,transparent);box-shadow:none}.vl2 button.go{background:color-mix(in srgb,var(--mint) 26%,transparent);box-shadow:none}
 .hint{font:400 13px/1.4 Onest,sans-serif;color:var(--ink2);margin-top:10px}`;
@@ -6323,12 +7032,12 @@ ${locks.length || opens.length ? `<div class="lst">${locks
       return `<div class="glass k ${kind}"><div class="glow"></div><div style="position:relative"><span class="caps" data-own>${esc(this._config.title || LL("Защита от протечек", "Leak protection"))}</span>
 <div class="big"><span class="sh"><ha-icon icon="${icon}"></ha-icon></span><div><div class="st" data-own>${esc(word)}</div><div class="sub" data-own>${esc(sub)}</div></div></div>
 ${ss.length ? `<div class="lst">${ss.map((x) => `<div class="it ${x.s.state === "on" ? "bad" : nd(x.s) ? "deaf" : ""}" data-info="${esc(x.id)}"><ha-icon icon="${x.s.state === "on" ? "mdi:water-alert" : "mdi:water-outline"}"></ha-icon><div style="min-width:0"><div class="nm">${esc(name(x))}</div>${roomLine(this._hass, x.id, name(x))}<div class="w" data-own>${nd(x.s) ? LL("нет связи", "no signal") : x.s.state === "on" ? LL("протечка", "leak") : LL("сухо", "dry")}</div></div></div>`).join("")}</div>` : ""}
-${vs.map((x) => { const [w, k] = this.valveWord(x.s); return `<div class="vl2"><ha-icon icon="${k === "closed" ? "mdi:valve-closed" : "mdi:valve-open"}" style="color:var(--${k === "closed" ? "ice" : "mint"})"></ha-icon><div class="tx" data-info="${esc(x.id)}"><div class="nm">${esc(name(x))}</div>${roomLine(this._hass, x.id, name(x))}<div class="w" data-own><span class="ackx">${[...new Set([w, ...VALVE_WORDS()])].map((v) => `<span${v === w ? "" : ' class="gh" aria-hidden="true"'}>${esc(v)}</span>`).join("")}</span></div></div>${`<button data-valve="${esc(x.id)}" data-k="${k}"${k === "nd" || k === "mv" ? ' class="vh" disabled aria-hidden="true" tabindex="-1"' : ""} data-ask="${esc(`${LL("Точно?", "Sure?")}|${k === "closed" ? LL("Перекрыть воду", "Shut off the water") : LL("Открыть воду", "Open the water")}`)}"><span data-own>${k === "closed" ? LL("Открыть воду", "Open the water") : LL("Перекрыть воду", "Shut off the water")}</span></button>`}</div>`; }).join("")}
+${vs.map((x) => { const [w, k] = this.valveWord(x.s); return `<div class="vl2" data-info="${esc(x.id)}"><ha-icon icon="${k === "closed" ? "mdi:valve-closed" : "mdi:valve-open"}" style="color:var(--${k === "closed" ? "ice" : "mint"})"></ha-icon><div class="tx"><div class="nm">${esc(name(x))}</div>${roomLine(this._hass, x.id, name(x))}<div class="w" data-own><span class="ackx">${[...new Set([w, ...VALVE_WORDS()])].map((v) => `<span${v === w ? "" : ' class="gh" aria-hidden="true"'}>${esc(v)}</span>`).join("")}</span></div></div>${`<button data-valve="${esc(x.id)}" data-k="${k}"${k === "nd" || k === "mv" ? ' class="vh" disabled aria-hidden="true" tabindex="-1"' : ""} data-ask="${esc(`${LL("Точно?", "Sure?")}|${k === "closed" ? LL("Перекрыть воду", "Shut off the water") : LL("Открыть воду", "Open the water")}`)}"><span data-own>${k === "closed" ? LL("Открыть воду", "Open the water") : LL("Перекрыть воду", "Shut off the water")}</span></button>`}</div>`; }).join("")}
 ${!vs.length && ss.length ? `<div class="hint" data-own>${LL("Кран не найден: укажите его в карточке (valves) или отнесите к этой комнате в Home Assistant.", "No valve found: name it in the card (valves) or put it into this area in Home Assistant.")}</div>` : ""}
 </div></div>`;
     }
     bind() {
-      this.shadowRoot.querySelectorAll("[data-info]").forEach((el) => (longPress(el, () => openTile(this, el.dataset.info)), el.addEventListener("click", () => !GST.lp && moreInfo(this, el.dataset.info))));
+      bindInfo(this, this.shadowRoot);
       // Closing the water is by hand only, and on a second tap within 4 s (the first one says so).
       this.shadowRoot.querySelectorAll("button[data-valve]").forEach((b) =>
         b.addEventListener("click", () => {
@@ -6985,7 +7694,7 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
         run: "Проверить сейчас", runAsk: (x) => `Сейчас выполнится: ${x}. Продолжить?`, runYes: "Выполнить", ran: "Выполнено — смотрите на шторы и свет.",
         rampNote: "Плавный свет займёт заданные минуты.",
         needLoc: "Местоположение не задано — время рассвета и заката будет приблизительным.", needLocAdmin: "Укажите местоположение в блоке «Местоположение» на этой странице.", needLocUser: "Попросите администратора указать местоположение в Home Assistant.", approx: "время приблизительное", needAction: "Добавьте хотя бы одно действие.", needDay: "Выберите хотя бы один день.",
-        err: "Не получилось: ", errNet: "Нет связи с Home Assistant — попробуйте ещё раз.", noAgent: "Нужен агент Hauflo новее — обновите его в HACS.", agentGone: "Агент Hauflo не установлен — без него правила и «Нет дома» не работают.", locWarn: "Сохранено, но местоположение не задано — время рассвета и заката приблизительное.",
+        err: "Не получилось: ", errNet: "Нет связи с Home Assistant — попробуйте ещё раз.", noAgent: "Нужен агент Hauflo новее — обновите его в HA (Настройки → Обновления).", agentGone: "Агент Hauflo не установлен — без него правила и «Нет дома» не работают.", locWarn: "Сохранено, но местоположение не задано — время рассвета и заката приблизительное.",
         last: (t) => `Последний раз: ${t}`, never: "ещё не срабатывало", missing: "нет в Home Assistant — сохраните заново",
         changedTag: "изменено в Home Assistant",
         changedNote: "Это правило поменяли в редакторе Home Assistant — Hauflo его не трогает: включать, выключать и проверять можно, править — там. Или верните как было в Hauflo (правка из Home Assistant пропадёт).",
@@ -7152,7 +7861,7 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
         run: "Test now", runAsk: (x) => `This runs now: ${x}. Go on?`, runYes: "Run", ran: "Done — look at the blinds and lights.",
         rampNote: "The slow light takes the minutes set.",
         needLoc: "The location isn't set — sunrise and sunset times will be approximate.", needLocAdmin: "Set the location in the “Location” block on this page.", needLocUser: "Ask the administrator to set the location in Home Assistant.", approx: "time is approximate", needAction: "Add at least one action.", needDay: "Pick at least one day.",
-        err: "Didn't work: ", errNet: "No link to Home Assistant — try again.", noAgent: "This needs a newer Hauflo agent — update it in HACS.", agentGone: "The Hauflo agent isn't installed — rules and “Away” don't work without it.", locWarn: "Saved, but the location isn't set — sunrise and sunset times are approximate.",
+        err: "Didn't work: ", errNet: "No link to Home Assistant — try again.", noAgent: "This needs a newer Hauflo agent — update it in HA (Settings → Updates).", agentGone: "The Hauflo agent isn't installed — rules and “Away” don't work without it.", locWarn: "Saved, but the location isn't set — sunrise and sunset times are approximate.",
         last: (t) => `Last run: ${t}`, never: "hasn't run yet", missing: "not in Home Assistant — save it again",
         changedTag: "changed in Home Assistant",
         changedNote: "This rule was changed in Home Assistant's editor — Hauflo leaves it alone: switch it on / off and test it here, edit it there. Or put it back as it was in Hauflo (the Home Assistant edit is lost).",
@@ -7447,7 +8156,8 @@ ha-icon{--mdc-icon-size:var(--hf-icon-m)}`;
         return r.when === "below" || r.when === "above" ? ["x"] : r.when === "outside" || r.when === "between" ? ["lo", "hi"] : [];
       }
       ruleStep(r) {
-        return r.unit === "ppm" ? 50 : r.unit === "%" ? 1 : r.unit === "°C" || r.unit === "°F" ? 0.5 : 1;
+        const u = unitKey(r.unit);
+        return u === "ppm" ? 50 : u === "%" ? 1 : u === "°C" || u === "°F" ? 0.5 : 1;
       }
       sysRow(r) {
         const w = this.w;
@@ -10357,6 +11067,12 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
         if (!t) return moreInfo(this, id);
         if (!riskTap(this, id)) return;
         haptic(this);
+        // A Hauflo scene through the agent (adaptive scenes, п.60; runScene waits for the agent's first answer and falls
+        // back to scene.turn_on itself): what it left off by day is said; failed both ways — call() says it.
+        if (t[0] === "scene" && hfScene(this._hass, id)) {
+          FAM.cards.add(this);
+          return runScene(this._hass, id).then((r) => r?.skipped?.length && okToast(tr("Подсветка не включена: на улице светло")), () => call(this._hass, t[0], t[1], { entity_id: id }));
+        }
         call(this._hass, t[0], t[1], { entity_id: id });
       };
       let timer;
@@ -10542,11 +11258,11 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
     "hauflo-acs": [G(TXT("title"), SEL("kind", [["ac", "Кондиционеры", "Air conditioners", "hauflo:ac"], ["floor_heating", "Тёплые полы", "Floor heating", "hauflo:floor-heat"]])), E("entities", "climate", true)],
     "hauflo-devices": [TXT("title"), E("entities", null, true)],
     "hauflo-leaks": [TXT("title"), { name: "area", selector: { area: {} } }, E("sensors", "binary_sensor", true), E("valves", ["valve", "switch"], true)],
-    "hauflo-area": [{ name: "area", selector: { area: {} } }, { name: "device", selector: { device: {} } }, TXT("title")],
+    "hauflo-area": [{ name: "area", selector: { area: {} } }, { name: "device", selector: { device: {} } }, TXT("title"), BOOL("battery_percent")],
   };
   const LABEL = {
-    ru: { sensors: "Датчики протечки", valves: "Кран (клапан)", area: "Комната в Home Assistant", device: "Или устройство целиком", label: "Подпись", name: "Название", title: "Заголовок", subtitle: "Подзаголовок", icon: "Иконка", icon_type: "Что слева", color: "Цвет, когда включено", layout: "Расположение", show_level: "Полоска уровня (яркость, положение)", controls: "Управление под плиткой (яркость, шторы, ±, плеер…)", primary_info: "Первая строка", secondary_info: "Вторая строка", tap_action: "Нажатие", hold_action: "Удержание", double_tap_action: "Двойное нажатие", path: "Открывать по нажатию", picture: "Фото комнаты (URL)", temperature: "Температура (термостаты, датчики)", humidity: "Влажность", lights: "Свет", alarms: "Аварийные датчики", devices: "Устройства (нет связи)", weather: "Погода", climate: "Термостат", covers: "Шторы", kind: "Вид", scenes: "Сцены", entity: "Объект", entities: "Объекты", days: "Дней прогноза", forecast: "Прогноз", pm25: "PM2.5", pm10: "PM10", co2: "CO₂", voc: "Летучие в-ва", hours: "Часов", locks: "Замки", openings: "Двери, окна, движение", refresh: "Обновлять кадр, с", chart: "График за сутки", hide_ok: "Прятать, когда всё в норме", compact: "Компактно (строкой)", heat_setpoint: "Уставка нагрева (number)", cool_setpoint: "Уставка охлаждения (number)", scene_layout: "Где сцены" },
-    en: { sensors: "Leak sensors", valves: "Valve", area: "Home Assistant area", device: "Or a whole device", label: "Label", name: "Name", title: "Title", subtitle: "Subtitle", icon: "Icon", icon_type: "On the left", color: "Color when on", layout: "Layout", show_level: "Level bar (brightness, position)", controls: "Controls under the tile (brightness, blinds, ±, player…)", primary_info: "First line", secondary_info: "Second line", tap_action: "Tap", hold_action: "Hold", double_tap_action: "Double tap", path: "Opens on tap", picture: "Room photo (URL)", temperature: "Temperature (thermostats, sensors)", humidity: "Humidity", lights: "Lights", alarms: "Alarm sensors", devices: "Devices (offline check)", weather: "Weather", climate: "Thermostat", covers: "Blinds", kind: "Kind", scenes: "Scenes", entity: "Entity", entities: "Entities", days: "Forecast days", forecast: "Forecast", pm25: "PM2.5", pm10: "PM10", co2: "CO₂", voc: "VOC", hours: "Hours", locks: "Locks", openings: "Doors, windows, motion", refresh: "Snapshot refresh, s", chart: "24 h chart", hide_ok: "Hide when all is OK", compact: "Compact (one row)", heat_setpoint: "Heating setpoint (number)", cool_setpoint: "Cooling setpoint (number)", scene_layout: "Where scenes go" },
+    ru: { sensors: "Датчики протечки", valves: "Кран (клапан)", area: "Комната в Home Assistant", device: "Или устройство целиком", label: "Подпись", name: "Название", title: "Заголовок", subtitle: "Подзаголовок", icon: "Иконка", icon_type: "Что слева", color: "Цвет, когда включено", layout: "Расположение", show_level: "Полоска уровня (яркость, положение)", controls: "Управление под плиткой (яркость, шторы, ±, плеер…)", primary_info: "Первая строка", secondary_info: "Вторая строка", tap_action: "Нажатие", hold_action: "Удержание", double_tap_action: "Двойное нажатие", path: "Открывать по нажатию", picture: "Фото комнаты (URL)", temperature: "Температура (термостаты, датчики)", humidity: "Влажность", lights: "Свет", alarms: "Аварийные датчики", devices: "Устройства (нет связи)", weather: "Погода", climate: "Термостат", covers: "Шторы", kind: "Вид", scenes: "Сцены", entity: "Объект", entities: "Объекты", days: "Дней прогноза", forecast: "Прогноз", pm25: "PM2.5", pm10: "PM10", co2: "CO₂", voc: "Летучие в-ва", hours: "Часов", locks: "Замки", openings: "Двери, окна, движение", refresh: "Обновлять кадр, с", chart: "График за сутки", hide_ok: "Прятать, когда всё в норме", battery_percent: "Заряд батареи в % всегда (не только когда садится)", compact: "Компактно (строкой)", heat_setpoint: "Уставка нагрева (number)", cool_setpoint: "Уставка охлаждения (number)", scene_layout: "Где сцены" },
+    en: { sensors: "Leak sensors", valves: "Valve", area: "Home Assistant area", device: "Or a whole device", label: "Label", name: "Name", title: "Title", subtitle: "Subtitle", icon: "Icon", icon_type: "On the left", color: "Color when on", layout: "Layout", show_level: "Level bar (brightness, position)", controls: "Controls under the tile (brightness, blinds, ±, player…)", primary_info: "First line", secondary_info: "Second line", tap_action: "Tap", hold_action: "Hold", double_tap_action: "Double tap", path: "Opens on tap", picture: "Room photo (URL)", temperature: "Temperature (thermostats, sensors)", humidity: "Humidity", lights: "Lights", alarms: "Alarm sensors", devices: "Devices (offline check)", weather: "Weather", climate: "Thermostat", covers: "Blinds", kind: "Kind", scenes: "Scenes", entity: "Entity", entities: "Entities", days: "Forecast days", forecast: "Forecast", pm25: "PM2.5", pm10: "PM10", co2: "CO₂", voc: "VOC", hours: "Hours", locks: "Locks", openings: "Doors, windows, motion", refresh: "Snapshot refresh, s", chart: "24 h chart", hide_ok: "Hide when all is OK", battery_percent: "Battery % always (not only when low)", compact: "Compact (one row)", heat_setpoint: "Heating setpoint (number)", cool_setpoint: "Cooling setpoint (number)", scene_layout: "Where scenes go" },
   };
   const idOf = (x) => (typeof x === "string" ? x : x?.entity);
   /** Per tile (cards with an `entities` list): its name, what its value means (scale) and its own fault sensors — picked by

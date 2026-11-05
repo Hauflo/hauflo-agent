@@ -12,9 +12,8 @@ from .const import CONF_SERVER, DOMAIN, VERSION
 
 
 def device_info(entry_id: str, entry: ConfigEntry | None = None) -> DeviceInfo:
-    info = DeviceInfo(identifiers={(DOMAIN, entry_id)}, name="Hauflo", manufacturer="Hauflo", entry_type=DeviceEntryType.SERVICE, sw_version=VERSION)
     server = str((entry.data.get(CONF_SERVER) if entry is not None else None) or "")
-    # The Hauflo app this home is linked to (the project's page needs the integrator's login there anyway).
-    if urlparse(server).scheme in ("http", "https") and urlparse(server).hostname:
-        info["configuration_url"] = server.rstrip("/")
-    return info
+    # The Hauflo app this home is linked to (the project's page needs the integrator's login there anyway). Passed to
+    # the constructor, not set as an item: HA 2026.11 made DeviceInfo a dataclass, dict access is a compat layer to go.
+    link = {"configuration_url": server.rstrip("/")} if urlparse(server).scheme in ("http", "https") and urlparse(server).hostname else {}
+    return DeviceInfo(identifiers={(DOMAIN, entry_id)}, name="Hauflo", manufacturer="Hauflo", entry_type=DeviceEntryType.SERVICE, sw_version=VERSION, **link)
