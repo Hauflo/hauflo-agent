@@ -4,7 +4,7 @@
 
 **English** · [Русский](https://github.com/Hauflo/hauflo-agent/blob/main/README.ru.md)
 
-**ETS project in, finished Home Assistant out: rooms, devices, family dashboard and alarms. KNX first.**
+**ETS project or an existing Home Assistant in, finished site out: rooms, devices, family dashboard and alarms. KNX first, and no KNX needed to start.**
 
 Free during the beta; needs a Hauflo account ([request access](https://app.hauflo.com/request-access)).
 
@@ -28,6 +28,15 @@ The agent connects a site's Home Assistant to [Hauflo](https://hauflo.com), wher
 4. **Hand over.** Phone and wall tablet, light and dark.
 
 No hand-built cards. Change the ETS project, re-import: the dashboard follows.
+
+### A house without KNX
+
+No ETS file, or Home Assistant already runs at the site? Create a project with **I have Home Assistant** and link the site with the agent's code. The ETS file is one source among others and can be added at any moment.
+
+- **Moving into this Home Assistant** (a card on Import): what the house already has, with the source of every number; a verdict — **Good to go**, **Possible, with caveats** or **Not yet**; and a plan of what Hauflo creates, leaves alone and asks about. Read-only.
+- **Take rooms from HA:** Home Assistant's floors and areas become the project's floors and rooms as they are, with a preview and no change in Home Assistant.
+- **Deploy without KNX:** the Atelier dashboard is built by Home Assistant's rooms; devices of other integrations sit on the room pages.
+- **What the agent reads for this:** the registries (entities, devices, areas, floors, integrations), the list of dashboards and Home Assistant's and the agent's versions. **What it does not read:** the contents of other automations, scripts and dashboards — it only counts them.
 
 ## For the family
 
@@ -281,7 +290,7 @@ Winter or summer is chosen in the dashboard (**Settings**) or in Hauflo, not by 
 
 - **A Hauflo account is needed.** Without one the integration can't be set up.
 - **One agent per Home Assistant.** One Home Assistant serves one Hauflo project.
-- **The project import is KNX only** (`.knxproj` or ETS CSV). Devices of other integrations are not imported: they are placed on the dashboard, and **Set up** assigns their rooms, names and blocks.
+- **The project file import is KNX only** (`.knxproj` or ETS CSV). In a house without KNX the rooms come from Home Assistant's areas (**Take rooms from HA**). Devices of other integrations are not imported from a file: they are placed on the dashboard, and **Set up** assigns their rooms, names and blocks.
 - **Home Assistant 2026.9 or newer.** The agent reads parts of Home Assistant’s KNX integration that are not a public API. If a new Home Assistant changes them, the agent switches off only those features and says which in **Repairs**.
 - **Hand-formatted `automations.yaml` / `scenes.yaml`** (comments, `!include`, `!secret`) are never rewritten, so the family’s own automations and scenes can’t be saved there until the file is plain.
 - **Dashboard resources in YAML mode** can’t be added by the agent. On removal (or **Make the site independent**) the cards are copied to `/config/www/hauflo` and Home Assistant shows a notification with the two lines to add to `configuration.yaml`.

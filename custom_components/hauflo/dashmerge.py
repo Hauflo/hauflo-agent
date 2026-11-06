@@ -298,6 +298,10 @@ class Merge:
         self.adopt: dict[str, list[Any]] = {}
         self.dissolved: set[str] = set()
         self._dissolve()
+        # Hauflo's pages gone whose integrator's items moved onto the new page of the same room (W1-5): python ids.
+        self.rehomed: set[int] = set()
+        self.held: dict[int, list[tuple[int, dict[str, Any]]]] = {}
+        self._rehome()
         self.result = self._build_root()
 
     def _mark_view(self, node: dict[str, Any], level: int, title: str | None) -> None:
@@ -361,6 +365,53 @@ class Merge:
             self.dissolved.add(h)
             self.adopt.setdefault(where.most_common(1)[0][0], []).extend(kids)
             self.restored.extend(k[ID] for k in kids if back and k[ID] in self.B.node)
+
+    def _home(self, c: dict[str, Any]) -> str | None:
+        """The new config's page for the same room / purpose as Hauflo's page `c` it no longer has (a design switch:
+        Atelier `komnaty_spalnia` ↔ classic `etazh_1_spalnia`, or the same path as another kind of view): its id under
+        a new key (`rekey`), else its path, else its title — unique among Hauflo's new pages of the same kind (a room's
+        subview ↔ a room's subview), two «Спальня» on two floors told apart by the longest common end of the path.
+        Never a page the integrator removed (it stays removed, nothing is put on it)."""
+        h = _hid(c)
+        top = [x for x in _kids(self.new, 0) if isinstance(x, dict) and (i := _hid(x)) and i in self.N.node and not (i in self.B.node and i not in self.C.node)]
+        if not top or h is None:
+            return None
+        hit = [x for x in top if re.fullmatch(re.escape(h) + r"~\d+", _hid(x) or "")]
+        path = c.get("path") if isinstance(c.get("path"), str) and c.get("path") else None
+        if not hit and path:
+            hit = [x for x in top if x.get("path") == path]
+        if not hit and (name := _same_name(_title(c, 1))):
+            hit = [x for x in top if _same_name(_title(x, 1)) == name and bool(x.get("subview")) == bool(c.get("subview"))]
+            if len(hit) > 1 and path:
+
+                def tail(x: dict[str, Any]) -> int:
+                    a, b = path[::-1], str(x.get("path") or "")[::-1]
+                    n = 0
+                    while n < min(len(a), len(b)) and a[n] == b[n]:
+                        n += 1
+                    return n
+
+                best = max(tail(x) for x in hit)
+                hit = [x for x in hit if tail(x) == best]
+        return _hid(hit[0]) if len(hit) == 1 else None
+
+    def _rehome(self) -> None:
+        """The integrator's items on a page of Hauflo's the new config no longer has (a design switch, W1-5) go to the
+        end of the new page of the same room (`_home`), not to a page of their own («<path>-kept», an extra tab for
+        ever). No such page, or one that can't hold them as they are (his sections on a page of cards): the old way."""
+        for c in _kids(self.current, 0):
+            if not isinstance(c, dict) or (h := self._hauflo(c)) is None or h in self.N.node or self._edited(h):
+                continue
+            t = self._home(c)
+            if t is None:
+                continue
+            cl = _child_level(1, _kids_key(self.N.node[t], 1))
+            items = self._orphans(c, 1)
+            if cl == 3 and any(lvl != 3 for lvl, _ in items):
+                self.held[id(c)] = items  # his sections can't sit on a page of cards as they are: a page of their own
+                continue
+            self.rehomed.add(id(c))
+            self.adopt.setdefault(t, []).extend(self._fit(items, cl, c))
 
     # building
     def _build_root(self) -> dict[str, Any]:
@@ -502,8 +553,9 @@ class Merge:
             if self._edited(h):
                 self.local.append(self._local_label(c, child_level, dropped=True))
                 put(self._local(c, child_level))
-            else:
-                tail.extend(self._fit(self._orphans(c, child_level), child_level, c))
+            elif id(c) not in self.rehomed:
+                items = self.held.pop(id(c)) if id(c) in self.held else self._orphans(c, child_level)
+                tail.extend(self._fit(items, child_level, c))
             pos = None
         out.extend(tail)
 

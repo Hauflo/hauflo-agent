@@ -38,6 +38,12 @@ PLAN_TTL = TUNING["ownership"]["foreign_plan_ttl_s"]
 # the first's. More at once is refused (plans_busy), never one silently dropped.
 PLANS_MAX = TUNING["ownership"]["foreign_plans_max"]
 PLAN_FEATURE = "foreign_plan_id"
+# A wizard's write names its plan (red team N7): `hauflo_plan` on the registry update — only that plan may allow it (a
+# write of deploy A is never let through by deploy B's plan holding the same item); a plan gone or another's — refused
+# (`plan_gone` / `not_in_plan`). The field is the agent's, taken off before HA sees the update. None: any live plan
+# holding the item, as before (a backend from before this feature).
+WRITE_PLAN_FEATURE = "foreign_write_plan"
+PLAN_KEY = "hauflo_plan"
 PLAN_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 LEGACY_PLAN = ""  # a plan sent with no id (a backend before plan ids): one such, replaced by the next
 LABELS_MAX = TUNING["ownership"]["foreign_labels_max"]
@@ -162,17 +168,19 @@ def _part(msg: dict[str, Any]) -> tuple[str, Any] | None:
 
 
 def _holding(hass: HomeAssistant | None, msg: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
-    """The live plans that hold this message's item, the oldest first."""
+    """The live plans that hold this message's item, the oldest first — only the one it names, when it names one."""
     ref = _part(msg)
     if ref is None:
         return []
-    held = [(k, p) for k, p in active_plans(hass).items() if ref[1] in p[ref[0]]]
+    named = msg.get(PLAN_KEY, None) if PLAN_KEY in msg else None
+    held = [(k, p) for k, p in active_plans(hass).items() if ref[1] in p[ref[0]] and (PLAN_KEY not in msg or k == named)]
     return sorted(held, key=lambda kp: float(kp[1].get("at") or 0))
 
 
 def planned(hass: HomeAssistant | None, msg: dict[str, Any]) -> bool:
-    """The item of this registry update is in a deploy's live plan: the wizard's rules alone decide."""
-    return bool(_holding(hass, msg))
+    """The item of this registry update is in a deploy's live plan — or the update names a plan (N7: then the wizard's
+    rules alone decide, a gone plan refused with its reason, never the click's placing): the wizard's rules decide."""
+    return PLAN_KEY in msg or bool(_holding(hass, msg))
 
 
 def drop_items(hass: HomeAssistant | None, devices: set[str], entities: set[str]) -> None:
@@ -282,7 +290,12 @@ def decide(hass: HomeAssistant | None, msg: dict[str, Any]) -> tuple[str | None,
     live = active_plans(hass) if hass is not None else {}
     held = _holding(hass, msg)
     if not held:
-        return _refusal(hass, msg, {"areas": set(), "devices": set(), "entities": set()} if live else None), None
+        why = _refusal(hass, msg, {"areas": set(), "devices": set(), "entities": set()} if live else None)
+        if PLAN_KEY in msg and why in ("not_in_plan", "no_plan"):
+            # The plan it names: not a live one (gone, expired, never sent, a bad id) — or a live one without the item.
+            named = msg.get(PLAN_KEY)
+            why = "not_in_plan" if isinstance(named, str) and named in live else "plan_gone"
+        return why, None
     why: str | None = None
     for pid, plan in held:
         if (r := _refusal(hass, msg, plan)) is None:
@@ -297,11 +310,13 @@ def _refusal(hass: HomeAssistant | None, msg: dict[str, Any], plan: dict[str, An
         return "not_allowed"
     device = t == DEVICE_UPDATE
     keys, ref = (DEVICE_KEYS, "device_id") if device else (ENTITY_KEYS, "entity_id")
-    extra = set(msg) - {"id", "type", ref} - keys
+    extra = set(msg) - {"id", "type", ref, PLAN_KEY} - keys
     if extra:
         return f"field_not_allowed:{sorted(extra)[0]}"
     if not set(msg) & keys:
         return "nothing_to_change"
+    if PLAN_KEY in msg and not (isinstance(msg[PLAN_KEY], str) and PLAN_ID.match(msg[PLAN_KEY])):
+        return "plan_gone"
     if plan is None:
         return "no_plan"
     if device:
@@ -348,7 +363,7 @@ def wizard_prepare(hass: HomeAssistant, msg: dict[str, Any]) -> tuple[dict[str, 
     f = flags(hass)
     created: list[str] = []
     _why, pid = decide(hass, msg)
-    out = dict(msg)
+    out = {k: v for k, v in msg.items() if k != PLAN_KEY}  # the agent's own field: HA's schema takes no other
     if "labels" in msg:
         reg = lr.async_get(hass)
         for lid in dict.fromkeys(msg["labels"]):
@@ -456,7 +471,7 @@ class ForeignView(HomeAssistantView):
             return self.json_message("admin only", 403)
         hass = request.app[KEY_HASS]
         f = flags(hass)
-        return self.json({"notify": f.notify if f is not None else {}, "features": [FEATURE, PLAN_FEATURE], "plan": bool(active_plans(hass)), "journal": _journal_list(hass)})
+        return self.json({"notify": f.notify if f is not None else {}, "features": [FEATURE, PLAN_FEATURE, WRITE_PLAN_FEATURE], "plan": bool(active_plans(hass)), "journal": _journal_list(hass)})
 
     async def post(self, request):
         if not request["hass_user"].is_admin:

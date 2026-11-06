@@ -42,7 +42,7 @@ async def entry(hass: HomeAssistant):
 async def test_the_switch_over_the_label(hass: HomeAssistant, hass_client, entry) -> None:
     client = await hass_client()
     got = await (await client.get("/api/hauflo/foreign")).json()
-    assert got["notify"] == {} and got["features"] == ["foreign_wizard", "foreign_plan_id"] and got["plan"] is False
+    assert got["notify"] == {} and got["features"] == [foreign.FEATURE, foreign.PLAN_FEATURE, foreign.WRITE_PLAN_FEATURE] == ["foreign_wizard", "foreign_plan_id", "foreign_write_plan"] and got["plan"] is False
     assert not notify.labelled(hass, LEAK) and notify.labelled(hass, BOILER)
     res = await client.post("/api/hauflo/foreign", json={"notify": {LEAK: True, BOILER: False, OWN: False}})
     assert res.status == 200, await res.text()
@@ -75,3 +75,33 @@ async def test_kept_across_a_restart(hass: HomeAssistant, hass_client, entry) ->
     again = foreign.Flags(hass)
     await again.async_load()
     assert again.notify == {LEAK: True}
+
+
+async def test_a_doorbell_press_is_said_once_not_a_problem(hass: HomeAssistant, hass_client, entry) -> None:
+    """An event entity (a doorbell / button / motion event; its state = when it last fired) switched on in Hauflo's list:
+    the status carries the press's time while it is recent — a line in Telegram, never a problem of the site."""
+    from datetime import timedelta
+
+    from homeassistant.util import dt as dt_util
+
+    reg = er.async_get(hass)
+    for eid in ("event.door_ring", "event.door_motion"):
+        reg.async_get_or_create("event", "intercom_q", eid, suggested_object_id=eid.split(".")[1])
+    now = dt_util.utcnow()
+    hass.states.async_set("event.door_ring", now.isoformat(), {"device_class": "doorbell", "event_types": ["ring"], "friendly_name": "Домофон Звонок"})
+    hass.states.async_set("event.door_motion", (now - timedelta(minutes=10)).isoformat(), {"device_class": "motion"})
+    client = await hass_client()
+    assert (await client.post("/api/hauflo/foreign", json={"notify": {"event.door_ring": True, "event.door_motion": True}})).status == 200
+    mon = {m["entityId"]: m for m in entry.runtime_data.status()["monitored"]}
+    ring = mon["event.door_ring"]
+    assert ring["problem"] is False and ring["eventClass"] == "doorbell" and dt_util.parse_datetime(ring["ring"]) == now
+    # An old press: nothing to say.
+    assert mon["event.door_motion"]["problem"] is False and "ring" not in mon["event.door_motion"]
+    # Never fired / lost: no press; lost is a no-data problem as any signal's.
+    for state, problem in (("unknown", False), ("unavailable", True), ("not a time", False)):
+        hass.states.async_set("event.door_ring", state, {"device_class": "doorbell"})
+        m = {m["entityId"]: m for m in entry.runtime_data.status()["monitored"]}["event.door_ring"]
+        assert m["problem"] is problem and "ring" not in m, state
+    # A time without a zone is not HA's: ignored.
+    hass.states.async_set("event.door_ring", "2026-11-06T10:00:00", {"device_class": "doorbell"})
+    assert "ring" not in {m["entityId"]: m for m in entry.runtime_data.status()["monitored"]}["event.door_ring"]

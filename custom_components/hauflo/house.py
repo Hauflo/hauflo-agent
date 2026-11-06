@@ -160,6 +160,12 @@ def _protected_ids(hass: HomeAssistant) -> list[str]:
     return protected_ids(hass)
 
 
+def _protected_why(hass: HomeAssistant, ids: list[str]) -> dict[str, str]:
+    from . import unknown_source  # noqa: PLC0415 — the package imports this module
+
+    return {eid: "unknown_source" for eid in ids if unknown_source(hass, eid)}
+
+
 def _rule_states(hass: HomeAssistant, admin: bool) -> dict[str, str]:
     from . import rule_states  # noqa: PLC0415 — the package imports this module
 
@@ -176,6 +182,7 @@ class HouseView(HomeAssistantView):
         user = request["hass_user"]
         data = await house(hass).load()
         mine = (data.get("favorites") or {}).get(user.id) if user else None
+        protected = _protected_ids(hass)
         out: dict[str, Any] = {
             "service": await service_of(hass),
             "can_edit": await may_edit(hass, user),
@@ -183,7 +190,9 @@ class HouseView(HomeAssistantView):
             "favorites": mine or {"items": []},
             # What opens the house, by the agent's one rule (a relay under a «Switch as X» gate too): the cards never
             # give it a one-tap button (red team L3).
-            "protected": _protected_ids(hass),
+            "protected": protected,
+            # Why, where it isn't the entity's plain kind: «unknown_source» — a YAML switch / script named as a gate (N6).
+            "protected_why": _protected_why(hass, protected),
             # What a Hauflo rule watches, by entity: «ok» / «fired» / «off» — the tile's bell (rules.py, notify.py).
             "rules": _rule_states(hass, bool(user and user.is_admin)),
         }

@@ -1050,6 +1050,12 @@
   {
    "file": "index.ts",
    "kind": "ws",
+   "call": "get_config",
+   "params": {}
+  },
+  {
+   "file": "index.ts",
+   "kind": "ws",
    "call": "knx/get_knx_project",
    "params": {}
   },

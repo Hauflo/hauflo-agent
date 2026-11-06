@@ -196,3 +196,124 @@ async def test_l3_one_protected_rule_for_helpers_and_the_card(hass: HomeAssistan
     # Unreadable helpers never break the rule for the rest.
     with patch.object(hauflo.er, "async_entries_for_config_entry", side_effect=RuntimeError):
         assert hauflo._helper_links(hass) == [] and hauflo._protected(hass, "lock.door")
+
+
+async def test_n7_a_write_goes_only_by_the_plan_it_names(hass: HomeAssistant, hass_client, house) -> None:  # noqa: F811
+    """N7: deploy B's live plan holding the same item never lets deploy A's write through once A's plan is gone; the
+    write names its plan (`hauflo_plan`), taken off before HA sees it."""
+    agent, d, a, local = house["agent"], house["devices"], house["areas"], house["local"]
+    await _post(hass_client, {"plan": _plan(a, [d["leak"], d["hub"]], ["sensor.helper"]), "plan_id": "A"})
+    await _post(hass_client, {"plan": _plan(a, [d["leak"]]), "plan_id": "B"})
+    send = Send(agent)
+    with Out(agent) as out, patch.object(hauflo.backup, "fresh", return_value=True):
+        await send(type=D, device_id=d["leak"], name_by_user="Протечка", hauflo_plan="B")
+    assert _errors(out) == [] and local.sent[-1] == {"id": local.sent[-1]["id"], "type": D, "device_id": d["leak"], "name_by_user": "Протечка"}
+    plans = foreign.active_plans(hass)
+    assert "B" not in plans and d["leak"] in plans["A"]["devices"]  # consumed from the plan it named, not the oldest
+    with Out(agent) as out, patch.object(hauflo.backup, "fresh", return_value=True):
+        await send(type=D, device_id=d["hub"], name_by_user="Хаб", hauflo_plan="B")  # B is gone (written through)
+        await send(type=E, entity_id="sensor.helper", name="Счётчик", hauflo_plan="nobody")  # never sent
+        await send(type=E, entity_id="sensor.helper", name="Счётчик", hauflo_plan="a b")  # not an id
+        await send(type=E, entity_id="sensor.helper", name="Счётчик", hauflo_plan=5)
+    assert [e["message"] for e in _errors(out)] == ["Hauflo agent: not allowed (plan_gone)"] * 4
+    # A live plan named, the item not in it.
+    await _post(hass_client, {"plan": _plan(a, [d["outside"]]), "plan_id": "C"})
+    with Out(agent) as out, patch.object(hauflo.backup, "fresh", return_value=True):
+        await send(type=D, device_id=d["hub"], name_by_user="Хаб", hauflo_plan="C")
+    assert [e["message"] for e in _errors(out)] == ["Hauflo agent: not allowed (not_in_plan)"]
+    # A expired: its write is refused although C is live (was: any live plan let it through).
+    foreign.active_plans(hass)["A"]["at"] -= foreign.PLAN_TTL + 1
+    with Out(agent) as out, patch.object(hauflo.backup, "fresh", return_value=True):
+        await send(type=D, device_id=d["hub"], name_by_user="Хаб", hauflo_plan="A")
+        await send(type=D, device_id=d["hub"], area_id=a["Hall"], hauflo_plan="A")  # never the click's placing either
+    assert [e["message"] for e in _errors(out)] == ["Hauflo agent: not allowed (plan_gone)"] * 2
+    # A backend from before (no id on the write): the old way, any live plan holding it.
+    with Out(agent) as out, patch.object(hauflo.backup, "fresh", return_value=True):
+        await send(type=D, device_id=d["outside"], name_by_user="Снаружи")
+    assert _errors(out) == [] and "C" not in foreign.active_plans(hass)
+
+
+async def test_n7_the_feature_is_said(hass: HomeAssistant, hass_client, house) -> None:  # noqa: F811
+    res = await (await hass_client()).get("/api/hauflo/foreign")
+    assert foreign.WRITE_PLAN_FEATURE in (await res.json())["features"]
+    assert foreign.WRITE_PLAN_FEATURE in hauflo.FEATURES
+
+
+async def test_n6_a_yaml_helper_over_a_gate_is_protected_source_unknown(hass: HomeAssistant, hass_client, house) -> None:  # noqa: F811
+    """Red team N6: a YAML template switch / script over a gate or lock has no config entry — what it operates can't be
+    read. By its class or its name (signalWords gateOpener, class words, no makers) it counts as one: protected, with
+    the reason «unknown_source» for the card; a UI one and a plain YAML one are judged as before."""
+    from homeassistant.helpers import entity_registry as er
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    reg = er.async_get(hass)
+    # YAML (no config entry): with a unique_id (in the registry) and without (state only).
+    reg.async_get_or_create("switch", "template", "y-gate", suggested_object_id="vorota_yaml", original_name="Откатные ворота")
+    hass.states.async_set("switch.vorota_yaml", "off", {"friendly_name": "Откатные ворота"})
+    hass.states.async_set("switch.front_gate", "off")
+    hass.states.async_set("script.open_wicket", "off", {"friendly_name": "Открыть калитку"})
+    hass.states.async_set("button.strike", "unknown", {"friendly_name": "Door opener"})
+    hass.states.async_set("cover.shed", "closed", {"friendly_name": "Сарай", "device_class": "garage"})
+    hass.states.async_set("switch.electro", "off", {"friendly_name": "Электрозамок входной"})
+    # Not a gate: the words inside others, a YAML lamp, a light.
+    for eid, name in (("switch.povorot", "Поворотный кран"), ("switch.yard_light", "Свет у гаража"), ("script.navigate", "navigate"), ("switch.zamknut", "Замкнуть контур"), ("light.vorota", "Подсветка ворот")):
+        hass.states.async_set(eid, "off", {"friendly_name": name})
+    # A UI helper / an integration's switch named so: it has a config entry — judged by what it operates, not by name.
+    e = MockConfigEntry(domain="zha")
+    e.add_to_hass(hass)
+    reg.async_get_or_create("switch", "zha", "z-gate", config_entry=e, suggested_object_id="gate_zha")
+    hass.states.async_set("switch.gate_zha", "off", {"friendly_name": "Ворота"})
+
+    yes = ("switch.vorota_yaml", "switch.front_gate", "script.open_wicket", "button.strike", "cover.shed", "switch.electro")
+    no = ("switch.povorot", "switch.yard_light", "script.navigate", "switch.zamknut", "light.vorota", "switch.gate_zha")
+    for eid in yes:
+        assert hauflo.unknown_source(hass, eid) and hauflo._protected(hass, eid), eid
+    for eid in no:
+        assert not hauflo._protected(hass, eid), eid
+    assert not hauflo.unknown_source(None, "switch.front_gate") and not hauflo.unknown_source(hass, 5)
+    body = await (await (await hass_client()).get("/api/hauflo/house")).json()
+    assert set(yes) <= set(body["protected"]) and not set(no) & set(body["protected"])
+    assert body["protected_why"] == dict.fromkeys(yes, "unknown_source")
+    # No registry (HA starting): the state alone still decides.
+    with patch.object(hauflo.er, "async_get", side_effect=RuntimeError):
+        assert hauflo.unknown_source(hass, "switch.front_gate") and not hauflo.unknown_source(hass, "switch.povorot")
+
+
+async def test_n6_a_ui_helper_naming_no_entity_is_protected_source_unknown(hass: HomeAssistant, hass_client, house) -> None:  # noqa: F811
+    """Acceptance 3 (06.11): a UI template switch «Ворота гаража» with empty actions, or one whose actions call a
+    service naming no entity (rest_command, shell_command, mqtt.publish), has a config entry but nothing readable
+    about what it operates — the same unknown source as a YAML one: protected, why «unknown_source». A UI helper
+    whose actions name an entity is still judged by that entity; a plain-named one with empty actions is not a gate."""
+    from homeassistant.helpers import entity_registry as er
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    reg = er.async_get(hass)
+
+    def helper(domain: str, options: dict, object_id: str, name: str, platform: str = "template", kind: str = "switch") -> str:
+        e = MockConfigEntry(domain=domain, options=options)
+        e.add_to_hass(hass)
+        reg.async_get_or_create(kind, platform, f"u-{object_id}", config_entry=e, suggested_object_id=object_id, original_name=name)
+        eid = f"{kind}.{object_id}"
+        hass.states.async_set(eid, "off", {"friendly_name": name})
+        return eid
+
+    hass.states.async_set("light.yard", "off", {"friendly_name": "Двор"})
+    empty = helper("template", {"name": "Ворота гаража шаблон", "template_type": "switch", "turn_on": [], "turn_off": [], "value_template": "{{ is_state('input_boolean.x', 'on') }}"}, "vorota_shablon", "Ворота гаража шаблон")
+    service = helper("template", {"name": "Калитка", "template_type": "switch", "turn_on": [{"action": "rest_command.open", "data": {"code": "1"}}], "turn_off": []}, "kalitka_rest", "Калитка")
+    button = helper("template", {"name": "Gate opener", "template_type": "button", "press": [{"action": "mqtt.publish", "data": {"topic": "gate/cmd", "payload": "open"}}]}, "gate_mqtt", "Gate opener", kind="button")
+    over_light = helper("template", {"name": "Ворота подсветка", "template_type": "switch", "turn_on": [{"action": "light.turn_on", "target": {"entity_id": "light.yard"}}], "turn_off": []}, "vorota_light", "Ворота подсветка")
+    plain = helper("template", {"name": "Полив", "template_type": "switch", "turn_on": [], "turn_off": []}, "poliv", "Полив")
+    other = helper("zha", {}, "gate_zha2", "Ворота", platform="zha")
+
+    yes = (empty, service, button)
+    no = (over_light, plain, other)
+    for eid in yes:
+        assert hauflo.unknown_source(hass, eid) and hauflo._protected(hass, eid), eid
+    for eid in no:
+        assert not hauflo.unknown_source(hass, eid) and not hauflo._protected(hass, eid), eid
+    body = await (await (await hass_client()).get("/api/hauflo/house")).json()
+    assert set(yes) <= set(body["protected"]) and not set(no) & set(body["protected"])
+    assert {k: v for k, v in body["protected_why"].items() if k in yes + no} == dict.fromkeys(yes, "unknown_source")
+    # The entry can't be read at all: as a helper naming nothing (fail closed).
+    with patch.object(hass.config_entries, "async_get_entry", side_effect=RuntimeError):
+        assert hauflo.unknown_source(hass, over_light) and not hauflo.unknown_source(hass, plain)

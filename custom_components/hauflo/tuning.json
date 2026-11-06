@@ -83,9 +83,11 @@
     "pair_timeout_s": 20,
     "unpair_timeout_s": 10,
     "knx_round_gap_s": 120,
-    "knx_round_min_reads": 3
+    "knx_round_min_reads": 3,
+    "event_recent_s": 90
   },
   "ownership": {
+    "gate_words": ["(?<!\\p{L})ворот\\p{L}*", "(?<!\\p{L})калитк\\p{L}*", "(?<!\\p{L})шлагбаум\\p{L}*", "(?<!\\p{L})(электро)?замо?к(?!\\p{L})", "(?<!\\p{L})(электро)?замк[аеиоу]\\p{L}*", "\\bgates?\\b", "\\bgarage\\s*doors?\\b", "\\bbarriers?\\b", "\\bwickets?\\b", "\\b(un)?lock(s|ed)?\\b", "\\bdoor\\s*(opener|strike|release)\\b"],
     "sync_delay_s": 20,
     "protect_max": 500,
     "foreign_max": 2000,

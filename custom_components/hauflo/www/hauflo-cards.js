@@ -354,6 +354,10 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
       return this.data;
     },
   };
+  /** N5: the agent is there and hasn't said what it protects yet (the first frame, or its answer failed): what could be
+   * protected counts as protected — a tap asks «Точно?» / waits for the answer, never goes unguarded. Without the agent
+   * (`HOUSE.off`) the card's own rule by state alone. */
+  const houseUnknown = (h) => !HOUSE.data && !HOUSE.off && !!h?.callApi;
   // A Hauflo rule on an entity (agent rules.py / notify.py via HOUSE.data.rules[entity_id]): a bell on its tile, in the
   // colour of the state — «ok» (the rule watches it), «fired» (it triggered now), «off» (the rule is switched off). One
   // look for every tile of an entity (hauflo-entity's badge, the room's reading / status tiles); none without a rule.
@@ -1003,7 +1007,7 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
   /** What opens the house or the water is never one tap on a tile (tester 03.11; HA's lock tile opens its dialog, Apple
    * Home asks before it unlocks): the first tap shows «Точно? …» on the tile, a second within 4 s does it. Locking a door
    * or closing a gate is never asked. The question, or "" when the tap may go at once. */
-  const riskAsk = (s) => {
+  const riskAsk = (s, h) => {
     if (!s || nd(s)) return "";
     const d = s.entity_id.split(".")[0];
     if (d === "lock") return s.state === "locked" ? "Точно? Отпереть" : "";
@@ -1011,12 +1015,13 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
     if (d === "siren") return s.state === "on" ? "" : "Точно? Включить";
     if (d === "cover" && ["gate", "garage", "door"].includes(s.attributes.device_class)) return ["closed", "closing"].includes(s.state) ? "Точно? Открыть" : "";
     // A relay the agent protects (under a «Switch as X» gate, a template gate; red team L3): its «on» opens the same.
-    if ((HOUSE.data?.protected || []).includes(s.entity_id)) return d === "cover" ? (["closed", "closing"].includes(s.state) ? "Точно? Открыть" : "") : s.state === "on" ? "" : "Точно? Включить";
+    if (houseUnknown(h) || (HOUSE.data?.protected || []).includes(s.entity_id)) return d === "cover" ? (["closed", "closing"].includes(s.state) ? "Точно? Открыть" : "") : s.state === "on" ? "" : "Точно? Включить";
     return "";
   };
   /** True: the tap goes. False: it asked — the card redraws, its tile says `riskWord(card, id)` for 4 s. */
   const riskTap = (card, id) => {
-    const q = riskAsk(st(card._hass, id));
+    HOUSE.get(card);
+    const q = riskAsk(st(card._hass, id), card._hass);
     const again = card._risk?.id === id && card._risk.until > Date.now();
     clearTimeout(card._riskT);
     if (!q || again) {
@@ -3323,7 +3328,7 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
 ${headline.replace(/<div class="hl( [a-z]+)?"/, (m) => `${m} role="button" tabindex="0" data-chk aria-haspopup="dialog"`)}${this.favHtml()}
 <div class="f">${tmin !== undefined ? `<div><span class="caps">В комнатах</span><b>${tmin === tmax ? `${fmt(tmin)}°` : `${fmt(Math.floor(tmin))}–${fmt(Math.ceil(tmax))}°`}</b></div>` : ""}
 ${hum !== undefined ? `<div><span class="caps">Влажность</span><b>${fmt(hum)}\u00a0%</b></div>` : ""}
-<div><span class="caps">Свет</span><b>${lightsUnknown ? (lightsFresh ? "обновляется…" : "нет данных") : litRooms ? `${lamps} ${lamps % 10 === 1 && lamps % 100 !== 11 ? "лампа" : [2, 3, 4].includes(lamps % 10) && ![12, 13, 14].includes(lamps % 100) ? "лампы" : "ламп"} в ${litRooms} ${litRooms === 1 ? "комнате" : "комнатах"}${outerOn.length ? ` · ${esc(nameOf(st(h, outerOn[0]), outerOn[0]))}${outerOn.length > 1 ? ` +${outerOn.length - 1}` : ""}` : ""}` : outerOn.length ? `включён: ${esc(nameOf(st(h, outerOn[0]), outerOn[0]))}${outerOn.length > 1 ? ` +${outerOn.length - 1}` : ""}` : lightsDeaf ? (lightsFresh ? "выключен · обновляется…" : `выключен · ${lightsDeaf} без данных`) : "выключен"}</b></div>
+${lightIds.length ? `<div><span class="caps">Свет</span><b>${lightsUnknown ? (lightsFresh ? "обновляется…" : "нет данных") : litRooms ? `${lamps} ${lamps % 10 === 1 && lamps % 100 !== 11 ? "лампа" : [2, 3, 4].includes(lamps % 10) && ![12, 13, 14].includes(lamps % 100) ? "лампы" : "ламп"} в ${litRooms} ${litRooms === 1 ? "комнате" : "комнатах"}${outerOn.length ? ` · ${esc(nameOf(st(h, outerOn[0]), outerOn[0]))}${outerOn.length > 1 ? ` +${outerOn.length - 1}` : ""}` : ""}` : outerOn.length ? `включён: ${esc(nameOf(st(h, outerOn[0]), outerOn[0]))}${outerOn.length > 1 ? ` +${outerOn.length - 1}` : ""}` : lightsDeaf ? (lightsFresh ? "выключен · обновляется…" : `выключен · ${lightsDeaf} без данных`) : "выключен"}</b></div>` : ""}
 ${ok && !offline.length && waiting.length && waiting.length < climates.length ? `<div><span class="caps">Климат</span><b>${waiting.length} из ${climates.length} без данных</b></div>` : ""}
 ${(c.alarms || []).length && ok ? `<div><span class="caps">Датчики</span><b>${deaf.length ? `<span class="dot" style="background:var(--ink2)"></span>${deaf.length} ${sensorsWord(deaf.length)} без связи` : wetOther.length + problemOn.length ? `<span class="dot" style="background:var(--amber)"></span>неисправность: ${wetOther.length + problemOn.length}` : "в норме"}</b></div>` : ""}</div></div>`;
     }
@@ -4559,7 +4564,8 @@ ${m.dom === "cover" && !m.dimmable ? `<div class="ud3">${coverButtons(coverSet({
             openTile(this, id); // a number has no on / off: a tap opens its control
           } else if (m.dom === "media_player") {
             const f = num(m.s.attributes.supported_features) || 0;
-            if (!m.on) call(this._hass, "media_player", "turn_on", { entity_id: id });
+            if (!isPlayer(m.s)) openTile(this, id); // no player bit (a phone line): nothing to switch, the hold sheet shows what it has
+            else if (!m.on) call(this._hass, "media_player", "turn_on", { entity_id: id });
             else if (f & (1 | 16384)) call(this._hass, "media_player", "media_play_pause", { entity_id: id });
             else call(this._hass, "homeassistant", "toggle", { entity_id: id });
           } else if (m.dom === "cover") {
@@ -5498,6 +5504,10 @@ ${hidden ? `<button class="more" data-more="1">${coversFolded ? `Каждая о
   // Presets / favourites: the WS browse_media (BROWSE_MEDIA 131072), the first level called presets / favourites.
   const MP_GROUPING = 524288;
   const MP_BROWSE = 131072;
+  // The player bits (foreignRules.json player.featureBits: pause 1, volume 4, turn on 128, turn off 256, source 2048, play
+  // 16384): a media_player with none of them (a phone line: play_media / stop / browse only) is no player — it is a device.
+  const MP_PLAYER = 1 | 4 | 128 | 256 | 2048 | 16384;
+  const isPlayer = (s) => s?.attributes?.supported_features === undefined || s.attributes.supported_features === null || (Number(s.attributes.supported_features) & MP_PLAYER) !== 0;
   const mpFlag = (s, bit) => ((num(s?.attributes?.supported_features) || 0) & bit) !== 0;
   /** The group of a player: its members, the leader first; empty when it plays alone or cannot group. */
   const groupOf = (s) => {
@@ -6199,12 +6209,36 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
     if ((HOUSE.data?.protected || []).includes(s.entity_id)) return true;
     return ["lock", "valve", "alarm_control_panel", "siren", "camera"].includes(d) || (d === "cover" && ["gate", "garage", "door"].includes(s.attributes.device_class));
   };
+  /** N5: a one-tap row of the room goes only once the agent has said it isn't protected — before its answer the tap waits
+   * for it (3 s at most); no answer → refused with «Не получилось — ещё раз», never sent unguarded. */
+  const guardedGo = async (card, id, go) => {
+    const h = card._hass;
+    if (houseUnknown(h)) await Promise.race([HOUSE.ready(h).catch(() => null), new Promise((r) => setTimeout(r, 3000))]);
+    if (houseUnknown(card._hass)) {
+      card.dispatchEvent(new CustomEvent("hass-notification", { bubbles: true, composed: true, detail: { message: tr("Не получилось — ещё раз") } }));
+      return;
+    }
+    if (!AREA_GUARDED(card._hass.states[id])) go();
+  };
   // A text sensor that reports a fault («Ошибок нет» / «E04 перегрев»): a chip, red unless it says all is well.
   const FAULT_NAME = /ошибк|авари|неисправ|угроз|fault|error|failure|alarm|warning|threat/i;
   // Of those, a warning (amber), not an alarm (red).
   const WARN_NAME = /угроз|предупрежд|warning|threat/i;
   const FAULT_OK = /^(|ok|ок|норма|в норме|нет|none|no errors?|no faults?|ошибок нет|нет ошибок|аварий нет|0|false|off|normal)$/i;
   const LL = (ru, en) => (LANG === "ru" ? ru : en);
+  /** An event entity's state is the time of its last event (a doorbell press, a button, a motion event): «сегодня 14:32»,
+   * «вчера 09:05», «5 нояб. 18:40»; none yet — «не было» (HA's «unknown» is that, not offline). The room's status tile and
+   * hauflo-devices' pill say the same. */
+  const eventWhen = (s) => {
+    if (s.state === "unavailable") return [LL("нет связи", "offline"), "nolink"];
+    const t = Date.parse(s.state);
+    if (!Number.isFinite(t)) return [LL("не было", "none yet"), "val"];
+    const d = new Date(t);
+    const day = (x) => Math.floor((x.getTime() - x.getTimezoneOffset() * 60000) / 864e5);
+    const ago = day(new Date()) - day(d);
+    const when = ago === 0 ? LL("сегодня", "today") : ago === 1 ? LL("вчера", "yesterday") : d.toLocaleDateString(LANG === "ru" ? "ru-RU" : "en-GB", { day: "numeric", month: "short" });
+    return [`${when} ${hhmm(d)}`, "val"];
+  };
   // Russian plural by the number: 1 проверка, 2 проверки, 5 проверок, 21 проверка.
   const plural = (n, one, few, many) => (n % 10 === 1 && n % 100 !== 11 ? one : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? few : many);
   // п.57: a role from HA's own labels. A label `hauflo_role_<role>` on an entity (first) or on its device says where this
@@ -6673,16 +6707,8 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
       if (d === "lock" && !nd(s)) return [s.state === "locked" ? "заперт" : s.state === "unlocked" ? "не заперт" : s.state, s.state === "locked" ? "ok" : "warn"];
       return super.word(s);
     }
-    /** An event entity's state is the time of its last event: «сегодня 14:32», «вчера 09:05», «5 нояб. 18:40»; none yet — «не было». */
     eventWord(s) {
-      if (s.state === "unavailable") return [LL("нет связи", "offline"), "nolink"];
-      const t = Date.parse(s.state);
-      if (!Number.isFinite(t)) return [LL("не было", "none yet"), "val"];
-      const d = new Date(t);
-      const day = (x) => Math.floor((x.getTime() - x.getTimezoneOffset() * 60000) / 864e5);
-      const ago = day(new Date()) - day(d);
-      const when = ago === 0 ? LL("сегодня", "today") : ago === 1 ? LL("вчера", "yesterday") : d.toLocaleDateString(LANG === "ru" ? "ru-RU" : "en-GB", { day: "numeric", month: "short" });
-      return [`${when} ${hhmm(d)}`, "val"];
+      return eventWhen(s);
     }
     /** A check of a device, not a thing it measures (п.63): a diagnostic, a problem / safety / battery / link / tamper,
      * a fault by its name («Авария», «Ошибка», «Угроза», «Alarm», «Warning»…), a boiler's «Ошибок нет». A leak, a door,
@@ -6720,7 +6746,8 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
       // a weather a reading, a lawn mower / a text a device pill.
       if (d === "lock" || d === "alarm_control_panel" || d === "siren") return "security";
       if (d === "camera" || d === "image") return "camera";
-      if (d === "media_player" || d === "remote") return "media";
+      if (d === "media_player") return isPlayer(s) ? "media" : "devices";
+      if (d === "remote") return "media";
       if (d === "weather") return "values";
       if (["vacuum", "valve", "lawn_mower", "text"].includes(d)) return "devices";
       if (d === "event") return "status";
@@ -6893,9 +6920,10 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
       const d = id.split(".")[0];
       const m = DEV[d] || { icon: "hauflo:info", word: haState, tap: null };
       const tone = m.tone ? m.tone(s) : "";
-      const on = !tone && !nd(s) && (m.on ? m.on(s) : s.state === "on");
+      const un = m.stamp ? s.state === "unavailable" : nd(s);
+      const on = !tone && !un && (m.on ? m.on(s) : s.state === "on");
       const icon = s.attributes.icon || (m.icon === "hauflo:info" ? SENSOR_ICON[s.attributes.device_class] || AREA_ICON[d] : "") || m.icon;
-      return `<div class="tg${on ? " on" : ""}${tone ? ` ${tone}` : ""}${nd(s) ? " un" : ""}" data-info="${esc(id)}" role="button" tabindex="0"><ha-icon icon="${esc(icon)}"></ha-icon><div class="tx"><div class="nm">${esc(this.label(id))}</div><div class="w">${esc(nd(s) ? LL("нет связи", "offline") : m.word(s, this.label(id)))}</div></div></div>`;
+      return `<div class="tg${on ? " on" : ""}${tone ? ` ${tone}` : ""}${un ? " un" : ""}" data-info="${esc(id)}" role="button" tabindex="0"><ha-icon icon="${esc(icon)}"></ha-icon><div class="tx"><div class="nm">${esc(this.label(id))}</div><div class="w">${esc(un ? LL("нет связи", "offline") : m.word(s, this.label(id)))}</div></div></div>`;
     }
     statusTile(id) {
       const s = this._hass.states[id];
@@ -7176,17 +7204,21 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
       root.querySelectorAll("button[data-tog]").forEach((b) =>
         b.addEventListener("click", () => {
           const id = b.dataset.tog;
-          if (!this.member(id) || AREA_GUARDED(h().states[id])) return;
-          haptic(this);
-          call(h(), "homeassistant", "toggle", { entity_id: id });
+          if (!this.member(id)) return;
+          guardedGo(this, id, () => {
+            haptic(this);
+            call(h(), "homeassistant", "toggle", { entity_id: id });
+          });
         }),
       );
       root.querySelectorAll("button[data-cover]").forEach((b) =>
         b.addEventListener("click", () => {
           const id = b.dataset.cover;
-          if (!this.member(id) || AREA_GUARDED(h().states[id]) || !["open_cover", "close_cover", "stop_cover"].includes(b.dataset.svc)) return;
-          haptic(this);
-          call(h(), "cover", b.dataset.svc, { entity_id: id });
+          if (!this.member(id) || !["open_cover", "close_cover", "stop_cover"].includes(b.dataset.svc)) return;
+          guardedGo(this, id, () => {
+            haptic(this);
+            call(h(), "cover", b.dataset.svc, { entity_id: id });
+          });
         }),
       );
       // A button of another integration presses on a second tap within 4 s (the first one says «ещё раз»).
@@ -7463,6 +7495,9 @@ ${!vs.length && ss.length ? `<div class="hint" data-own>${LL("Кран не на
     button: { icon: "mdi:gesture-tap-button", word: (s, name = "") => (/звон|bell/i.test(name) ? "позвонить" : /калит|ворот|двер|замок|gate|door/i.test(name) ? "открыть" : "нажать"), tap: ["button", "press"], on: () => false, action: true },
     binary_sensor: { icon: "hauflo:info", word: (s) => (OPENING.includes(s.attributes.device_class) ? (s.state === "on" ? "открыто" : "закрыто") : s.state === "on" ? "сработал" : "в норме"), tap: null, tone: (s) => (s.state === "on" && ["moisture", "smoke", "gas", "problem", "safety", "carbon_monoxide"].includes(s.attributes.device_class) ? "alarm" : ""), on: (s) => s.state === "on" && !["moisture", "smoke", "gas", "problem", "safety", "carbon_monoxide"].includes(s.attributes.device_class) },
     number: { icon: "hauflo:info", word: (s) => (num(s.state) === undefined ? "нет данных" : `${fmt(num(s.state), num(s.state) % 1 ? 1 : 0)} ${unitOf(s) || (num(s.attributes.max) === 100 && num(s.attributes.min) === 0 ? "%" : "")}`.trim()), tap: null, on: () => false },
+    // An event (a doorbell press, a button, a motion event — HA's event entity): when it last fired, its class's icon; a tap — HA's
+    // dialog (its history). `stamp`: «unknown» = never fired, not offline.
+    event: { icon: "hauflo:info", word: (s) => eventWhen(s)[0], tap: null, on: () => false, stamp: true },
     sensor: { icon: "hauflo:info", word: (s) => (num(s.state) === undefined ? haState(s) : `${fmt(num(s.state), num(s.state) % 1 ? 1 : 0)} ${unitOf(s)}`.trim()), tap: null, on: () => false, tone: (s) => (s.attributes.device_class === "battery" && num(s.state) !== undefined && num(s.state) < 20 ? "warn" : "") },
   };
   // --- hauflo-acs: every AC of the house in one card (persona round 3, Dubai: 14 rooms, «turn off every AC») ---
@@ -7778,7 +7813,7 @@ button.off{min-height:40px;padding:0 14px;border-radius:20px;font:500 13px Onest
           const on = !tone && (d.on ? d.on(e.s) : e.s.state === "on");
           // A button / scene / script has no on-off state: «unknown» = never pressed yet, not offline (owner 28.10:
           // damper presets read «нет связи» until pressed). Only «unavailable» is offline; a press flashes «отправлено».
-          const un = d.action ? e.s.state === "unavailable" : nd(e.s) && !assumed(e.s);
+          const un = d.action || d.stamp ? e.s.state === "unavailable" : nd(e.s) && !assumed(e.s);
           const sent = d.action && (this._sent?.[e.entity] || 0) > Date.now();
           return `<div class="p ${on ? "on" : ""} ${tone} ${d.action ? "act" : ""} ${sent ? "sent" : ""} ${un ? "un" : ""}" data-e="${esc(e.entity)}"><ha-icon icon="${esc(e.icon || (/звон|bell/i.test(e.name || nameOf(e.s, e.entity)) ? "hauflo:doorbell" : sent ? "hauflo:check" : (d.icon === "hauflo:info" && e.s && (e.s.attributes.icon || SENSOR_ICON[e.s.attributes.device_class] || AREA_ICON[e.entity.split(".")[0]])) || d.icon))}"></ha-icon><div class="tx"><div class="nm">${esc(e.name || nameOf(e.s, e.entity))}</div><div class="w">${esc(riskWord(this, e.entity) || (assumed(e.s) ? "" : un ? "нет связи" : fault ? nameOf(fault, fault.entity_id) : sc ? scaleWord(sc) : d.word(e.s, e.name || nameOf(e.s, e.entity))))}</div></div></div>`;
         })
@@ -11008,7 +11043,7 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
     "hauflo-covers": (h) => ({ title: "Шторы", entities: ids(h, "cover", 8) }),
     "hauflo-weather": (h) => ({ entity: ids(h, "weather", 1)[0] }),
     "hauflo-air": (h) => ({ pm25: ids(h, "sensor", 1, (s) => s.attributes.device_class === "pm25")[0], co2: ids(h, "sensor", 1, (s) => s.attributes.device_class === "carbon_dioxide")[0] }),
-    "hauflo-media": (h) => ({ entity: ids(h, "media_player", 1)[0] }),
+    "hauflo-media": (h) => ({ entity: ids(h, "media_player", 1, isPlayer)[0] }),
     "hauflo-automations": () => ({}),
     "hauflo-graph": (h) => ({ entities: ids(h, "sensor", 2, (s) => s.attributes.device_class === "temperature").map((entity) => ({ entity })) }),
     "hauflo-auto": (h) => ({ entities: [...ids(h, "automation", 4), ...ids(h, "script", 2)] }),
@@ -11048,7 +11083,7 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
     const d = domainOf(s.entity_id);
     if (ONE[d]) return ONE[d];
     const v = DEV[d];
-    if (v) return { icon: () => (v.icon === "hauflo:info" && (SENSOR_ICON[s.attributes.device_class] || AREA_ICON[d])) || v.icon, tone: domTone(d), word: (x) => v.word(x, nameOf(x, x.entity_id)), on: v.on, alarm: (x) => v.tone?.(x) === "alarm", warn: (x) => v.tone?.(x) === "warn", tap: v.tap };
+    if (v) return { icon: () => (v.icon === "hauflo:info" && (SENSOR_ICON[s.attributes.device_class] || AREA_ICON[d])) || v.icon, tone: domTone(d), word: (x) => v.word(x, nameOf(x, x.entity_id)), on: v.on, alarm: (x) => v.tone?.(x) === "alarm", warn: (x) => v.tone?.(x) === "warn", tap: v.tap, action: !!(v.action || v.stamp) };
     return { icon: () => s.attributes.icon || SENSOR_ICON[s.attributes.device_class] || AREA_ICON[d] || "hauflo:info", tone: domTone(d), word: (x) => `${x.state}${unitOf(x) ? ` ${unitOf(x)}` : ""}`, on: (x) => x.state === "on", tap: null };
   };
   // What a tap / hold / double tap does when the editor set it (HA's own action format); else the domain's default.
@@ -11069,6 +11104,7 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
     // Anything newer (assist…) — HA's own handler.
     card.dispatchEvent(new CustomEvent("hass-action", { bubbles: true, composed: true, detail: { config: { entity, tap_action: a }, action: "tap" } }));
   };
+  // `k.action`: a button / an event has no on-off state — «unknown» = never pressed / never fired, not offline.
   const INFO = (s, what, k) => {
     if (what === "none") return "";
     if (what === "name") return null;
@@ -11307,7 +11343,7 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
       const ctl = this.controls(s);
       const level = k.level && c.show_level !== false && on && !ctl ? Math.max(0, Math.min(1, k.level(s))) : 0;
       const rbadge = ruleBadge(this, c.entity, "rbell-badge");
-      return `<div class="glass e${rbadge ? " hasrl" : ""}${ctl ? " hasctl" : ""}${c.layout === "vertical" ? " v" : ""}${on ? " on" : ""}${alarm ? " alarm" : ""}${warn ? " warn" : ""}${nd(s) ? " un" : ""}" style="--acc:${acc};--accGlow:${glow}" role="button" tabindex="0" aria-label="${esc(name)}"><div class="glow"></div>${icon}<div class="tx">${p1 === "" ? "" : `<div class="p1">${esc(p1 ?? name)}</div>`}${p2 === "" ? "" : `<div class="p2">${esc(p2 ?? name)}</div>`}</div>${rbadge}${level ? `<i class="lvl" style="width:${Math.round(level * 100)}%"></i>` : ""}${ctl ? `<div class="ctl">${ctl}</div>` : ""}</div>`;
+      return `<div class="glass e${rbadge ? " hasrl" : ""}${ctl ? " hasctl" : ""}${c.layout === "vertical" ? " v" : ""}${on ? " on" : ""}${alarm ? " alarm" : ""}${warn ? " warn" : ""}${(k.action ? s.state === "unavailable" : nd(s)) ? " un" : ""}" style="--acc:${acc};--accGlow:${glow}" role="button" tabindex="0" aria-label="${esc(name)}"><div class="glow"></div>${icon}<div class="tx">${p1 === "" ? "" : `<div class="p1">${esc(p1 ?? name)}</div>`}${p2 === "" ? "" : `<div class="p2">${esc(p2 ?? name)}</div>`}</div>${rbadge}${level ? `<i class="lvl" style="width:${Math.round(level * 100)}%"></i>` : ""}${ctl ? `<div class="ctl">${ctl}</div>` : ""}</div>`;
     }
     /** The domain's controls (CTL) unless the card turns them off; none while the entity is unavailable. */
     controls(s) {
@@ -11481,7 +11517,7 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
     "hauflo-graph": (h) => ({ hours: 24, entities: ids(h, "sensor", 2, (s) => !!s.attributes.unit_of_measurement && !isNaN(Number(s.state))) }),
     "hauflo-status": (h) => ({ entities: [...ids(h, "binary_sensor", 6, dc("problem", "connectivity", "battery", "moisture", "running", "power")), ...ids(h, "switch", 2)] }),
     "hauflo-devices": (h) => ({ entities: ["fan", "valve", "lock", "vacuum", "humidifier", "water_heater", "siren"].flatMap((d) => ids(h, d, 2)).slice(0, 8) }),
-    "hauflo-media": (h) => ({ entity: ids(h, "media_player", 1, (s) => s.state === "playing")[0] || ids(h, "media_player", 1)[0] }),
+    "hauflo-media": (h) => ({ entity: ids(h, "media_player", 1, (s) => s.state === "playing")[0] || ids(h, "media_player", 1, isPlayer)[0] }),
   });
   const STUB_EN = { Дома: "Home", Гостиная: "Living room", Свет: "Lights", Шторы: "Blinds", Кондиционеры: "Air conditioners" };
   const stubOf = (tag, hass) => {

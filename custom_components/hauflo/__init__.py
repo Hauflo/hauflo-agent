@@ -32,6 +32,7 @@ from homeassistant.helpers import area_registry as ar, device_registry as dr, en
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
+from homeassistant.util import dt as dt_util
 
 from . import automations, backup, dashmerge, daylight, foreign, guest, house, insight, issues, keep, noeffect, notify, ownership, presence, protect, ranges, retired, rules, scenes, season, servers, service, sidebar, stock, theme, timers, titles, voice
 from . import derived as dv
@@ -48,6 +49,9 @@ _LOGGER = logging.getLogger(__name__)
 KNX_ROUND_GAP = TUNING["link"]["knx_round_gap_s"]
 # Fewer unanswered reads than this say nothing about the bus (one address without a read flag).
 KNX_ROUND_MIN_READS = TUNING["link"]["knx_round_min_reads"]
+# A monitored event (a doorbell press, a button, a motion event — HA's event entity, its state = the last time it fired)
+# said once: the status carries the time while it is this recent (the status runs 2 s after a change and every minute).
+EVENT_RECENT = TUNING["link"]["event_recent_s"]
 PROBLEM_ON = {"problem", "safety", "smoke", "gas", "moisture", "battery", "heat", "cold", "carbon_monoxide", "tamper", "vibration"}
 
 
@@ -158,7 +162,7 @@ _ROUTES = [(r["id"], r["path"].split("/"), set(r["methods"])) for r in _TH["rout
 _HAUFLO_VIEWS = {(r["path"], m) for r in _TH["routes"] if r["id"] == "hauflo" for m in r["methods"]}
 _MAX_CHANNELS = 8
 # What this agent can do beyond its version (hello and status «features»): the backend gates a step on it.
-FEATURES = [foreign.FEATURE, foreign.PLAN_FEATURE]
+FEATURES = [foreign.FEATURE, foreign.PLAN_FEATURE, foreign.WRITE_PLAN_FEATURE]
 
 
 # What a registry edit may touch: Hauflo's own — KNX entities/devices, its light/cover groups and scenes
@@ -220,21 +224,62 @@ def _protected(hass: HomeAssistant | None, entity_id: Any, depth: int = 0, links
 
 
 def _self_protected(hass: HomeAssistant, entity_id: str) -> bool:
-    """Protected by what it is itself (its domain, its class, a KNX mark), not by what it holds or operates."""
-    return entity_id.startswith(_NEVER_EXPOSE) or _sticky(hass, entity_id) or _class_protected(hass, entity_id)
+    """Protected by what it is itself (its domain, its class, a KNX mark, a YAML helper named as a gate / lock), not by
+    what it holds or operates."""
+    return entity_id.startswith(_NEVER_EXPOSE) or _sticky(hass, entity_id) or _class_protected(hass, entity_id) or unknown_source(hass, entity_id)
+
+
+# What a name says opens a gate / a garage door / a wicket / a lock — tuning.json ownership.gate_words = the canon's
+# backend/src/mapping/signalWords.json gateOpener (scripts/check-signal-words.mjs keeps them equal); \p{L} is a letter, as there.
+_GATE_WORDS = TUNING["ownership"]["gate_words"]
+_GATE_NAME = re.compile("|".join(w.replace(r"\p{L}", r"[^\W\d_]") for w in _GATE_WORDS), re.IGNORECASE)
+# What can operate something by an action nobody can read: a YAML switch / cover / button / script.
+_UNKNOWN_DOMAINS = ("switch.", "cover.", "button.", "script.")
+
+
+def _recent_event(state: str, within: float) -> str | None:
+    """An event entity's state is the ISO time it last fired: that time when it is within `within` seconds of now
+    (a clock a little ahead counts), else None (unknown / unavailable / old)."""
+    at = dt_util.parse_datetime(state) if isinstance(state, str) else None
+    if at is None or at.tzinfo is None:
+        return None
+    age = (dt_util.utcnow() - at).total_seconds()
+    return dt_util.as_utc(at).isoformat() if -within <= age <= within else None
+
+
+def unknown_source(hass: HomeAssistant | None, entity_id: str) -> bool:
+    """N6: a switch / cover / button / script whose actions nobody can read — made in YAML (a template, a command line,
+    a REST one: no config entry) or a UI helper whose options name no entity (empty actions, a service call only) —
+    and whose class or name says a gate / garage door / door / lock: counted as one, the source unknown (fail closed).
+    A UI helper naming what it operates is judged by that (_helper_links); an integration's own by class / mark."""
+    if hass is None or not isinstance(entity_id, str) or not entity_id.startswith(_UNKNOWN_DOMAINS):
+        return False
+    try:
+        reg = er.async_get(hass).async_get(entity_id)
+    except Exception:  # noqa: BLE001 — no registry (a stub, HA starting): the state alone
+        reg = None
+    if reg is not None and getattr(reg, "config_entry_id", None) and _helper_operates_known(hass, reg) is not False:
+        return False
+    st = hass.states.get(entity_id) if hasattr(hass, "states") else None
+    attrs = st.attributes if st is not None else {}
+    classes = {attrs.get("device_class"), getattr(reg, "device_class", None), getattr(reg, "original_device_class", None)}
+    names = (attrs.get("friendly_name"), getattr(reg, "name", None), getattr(reg, "original_name", None), entity_id.split(".", 1)[1].replace("_", " "))
+    return bool(classes & _PROTECTED_COVERS) or any(isinstance(n, str) and _GATE_NAME.search(n) for n in names)
 
 
 _WRAPPER_PLATFORMS = {"switch_as_x"}
 # UI helpers that operate other entities: their config entry's entities and the entity ids their options act on.
 _HELPER_DOMAINS = ("switch_as_x", "template")
 _ENTITY_REF = re.compile(r"^[a-z0-9_]+\.[a-z0-9_]+$")
+_SERVICE_KEYS = frozenset({"action", "service"})
 
 
 def _option_refs(value: Any, nested: bool = False) -> set[str]:
     """Entity ids a helper's options act on: inside its action sequences / targets (a list or a mapping) — never a
     top-level template string (a state template reads an entity, it doesn't operate it)."""
     if isinstance(value, dict):
-        return set().union(*(_option_refs(v, True) for v in value.values())) if value else set()
+        # «action: rest_command.open» names a service, not an entity: what it does stays unreadable.
+        return set().union(*(_option_refs(v, True) for k, v in value.items() if k not in _SERVICE_KEYS)) if value else set()
     if isinstance(value, list):
         return set().union(*(_option_refs(v, True) for v in value)) if value else set()
     return {value} if nested and isinstance(value, str) and _ENTITY_REF.match(value) else set()
@@ -252,16 +297,38 @@ def _helper_links(hass: HomeAssistant) -> list[tuple[set[str], set[str]]]:
     for domain, entry in entries:
         with contextlib.suppress(Exception):
             wrappers = {e.entity_id for e in er.async_entries_for_config_entry(reg, entry.entry_id)}
-            opts = dict(entry.options or {})
-            if domain == "switch_as_x":
-                src = opts.get("entity_id")
-                sources = {getattr(reg.async_get(src), "entity_id", src)} if isinstance(src, str) and src else set()
-            else:
-                sources = _option_refs(opts)
-            sources = {x for x in sources if isinstance(x, str) and "." in x}
+            sources = _entry_sources(reg, domain, entry)
             if wrappers and sources:
                 out.append((wrappers, sources))
     return out
+
+
+def _entry_sources(reg: er.EntityRegistry, domain: str, entry: Any) -> set[str]:
+    """The entity ids a UI helper's config entry operates: Switch-as-X's one source, a template's action targets."""
+    opts = dict(entry.options or {})
+    if domain == "switch_as_x":
+        src = opts.get("entity_id")
+        sources = {getattr(reg.async_get(src), "entity_id", src)} if isinstance(src, str) and src else set()
+    else:
+        sources = _option_refs(opts)
+    return {x for x in sources if isinstance(x, str) and "." in x}
+
+
+def _helper_operates_known(hass: HomeAssistant, reg_entry: Any) -> bool | None:
+    """For an entity of a config entry: True when it is a UI helper (template / Switch as X) whose options name at
+    least one entity it operates (then _helper_links judges it), False when it is such a helper naming none (empty
+    actions, a service like rest_command / shell_command / mqtt.publish — what it does can't be read), None when the
+    entry is an integration's own (judged by its class, its mark, what it holds — not by its name)."""
+    try:
+        entry = hass.config_entries.async_get_entry(reg_entry.config_entry_id)
+    except Exception:  # noqa: BLE001 — not knowable: as a helper naming nothing
+        return False
+    if entry is None or entry.domain not in _HELPER_DOMAINS:
+        return None
+    try:
+        return bool(_entry_sources(er.async_get(hass), entry.domain, entry))
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def protected_ids(hass: HomeAssistant) -> list[str]:
@@ -2648,7 +2715,12 @@ class Agent:
             if s.domain == "sensor" and dc == "battery":
                 with contextlib.suppress(ValueError):
                     problem = problem or float(s.state) < 20
-            monitored.append({"entityId": eid, "name": s.name, "state": s.state, "problem": problem})
+            item = {"entityId": eid, "name": s.name, "state": s.state, "problem": problem}
+            if s.domain == "event" and (ring := _recent_event(s.state, EVENT_RECENT)):
+                # Not a problem (the site isn't in alarm for a ring): one line in Telegram per press, never a back-to-normal line.
+                item["ring"] = ring
+                item["eventClass"] = str(dc) if dc else ""
+            monitored.append(item)
         return {
             "haVersion": HA_VERSION,
             "agentVersion": VERSION,
