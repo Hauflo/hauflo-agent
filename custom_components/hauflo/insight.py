@@ -387,9 +387,10 @@ class StuckSensor(Detector):
 
 
 # The trends (predict.py) subclass Detector from here — imported once it exists.
+from .noeffect import NOEFFECT  # noqa: E402
 from .predict import TRENDS  # noqa: E402
 
-DETECTORS: tuple[type[Detector], ...] = (ClimateEffect, StuckSensor, *TRENDS)
+DETECTORS: tuple[type[Detector], ...] = (ClimateEffect, StuckSensor, *TRENDS, *NOEFFECT)
 
 
 class Insights:
@@ -405,6 +406,7 @@ class Insights:
         self.detectors: list[Detector] = [cls(self) for cls in DETECTORS]
         self.on_change: Callable[[], None] | None = None
         self.started = 0.0
+        self.not_windows: set[str] = set()  # «opening» sensors that are no windows (valve feedback): ONE list, filled by PairEffect, read by every detector
         self._listed: frozenset[str] = frozenset()
         self._unsubs: list[Callable[[], None]] = []
 
@@ -523,9 +525,10 @@ class Insights:
         area = ar.async_get(self.hass).async_get_area(area_id) if area_id else None
         return {"name": (st.attributes.get("friendly_name") if st else None) or eid, "area": area.name if area else ""}
 
-    def opening_open(self, eid: str) -> bool:
-        """A window / door of the same room is open now (a room unknown: none known open)."""
+    def opening_open(self, eid: str, ignore: set[str] | frozenset[str] = frozenset()) -> bool:
+        """A window / door of the same room is open now (a room unknown: none known open). `ignore`: entities that are
+        not windows although HA calls them «opening» (a valve's feedback sensor: Горького 3's «Клапан 2.1»)."""
         area_id = self._area_id(eid)
         if not area_id:
             return False
-        return any(s.state == STATE_ON and s.attributes.get("device_class") in OPENING and self._area_id(s.entity_id) == area_id for s in self.hass.states.async_all("binary_sensor"))
+        return any(s.state == STATE_ON and s.entity_id not in ignore and s.entity_id not in self.not_windows and s.attributes.get("device_class") in OPENING and self._area_id(s.entity_id) == area_id for s in self.hass.states.async_all("binary_sensor"))

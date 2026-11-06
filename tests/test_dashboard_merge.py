@@ -826,3 +826,55 @@ def test_twins_his_empty_page_named_as_hauflos_offered_and_dropped_only_ticked_w
     # The merge after it loses none of his other items.
     _, report = plan_and_merge(new, out, copy.deepcopy(new))
     assert report["lost"] == 0
+
+
+STYLE_PAIRS = sorted({re.sub(r"_(atelier|classic)_", "_@_", pathlib.Path(p).name) for p in glob.glob(str(pathlib.Path(__file__).parent / "fixtures/dashboards/generated/*_0.21.0_en.json"))})
+
+
+def _unsuffixed(node):
+    """Ids without the `~N` a view of another kind gets (rekey: a panel page is a sections page in the other design)."""
+    if isinstance(node, dict):
+        return {k: (re.sub(r"~\d+", "", v) if k == ID and isinstance(v, str) else _unsuffixed(v)) for k, v in node.items()}
+    return [_unsuffixed(x) for x in node] if isinstance(node, list) else node
+
+
+def _agent_save(new, live, base):
+    """What `DashboardMerge.save` does to the config the cloud sends: ids, rekey against the base, merge; the stored base is the keyed `new`."""
+    new = dashmerge.rekey(dashmerge.ensure_ids(copy.deepcopy(new)), dashmerge.unpanel(base, new))
+    merged, plan = plan_and_merge(new, live, base)
+    return merged, new, plan
+
+
+@pytest.mark.parametrize("pair", STYLE_PAIRS)
+def test_design_round_trip_keeps_the_integrators_card(pair):
+    """п.30 (04.11): Atelier → classic → Atelier (and the other way) through the agent's merge, the way the tunnel runs it.
+    His own card in a Hauflo section and his own view survive every switch; nothing is lost or in conflict; no page is
+    doubled; the way back is Hauflo's first design plus his items, ids the same but for the `~N` of a page that changed kind."""
+    d = pathlib.Path(__file__).parent / "fixtures/dashboards/generated"
+    at = json.load(open(d / pair.replace("@", "atelier")))
+    cl = json.load(open(d / pair.replace("@", "classic")))
+    mine = {"type": "entities", "title": "Мой поливочный сценарий", "entities": ["switch.garden_valve", "sensor.soil"]}
+    for first, second in ((at, cl), (cl, at)):
+        live = copy.deepcopy(first)
+        for v in live["views"]:
+            if isinstance(v.get("sections"), list) and v["sections"]:
+                v["sections"][-1].setdefault("cards", []).append(copy.deepcopy(mine))
+                break
+        live["views"].append({"title": "Сад", "path": "garden", "cards": [copy.deepcopy(mine)]})
+        base = first
+        for new in (second, first, second, first):
+            live, base, plan = _agent_save(new, live, base)
+            assert plan["conflicts"] == [] and plan["lost"] == 0
+            assert json.dumps(live, ensure_ascii=False).count("switch.garden_valve") == 2
+            paths = [v.get("path") for v in live["views"]]
+            assert len(paths) == len(set(paths))
+        no_mine = copy.deepcopy(live)
+        no_mine["views"] = [v for v in no_mine["views"] if v.get("path") != "garden"]
+        for v in no_mine["views"]:
+            for sec in v.get("sections") or []:
+                sec["cards"] = [c for c in sec.get("cards", []) if c != mine]
+            # His card whose Hauflo section the other design doesn't have waits in a section / view of its own (no id).
+            if isinstance(v.get("sections"), list):
+                v["sections"] = [sec for sec in v["sections"] if sec.get(ID) or sec.get("cards")]
+        no_mine["views"] = [v for v in no_mine["views"] if v.get(ID) or v.get("sections") or v.get("cards")]
+        assert _unsuffixed(no_mine) == _unsuffixed(dashmerge.ensure_ids(copy.deepcopy(first)))

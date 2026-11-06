@@ -147,7 +147,9 @@ async def test_allowed_writes_merge_labels_and_keep_the_old(hass: HomeAssistant,
         _apply(hass, s)
     local.sent.clear()
     with Out(agent) as out, patch.object(hauflo.backup, "fresh", return_value=True):
+        await _plan(hass, hass_client, house["plan"])  # a plan is one-shot: each deploy sends its own
         await send(type=foreign.DEVICE_UPDATE, device_id=d["leak"], labels=["hauflo_role_leaks", "hauflo_role_climate"])
+        await _plan(hass, hass_client, house["plan"])
         await send(type=foreign.DEVICE_UPDATE, device_id=d["leak"], labels=[])  # role labels off, the family's stay
     assert _errors(out) == []
     assert local.sent[0]["labels"] == ["family_tag", "hauflo_role_climate", "hauflo_role_leaks"]
@@ -241,12 +243,12 @@ async def test_no_plan_old_plan_and_backup_first(hass: HomeAssistant, hass_clien
     with Out(agent) as out, patch.object(hauflo.backup, "fresh", return_value=False):
         await send(**msg)  # a backup first: nothing kept, nothing sent
     assert _errors(out)[0]["code"] == "backup_required" and local.sent == [] and foreign.flags(hass).journal == {}
-    foreign.flags(hass).plan["at"] -= foreign.PLAN_TTL + 1  # an hour old
+    foreign.flags(hass).plans[foreign.LEGACY_PLAN]["at"] -= foreign.PLAN_TTL + 1  # idle too long
     with Out(agent) as out, patch.object(hauflo.backup, "fresh", return_value=True):
         await send(**msg)
     assert _errors(out)[0]["message"] == "Hauflo agent: not allowed (no_plan)"
     await _plan(hass, hass_client, None)  # cleared
-    assert foreign.active_plan(hass) is None
+    assert not foreign.active_plans(hass)
     # The 0.22 forms still pass with no plan: an entity hidden / named, a device in no room put in a room.
     devs = dr.async_get(hass)
     devs.async_update_device(d["hub"], area_id=None)
@@ -274,9 +276,9 @@ async def test_plan_bodies(hass: HomeAssistant, hass_client, hass_read_only_acce
         assert (await client.post("/api/hauflo/foreign", json=body)).status == 400, body
     user = await hass_client(hass_read_only_access_token)
     assert (await user.post("/api/hauflo/foreign", json={"plan": p})).status == 403
-    assert foreign.active_plan(hass) is None
+    assert not foreign.active_plans(hass)
     got = await (await client.get("/api/hauflo/foreign")).json()
-    assert got == {"notify": {}, "features": ["foreign_wizard"], "plan": False, "journal": {"devices": [], "entities": []}}
+    assert got == {"notify": {}, "features": ["foreign_wizard", "foreign_plan_id"], "plan": False, "journal": {"devices": [], "entities": []}}
 
 
 async def test_revert_puts_back_what_hauflo_wrote(hass: HomeAssistant, hass_client, house) -> None:
@@ -382,5 +384,5 @@ async def test_reads_the_wizard_needs(hass: HomeAssistant, house) -> None:
 
 
 async def test_the_agent_says_it_can(hass: HomeAssistant, house) -> None:
-    assert house["agent"].status()["features"] == ["foreign_wizard"]
+    assert house["agent"].status()["features"] == ["foreign_wizard", "foreign_plan_id"]
     assert '"features": FEATURES' in inspect.getsource(hauflo.Agent.run)  # in the hello too

@@ -82,7 +82,7 @@ async def test_names_without_control_or_bidi(hass: HomeAssistant, hass_client, h
     assert sent == [] and got == want
     # The older path (п.63.7, no plan: a name from Hauflo's list) — the same rule.
     agent = house["agent"]
-    foreign.flags(hass).plan = None
+    foreign.flags(hass).plans.clear()
     assert not hauflo._ws_allowed({"id": 1, "type": E, "entity_id": "sensor.hub_link", "name": "Hub‮"}, hass, agent.owned, agent.owned_entries)
     assert hauflo._ws_allowed({"id": 1, "type": E, "entity_id": "sensor.hub_link", "name": "Hub"}, hass, agent.owned, agent.owned_entries)
 

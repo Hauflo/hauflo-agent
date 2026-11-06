@@ -1,6 +1,18 @@
 {
  "calls": [
   {
+   "file": "agent/alarmRoutes.ts",
+   "kind": "rest",
+   "call": "GET /api/hauflo/pairs",
+   "params": {}
+  },
+  {
+   "file": "agent/alarmRoutes.ts",
+   "kind": "rest",
+   "call": "POST /api/hauflo/pairs",
+   "params": {}
+  },
+  {
    "file": "ha/alisa.ts",
    "kind": "rest",
    "call": "DELETE /api/config/config_entries/flow/{x}",
@@ -582,6 +594,12 @@
    "file": "ha/foreignDeploy.ts",
    "kind": "ws",
    "call": "get_states",
+   "params": {}
+  },
+  {
+   "file": "ha/foreignPlan.ts",
+   "kind": "rest",
+   "call": "POST /api/hauflo/foreign",
    "params": {}
   },
   {

@@ -226,3 +226,26 @@ def test_favourites_cleaned() -> None:
     assert clean_favorites({"items": [f"light.l{i}" for i in range(40)]})["items"] == [f"light.l{i}" for i in range(24)]
     assert clean_favorites({"items": [], "room": {"path": "/evil/x"}}) == {"items": []}
     assert clean_favorites({"items": 5}) is None
+
+
+async def test_rules_of_the_tile(hass: HomeAssistant, hass_client, hass_read_only_access_token, entry) -> None:
+    """«rules» of the house answer: entity → ok / fired / off for what a value rule or an alarm rule watches (the tile's bell)."""
+    agent = entry.runtime_data
+    base = {"input": {"entity_id": "sensor.t"}, "only_if": [{"entity_id": "sensor.c"}], "client": {"visible": True}}
+    agent.rules.rules = {
+        "a": {**base, "id": "a", "enabled": True},
+        "b": {**base, "id": "b", "enabled": False, "input": {"entity_id": "sensor.only_off"}, "only_if": []},
+        "c": {**base, "id": "c", "enabled": True, "input": {"entity_id": "sensor.hid"}, "only_if": [], "client": {"visible": False}},
+    }
+    agent.rules.state = {}
+    agent.rules.st("a")["active"] = True
+    agent.engine.config["rules"] = [
+        {"id": "x", "enabled": True, "sources": ["binary_sensor.leak", "binary_sensor.nodata"]},
+        {"id": "y", "enabled": False, "sources": ["binary_sensor.leak", "sensor.only_off"]},
+    ]
+    agent.engine.active = {"x|binary_sensor.leak": {"since": "t"}, "x|binary_sensor.nodata": {"since": "t", "nodata": True}}
+    admin = await hass_client()
+    got = (await (await admin.get("/api/hauflo/house")).json())["rules"]
+    assert got == {"binary_sensor.leak": "fired", "binary_sensor.nodata": "ok", "sensor.c": "fired", "sensor.hid": "ok", "sensor.only_off": "off", "sensor.t": "fired"}
+    family = await hass_client(hass_read_only_access_token)
+    assert "sensor.hid" not in (await (await family.get("/api/hauflo/house")).json())["rules"]

@@ -212,6 +212,7 @@ const HF_DATA = await (async () => {
 *{box-sizing:border-box}
 .glass{background:var(--eh-glass,var(--ha-card-background,var(--card-background-color)));box-shadow:var(--eh-edge,none),var(--eh-deep,var(--ha-card-box-shadow,none));border-radius:var(--eh-radius,var(--hf-r-lg));position:relative;overflow:hidden}
 .caps{font:500 11px/1.2 Onest,var(--ha-font-family-body),sans-serif;letter-spacing:var(--hf-caps-ls);text-transform:uppercase;color:var(--ink2)}
+.hfh{padding:var(--hf-pad);opacity:.6}.hfh p{font:400 13px/1.4 Onest,sans-serif;color:var(--ink2);margin:6px 0 0}
 .thin{font-weight:200;letter-spacing:-.05em;font-variant-numeric:tabular-nums}
 .ns.ns{display:inline-grid;gap:0;margin:0;padding:0}.ns.ns>*{grid-area:1/1;display:inline;font:inherit;color:inherit;margin:0;padding:0}.ns.ns>.gh{visibility:hidden}
 ha-icon{--mdc-icon-size:var(--hf-icon-m);display:inline-flex}
@@ -352,6 +353,22 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
       if (!this.data) throw new Error("no house settings");
       return this.data;
     },
+  };
+  // A Hauflo rule on an entity (agent rules.py / notify.py via HOUSE.data.rules[entity_id]): a bell on its tile, in the
+  // colour of the state — «ok» (the rule watches it), «fired» (it triggered now), «off» (the rule is switched off). One
+  // look for every tile of an entity (hauflo-entity's badge, the room's reading / status tiles); none without a rule.
+  const RULE_ICON = { ok: "mdi:bell-outline", fired: "mdi:bell-ring-outline", off: "mdi:bell-off-outline" };
+  const RULE_WORD = { ok: "правило", fired: "сработало", off: "правило выкл" };
+  const RULE_CSS = `.rbell{--rc:var(--mintT);display:grid;place-items:center;color:var(--rc);flex:0 0 auto}.rbell.fired{--rc:var(--alertT)}.rbell.off{--rc:var(--ink3)}
+.rbell-badge{position:absolute;top:8px;right:8px;width:24px;height:24px;border-radius:var(--hf-r-sm);background:color-mix(in srgb,var(--rc) 16%,transparent);z-index:2}.rbell-badge ha-icon{--mdc-icon-size:var(--hf-icon-s)}.e.hasrl:not(.v) .tx{padding-right:30px}
+.rbell-mark{width:18px;height:18px;border-radius:var(--hf-r-sm);background:color-mix(in srgb,var(--rc) 16%,transparent)}.rbell-mark ha-icon{--mdc-icon-size:14px;color:var(--rc)}`;
+  const ruleOf = (card, id) => {
+    const r = HOUSE.get(card)?.rules?.[id];
+    return Object.hasOwn(RULE_ICON, r) ? r : "";
+  };
+  const ruleBadge = (card, id, cls) => {
+    const r = ruleOf(card, id);
+    return r ? `<span class="rbell ${cls} ${r}" role="img" aria-label="${esc(tr(RULE_WORD[r]))}" title="${esc(tr(RULE_WORD[r]))}"><ha-icon icon="${RULE_ICON[r]}"></ha-icon></span>` : "";
   };
   /** May this person change the house's settings: the agent's answer; before it (or without the agent) — HA admins. */
   const canEdit = (h) => (HOUSE.data ? !!HOUSE.data.can_edit : !!h?.user?.is_admin);
@@ -561,6 +578,7 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
     "пол сейчас": "floor now", "пол": "floor", "тёплый пол": "floor heating", "климат": "climate", "Все ждут": "All idle", "Греет": "Heating", "Греет · клапаны открыты": "Heating · valves open", "Греет · клапан открыт": "Heating · valve open", "Нагрев · клапаны открыты": "Heating · valves open", "Нагрев · клапан открыт": "Heating · valve open", "клапан открыт": "valve open", "клапан закрыт": "valve closed", "греет": "heating", "держит": "holding", "поддерживает": "keeping", "Сейчас не греют": "Not heating now", "сейчас": "now", "Пол": "Floor", "В комнате": "Room",
     "Состояние": "Status", "Управление": "Controls", "Настройки": "Settings", "охлаждает": "cooling", "осушает": "drying", "вентилирует": "ventilating", "Электро": "Electric", "Тепловой насос": "Heat pump", "Мощность": "Performance",
   };
+  Object.assign(EN, { "правило": "rule", "сработало": "triggered", "правило выкл": "rule off" });
   // Phrases with numbers / declensions (whole text node).
   const EN_RX = [
     [/^включён: /, "on: "],
@@ -992,6 +1010,8 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
     if (d === "valve") return s.state === "open" ? "Точно? Закрыть" : "Точно? Открыть";
     if (d === "siren") return s.state === "on" ? "" : "Точно? Включить";
     if (d === "cover" && ["gate", "garage", "door"].includes(s.attributes.device_class)) return ["closed", "closing"].includes(s.state) ? "Точно? Открыть" : "";
+    // A relay the agent protects (under a «Switch as X» gate, a template gate; red team L3): its «on» opens the same.
+    if ((HOUSE.data?.protected || []).includes(s.entity_id)) return d === "cover" ? (["closed", "closing"].includes(s.state) ? "Точно? Открыть" : "") : s.state === "on" ? "" : "Точно? Включить";
     return "";
   };
   /** True: the tap goes. False: it asked — the card redraws, its tile says `riskWord(card, id)` for 4 s. */
@@ -1071,6 +1091,16 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
   const navigate = (path) => {
     history.pushState(null, "", path);
     window.dispatchEvent(new CustomEvent("location-changed", { detail: { replace: false } }));
+  };
+  /** Domains HA's more-info shows no history for: DOMAINS_MORE_INFO_NO_HISTORY in frontend src/dialogs/more-info/const.ts. */
+  const NO_HISTORY = ["camera", "configurator"];
+  /** HA's computeShowHistoryComponent: the `history` component is loaded (no recorder — no /history panel) and the domain is not excluded. */
+  const hasHistory = (h, id) => typeof id === "string" && id.includes(".") && !!h?.config?.components?.includes("history") && !NO_HISTORY.includes(id.split(".")[0]);
+  /** HA's History panel for these entities from the start of today; no end_date — the panel itself ends at «now». */
+  const historyPath = (ids) => {
+    const now = new Date();
+    const from = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    return `/history?entity_id=${ids.map(encodeURIComponent).join(",")}&start_date=${encodeURIComponent(from.toISOString())}`;
   };
   const haptic = (el, type = "light") => el.dispatchEvent(new CustomEvent("haptic", { detail: type, bubbles: true, composed: true }));
   /** A thermostat never opens HA's own dialog (the round dial, «Предуст… Нет»; owner 04.11, item 34): every path that asks for
@@ -2988,7 +3018,12 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
       // A size set in HA's grid: the card fills its cell and never draws over the next card (stage 5, item 5).
       this.toggleAttribute("fit", fixedRows(this._config) !== undefined && !this._config.panel);
       orderApply(this);
-      const html = `<style>${TZ(CSS + (this.css ? this.css() : ""))}</style>${TZ(this.render(), false)}`;
+      this._hfHid = false;
+      let body = this.render();
+      // HA's edit mode (preview): a card hidden for now stays visible to whoever edits — an empty grid slot said
+      // nothing (п.70: the room's alert before «Сцены»); HA does the same for its cards hidden by conditions.
+      if (this._hfHid && this._hfPreview && !body) body = `<div class="glass hfh"><span class="caps">${this.hiddenName() || ""}</span><p>${LL("Скрыто, пока нечего показать", "Hidden while there's nothing to show")}</p></div>`;
+      const html = `<style>${TZ(CSS + (this.css ? this.css() : ""))}</style>${TZ(body, false)}`;
       // A state update that changes nothing on the card (a thermostat repeating its reading) leaves it alone.
       // A forced render (after a drag, a tab) always goes: the DOM may have been changed by hand.
       if (!forced && html === this._html) return;
@@ -3030,8 +3065,24 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
         this._update();
       } else orderAfter(this);
     }
+    /** HA's edit mode and its card previews (hui-card sets it): what hides itself shows a placeholder there. */
+    get preview() {
+      return !!this._hfPreview;
+    }
+    set preview(v) {
+      if (!!v === !!this._hfPreview) return;
+      this._hfPreview = !!v;
+      this._sig = "";
+      this._update();
+    }
+    /** The placeholder's caption (HTML) in edit mode. */
+    hiddenName() {
+      return esc(this._config?.title || "");
+    }
     /** Nothing to show (scenes that are in their blocks): the card and HA's wrapper around it take no room. */
     hideCard(hide) {
+      this._hfHid = hide;
+      if (this._hfPreview) hide = false;
       // HA's own way (its «hide when empty» cards): `hidden` on the card and «card-visibility-changed» to its wrapper,
       // which hides itself (and an empty section) and shows again on the same event.
       if (this.hidden === hide) return;
@@ -3564,6 +3615,9 @@ ${row(k.lightsDeaf.length ? true : !k.lights.length ? null : false, LL("Свет
   // No «active scene»: a scene is a moment, not a state — touch one group and it isn't that scene any
   // more (owner 2026-10-25: «Сейчас: Утро» was a fake). A pressed button glows for a moment, nothing moves.
   class Scenes extends EHCard {
+    hiddenName() {
+      return blockTitle(this, "Сцены");
+    }
     watched() {
       return [...(this._config.scenes || []), ...(this._config.rows || []).flatMap((r) => r.scenes || [])].map((s) => s.entity);
     }
@@ -3592,7 +3646,7 @@ ${row(k.lightsDeaf.length ? true : !k.lights.length ? null : false, LL("Свет
         if (!rows.length) return "";
         const adds = rows.filter((r) => r.kind !== "mixed" && sceneCanAdd(this._hass, r.kind === "cover" ? "cover" : "light", rowRoom(this, r.kind))).map((r) => (r.kind === "cover" ? "cover" : "light"));
         return `<div class="glass m rows"><div class="hd"${adds.length ? ` data-scene-add="${[...new Set(adds)].join(" ")}"` : ""}><span class="ic"><ha-icon icon="hauflo:scene"></ha-icon></span><span class="caps">${blockTitle(this, "Сцены")}</span></div>
-${rows.map((r) => `<div class="rw"><span class="caps sub"${r.kind === "mixed" ? "" : sceneAddAttr(this._hass, r.kind === "cover" ? "cover" : "light", rowRoom(this, r.kind))}>${esc(r.title || (r.kind === "cover" ? "Шторы" : "Свет"))}</span>${sceneChips(this._hass, r.scenes, r.kind === "cover" ? "cover" : r.kind === "mixed" ? "mixed" : "light", r.kind === "mixed" ? undefined : rowRoom(this, r.kind), this)}</div>`).join("")}</div>`;
+${rows.map((r) => `<div class="rw">${r.title === "" ? "" : `<span class="caps sub"${r.kind === "mixed" ? "" : sceneAddAttr(this._hass, r.kind === "cover" ? "cover" : "light", rowRoom(this, r.kind))}>${esc(r.title || (r.kind === "cover" ? "Шторы" : "Свет"))}</span>`}${sceneChips(this._hass, r.scenes, r.kind === "cover" ? "cover" : r.kind === "mixed" ? "mixed" : "light", r.kind === "mixed" ? undefined : rowRoom(this, r.kind), this)}</div>`).join("")}</div>`;
       }
       const list = (c.scenes || []).map((x) => ({ ...x, st: st(this._hass, x.entity) })).filter((x) => x.st);
       const kind = c.kind === "cover" ? "cover" : c.kind === "mixed" ? "mixed" : "light";
@@ -3803,7 +3857,9 @@ ${rows.map((r) => `<div class="rw"><span class="caps sub"${r.kind === "mixed" ? 
       const c = this._config;
       if (!c.popup || c.chart === false) return "";
       const ids = [...new Set([c.entity, c.history, ...readingsOf(c).map((r) => r.entity)].filter(Boolean))];
-      return `<a class="thist" data-own href="/history?entity_id=${esc(ids.map(encodeURIComponent).join(","))}">${esc(LL("История в HA", "History in HA"))}<ha-icon icon="mdi:chevron-right"></ha-icon></a>`;
+      const hs = ids.filter((i) => hasHistory(this._hass, i));
+      if (!hs.length) return "";
+      return `<a class="thist" data-own href="${esc(historyPath(hs))}">${esc(LL("История в HA", "History in HA"))}<ha-icon icon="mdi:chevron-right"></ha-icon></a>`;
     }
     css() {
       return `${TCHART_CSS}${VALVE_CSS}${TONE_CSS}.seg{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:4px;padding:4px;border-radius:var(--hf-r-md);background:var(--hf-track)}.seg button{font:500 14px Onest,sans-serif;color:inherit;border:0;border-radius:var(--hf-r-sm);min-height:44px;padding:6px 4px;background:none;cursor:pointer}.seg button[aria-pressed="true"]{background:var(--hf-card-bg);box-shadow:0 1px 3px var(--hf-shade-18);font-weight:600}
@@ -4533,6 +4589,9 @@ ${m.dom === "cover" && !m.dimmable ? `<div class="ud3">${coverButtons(coverSet({
 
   // --- hauflo-alert: the alarm as the screen's one moment; the action by a swipe ------------------
   class Alert extends EHCard {
+    hiddenName() {
+      return esc(this._config.title || LL("Аварии", "Alarms"));
+    }
     watched() {
       return [...(this._config.alarms || []), this._config.action?.entity_id].filter(Boolean);
     }
@@ -4886,7 +4945,7 @@ ${top.key && !top.ackedBy ? `<button class="ack" data-ack="${esc(top.key)}">Пр
         .filter((e) => e.s);
     }
     css() {
-      return `.k{padding:var(--hf-pad)}.hd{display:flex;align-items:center;gap:12px}.hd .sum{flex:1;min-width:0}
+      return `${RULE_CSS}.k{padding:var(--hf-pad)}.hd{display:flex;align-items:center;gap:12px}.hd .sum{flex:1;min-width:0}
 .pill.wide{grid-column:span 2}.more{margin-top:10px;width:100%;height:44px;border-radius:var(--hf-r-sm);font:500 13px Onest,sans-serif;color:var(--ink2);box-shadow:inset 0 0 0 1px var(--line)}
 .hd{flex-wrap:wrap}.cover .hd .sum{flex:1 1 auto;min-width:0}
 .hd b{font:300 24px Onest,sans-serif;letter-spacing:-.03em;display:block;line-height:1.1;white-space:normal;overflow-wrap:break-word;hyphens:auto}
@@ -5037,7 +5096,7 @@ ${top.key && !top.ackedBy ? `<button class="ack" data-ack="${esc(top.key)}">Пр
           const state = riskWord(this, e.entity) || (open && !["opening", "closing"].includes(e.s.state) && pos !== undefined ? `${pos}\u00a0%` : coverWord(e.s));
           const moving = ["opening", "closing"].includes(e.s.state);
           return `<div class="pill ${open ? "on" : ""} ${moving ? "mv" : ""} ${settable ? "" : "wide"} ${unavailable ? "unavail" : ""}" data-e="${esc(e.entity)}" data-set="${settable ? 1 : 0}"><div class="f" style="width:${moving ? 100 : open ? pos ?? 100 : 0}%"></div>
-<ha-icon icon="${esc(e.icon || coverIcon(e, this._config))}"></ha-icon><div class="tx"><div class="nm">${esc(name)}</div>${state || zoneTagAll ? `<div class="lv">${esc(state ? zoneTagAll : zoneTagAll.replace(/ · $/, ""))}${state ? stateBox(state, settable ? ["100 %", "открыта", "закрыта"] : ["открыта", "закрыта"]) : ""}</div>` : ""}</div>
+<ha-icon icon="${esc(e.icon || coverIcon(e, this._config))}"></ha-icon><div class="tx"><div class="nm">${esc(name)}</div>${state || zoneTagAll ? `<div class="lv">${esc(state ? zoneTagAll : zoneTagAll.replace(/ · $/, ""))}${state ? stateBox(state, settable ? ["100 %", "открыта", "закрыта"] : ["открыта", "закрыта"]) : ""}</div>` : ""}</div>${ruleBadge(this, e.entity, "rbell-mark")}
 ${settable ? "" : `<div class="ud">${coverButtons(coverSet(e, this._config), "data-c")}</div>`}</div>`;
         }
         const on = isOpenOn(e);
@@ -5047,7 +5106,7 @@ ${settable ? "" : `<div class="ud">${coverButtons(coverSet(e, this._config), "da
         const zoneTag = nb ? `${nb[2]} · ${zoneTagAll}` : zoneTagAll;
         name = nb ? nb[1] : name;
         return `<div class="pill ${on ? "on" : ""} ${settable ? "" : "solo"} ${unavailable ? "unavail" : ""}" data-e="${esc(e.entity)}" data-set="${settable ? 1 : 0}"><div class="f" style="width:${on && settable ? pct : 0}%"></div>
-<ha-icon icon="${esc(e.icon || (!String(e.entity).startsWith("light.") ? e.s.attributes.icon || "hauflo:power" : on ? "hauflo:bulb-on" : "hauflo:bulb"))}"></ha-icon><div class="tx"><div class="nm">${esc(name)}</div><div class="lv">${esc(zoneTag)}${stateBox(assumed(e.s) ? "" : nd(e.s) ? "нет связи" : on ? (settable ? `${pct}\u00a0%` : "вкл") : "выкл", settable ? ["100 %", "выкл"] : ["выкл"])}</div></div></div>`;
+<ha-icon icon="${esc(e.icon || (!String(e.entity).startsWith("light.") ? e.s.attributes.icon || "hauflo:power" : on ? "hauflo:bulb-on" : "hauflo:bulb"))}"></ha-icon><div class="tx"><div class="nm">${esc(name)}</div><div class="lv">${esc(zoneTag)}${stateBox(assumed(e.s) ? "" : nd(e.s) ? "нет связи" : on ? (settable ? `${pct}\u00a0%` : "вкл") : "выкл", settable ? ["100 %", "выкл"] : ["выкл"])}</div></div>${ruleBadge(this, e.entity, "rbell-mark")}</div>`;
       };
       return `<div class="glass k ${isCover ? "cover" : "light"}"><div class="hd"><div class="sum"><span class="caps">${title}${this._zone ? ` · ${esc(this._zone)}` : ""}</span><b class="${isCover && unknownAll ? "nd" : ""}">${esc(summary)}</b></div><div class="mst">${master}</div></div>
 ${dimmables.length > 1 && (isCover || n) ? `<div class="bar" data-bar="1"><i style="width:${lvl ?? 0}%"></i><span>${isCover ? "Все" : "Яркость"}${lvl === undefined ? "" : ` · ${lvl}\u00a0%`}</span></div>` : ""}
@@ -5399,7 +5458,7 @@ ${hidden ? `<button class="more" data-more="1">${coversFolded ? `Каждая о
     if (dom === "media_player" && s.state !== "off") {
       // The source (SELECT_SOURCE 2048) and the sound mode (SELECT_SOUND_MODE 65536), as HA's own more-info.
       const sel = (svc, key, list, cur) => `<div class="row"><select class="dd" data-svc="${svc}" data-k="${key}" aria-label="${esc(tr(key === "source" ? "Источник" : "Режим звука"))}">${list.map((o) => `<option value="${esc(o)}"${o === cur ? " selected" : ""}>${esc(o)}</option>`).join("")}</select></div>`;
-      return `${f & 2048 && (a.source_list || []).length ? sel("media_player.select_source", "source", a.source_list, a.source) : ""}${f & 65536 && (a.sound_mode_list || []).length ? sel("media_player.select_sound_mode", "sound_mode", a.sound_mode_list, a.sound_mode) : ""}`;
+      return `${f & 2048 && (a.source_list || []).length ? sel("media_player.select_source", "source", a.source_list, a.source) : ""}${f & 65536 && (a.sound_mode_list || []).length ? sel("media_player.select_sound_mode", "sound_mode", a.sound_mode_list, a.sound_mode) : ""}${f & MP_BROWSE ? presetChips(s.entity_id) : ""}`;
     }
     return "";
   };
@@ -5433,6 +5492,58 @@ ${hidden ? `<button class="more" data-more="1">${coversFolded ? `Каждая о
     const sp = spark(data, 300, 60, 4, 0, 3);
     if (!sp) return `<div class="skc"><span>${esc(tr("истории пока нет"))}</span></div>`;
     return `<svg class="sk" viewBox="0 0 300 60" preserveAspectRatio="none" role="img" aria-label="${esc(LL("График за сутки", "24 h chart"))}"><path class="a" d="${sp.area}"/><path class="l" d="${sp.line}"/></svg><div class="skc"><span>${esc(`${fmt(sp.lo, 1)} … ${fmt(sp.hi, 1)}`)}</span><span>${esc(LL("за сутки", "24 h"))}</span></div>`;
+  };
+  // --- Multiroom (p.67), by HA's standard — MediaPlayerEntityFeature.GROUPING (524288): group_members (the leader first),
+  // media_player.join / unjoin. One code for every platform that has it; a player without the bit shows nothing of it.
+  // Presets / favourites: the WS browse_media (BROWSE_MEDIA 131072), the first level called presets / favourites.
+  const MP_GROUPING = 524288;
+  const MP_BROWSE = 131072;
+  const mpFlag = (s, bit) => ((num(s?.attributes?.supported_features) || 0) & bit) !== 0;
+  /** The group of a player: its members, the leader first; empty when it plays alone or cannot group. */
+  const groupOf = (s) => {
+    if (!mpFlag(s, MP_GROUPING)) return [];
+    const m = (Array.isArray(s.attributes.group_members) ? s.attributes.group_members : []).filter((x) => typeof x === "string");
+    return m.length > 1 ? m : [];
+  };
+  const PRESET_KIND = /preset|favou?rite|пресет|избран/i;
+  const MP_PRESETS = new Map();
+  /** The player's presets: [{title, id, type}] — from the first browse level whose name says presets / favourites; [] if none. */
+  const loadPresets = async (h, id) => {
+    const hit = MP_PRESETS.get(id);
+    if (hit && Date.now() - hit.at < 60000) return hit.list;
+    let list = [];
+    try {
+      const root = await h.callWS({ type: "media_player/browse_media", entity_id: id });
+      const folder = (root?.children || []).find((c) => PRESET_KIND.test(`${c.media_content_id || ""} ${c.title || ""}`) && c.can_expand);
+      const lvl = folder ? await h.callWS({ type: "media_player/browse_media", entity_id: id, media_content_id: folder.media_content_id, media_content_type: folder.media_content_type }) : null;
+      list = (lvl?.children || []).filter((c) => c.can_play && c.media_content_id !== undefined).slice(0, 8).map((c) => ({ title: String(c.title || c.media_content_id), id: String(c.media_content_id), type: String(c.media_content_type || "music") }));
+    } catch (e) {
+      list = [];
+    }
+    MP_PRESETS.set(id, { at: Date.now(), list });
+    return list;
+  };
+  /** Chips of the presets (inside `.ctl`: bound by bindControls to media_player.play_media). */
+  const presetChips = (id) => {
+    const list = MP_PRESETS.get(id)?.list || [];
+    return list.length ? `<div class="row chips" role="group" aria-label="${esc(tr("Избранное"))}">${list.map((p) => `<button class="chip" data-svc="media_player.play_media" data-x="${esc(JSON.stringify({ media_content_id: p.id, media_content_type: p.type }))}">${esc(p.title)}</button>`).join("")}</div>` : "";
+  };
+  /** The sheet's group part: who is in the group (checkboxes), leaving it, the volume of the others when the leader is open. */
+  const mediaGroup = (h, s, id) => {
+    if (!mpFlag(s, MP_GROUPING) || s.state === "off") return "";
+    const cur = groupOf(s);
+    const leader = cur.length ? cur[0] : id;
+    const others = Object.keys(h.states).filter((k) => k.startsWith("media_player.") && k !== id && k !== leader && mpFlag(h.states[k], MP_GROUPING) && !["unavailable", "unknown"].includes(h.states[k].state));
+    if (!others.length && !cur.length) return "";
+    const rows = others.map((k) => {
+      const on = cur.includes(k);
+      return `<button data-gj="${esc(k)}" role="checkbox" aria-checked="${on}" aria-pressed="${on}"><ha-icon icon="${on ? "mdi:checkbox-marked-outline" : "mdi:checkbox-blank-outline"}"></ha-icon><span class="mn">${esc(nameOf(h.states[k], k))}</span></button>`;
+    }).join("");
+    const vols = cur.length && cur[0] === id ? cur.filter((k) => k !== id && num(h.states[k]?.attributes.volume_level) !== undefined && mpFlag(h.states[k], 4)).map((k) => {
+      const pct = Math.round(num(h.states[k].attributes.volume_level) * 100);
+      return `<div class="ctl" data-gm="${esc(k)}"><div class="row">${SL_("media_player.volume_set", "volume_level", 0, 100, 1, pct, `${nameOf(h.states[k], k)} · ${pct}\u00a0%`, "pos")}</div></div>`;
+    }).join("") : "";
+    return `${rows ? `<div class="mem gm" role="group" aria-label="${esc(tr("В группу"))}">${rows}</div>` : ""}${vols}${cur.length ? `<button class="b" data-unjoin><ha-icon icon="mdi:link-variant-off"></ha-icon><span>${esc(tr("Выйти из группы"))}</span></button>` : ""}`;
   };
   let TILE = null;
   /** The control sheet of one entity over the page: a light / blind / scene's own; any other domain's tile controls. */
@@ -5513,6 +5624,7 @@ ${hidden ? `<button class="more" data-more="1">${coversFolded ? `Каждая о
       const f0 = num(s.attributes.supported_features) || 0;
       const ex = nd(s) ? "" : sheetExtra(dom, s, f0);
       if (ex) body += `<div class="ctl" style="--acc:${(TONE[dom === "cover" ? "ice" : "mint"] || TONE.mint)[0]}">${ex}</div>`;
+      if (dom === "media_player" && !nd(s)) body += mediaGroup(h, s, id);
       const facts = scene0(dom) ? "" : sheetFacts(h, s, id, dom);
       const spk = numeric(s) && dom !== "light" && dom !== "fan" && dom !== "cover" && !CTL[dom] ? sheetSpark(sparkData) : "";
       if (spk || facts) body += `<div class="inf">${spk}${facts}</div>`;
@@ -5525,6 +5637,7 @@ ${hidden ? `<button class="more" data-more="1">${coversFolded ? `Каждая о
 ${body}
 ${dayBtn}
 ${fav ? `<button class="b fav" data-fav aria-pressed="${favHas(id)}"><ha-icon icon="${favHas(id) ? "mdi:star" : "mdi:star-outline"}"></ha-icon><span>${favHas(id) ? "Убрать из избранного" : "В избранное"}</span></button>` : ""}
+${hasHistory(h, id) ? `<button class="b lnk" data-hist>История</button>` : ""}
 ${body.includes('class="mem"') ? "" : `<button class="b lnk" data-more>Подробнее</button>`}</div>`;
       if (LANG !== "ru") translate(sr);
       bind();
@@ -5536,6 +5649,10 @@ ${body.includes('class="mem"') ? "" : `<button class="b lnk" data-more>Подр�
         close();
         moreInfo(card, id);
       };
+      sr.querySelector("[data-hist]")?.addEventListener("click", () => {
+        close();
+        navigate(historyPath([id]));
+      });
       sr.querySelectorAll("[data-mem]").forEach((b) => b.addEventListener("click", () => {
         haptic(card);
         call(h, "light", "toggle", { entity_id: b.dataset.mem });
@@ -5582,7 +5699,19 @@ ${body.includes('class="mem"') ? "" : `<button class="b lnk" data-more>Подр�
           }
           draw();
         };
-      sr.querySelectorAll(".ctl").forEach((ctl) => Entity.prototype.bindControls.call(card, ctl, id));
+      sr.querySelectorAll(".ctl:not([data-gm])").forEach((ctl) => Entity.prototype.bindControls.call(card, ctl, id));
+      sr.querySelectorAll(".ctl[data-gm]").forEach((ctl) => Entity.prototype.bindControls.call(card, ctl, ctl.dataset.gm));
+      sr.querySelectorAll("[data-gj]").forEach((b) => b.addEventListener("click", () => {
+        haptic(card);
+        const cur = groupOf(st(hass(), id));
+        const x = b.dataset.gj;
+        if (cur.includes(x)) call(hass(), "media_player", "unjoin", { entity_id: x });
+        else call(hass(), "media_player", "join", { entity_id: cur.length ? cur[0] : id, group_members: [...cur.filter((m) => m !== (cur[0] || id)), x] });
+      }));
+      sr.querySelector("[data-unjoin]")?.addEventListener("click", () => {
+        haptic(card);
+        call(hass(), "media_player", "unjoin", { entity_id: id });
+      });
       const sl = sr.querySelector("[data-sl]");
       if (!sl) return;
       const cover = id.startsWith("cover.");
@@ -5634,12 +5763,16 @@ ${body.includes('class="mem"') ? "" : `<button class="b lnk" data-more>Подр�
     sr.querySelector("[data-x]")?.focus({ preventScroll: true });
     if (numeric(st(h0, id)) && !CTL[id.split(".")[0]] && !id.startsWith("light.") && !id.startsWith("fan.") && !id.startsWith("cover."))
       series(h0, id, 24).then((d) => (TILE === host && ((sparkData = d), draw())), () => {});
+    // A player's presets (BROWSE_MEDIA): asked once, the sheet redrawn with the chips.
+    if (id.startsWith("media_player.") && mpFlag(st(h0, id), MP_BROWSE)) loadPresets(h0, id).then(() => TILE === host && draw(), () => {});
     // A light's «Днём не включать в сценах» needs the agent's answer (FAM.day): asked once, the sheet redrawn with it.
     if (FAM.state !== "done" && /^(?:light|switch)\./.test(id)) Promise.resolve(loadFam(h0)).then(() => TILE === host && draw(), () => {});
   };
   Object.assign(EN, { Значение: "Value", Изменилось: "Changed", Играет: "Playing", Источник: "Source", "Режим звука": "Sound mode", "да": "yes", "нет": "no",
     "Закрыто": "Closed", "Открывается": "Opening", "Закрывается": "Closing", "Батарея": "Battery", "Положение": "Position", "Наклон": "Tilt", "Скорость": "Speed", "Режим": "Mode", "Громкость": "Volume", "Мощность": "Power", "Напряжение": "Voltage", "Сигнал": "Signal" });
-  Object.assign(EN, { "Выкл. всё": "All off", "Вкл. всё": "All on", "Светильники группы": "Lights in the group", "Этот светильник только включается и выключается": "This light only switches on and off", "В избранное": "Add to favourites", "Убрать из избранного": "Remove from favourites", "Подробнее": "More details", "Включить": "Turn on", "Выключить": "Turn off", "сцена": "scene", "Положение": "Position", "Скорость": "Speed", "Не сохранилось — проверьте связь с Home Assistant": "Not saved — check the link to Home Assistant", "Избранное": "Favourites", "Моя комната": "My room",
+  Object.assign(EN, { "В группу": "Add to group", "Выйти из группы": "Leave the group", "Избранное": "Favourites" });
+  EN_RX.unshift([/^Группа (\d+)$/, "Group $1"]);
+  Object.assign(EN, { "История": "History", "Выкл. всё": "All off", "Вкл. всё": "All on", "Светильники группы": "Lights in the group", "Этот светильник только включается и выключается": "This light only switches on and off", "В избранное": "Add to favourites", "Убрать из избранного": "Remove from favourites", "Подробнее": "More details", "Включить": "Turn on", "Выключить": "Turn off", "сцена": "scene", "Положение": "Position", "Скорость": "Speed", "Не сохранилось — проверьте связь с Home Assistant": "Not saved — check the link to Home Assistant", "Избранное": "Favourites", "Моя комната": "My room",
     "Всё хорошо": "All is well", "авария останется, пока причина не устранена; видно, кто принял": "the alarm stays until the cause is gone; everyone sees who accepted",
     "Порядок для всех меняют взрослые — у вас детский профиль": "The order for everyone is changed by the adults — you have a child profile",
     "Позвонить сервису": "Call service", "нет связи": "no signal", "вкл": "on", "выкл": "off" });
@@ -5822,7 +5955,7 @@ ${v.pm25 === undefined ? "" : `<div class="sc">${[0, 1, 2, 3].map((k) => `<b cla
       const playing = s.state === "playing";
       return `<div class="glass p">${pic ? `<div class="bg" style="background-image:url('${cssUrl(pic)}')"></div>` : ""}
 <div class="row"><div class="art" ${pic ? `style="background-image:url('${cssUrl(pic)}')"` : ""}>${pic ? "" : `<ha-icon icon="hauflo:speaker"></ha-icon>`}</div>
-<div class="tx"><span class="caps">${esc(name)}${a.source ? ` · ${esc(a.source)}` : ""}</span><div class="tt">${esc(a.media_title || (playing ? "Играет" : "Пауза"))}</div><div class="ar">${esc(a.media_artist || a.media_album_name || a.app_name || "")}</div></div></div>
+<div class="tx"><span class="caps">${esc(name)}${a.source ? ` · ${esc(a.source)}` : ""}${groupOf(s).length ? ` · <span class="gb" data-group="${groupOf(s).length}">Группа ${groupOf(s).length}</span>` : ""}</span><div class="tt">${esc(a.media_title || (playing ? "Играет" : "Пауза"))}</div><div class="ar">${esc(a.media_artist || a.media_album_name || a.app_name || "")}</div></div></div>
 <div class="ctl"><button data-s="media_previous_track" aria-label="Назад"><ha-icon icon="mdi:skip-previous"></ha-icon></button><button class="pp" data-s="media_play_pause" aria-label="${playing ? "Пауза" : "Играть"}"><ha-icon icon="${playing ? "hauflo:pause" : "hauflo:play"}"></ha-icon></button><button data-s="media_next_track" aria-label="Вперёд"><ha-icon icon="mdi:skip-next"></ha-icon></button></div>
 ${vol === undefined ? "" : `<div class="vol"><i style="width:${Math.round(vol * 100)}%"></i><span><ha-icon icon="hauflo:speaker"></ha-icon>${Math.round(vol * 100)}\u00a0%</span></div>`}</div>`;
     }
@@ -5974,6 +6107,9 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
 
   // --- hauflo-status: dispatching — engineering systems at a glance: works / stopped / fault / no link
   class Status extends EHCard {
+    hiddenName() {
+      return blockTitle(this, "Инженерные системы");
+    }
     watched() {
       return (this._config.entities || []).map((e) => (typeof e === "string" ? e : e.entity));
     }
@@ -6056,9 +6192,11 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
   const AREA_ICON = { climate: "mdi:thermostat", water_heater: "mdi:water-boiler", sensor: "mdi:gauge", number: "mdi:knob", input_number: "mdi:knob", select: "mdi:format-list-bulleted", input_select: "mdi:format-list-bulleted", switch: "mdi:toggle-switch-outline", input_boolean: "mdi:toggle-switch-outline", light: "mdi:lightbulb-outline", fan: "mdi:fan", binary_sensor: "mdi:checkbox-blank-circle-outline", valve: "mdi:valve", cover: "mdi:window-shutter", lock: "mdi:lock-outline", camera: "mdi:cctv", media_player: "mdi:speaker", button: "mdi:gesture-tap-button", humidifier: "mdi:air-humidifier", vacuum: "mdi:robot-vacuum", event: "mdi:bell-ring-outline", alarm_control_panel: "mdi:shield-home-outline" };
   const SENSOR_ICON = { temperature: "mdi:thermometer", humidity: "mdi:water-percent", pressure: "mdi:gauge", power: "mdi:flash", energy: "mdi:lightning-bolt", voltage: "mdi:sine-wave", current: "mdi:current-ac", carbon_monoxide: "mdi:molecule-co", carbon_dioxide: "mdi:molecule-co2", gas: "mdi:meter-gas", water: "mdi:water", battery: "mdi:battery", illuminance: "mdi:brightness-5", motion: "mdi:motion-sensor", occupancy: "mdi:home-account", door: "mdi:door", window: "mdi:window-closed-variant", moisture: "mdi:water-alert", smoke: "mdi:smoke-detector", connectivity: "mdi:lan-connect", doorbell: "mdi:doorbell", button: "mdi:gesture-tap-button" };
   const AREA_ORDER = ["climate", "status", "switches", "devices", "media", "camera", "security", "settings", "buttons", "values", "other"];
-  // Never one tap from this card: what opens the house or the water.
+  // Never one tap from this card: what opens the house or the water — by its state, or by the agent's one rule
+  // (/api/hauflo/house «protected»: the relay under a «Switch as X» gate, a template over one, a KNX gate; red team L3).
   const AREA_GUARDED = (s) => {
     const d = s.entity_id.split(".")[0];
+    if ((HOUSE.data?.protected || []).includes(s.entity_id)) return true;
     return ["lock", "valve", "alarm_control_panel", "siren", "camera"].includes(d) || (d === "cover" && ["gate", "garage", "door"].includes(s.attributes.device_class));
   };
   // A text sensor that reports a fault («Ошибок нет» / «E04 перегрев»): a chip, red unless it says all is well.
@@ -6463,6 +6601,10 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
     return cards.filter((c) => c && c.type !== "custom:hauflo-area").length;
   };
   class Area extends Status {
+    hiddenName() {
+      const c = this._config;
+      return esc(c.title || (c.device ? devName(this._hass, c.device) : this._hass?.areas?.[c.area]?.name) || LL("Комната", "Room"));
+    }
     /** The area's entities: put in it themselves or through their device; not hidden, not diagnostic / config. With
      * `device` (a device_id): the whole device, wherever its entities are («Устройство целиком», stage 5). */
     members() {
@@ -6614,7 +6756,7 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
 .v .vh .vn{flex:1}.mi{display:flex;align-items:center;gap:6px;flex:0 0 auto;margin-left:auto;align-self:flex-start;color:var(--ink3);font:500 11px/1 Onest,sans-serif}.v .vh .mi>:is(.mb,.mg){display:inline-flex;align-items:center;gap:4px;width:auto;height:auto;min-height:14px;padding:0;border:0;border-radius:0;box-shadow:none;background:none;color:inherit;font:inherit;cursor:pointer;position:relative;transform:none}
 .mi button::before{content:"";position:absolute;inset:min(0px,(100% - var(--hf-hit))/2) -3px}.mi svg{width:14px;height:14px;fill:currentColor;display:block;flex:0 0 auto}.mi em{font-style:normal;white-space:nowrap}.v .vh .mi>.lo{color:var(--amberT)}
 .v.st.alarm{box-shadow:inset 0 0 0 2px var(--alert),0 0 24px color-mix(in srgb,var(--alert) 35%,transparent)}.v.st.alarm .vn,.v.st.alarm .vh>ha-icon{color:var(--alertT)}.v.st.alarm .vt{font-weight:600}
-.v.st.nolink .vn,.v.st.nolink .vt{color:var(--ink3)}.v.st.nolink i{background:var(--ink3);box-shadow:none}`;
+.v.st.nolink .vn,.v.st.nolink .vt{color:var(--ink3)}.v.st.nolink i{background:var(--ink3);box-shadow:none}${RULE_CSS}`;
     }
     /** A thermostat / boiler circuit: name, now, mode, its setpoint large with ±; HA's dialog on the name. */
     climateRow(id) {
@@ -6662,7 +6804,7 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
       const unit = unitOf(s);
       const digits = v === undefined ? 0 : Math.abs(v) < 10 && v % 1 ? (Math.abs(v * 10) % 1 ? 2 : 1) : v % 1 ? 1 : 0;
       const val = nd(s) ? `<span class="vv">—</span>` : v === undefined ? `<span class="vt">${esc(wx ? [wx[0], num(s.attributes.temperature) !== undefined ? `${fmt(num(s.attributes.temperature))}°` : ""].filter(Boolean).join(" · ") : haState(s))}</span>` : `<span class="vv thin">${fmt(v, Math.min(digits, 2))}${unit ? `<small>${esc(unit)}</small>` : ""}</span>`;
-      return `<div class="v${nd(s) ? " nolink" : ""}" data-info="${esc(id)}" role="button" tabindex="0"><span class="vh"><ha-icon icon="${esc(icon)}"></ha-icon><span class="vn">${esc(this.tileLabel(id))}</span>${this.marks(id)}</span>${val}</div>`;
+      return `<div class="v${nd(s) ? " nolink" : ""}" data-info="${esc(id)}" role="button" tabindex="0"><span class="vh"><ha-icon icon="${esc(icon)}"></ha-icon><span class="vn">${esc(this.tileLabel(id))}</span>${ruleBadge(this, id, "rbell-mark")}${this.marks(id)}</span>${val}</div>`;
     }
     /** A number (± by its step, inside its range) or a list (its options). */
     settingTile(id) {
@@ -6760,7 +6902,7 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
       const [w, k] = this.word(s);
       const icon = s.attributes.icon || SENSOR_ICON[s.attributes.device_class] || (id.startsWith("event.") ? AREA_ICON.event : AREA_ICON.sensor);
       const alarm = k === "fault" && s.state === "on" && TILE_ALARM.includes(s.attributes.device_class);
-      return `<div class="v st ${k}${alarm ? " alarm" : ""}${nd(s) ? " nolink" : ""}" data-info="${esc(id)}" role="button" tabindex="0"><span class="vh"><ha-icon icon="${esc(icon)}"></ha-icon><span class="vn">${esc(this.tileLabel(id))}</span>${this.marks(id)}</span><span class="vt"><i></i>${esc(w)}</span></div>`;
+      return `<div class="v st ${k}${alarm ? " alarm" : ""}${nd(s) ? " nolink" : ""}" data-info="${esc(id)}" role="button" tabindex="0"><span class="vh"><ha-icon icon="${esc(icon)}"></ha-icon><span class="vn">${esc(this.tileLabel(id))}</span>${ruleBadge(this, id, "rbell-mark")}${this.marks(id)}</span><span class="vt"><i></i>${esc(w)}</span></div>`;
     }
     chip(id, name) {
       const s = this._hass.states[id];
@@ -6791,6 +6933,7 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
     }
     render() {
       const h = this._hass;
+      HOUSE.get(this); // the agent's protected list (AREA_GUARDED): asked once a page, the card drawn again when it comes
       // `block` (п.63): this card is one of the room's three — «Управление», «Показания», «Диагностика»; none — all of it.
       const part = Object.hasOwn(AREA_PARTS, this._config.block || "") ? this._config.block : "";
       const all = orderIds(this, this.members()).filter((id) => h.states[id]);
@@ -7605,6 +7748,9 @@ button.off{min-height:40px;padding:0 14px;border-radius:20px;font:500 13px Onest
   }
 
   class Devices extends EHCard {
+    hiddenName() {
+      return esc(this._config.title || LL("Устройства", "Devices"));
+    }
     watched() {
       return (this._config.entities || []).flatMap((e) => (typeof e === "string" ? [e] : [e.entity, ...rowAlarms(e)]));
     }
@@ -8624,6 +8770,11 @@ ${logHtml}</section>`;
       }
       room(a) {
         return this.data?.targets?.areas?.[a] || a;
+      }
+      /** Rooms of a grouped summary («Весь свет выкл: Кухня, Спальня…»): names, no repeats, more than three cut short. */
+      roomsList(ids) {
+        const n = [...new Set((ids || []).map((a) => this.room(a)))];
+        return n.length > 3 ? `${n.slice(0, 2).join(", ")}${this.w.more(n.length - 2)}` : n.join(", ");
       }
       // Everything a rule may do something to: Hauflo's and other integrations' safe devices.
       targetItems() {
@@ -10858,6 +11009,7 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
     "hauflo-weather": (h) => ({ entity: ids(h, "weather", 1)[0] }),
     "hauflo-air": (h) => ({ pm25: ids(h, "sensor", 1, (s) => s.attributes.device_class === "pm25")[0], co2: ids(h, "sensor", 1, (s) => s.attributes.device_class === "carbon_dioxide")[0] }),
     "hauflo-media": (h) => ({ entity: ids(h, "media_player", 1)[0] }),
+    "hauflo-automations": () => ({}),
     "hauflo-graph": (h) => ({ entities: ids(h, "sensor", 2, (s) => s.attributes.device_class === "temperature").map((entity) => ({ entity })) }),
     "hauflo-auto": (h) => ({ entities: [...ids(h, "automation", 4), ...ids(h, "script", 2)] }),
     "hauflo-status": (h) => ({ entities: ids(h, "binary_sensor", 8, (s) => ["problem", "connectivity", "battery"].includes(s.attributes.device_class)) }),
@@ -11134,7 +11286,7 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
 .p1{font:500 15px/1.25 Onest,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.p2{font:400 13px/1.3 Onest,sans-serif;color:var(--ink2);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .on .p2{color:var(--acc)}.lvl{position:absolute;left:0;bottom:0;height:3px;background:var(--acc);opacity:.8;border-radius:0 2px 2px 0}
 .e.alarm{box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--alert) 60%,transparent),var(--eh-deep,none)}.e.alarm .ic{background:color-mix(in srgb,var(--alert) 22%,transparent);color:var(--alertT)}.e.alarm .p2{color:var(--alertT);font-weight:600}
-.e.warn .ic,.e.warn .p2{color:var(--amberT)}.un{opacity:.55}.e .glow{background:radial-gradient(circle at 30px 50%,color-mix(in srgb,var(--accGlow) 45%,transparent),transparent 55%);opacity:0}.on .glow{opacity:.6}${CTL_CSS}`;
+.e.warn .ic,.e.warn .p2{color:var(--amberT)}.un{opacity:.55}.e .glow{background:radial-gradient(circle at 30px 50%,color-mix(in srgb,var(--accGlow) 45%,transparent),transparent 55%);opacity:0}.on .glow{opacity:.6}${RULE_CSS}${CTL_CSS}`;
     }
     render() {
       const c = this._config;
@@ -11154,7 +11306,8 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
       const icon = c.icon_type === "none" ? "" : `<div class="ic${pic ? " pic" : ""}"${pic ? ` style="background-image:url('${cssUrl(s.attributes.entity_picture)}')"` : ""}>${pic ? "" : `<ha-icon icon="${esc(c.icon || s.attributes.icon || k.icon(s, c))}"></ha-icon>`}</div>`;
       const ctl = this.controls(s);
       const level = k.level && c.show_level !== false && on && !ctl ? Math.max(0, Math.min(1, k.level(s))) : 0;
-      return `<div class="glass e${ctl ? " hasctl" : ""}${c.layout === "vertical" ? " v" : ""}${on ? " on" : ""}${alarm ? " alarm" : ""}${warn ? " warn" : ""}${nd(s) ? " un" : ""}" style="--acc:${acc};--accGlow:${glow}" role="button" tabindex="0" aria-label="${esc(name)}"><div class="glow"></div>${icon}<div class="tx">${p1 === "" ? "" : `<div class="p1">${esc(p1 ?? name)}</div>`}${p2 === "" ? "" : `<div class="p2">${esc(p2 ?? name)}</div>`}</div>${level ? `<i class="lvl" style="width:${Math.round(level * 100)}%"></i>` : ""}${ctl ? `<div class="ctl">${ctl}</div>` : ""}</div>`;
+      const rbadge = ruleBadge(this, c.entity, "rbell-badge");
+      return `<div class="glass e${rbadge ? " hasrl" : ""}${ctl ? " hasctl" : ""}${c.layout === "vertical" ? " v" : ""}${on ? " on" : ""}${alarm ? " alarm" : ""}${warn ? " warn" : ""}${nd(s) ? " un" : ""}" style="--acc:${acc};--accGlow:${glow}" role="button" tabindex="0" aria-label="${esc(name)}"><div class="glow"></div>${icon}<div class="tx">${p1 === "" ? "" : `<div class="p1">${esc(p1 ?? name)}</div>`}${p2 === "" ? "" : `<div class="p2">${esc(p2 ?? name)}</div>`}</div>${rbadge}${level ? `<i class="lvl" style="width:${Math.round(level * 100)}%"></i>` : ""}${ctl ? `<div class="ctl">${ctl}</div>` : ""}</div>`;
     }
     /** The domain's controls (CTL) unless the card turns them off; none while the entity is unavailable. */
     controls(s) {
@@ -11401,10 +11554,11 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
     "hauflo-devices": [TXT("title"), E("entities", null, true)],
     "hauflo-leaks": [TXT("title"), { name: "area", selector: { area: {} } }, E("sensors", "binary_sensor", true), E("valves", ["valve", "switch"], true)],
     "hauflo-area": [{ name: "area", selector: { area: {} } }, { name: "device", selector: { device: {} } }, TXT("title"), BOOL("battery_percent")],
+    "hauflo-automations": [SEL("only", [["all", "Правила семьи и системы", "Family and system rules"], ["guest", "Только гостевой вид (правила клиента)", "Guest view only (the client's rules)"]])],
   };
   const LABEL = {
-    ru: { sensors: "Датчики протечки", valves: "Кран (клапан)", area: "Комната в Home Assistant", device: "Или устройство целиком", label: "Подпись", name: "Название", title: "Заголовок", subtitle: "Подзаголовок", icon: "Иконка", icon_type: "Что слева", color: "Цвет, когда включено", layout: "Расположение", show_level: "Полоска уровня (яркость, положение)", controls: "Управление под плиткой (яркость, шторы, ±, плеер…)", primary_info: "Первая строка", secondary_info: "Вторая строка", tap_action: "Нажатие", hold_action: "Удержание", double_tap_action: "Двойное нажатие", path: "Открывать по нажатию", picture: "Фото комнаты (URL)", temperature: "Температура (термостаты, датчики)", humidity: "Влажность", lights: "Свет", alarms: "Аварийные датчики", devices: "Устройства (нет связи)", weather: "Погода", climate: "Термостат", covers: "Шторы", kind: "Вид", scenes: "Сцены", entity: "Объект", entities: "Объекты", days: "Дней прогноза", forecast: "Прогноз", pm25: "PM2.5", pm10: "PM10", co2: "CO₂", voc: "Летучие в-ва", hours: "Часов", locks: "Замки", openings: "Двери, окна, движение", refresh: "Обновлять кадр, с", chart: "График за сутки", hide_ok: "Прятать, когда всё в норме", battery_percent: "Заряд батареи в % всегда (не только когда садится)", compact: "Компактно (строкой)", heat_setpoint: "Уставка нагрева (number)", cool_setpoint: "Уставка охлаждения (number)", scene_layout: "Где сцены" },
-    en: { sensors: "Leak sensors", valves: "Valve", area: "Home Assistant area", device: "Or a whole device", label: "Label", name: "Name", title: "Title", subtitle: "Subtitle", icon: "Icon", icon_type: "On the left", color: "Color when on", layout: "Layout", show_level: "Level bar (brightness, position)", controls: "Controls under the tile (brightness, blinds, ±, player…)", primary_info: "First line", secondary_info: "Second line", tap_action: "Tap", hold_action: "Hold", double_tap_action: "Double tap", path: "Opens on tap", picture: "Room photo (URL)", temperature: "Temperature (thermostats, sensors)", humidity: "Humidity", lights: "Lights", alarms: "Alarm sensors", devices: "Devices (offline check)", weather: "Weather", climate: "Thermostat", covers: "Blinds", kind: "Kind", scenes: "Scenes", entity: "Entity", entities: "Entities", days: "Forecast days", forecast: "Forecast", pm25: "PM2.5", pm10: "PM10", co2: "CO₂", voc: "VOC", hours: "Hours", locks: "Locks", openings: "Doors, windows, motion", refresh: "Snapshot refresh, s", chart: "24 h chart", hide_ok: "Hide when all is OK", battery_percent: "Battery % always (not only when low)", compact: "Compact (one row)", heat_setpoint: "Heating setpoint (number)", cool_setpoint: "Cooling setpoint (number)", scene_layout: "Where scenes go" },
+    ru: { sensors: "Датчики протечки", valves: "Кран (клапан)", area: "Комната в Home Assistant", device: "Или устройство целиком", label: "Подпись", name: "Название", title: "Заголовок", subtitle: "Подзаголовок", icon: "Иконка", icon_type: "Что слева", color: "Цвет, когда включено", layout: "Расположение", show_level: "Полоска уровня (яркость, положение)", controls: "Управление под плиткой (яркость, шторы, ±, плеер…)", primary_info: "Первая строка", secondary_info: "Вторая строка", tap_action: "Нажатие", hold_action: "Удержание", double_tap_action: "Двойное нажатие", path: "Открывать по нажатию", picture: "Фото комнаты (URL)", temperature: "Температура (термостаты, датчики)", humidity: "Влажность", lights: "Свет", alarms: "Аварийные датчики", devices: "Устройства (нет связи)", weather: "Погода", climate: "Термостат", covers: "Шторы", kind: "Вид", scenes: "Сцены", entity: "Объект", entities: "Объекты", days: "Дней прогноза", forecast: "Прогноз", pm25: "PM2.5", pm10: "PM10", co2: "CO₂", voc: "Летучие в-ва", hours: "Часов", locks: "Замки", openings: "Двери, окна, движение", refresh: "Обновлять кадр, с", chart: "График за сутки", hide_ok: "Прятать, когда всё в норме", battery_percent: "Заряд батареи в % всегда (не только когда садится)", compact: "Компактно (строкой)", only: "Что показывать", heat_setpoint: "Уставка нагрева (number)", cool_setpoint: "Уставка охлаждения (number)", scene_layout: "Где сцены" },
+    en: { sensors: "Leak sensors", valves: "Valve", area: "Home Assistant area", device: "Or a whole device", label: "Label", name: "Name", title: "Title", subtitle: "Subtitle", icon: "Icon", icon_type: "On the left", color: "Color when on", layout: "Layout", show_level: "Level bar (brightness, position)", controls: "Controls under the tile (brightness, blinds, ±, player…)", primary_info: "First line", secondary_info: "Second line", tap_action: "Tap", hold_action: "Hold", double_tap_action: "Double tap", path: "Opens on tap", picture: "Room photo (URL)", temperature: "Temperature (thermostats, sensors)", humidity: "Humidity", lights: "Lights", alarms: "Alarm sensors", devices: "Devices (offline check)", weather: "Weather", climate: "Thermostat", covers: "Blinds", kind: "Kind", scenes: "Scenes", entity: "Entity", entities: "Entities", days: "Forecast days", forecast: "Forecast", pm25: "PM2.5", pm10: "PM10", co2: "CO₂", voc: "VOC", hours: "Hours", locks: "Locks", openings: "Doors, windows, motion", refresh: "Snapshot refresh, s", chart: "24 h chart", hide_ok: "Hide when all is OK", battery_percent: "Battery % always (not only when low)", compact: "Compact (one row)", only: "What to show", heat_setpoint: "Heating setpoint (number)", cool_setpoint: "Cooling setpoint (number)", scene_layout: "Where scenes go" },
   };
   const idOf = (x) => (typeof x === "string" ? x : x?.entity);
   /** Per tile (cards with an `entities` list): its name, what its value means (scale) and its own fault sensors — picked by
@@ -12058,6 +12212,247 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
     if (reg.get(TAG)) return;
     if (!reg.get("home-assistant") && !reg.get("hui-view")) return setTimeout(define, 120);
     reg.define(TAG, HaufloLayout);
+  };
+  define();
+})();
+
+// hauflo-section: a page's blocks as HA's own section (type: custom:hauflo-section) — each block its own card, so the
+// integrator drags, edits (visual editor), copies and adds cards of other integrations next to ours by HA's own means.
+// HA's grid section (hui-grid-section) with one difference in view mode: where a `layouts` rule matches the screen
+// ({media, max}), the cards are packed in up to `max` columns like hauflo-layout (every card where the tallest column
+// comes out lowest, `_packShort`, by the measured heights; in the cards' order = the reading order on a phone, so the
+// integrator's reorder and his own cards take part); {media, per_row}: N cards in a row. No rule matched (a phone) and
+// edit mode: HA's own layout (one card under another), so dragging stays HA's. Packed once per config/rule/count and
+// frozen (a card the client opens moves only the cards under it in its column); again on a width change.
+(() => {
+  const TAG = "hauflo-section";
+  const sheetCss = (cols) => {
+    const g = "var(--ha-view-sections-column-gap,32px)";
+    let s = `:host([hf-measure]) .container:not(.edit-mode){visibility:hidden}
+:host([hf-cols]) .container:not(.edit-mode){grid-template-columns:repeat(var(--hf-n),minmax(0,var(--hf-w)))!important;grid-auto-rows:1px!important;grid-auto-flow:row!important;row-gap:0!important;column-gap:${g}!important;justify-content:center}
+:host([hf-cols]) .container:not(.edit-mode)>.card{align-self:start}
+:host([hf-rows]) .container:not(.edit-mode){grid-template-columns:repeat(var(--hf-n),minmax(0,1fr))!important}
+:host([hf-rows]) .container:not(.edit-mode)>.card{grid-column:auto/span 1!important}`;
+    (cols || []).forEach(([c, r, h], i) => {
+      s += `\n:host([hf-cols]) .container:not(.edit-mode)>.card:nth-child(${i + 1}){grid-column:${c + 1}/span 1!important;grid-row:${r + 1}/span ${Math.max(1, h)}!important}`;
+    });
+    return s;
+  };
+  const define = () => {
+    const reg = window.customElements;
+    if (reg.get(TAG)) return;
+    const Base = reg.get("hui-grid-section");
+    if (!Base) {
+      if (!reg.get("home-assistant") && !reg.get("hui-view")) return setTimeout(define, 120);
+      // HA loads its grid section with the first section on a page: until then, waited for.
+      return reg.whenDefined("hui-grid-section").then(define);
+    }
+    class HaufloSection extends Base {
+      constructor() {
+        super();
+        this._hfSheet = new CSSStyleSheet();
+        this._hfPacked = null; // { key, media, n, w, at: [column per card] }
+        this._hfMqs = [];
+        this._hfOnMq = () => this._hfPlace();
+        this._hfRo = new ResizeObserver(() => this._hfHeights());
+        this._hfWro = new ResizeObserver(() => {
+          clearTimeout(this._hfWt);
+          this._hfWt = setTimeout(() => this._hfRepack(), 250);
+        });
+      }
+      static getStubConfig() {
+        return { type: `custom:${TAG}`, cards: [] };
+      }
+      setConfig(config) {
+        super.setConfig(config);
+        const key = JSON.stringify(config);
+        if (key !== this._hfKey) this._hfPacked = null;
+        this._hfKey = key;
+        this._hfWatch();
+      }
+      connectedCallback() {
+        super.connectedCallback();
+        this._hfWatch();
+        this._hfWro.observe(this);
+        // Taken out of the DOM mid-measure (HA rebuilt the view): the timers died with it and the cards stayed hidden
+        // until the next hass update (1–8 s on a quiet house, W1-2) — measured again on return.
+        if (this.hasAttribute("hf-measure")) {
+          this._hfMeasuring = null;
+          this._hfPacked = null;
+          this._hfPlace();
+        }
+      }
+      disconnectedCallback() {
+        super.disconnectedCallback();
+        for (const m of this._hfMqs) m.removeEventListener?.("change", this._hfOnMq);
+        this._hfMqs = [];
+        this._hfRo.disconnect();
+        this._hfWro.disconnect();
+        clearTimeout(this._hfWt);
+        clearTimeout(this._hfQuiet);
+        this._hfMeasuring = null;
+      }
+      firstUpdated(ch) {
+        super.firstUpdated?.(ch);
+        const sr = this.shadowRoot;
+        if (sr && !sr.adoptedStyleSheets.includes(this._hfSheet)) sr.adoptedStyleSheets = [...sr.adoptedStyleSheets, this._hfSheet];
+      }
+      updated(ch) {
+        super.updated?.(ch);
+        this._hfPlace();
+      }
+      _hfWatch() {
+        for (const m of this._hfMqs) m.removeEventListener?.("change", this._hfOnMq);
+        this._hfMqs = [];
+        if (!this.isConnected || !this._config) return;
+        this._hfMqs = this._hfLayouts().map((l) => window.matchMedia(l.media));
+        for (const m of this._hfMqs) m.addEventListener?.("change", this._hfOnMq);
+      }
+      _hfLayouts() {
+        return (Array.isArray(this._config?.layouts) ? this._config.layouts : []).filter((l) => l && typeof l.media === "string");
+      }
+      _hfCards() {
+        const box = this.shadowRoot?.querySelector(".container");
+        return box ? [...box.children].filter((c) => c.classList.contains("card")) : [];
+      }
+      _hfMode(mode, n) {
+        this.toggleAttribute("hf-cols", mode === "cols");
+        this.toggleAttribute("hf-rows", mode === "rows");
+        if (n) this.style.setProperty("--hf-n", String(n));
+        this.style.setProperty("--hf-w", this._config?.card_w === true ? "var(--hf-card-w,400px)" : "1fr");
+      }
+      /** The rule for the screen: packed columns, N per row, or HA's own layout (none matched, edit mode). */
+      _hfPlace() {
+        if (!this._config || !this.shadowRoot) return;
+        const edit = !!(this.lovelace?.editMode && !this.isStrategy);
+        const l = edit ? null : this._hfLayouts().find((x) => window.matchMedia(x.media).matches);
+        const els = this._hfCards();
+        if (!l || !els.length) {
+          this._hfRo.disconnect();
+          this.removeAttribute("hf-measure");
+          return this._hfMode(null);
+        }
+        if (Number(l.per_row) > 1) {
+          this._hfRo.disconnect();
+          this.removeAttribute("hf-measure");
+          // The sheet holds the rows rule too (no packed cells): empty until a packing filled it, the rows were HA's.
+          this._hfPacked = null;
+          this._hfSheet.replaceSync(sheetCss([]));
+          return this._hfMode("rows", Math.min(12, Math.round(Number(l.per_row))));
+        }
+        const max = Math.max(1, Math.round(Number(l.max) || 1));
+        const p = this._hfPacked;
+        if (p && p.key === this._hfKey && p.media === l.media && p.n === els.length) return this._hfRows();
+        // A hass update mid-measure (every few hundred ms in a busy house) must not start the measurement over.
+        const mk = `${this._hfKey}|${l.media}|${els.length}`;
+        if (this.hasAttribute("hf-measure") && this._hfMeasuring === mk) return;
+        this._hfMeasuring = mk;
+        // Measured where they'll stand (that many columns, the same width), hidden until packed.
+        const vis = els.filter((el) => el.offsetParent !== null).length || els.length;
+        this._hfMeasure(l, max, Math.min(max, vis), 0);
+      }
+      _hfMeasure(l, max, n, round) {
+        const els = this._hfCards();
+        this.setAttribute("hf-measure", "");
+        this._hfPacked = null;
+        this._hfMode("cols", n);
+        this._hfSheet.replaceSync(sheetCss(els.map((_, i) => [i % n, 0, 1])));
+        const start = performance.now();
+        const shown = (el) => el.offsetParent !== null;
+        const ready = () => els.every((el) => !shown(el) || el.offsetHeight > 0);
+        const done = () => {
+          this._hfRo.disconnect();
+          const h = els.map((el) => (shown(el) ? el.offsetHeight : 0));
+          const at = this._hfPack(h, max);
+          const cn = Math.max(1, ...at.map((k) => k + 1));
+          if (cn !== n && round < 1) return this._hfMeasure(l, max, cn, round + 1);
+          this._hfPacked = { key: this._hfKey, media: l.media, n: els.length, w: this.clientWidth, cn, at, max };
+          this._hfMeasuring = null;
+          this.removeAttribute("hf-measure");
+          this._hfRows();
+        };
+        const check = () => {
+          clearTimeout(this._hfQuiet);
+          if (!this.isConnected) return; // connectedCallback measures again
+          if (performance.now() - start > 1500) return done();
+          this._hfQuiet = setTimeout(() => (ready() ? done() : check()), ready() ? 120 : 200);
+        };
+        this._hfRo.disconnect();
+        this._hfRo = new ResizeObserver(check);
+        for (const el of els) this._hfRo.observe(el);
+        check();
+      }
+      /** Each card's column (= hauflo-layout `_pack`): a hidden one (an alert with nothing to say) right above the next card. */
+      _hfPack(h, max) {
+        const gap = 8;
+        const vis = h.map((x, i) => [x, i]).filter(([x]) => x > 0);
+        const to = window.customElements.get("hauflo-layout")?._packShort?.(vis.map(([x]) => x), max, gap) || vis.map((_, i) => i % max);
+        const at = new Array(h.length).fill(-1);
+        vis.forEach(([, i], v) => (at[i] = to[v]));
+        let next = -1;
+        for (let i = h.length - 1; i >= 0; i--) {
+          if (at[i] >= 0) next = at[i];
+          else at[i] = next >= 0 ? next : Math.max(0, ...to);
+        }
+        return at;
+      }
+      /** The rows of the frozen columns by the cards' current heights (a card opened: only the ones under it move). */
+      _hfRows() {
+        const p = this._hfPacked;
+        const els = this._hfCards();
+        if (!p || els.length !== p.at.length) return;
+        this._hfMode("cols", p.cn);
+        const gap = parseFloat(getComputedStyle(this.shadowRoot.querySelector(".container")).getPropertyValue("--row-gap")) || 8;
+        const y = new Array(p.cn).fill(0);
+        const cells = els.map((el, i) => {
+          const h = el.offsetParent !== null ? Math.ceil(el.offsetHeight) : 0;
+          const c = Math.min(p.at[i], p.cn - 1);
+          const cell = [c, y[c], h];
+          if (h > 0) y[c] += h + gap;
+          return cell;
+        });
+        this._hfSheet.replaceSync(sheetCss(cells));
+        this._hfRo.disconnect();
+        this._hfRo = new ResizeObserver(() => this._hfHeights());
+        for (const el of els) this._hfRo.observe(el);
+        this._hfCells = cells.map((c) => c[2]).join();
+      }
+      _hfHeights() {
+        if (!this._hfPacked || this.hasAttribute("hf-measure")) return;
+        const now = this._hfCards().map((el) => (el.offsetParent !== null ? Math.ceil(el.offsetHeight) : 0)).join();
+        if (now !== this._hfCells) this._hfRows();
+      }
+      /** The section's width changed (a window resized, the sidebar docked): packed again by the heights at the new width. */
+      _hfRepack() {
+        const p = this._hfPacked;
+        if (!p || !this.clientWidth || Math.abs(this.clientWidth - p.w) < 1) return;
+        this._hfPacked = null;
+        this._hfPlace();
+      }
+    }
+    reg.define(TAG, HaufloSection);
+    setTimeout(resync, 0);
+  };
+  // HA creates a page's sections before this file is in (a fresh tab: the dashboard comes before the module): an error
+  // card, rebuilt by HA once the element is defined — but its view keeps handing the old element to the layout
+  // (hui-view._rebuildSection doesn't pass `sections` on; HA 2026.10), so edit mode showed that error's empty section.
+  // Once defined (after HA's own rebuild), each view hands its current sections on again; HA's own fields, so read
+  // with care: none there, nothing done.
+  const resync = () => {
+    const views = new Set();
+    const walk = (n) => {
+      for (const e of n.querySelectorAll("*")) {
+        if (e.localName === "hui-view") views.add(e);
+        if (e.localName === "hui-root" && e._viewCache && typeof e._viewCache === "object") for (const v of Object.values(e._viewCache)) if (v) views.add(v);
+        if (e.shadowRoot) walk(e.shadowRoot);
+      }
+    };
+    walk(document);
+    for (const v of views) {
+      const l = v._layoutElement, now = v._sections;
+      if (!l || !Array.isArray(now) || !Array.isArray(l.sections)) continue;
+      if (l.sections.length !== now.length || l.sections.some((x, i) => x !== now[i])) l.sections = now;
+    }
   };
   define();
 })();

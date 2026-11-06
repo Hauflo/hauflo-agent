@@ -42,6 +42,7 @@
       { "id": "hauflo", "path": "/api/hauflo/owned", "methods": ["GET"] },
       { "id": "hauflo", "path": "/api/hauflo/protect", "methods": ["POST"] },
       { "id": "hauflo", "path": "/api/hauflo/foreign", "methods": ["GET", "POST"] },
+      { "id": "hauflo", "path": "/api/hauflo/pairs", "methods": ["GET", "POST"] },
       { "id": "hauflo", "path": "/api/hauflo/ranges", "methods": ["GET", "POST"] },
       { "id": "hauflo", "path": "/api/hauflo/ownership", "methods": ["GET", "POST"] },
       { "id": "hauflo", "path": "/api/hauflo/season/config", "methods": ["GET", "POST"] },

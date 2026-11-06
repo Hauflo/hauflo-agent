@@ -33,7 +33,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
 
-from . import automations, backup, dashmerge, daylight, foreign, guest, house, insight, issues, keep, notify, ownership, presence, protect, ranges, retired, rules, scenes, season, servers, service, sidebar, stock, theme, timers, titles, voice
+from . import automations, backup, dashmerge, daylight, foreign, guest, house, insight, issues, keep, noeffect, notify, ownership, presence, protect, ranges, retired, rules, scenes, season, servers, service, sidebar, stock, theme, timers, titles, voice
 from . import derived as dv
 from . import order as block_order
 from . import habits as habits_mod
@@ -158,7 +158,7 @@ _ROUTES = [(r["id"], r["path"].split("/"), set(r["methods"])) for r in _TH["rout
 _HAUFLO_VIEWS = {(r["path"], m) for r in _TH["routes"] if r["id"] == "hauflo" for m in r["methods"]}
 _MAX_CHANNELS = 8
 # What this agent can do beyond its version (hello and status «features»): the backend gates a step on it.
-FEATURES = [foreign.FEATURE]
+FEATURES = [foreign.FEATURE, foreign.PLAN_FEATURE]
 
 
 # What a registry edit may touch: Hauflo's own — KNX entities/devices, its light/cover groups and scenes
@@ -189,7 +189,7 @@ def _own_entity(hass: HomeAssistant | None, entity_id: Any, owned_entries: set[s
 _PROTECTED_COVERS = {"garage", "gate", "door"}
 
 
-def _protected(hass: HomeAssistant | None, entity_id: Any, depth: int = 0) -> bool:
+def _protected(hass: HomeAssistant | None, entity_id: Any, depth: int = 0, links: list[tuple[set[str], set[str]]] | None = None) -> bool:
     """What opens the house or stops its protection: a lock, the alarm, a valve, a garage door / gate / door cover —
     never in a voice assistant, a scene or a bridge, whatever path asks (security re-review round 5); nor a group with
     one of them inside (panel round 6)."""
@@ -199,18 +199,75 @@ def _protected(hass: HomeAssistant | None, entity_id: Any, depth: int = 0) -> bo
         return True
     st = hass.states.get(entity_id) if hass is not None and hasattr(hass, "states") else None
     members = st.attributes.get("entity_id") if st is not None else None
-    if isinstance(members, list) and members and depth < 3 and any(_protected(hass, m, depth + 1) for m in members):
+    if isinstance(members, list) and members and depth < 3 and any(_protected(hass, m, depth + 1, links) for m in members):
         return True
     if hass is None:
         return False
     # A «Switch as X» light / cover over a gate's relay operates the relay (red-team 2, A1): protected as its source.
     src = _wrapped_source(hass, entity_id)
-    if src is not None and (src == "?" or depth >= 3 or src == entity_id or _protected(hass, src, depth + 1)):
+    if src is not None and (src == "?" or depth >= 3 or src == entity_id or _protected(hass, src, depth + 1, links)):
         return True
-    return _sticky(hass, entity_id) or _class_protected(hass, entity_id)
+    # A UI helper over another entity (red team L3), both ways: a template switch / cover whose actions open a gate is
+    # protected as what it operates; the relay a «Switch as X» gate / lock or a template gate cover operates is protected
+    # as that helper (the relay's own toggle opens the same gate).
+    links = _helper_links(hass) if links is None else links
+    for wrappers, sources in links:
+        if entity_id in wrappers and depth < 3 and any(_protected(hass, x, depth + 1, links) for x in sources - {entity_id}):
+            return True
+        if entity_id in sources and any(_self_protected(hass, w) for w in wrappers - {entity_id}):
+            return True
+    return _self_protected(hass, entity_id)
+
+
+def _self_protected(hass: HomeAssistant, entity_id: str) -> bool:
+    """Protected by what it is itself (its domain, its class, a KNX mark), not by what it holds or operates."""
+    return entity_id.startswith(_NEVER_EXPOSE) or _sticky(hass, entity_id) or _class_protected(hass, entity_id)
 
 
 _WRAPPER_PLATFORMS = {"switch_as_x"}
+# UI helpers that operate other entities: their config entry's entities and the entity ids their options act on.
+_HELPER_DOMAINS = ("switch_as_x", "template")
+_ENTITY_REF = re.compile(r"^[a-z0-9_]+\.[a-z0-9_]+$")
+
+
+def _option_refs(value: Any, nested: bool = False) -> set[str]:
+    """Entity ids a helper's options act on: inside its action sequences / targets (a list or a mapping) — never a
+    top-level template string (a state template reads an entity, it doesn't operate it)."""
+    if isinstance(value, dict):
+        return set().union(*(_option_refs(v, True) for v in value.values())) if value else set()
+    if isinstance(value, list):
+        return set().union(*(_option_refs(v, True) for v in value)) if value else set()
+    return {value} if nested and isinstance(value, str) and _ENTITY_REF.match(value) else set()
+
+
+def _helper_links(hass: HomeAssistant) -> list[tuple[set[str], set[str]]]:
+    """(the helper's entities, what they operate) per Switch-as-X / template config entry; an unreadable entry alone is
+    left out, not the others."""
+    out: list[tuple[set[str], set[str]]] = []
+    try:
+        reg = er.async_get(hass)
+        entries = [(d, e) for d in _HELPER_DOMAINS for e in hass.config_entries.async_entries(d)]
+    except Exception:  # noqa: BLE001 — no registry / entries (a stub, HA starting): no links
+        return out
+    for domain, entry in entries:
+        with contextlib.suppress(Exception):
+            wrappers = {e.entity_id for e in er.async_entries_for_config_entry(reg, entry.entry_id)}
+            opts = dict(entry.options or {})
+            if domain == "switch_as_x":
+                src = opts.get("entity_id")
+                sources = {getattr(reg.async_get(src), "entity_id", src)} if isinstance(src, str) and src else set()
+            else:
+                sources = _option_refs(opts)
+            sources = {x for x in sources if isinstance(x, str) and "." in x}
+            if wrappers and sources:
+                out.append((wrappers, sources))
+    return out
+
+
+def protected_ids(hass: HomeAssistant) -> list[str]:
+    """Every entity of the house that is protected now — the card's one rule with the agent's (red team L3)."""
+    links = _helper_links(hass)
+    return sorted(eid for eid in hass.states.async_entity_ids() if _protected(hass, eid, links=links))
 
 
 def _wrapped_source(hass: HomeAssistant, entity_id: str) -> str | None:
@@ -1277,6 +1334,8 @@ _LOVELACE_TYPES = {
     "custom:hauflo-area",
     # Hauflo's page layout (0.21.0, п.49): the page's cards once, its columns name them by their hauflo_id.
     "custom:hauflo-layout",
+    # Hauflo's page section (0.24.0, п.70): HA's grid section, its blocks its own cards — no entity, no action of its own.
+    "custom:hauflo-section",
 }
 # What a card may only show: anyone's (weather on the floor, an alarm source of a monitoring rule).
 _READ_ONLY_DOMAINS = {"sensor", "binary_sensor", "weather", "sun", "person", "zone", "device_tracker", "calendar", "image", "camera", "event"}
@@ -2850,6 +2909,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
         hass.http.register_view(stock.StockView())
         hass.http.register_view(protect.ProtectView(_protect_mark, _protect_unmark))
         hass.http.register_view(foreign.ForeignView())
+        hass.http.register_view(noeffect.PairsView(lambda: _pair_effect(hass)))
 
     async def _stop(_event: Event) -> None:
         if agent.presence is not None:
@@ -2966,6 +3026,36 @@ def _engine(hass: HomeAssistant) -> notify.NotifyEngine | None:
     return None
 
 
+def rule_states(hass: HomeAssistant, admin: bool) -> dict[str, str]:
+    """entity → «ok» / «fired» / «off» for every entity a Hauflo rule watches (the tile's bell, hauflo-cards.js).
+    Both kinds count: the value rules (rules.py: the input, the conditions, the interlock) and the alarm rules (notify.py:
+    their sources). Several rules: fired if any fired; else off only if all are off; else ok. A client sees only the value
+    rules the integrator left visible (as /api/hauflo/rules); a no-data alarm is a diagnosis, not «сработало»."""
+    found: dict[str, list[str]] = {}
+    for entry in hass.config_entries.async_loaded_entries(DOMAIN):
+        agent = entry.runtime_data
+        if (eng := agent.rules) is not None:
+            for rid, rule in eng.rules.items():
+                if not (admin or rule["client"].get("visible", True)):
+                    continue
+                st = "off" if not rule["enabled"] else "fired" if eng.st(rid)["active"] else "ok"
+                for eid in rules.inputs_of(rule):
+                    found.setdefault(eid, []).append(st)
+        if (alarms := agent.engine) is not None:
+            for rule in alarms.config["rules"]:
+                for eid in rule["sources"]:
+                    open_ = alarms.active.get(f"{rule['id']}|{eid}")
+                    found.setdefault(eid, []).append("off" if not rule["enabled"] else "fired" if open_ and not open_.get("nodata") else "ok")
+    return {eid: "fired" if "fired" in v else "off" if all(x == "off" for x in v) else "ok" for eid, v in sorted(found.items())}
+
+
+def _pair_effect(hass: HomeAssistant) -> noeffect.PairEffect | None:
+    for entry in hass.config_entries.async_loaded_entries(DOMAIN):
+        if ins := entry.runtime_data.insights:
+            return next((d for d in ins.detectors if isinstance(d, noeffect.PairEffect)), None)
+    return None
+
+
 def _season(hass: HomeAssistant) -> season.Season | None:
     for entry in hass.config_entries.async_loaded_entries(DOMAIN):
         return entry.runtime_data.season
@@ -3027,6 +3117,8 @@ def _rules(hass: HomeAssistant) -> rules.Rules | None:
 async def async_unload_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bool:
     if not await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         return False
+    if (ff := foreign.flags(hass)) is not None:
+        ff.plans.clear()  # re-paired / a new token: no deploy's plan of the old link writes through the new one (red team)
     if (dl := entry.runtime_data.daylight) is not None:
         dl.async_stop()
     if (sn := entry.runtime_data.season) is not None:

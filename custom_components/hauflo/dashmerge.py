@@ -294,6 +294,10 @@ class Merge:
         for v in _kids(self.current, 0):
             if isinstance(v, dict):
                 self._mark_view(v, 1, _title(v, 1))
+        # Hauflo's containers the integrator dissolved: new items for them go to where their children went.
+        self.adopt: dict[str, list[Any]] = {}
+        self.dissolved: set[str] = set()
+        self._dissolve()
         self.result = self._build_root()
 
     def _mark_view(self, node: dict[str, Any], level: int, title: str | None) -> None:
@@ -341,6 +345,23 @@ class Merge:
             out["where"] = w
         return {**out, **extra}
 
+    def _dissolve(self) -> None:
+        """A Hauflo container (section, stack) gone from HA while some of its Hauflo children live on elsewhere (moved
+        out by the integrator before he removed it) is not brought back empty (W1-3): what Hauflo would put into it
+        that HA lacks goes to the end of the Hauflo container holding most of those children (with restore asked for,
+        the removed ones too). No such container in the new config: the old way, `_children` brings it back."""
+        for h, lvl in self.B.level.items():
+            if lvl < 2 or h in self.C.node or h not in self.N.node or not _holds(self.B.node[h], lvl):
+                continue
+            where = Counter(self.C.parent[x] for x, p in self.B.parent.items() if p == h and x in self.C.node and self.C.parent[x] in self.N.node and self.C.parent[x] != h)
+            if not where:
+                continue
+            back = self.restore_all or h in self.restore
+            kids = [self._fresh(i) for x in _kids(self.N.node[h], lvl) if isinstance(x, dict) and (i := _hid(x)) and (back or i not in self.B.node) and i not in self.C.node]
+            self.dissolved.add(h)
+            self.adopt.setdefault(where.most_common(1)[0][0], []).extend(kids)
+            self.restored.extend(k[ID] for k in kids if back and k[ID] in self.B.node)
+
     # building
     def _build_root(self) -> dict[str, Any]:
         own = {k: v for k, v in self.new.items() if k != "views"}
@@ -374,11 +395,18 @@ class Merge:
             nh = _hid(n)
             if nh is None:
                 continue
+            if nh in self.dissolved:
+                continue  # its items are placed in the section its children went to
             if nh in self.B.node and nh not in self.C.node:
                 # Removed in HA: stays removed unless asked back.
                 if self.restore_all or nh in self.restore:
+                    back = self._fresh(nh)
+                    # Not an empty shell of a container whose items all live elsewhere (W1-3).
+                    key = _kids_key(back, self.N.level[nh])
+                    if key is not None and not back[key] and _kids(self.N.node[nh], self.N.level[nh]):
+                        continue
                     self.restored.append(nh)
-                    out.append(self._fresh(nh))
+                    out.append(back)
                 else:
                     self.removed.append(self._label(self.B, nh))
                 continue
@@ -386,9 +414,37 @@ class Merge:
                 continue  # where the integrator put it (placed with its current parent)
             out.append(self._build(nh))
         if c_node is None:
-            return out
+            return out + self.adopt.get(h, [])
+        out = self._keep_order(h, level, out, c_node)
         self._float(out, level, c_node)
-        return out
+        return out + self.adopt.get(h, [])
+
+    def _keep_order(self, h: str, level: int, out: list[Any], c_node: dict[str, Any]) -> list[Any]:
+        """The integrator's order of Hauflo's items under one parent (dragged in HA's edit mode) beats Hauflo's: when
+        the items still in both are in another order than the base's, they stay in his order and Hauflo's new or
+        restored items go after them (HA's own rule for an added card: the end of the section). Untouched order:
+        Hauflo's, its new items where Hauflo puts them."""
+        b_node = self.base if h == ROOT else self.B.node.get(h)
+        if not isinstance(b_node, dict):
+            return out
+
+        def pos(node: dict[str, Any], idx: _Index, mine: bool) -> dict[str, int]:
+            got: dict[str, int] = {}
+            for i, c in enumerate(_kids(node, level)):
+                x = self._hauflo(c) if mine else _hid(c)
+                if x is not None and idx.parent.get(x) == h and x not in got:
+                    got[x] = i
+            return got
+
+        cur, was = pos(c_node, self.C, True), pos(b_node, self.B, False)
+        ids = [x.get(ID) for x in out if isinstance(x, dict)]
+        common = [x for x in ids if x in cur and x in was]
+        mine = sorted(common, key=lambda x: cur[x])
+        if mine == sorted(common, key=lambda x: was[x]):
+            return out
+        by = {x.get(ID): x for x in out if isinstance(x, dict)}
+        keep = set(common)
+        return [by[x] for x in mine] + [x for x in out if not (isinstance(x, dict) and x.get(ID) in keep)]
 
     def _fresh(self, h: str) -> dict[str, Any]:
         """Hauflo's new item with its new children (a removed item brought back) — less what HA still has elsewhere

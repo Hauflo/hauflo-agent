@@ -154,6 +154,18 @@ async def refuse(request: Any) -> Any:
     return HomeAssistantView.json({"message": "a restricted (child) profile can't change the house's settings", "code": "not_allowed"}, 403)
 
 
+def _protected_ids(hass: HomeAssistant) -> list[str]:
+    from . import protected_ids  # noqa: PLC0415 — the package imports this module
+
+    return protected_ids(hass)
+
+
+def _rule_states(hass: HomeAssistant, admin: bool) -> dict[str, str]:
+    from . import rule_states  # noqa: PLC0415 — the package imports this module
+
+    return rule_states(hass, admin)
+
+
 class HouseView(HomeAssistantView):
     url = "/api/hauflo/house"
     name = "api:hauflo:house"
@@ -169,6 +181,11 @@ class HouseView(HomeAssistantView):
             "can_edit": await may_edit(hass, user),
             "admin": bool(user and user.is_admin),
             "favorites": mine or {"items": []},
+            # What opens the house, by the agent's one rule (a relay under a «Switch as X» gate too): the cards never
+            # give it a one-tap button (red team L3).
+            "protected": _protected_ids(hass),
+            # What a Hauflo rule watches, by entity: «ok» / «fired» / «off» — the tile's bell (rules.py, notify.py).
+            "rules": _rule_states(hass, bool(user and user.is_admin)),
         }
         if user and user.is_admin:
             people = [u for u in await hass.auth.async_get_users() if not u.system_generated and u.is_active]

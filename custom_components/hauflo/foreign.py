@@ -30,7 +30,16 @@ STORE_KEY = f"{DOMAIN}.foreign"
 DATA = f"{DOMAIN}_foreign"
 MAX_IDS = TUNING["ownership"]["foreign_max"]  # a house's other integrations' entities, never a flood
 NAME_MAX = TUNING["ownership"]["foreign_name_max"]
-PLAN_TTL = TUNING["ownership"]["foreign_plan_ttl_s"]  # a deploy's plan: written within the hour, or sent again
+# A deploy's plan lives while it writes: idle this long (no write of it) and it is gone. The deploy writes right after
+# sending it and each write keeps it alive, so 5 minutes outlasts a tunnel reconnect, never a deploy that is over
+# (red team L2: an hour-long plan let a write through long after its deploy).
+PLAN_TTL = TUNING["ownership"]["foreign_plan_ttl_s"]
+# Plans at once (red team L1): one per deploy / «Поставить» running, by its id — a second integrator's never replaces
+# the first's. More at once is refused (plans_busy), never one silently dropped.
+PLANS_MAX = TUNING["ownership"]["foreign_plans_max"]
+PLAN_FEATURE = "foreign_plan_id"
+PLAN_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+LEGACY_PLAN = ""  # a plan sent with no id (a backend before plan ids): one such, replaced by the next
 LABELS_MAX = TUNING["ownership"]["foreign_labels_max"]
 FEATURE = "foreign_wizard"
 ROLE_PREFIX = "hauflo_role_"
@@ -52,8 +61,9 @@ ENTITY_UPDATE = "config/entity_registry/update"
 class Flags:
     def __init__(self, hass: HomeAssistant) -> None:
         self.notify: dict[str, bool] = {}
-        # The deploy's plan (in memory: a restart asks the deploy for it again): {"areas", "devices", "entities": set, "at"}.
-        self.plan: dict[str, Any] | None = None
+        # The deploys' plans by id (in memory: a restart asks the deploy for them again):
+        # {plan id: {"areas", "devices", "entities": set, "at": last use}}. Each item is written once by its plan.
+        self.plans: dict[str, dict[str, Any]] = {}
         # Before Hauflo's first write: "d:<device id>" / "e:<entity registry id>" → {"was": {...}, "set": {...}}.
         self.journal: dict[str, dict[str, dict[str, Any]]] = {}
         self._store = HaufloStore(hass, STORE_KEY)
@@ -132,24 +142,59 @@ def plan_ok(p: Any) -> dict[str, set[str]] | None:
     return out if all(v is not None for v in out.values()) else None  # type: ignore[return-value]
 
 
-def active_plan(hass: HomeAssistant | None) -> dict[str, Any] | None:
+def active_plans(hass: HomeAssistant | None) -> dict[str, dict[str, Any]]:
+    """The live plans by id (one idle past PLAN_TTL is dropped here)."""
     f = flags(hass)
-    if f is None or f.plan is None:
-        return None
-    if time.time() - float(f.plan.get("at") or 0) > PLAN_TTL:
-        f.plan = None
-        return None
-    return f.plan
+    if f is None:
+        return {}
+    now = time.time()
+    for pid in [k for k, p in f.plans.items() if now - float(p.get("at") or 0) > PLAN_TTL]:
+        f.plans.pop(pid, None)
+    return f.plans
+
+
+def _part(msg: dict[str, Any]) -> tuple[str, Any] | None:
+    if msg.get("type") == DEVICE_UPDATE:
+        return "devices", msg.get("device_id")
+    if msg.get("type") == ENTITY_UPDATE:
+        return "entities", msg.get("entity_id")
+    return None
+
+
+def _holding(hass: HomeAssistant | None, msg: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """The live plans that hold this message's item, the oldest first."""
+    ref = _part(msg)
+    if ref is None:
+        return []
+    held = [(k, p) for k, p in active_plans(hass).items() if ref[1] in p[ref[0]]]
+    return sorted(held, key=lambda kp: float(kp[1].get("at") or 0))
 
 
 def planned(hass: HomeAssistant | None, msg: dict[str, Any]) -> bool:
-    """The item of this registry update is in the deploy's active plan: the wizard's rules alone decide."""
-    plan = active_plan(hass)
-    if plan is None:
-        return False
-    if msg.get("type") == DEVICE_UPDATE:
-        return msg.get("device_id") in plan["devices"]
-    return msg.get("type") == ENTITY_UPDATE and msg.get("entity_id") in plan["entities"]
+    """The item of this registry update is in a deploy's live plan: the wizard's rules alone decide."""
+    return bool(_holding(hass, msg))
+
+
+def drop_items(hass: HomeAssistant | None, devices: set[str], entities: set[str]) -> None:
+    """These items leave every plan (put back by «Вернуть как было»: only a plan sent after writes them again)."""
+    live = active_plans(hass)
+    for pid, p in list(live.items()):
+        p["devices"] = p["devices"] - devices
+        p["entities"] = p["entities"] - entities
+        if not p["devices"] and not p["entities"]:
+            live.pop(pid, None)
+
+
+def _consume(hass: HomeAssistant, pid: str, msg: dict[str, Any]) -> None:
+    """A plan's item written: gone from that plan (the same write again is refused), the plan kept alive."""
+    live = active_plans(hass)
+    plan, ref = live.get(pid), _part(msg)
+    if plan is None or ref is None:
+        return
+    plan[ref[0]] = plan[ref[0]] - {ref[1]}
+    plan["at"] = time.time()
+    if not plan["devices"] and not plan["entities"]:
+        live.pop(pid, None)
 
 
 def _labels_ok(hass: HomeAssistant, labels: Any) -> str | None:
@@ -228,6 +273,25 @@ def _is_protected(hass: HomeAssistant, entity_id: str) -> bool:
 def wizard_refusal(hass: HomeAssistant | None, msg: dict[str, Any]) -> str | None:
     """Why a device / entity registry update of another integration's item is refused (None — allowed). The reason
     goes back to Hauflo in the error message («Hauflo agent: not allowed (<reason>)»)."""
+    return decide(hass, msg)[0]
+
+
+def decide(hass: HomeAssistant | None, msg: dict[str, Any]) -> tuple[str | None, str | None]:
+    """(why refused, None) or (None, the id of the plan that allows it): the oldest live plan holding the item whose
+    rooms allow the write — a room is never taken from another deploy's plan."""
+    live = active_plans(hass) if hass is not None else {}
+    held = _holding(hass, msg)
+    if not held:
+        return _refusal(hass, msg, {"areas": set(), "devices": set(), "entities": set()} if live else None), None
+    why: str | None = None
+    for pid, plan in held:
+        if (r := _refusal(hass, msg, plan)) is None:
+            return None, pid
+        why = why or r
+    return why, None
+
+
+def _refusal(hass: HomeAssistant | None, msg: dict[str, Any], plan: dict[str, Any] | None) -> str | None:
     t = msg.get("type")
     if hass is None or t not in (DEVICE_UPDATE, ENTITY_UPDATE):
         return "not_allowed"
@@ -238,7 +302,6 @@ def wizard_refusal(hass: HomeAssistant | None, msg: dict[str, Any]) -> str | Non
         return f"field_not_allowed:{sorted(extra)[0]}"
     if not set(msg) & keys:
         return "nothing_to_change"
-    plan = active_plan(hass)
     if plan is None:
         return "no_plan"
     if device:
@@ -284,6 +347,7 @@ def wizard_prepare(hass: HomeAssistant, msg: dict[str, Any]) -> tuple[dict[str, 
     message to send (None — refused: a label of that id can't be made) and the label ids it created."""
     f = flags(hass)
     created: list[str] = []
+    _why, pid = decide(hass, msg)
     out = dict(msg)
     if "labels" in msg:
         reg = lr.async_get(hass)
@@ -308,6 +372,8 @@ def wizard_prepare(hass: HomeAssistant, msg: dict[str, Any]) -> tuple[dict[str, 
             rec["was"].setdefault(k, cur.get(k))
             rec["set"][k] = sorted(out[k]) if k == "labels" else out[k]
         f.save()
+    if pid is not None:
+        _consume(hass, pid, msg)  # one-shot (red team L2): the same write again is refused — the plan is not a pass
     return out, created
 
 
@@ -365,6 +431,7 @@ def revert(hass: HomeAssistant, devices: set[str], entities: set[str]) -> dict[s
                 changes["hidden_by"] = er.RegistryEntryHider(changes["hidden_by"]) if changes["hidden_by"] else None
             ereg.async_update_entity(ref, **changes)
         f.journal.pop(key, None)
+        drop_items(hass, {ref} if kind == "d" else set(), {ref} if kind == "e" else set())
         out["devices" if kind == "d" else "entities"].append(ref)
         if kept:
             out["kept"][ref] = sorted(set(kept))
@@ -376,7 +443,8 @@ class ForeignView(HomeAssistantView):
     """GET → {"notify": {...}, "features": [...], "plan": bool, "journal": {"devices": [...], "entities": [...]}};
     POST (admin only), any of:
       {"notify": {entity_id: bool}} — replaces the alarm sources map;
-      {"plan": {"areas": [...], "devices": [...], "entities": [...]} | null} — the wizard's plan for the next hour (п.57);
+      {"plan": {"areas": [...], "devices": [...], "entities": [...]} | null, "plan_id": "<id>"} — a deploy's plan (п.57),
+        by its id (none — the one legacy plan): each item written once, gone when idle PLAN_TTL; null — dropped;
       {"revert": {"devices": [...], "entities": [...]}} — «Вернуть как было» (a fresh backup first, as any change)."""
 
     url = "/api/hauflo/foreign"
@@ -388,7 +456,7 @@ class ForeignView(HomeAssistantView):
             return self.json_message("admin only", 403)
         hass = request.app[KEY_HASS]
         f = flags(hass)
-        return self.json({"notify": f.notify if f is not None else {}, "features": [FEATURE], "plan": active_plan(hass) is not None, "journal": _journal_list(hass)})
+        return self.json({"notify": f.notify if f is not None else {}, "features": [FEATURE, PLAN_FEATURE], "plan": bool(active_plans(hass)), "journal": _journal_list(hass)})
 
     async def post(self, request):
         if not request["hass_user"].is_admin:
@@ -397,8 +465,11 @@ class ForeignView(HomeAssistantView):
             body = await request.json()
         except ValueError:
             return self.json_message("invalid JSON", 400)
-        if not isinstance(body, dict) or not body or set(body) - {"notify", "plan", "revert"}:
+        if not isinstance(body, dict) or not body or set(body) - {"notify", "plan", "plan_id", "revert"}:
             return self.json_message("notify / plan / revert expected", 400)
+        pid = body.get("plan_id", LEGACY_PLAN)
+        if "plan_id" in body and ("plan" not in body or not isinstance(pid, str) or not PLAN_ID.match(pid)):
+            return self.json_message("plan_id: [A-Za-z0-9_-]{1,64} with a plan expected", 400)
         if "notify" in body and not notify_ok(body["notify"]):
             return self.json_message("notify: {entity_id: bool} expected", 400)
         plan = plan_ok(body["plan"]) if body.get("plan") is not None else None
@@ -413,14 +484,21 @@ class ForeignView(HomeAssistantView):
             return self.json_message("not ready", 409)
         if "revert" in body and not backup.fresh():
             return self.json({"code": "backup_required", "message": "Hauflo agent: a backup first"}, 428)
+        live = active_plans(hass)
+        if plan is not None and pid not in live and len(live) >= PLANS_MAX:
+            # Never another deploy's plan dropped for this one: said, and tried again when one is over.
+            return self.json({"code": "plans_busy", "message": "Hauflo agent: not allowed (plans_busy)"}, 409)
         out: dict[str, Any] = {}
         if "notify" in body:
             f.set_notify(body["notify"])
         if "plan" in body:
-            f.plan = {**plan, "at": time.time()} if plan is not None else None
+            if plan is None:
+                live.pop(pid, None)
+            else:
+                live[pid] = {**plan, "at": time.time()}
         if "revert" in body:
             out["reverted"] = revert(hass, set(rv.get("devices", [])), set(rv.get("entities", [])))
-        return self.json({"notify": f.notify, "plan": active_plan(hass) is not None, **out})
+        return self.json({"notify": f.notify, "plan": bool(active_plans(hass)), **out})
 
 
 def _journal_list(hass: HomeAssistant) -> dict[str, list[str]]:

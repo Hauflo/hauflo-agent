@@ -8,7 +8,7 @@ import ast, contextlib, glob, ipaddress, json, logging, pathlib, re, sys, types
 HERE = pathlib.Path(__file__).parent
 src = open(HERE.parent / "custom_components/hauflo/__init__.py").read()
 tree = ast.parse(src)
-FUNCS = {"_lovelace_ok", "_area_lights_owned", "_image_ok", "_svg_ok", "_hauflo_entity", "_own_entity", "_protected", "_sticky", "_class_protected", "_platform", "_owned_knx", "_owned_knx_writes", "_owned_scene_sends", "_protected_writes", "_shown_protected", "_words", "_named_as", "_wrapped_source", "_knx_store", "_knx_writes", "_ga_key"}
+FUNCS = {"_lovelace_ok", "_area_lights_owned", "_image_ok", "_svg_ok", "_hauflo_entity", "_own_entity", "_protected", "_sticky", "_class_protected", "_self_protected", "_helper_links", "_option_refs", "_platform", "_owned_knx", "_owned_knx_writes", "_owned_scene_sends", "_protected_writes", "_shown_protected", "_words", "_named_as", "_wrapped_source", "_knx_store", "_knx_writes", "_ga_key"}
 keep = [n for n in tree.body if (isinstance(n, ast.Assign) and any(getattr(t, "id", "").startswith("_") for t in n.targets)) or (isinstance(n, ast.FunctionDef) and n.name in FUNCS)]
 sys.path.insert(0, str(HERE.parent / "custom_components/hauflo"))
 from tunnel import TUNNEL  # noqa: E402 — plain Python, no HA
