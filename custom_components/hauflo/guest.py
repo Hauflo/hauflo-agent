@@ -182,7 +182,7 @@ class GuestAccess:
 
     def _safe(self, eid: Any) -> bool:
         """A Hauflo light / cover / climate on the family's screen, never a lock / alarm / valve / garage, gate or door
-        cover (owns()), not a group, not the agent's own (the comfort floor is the integrator's), not hidden / off."""
+        cover (owns()), not a group, not the agent's own (platform hauflo), not hidden / off."""
         if not isinstance(eid, str) or not _ENTITY.fullmatch(eid) or self.hass.states.get(eid) is None:
             return False
         ent = er.async_get(self.hass).async_get(eid)

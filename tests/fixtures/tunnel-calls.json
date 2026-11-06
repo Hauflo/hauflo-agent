@@ -563,6 +563,12 @@
   {
    "file": "ha/foreignDeploy.ts",
    "kind": "ws",
+   "call": "config/device_registry/update",
+   "params": {}
+  },
+  {
+   "file": "ha/foreignDeploy.ts",
+   "kind": "ws",
    "call": "config/entity_registry/list",
    "params": {}
   },
@@ -625,6 +631,56 @@
    "kind": "ws",
    "call": "unsubscribe_events",
    "params": {}
+  },
+  {
+   "file": "ha/haInventory.ts",
+   "kind": "ws",
+   "call": "config_entries/get",
+   "params": {}
+  },
+  {
+   "file": "ha/haInventory.ts",
+   "kind": "ws",
+   "call": "config/area_registry/list",
+   "params": {}
+  },
+  {
+   "file": "ha/haInventory.ts",
+   "kind": "ws",
+   "call": "config/device_registry/list",
+   "params": {}
+  },
+  {
+   "file": "ha/haInventory.ts",
+   "kind": "ws",
+   "call": "config/entity_registry/list",
+   "params": {}
+  },
+  {
+   "file": "ha/haInventory.ts",
+   "kind": "ws",
+   "call": "config/floor_registry/list",
+   "params": {}
+  },
+  {
+   "file": "ha/haInventory.ts",
+   "kind": "ws",
+   "call": "config/label_registry/list",
+   "params": {}
+  },
+  {
+   "file": "ha/haInventory.ts",
+   "kind": "ws",
+   "call": "get_states",
+   "params": {}
+  },
+  {
+   "file": "ha/haInventory.ts",
+   "kind": "ws",
+   "call": "manifest/get",
+   "params": {
+    "integration": "hauflo"
+   }
   },
   {
    "file": "ha/lampWrappers.ts",
@@ -873,6 +929,12 @@
   {
    "file": "index.ts",
    "kind": "rest",
+   "call": "GET /api/hauflo/foreign",
+   "params": {}
+  },
+  {
+   "file": "index.ts",
+   "kind": "rest",
    "call": "GET /api/hauflo/notify",
    "params": {}
   },
@@ -909,6 +971,12 @@
    "file": "index.ts",
    "kind": "rest",
    "call": "POST /api/hauflo/alarms",
+   "params": {}
+  },
+  {
+   "file": "index.ts",
+   "kind": "rest",
+   "call": "POST /api/hauflo/foreign",
    "params": {}
   },
   {
@@ -958,6 +1026,12 @@
   {
    "file": "index.ts",
    "kind": "ws",
+   "call": "config/entity_registry/update",
+   "params": {}
+  },
+  {
+   "file": "index.ts",
+   "kind": "ws",
    "call": "knx/get_knx_project",
    "params": {}
   },
@@ -965,6 +1039,12 @@
    "file": "index.ts",
    "kind": "ws",
    "call": "knx/project_file_process",
+   "params": {}
+  },
+  {
+   "file": "index.ts",
+   "kind": "ws",
+   "call": "lovelace/dashboards/list",
    "params": {}
   },
   {

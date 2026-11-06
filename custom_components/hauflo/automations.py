@@ -54,6 +54,7 @@ from .house import refuse
 from .natural import natural_key
 from .const import DOMAIN, wants_ru
 from .storage import HaufloStore
+from . import recipes
 from .tuning import TUNING
 _LOGGER = logging.getLogger(__name__)
 STORE_KEY = "hauflo.automations"
@@ -1075,7 +1076,11 @@ class Automations:
             # On / off as HA has it (a person may switch it in HA too).
             rules.append({"id": rule_id, **{k: v for k, v in rule.items() if k not in ("by", "hash")}, "entity_id": eid, "state": s.state if s else "missing", "enabled": s.state == "on" if s else rule["enabled"], "changed": rule_id in edited})
         rules.sort(key=lambda r: r.get("at") or 0)
-        out = {"location": self.location(), "days": self.days(self.location()["set"]), "rules": rules, "targets": self.targets(), "max_offset": MAX_OFFSET}
+        targets = self.targets()
+        out = {"location": self.location(), "days": self.days(self.location()["set"]), "rules": rules, "targets": targets, "max_offset": MAX_OFFSET}
+        # Ready rules (automation_recipes.json, p6d): what this house can run; the engine's own validate() has the last word.
+        out["recipes"] = recipes.resolve(recipes.DATA, targets, self.validate)
+        out["recipe_groups"] = recipes.DATA["groups"]
         if (h := self.habits()) is not None:
             # «Предложения по привычкам» (habits.py): the person's repeated hand actions as ready rules; off by the switch.
             out["habits_on"] = h.enabled

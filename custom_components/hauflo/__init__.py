@@ -157,6 +157,8 @@ _ROUTES = [(r["id"], r["path"].split("/"), set(r["methods"])) for r in _TH["rout
 # HA says can heat and cool (season.py).
 _HAUFLO_VIEWS = {(r["path"], m) for r in _TH["routes"] if r["id"] == "hauflo" for m in r["methods"]}
 _MAX_CHANNELS = 8
+# What this agent can do beyond its version (hello and status «features»): the backend gates a step on it.
+FEATURES = [foreign.FEATURE]
 
 
 # What a registry edit may touch: Hauflo's own — KNX entities/devices, its light/cover groups and scenes
@@ -908,7 +910,7 @@ def _foreign_entity_shown(hass: HomeAssistant | None, eid: str, msg: dict[str, A
         return False
     if "hidden_by" in msg and msg["hidden_by"] not in ("user", None):
         return False
-    if "name" in msg and msg["name"] is not None and not (isinstance(msg["name"], str) and msg["name"].strip() and len(msg["name"]) <= _FOREIGN_NAME_MAX):
+    if "name" in msg and msg["name"] is not None and not (isinstance(msg["name"], str) and msg["name"].strip() and len(msg["name"]) <= _FOREIGN_NAME_MAX and not foreign.UNSAFE_NAME.search(msg["name"])):
         return False
     entry = er.async_get(hass).async_get(eid)
     if entry is None or not getattr(entry, "device_id", None) or entry.platform in ("knx", DOMAIN, "mobile_app"):
@@ -1630,7 +1632,11 @@ def _ws_allowed(msg: dict[str, Any], hass: HomeAssistant | None = None, owned: s
         # Only what the deploy reads (the agent's own version) and KNX's — not which integrations the house runs.
         return isinstance(msg.get("integration"), str) and msg["integration"] in _MANIFESTS
     if t == "config_entries/get":
-        # The agent's own among them: the dashboard needs its cards.
+        # The agent's own among them: the dashboard needs its cards. Without a domain: every integration's id, title
+        # and domain only (the wizard of other integrations, п.57) — the answer is cut to those (_scrub_entries).
+        if "domain" not in msg:
+            tf = msg.get("type_filter")
+            return set(msg) <= {"id", "type", "type_filter"} and (tf is None or (isinstance(tf, list) and len(tf) <= 5 and all(isinstance(x, str) for x in tf)))
         return isinstance(msg.get("domain"), str) and msg["domain"] in _ENTRY_DOMAINS
     if t == "config/entity_registry/update":
         # Hauflo's own only (a KNX one only if it created it), never a lock / the alarm / a valve, and never handed
@@ -1639,7 +1645,9 @@ def _ws_allowed(msg: dict[str, Any], hass: HomeAssistant | None = None, owned: s
         if not isinstance(eid, str) or eid.startswith(_NEVER_EXPOSE):
             return False
         if not _own_entity(hass, eid, owned_entries):
-            return _foreign_entity_shown(hass, eid, msg)
+            # Another integration's: hidden / named from Hauflo's list (п.63.5/7), or the wizard's plan (п.57).
+            # One in the plan goes by the wizard's rules alone (never a room outside it).
+            return foreign.wizard_refusal(hass, msg) is None if foreign.planned(hass, msg) else _foreign_entity_shown(hass, eid, msg)
         # A garage door / gate keeps its class and never gets Alice's label (security re-review round 5). One protected
         # only by its addresses (protect.py: remade by a deploy, no class yet) may be given a protected class.
         if _protected(hass, eid) and set(msg.get("labels") or []) & _alice_labels(hass):
@@ -1659,11 +1667,13 @@ def _ws_allowed(msg: dict[str, Any], hass: HomeAssistant | None = None, owned: s
     if t == "config/device_registry/update":
         # Only placing a device in a room (security expert 25.10: «disabled_by» on the KNX interface reloaded KNX — the
         # house lost the bus): Hauflo's own, or another integration's one the integrator put there by a click (п.56).
-        if not set(msg) <= {"id", "type", "device_id", "area_id"}:
-            return False
+        # Another integration's also named and given role labels by the wizard's plan (п.57, foreign.wizard_refusal).
+        placing = set(msg) <= {"id", "type", "device_id", "area_id"}
         if _own_device(hass, msg.get("device_id")):
-            return _device_entities_owned(hass, msg.get("device_id"), owned)
-        return _foreign_device_placeable(hass, msg.get("device_id"), msg.get("area_id"), owned_entries)
+            return placing and _device_entities_owned(hass, msg.get("device_id"), owned)
+        if foreign.planned(hass, msg):
+            return foreign.wizard_refusal(hass, msg) is None
+        return placing and _foreign_device_placeable(hass, msg.get("device_id"), msg.get("area_id"), owned_entries)
     if t in ("config/area_registry/update", "config/floor_registry/update"):
         kind = "area" if t.startswith("config/area") else "floor"
         key = f"{kind}_id"
@@ -1757,6 +1767,30 @@ def _scrub_devices(devices: Any, hass: HomeAssistant | None) -> Any:
                 if k in d:
                     d[k] = None
     return devices
+
+
+# A contact in a title (an account's e-mail, a URL's user:password@, a phone): cut to «…», the hub's name stays (red
+# team 3; the backend's haInventory redactTitle is the same rule for a direct token / an older agent).
+_CONTACT = re.compile(r"[^\s@()<>\[\]\"',;]*@[^\s()<>\[\]\"',;]*|\+?\d[\d\s()-]{8,}\d")
+
+
+def _redact_title(title: Any) -> str | None:
+    if not isinstance(title, str):
+        return None
+    r = _CONTACT.sub("…", title).strip()[:200]
+    return r if any(c.isalnum() for c in r) else None
+
+
+def _scrub_entries(entries: Any) -> list[dict[str, Any]]:
+    """config_entries/get without a domain (п.57): entry_id, title, domain — nothing else of any integration."""
+    if not isinstance(entries, list):
+        return []  # fail closed
+    out = []
+    for e in entries:
+        if not isinstance(e, dict) or e.get("domain") in _PHONE_PLATFORMS or not isinstance(e.get("entry_id"), str):
+            continue
+        out.append({"entry_id": e["entry_id"], "domain": e.get("domain"), "title": _redact_title(e.get("title"))})
+    return out
 
 
 def _scrub_monitor(info: Any) -> Any:
@@ -2046,7 +2080,7 @@ class Agent:
                     async with asyncio.timeout(CONNECT_TIMEOUT):
                         ws = await stack.enter_async_context(self.session.ws_connect(servers.ws_url(host), heartbeat=30, max_msg_size=16 * 1024 * 1024))
                     self.ws = ws
-                    await self.send({"t": "hello", "token": self.secret, "version": VERSION, "haVersion": HA_VERSION, "instance": await self._instance()})
+                    await self.send({"t": "hello", "token": self.secret, "version": VERSION, "haVersion": HA_VERSION, "instance": await self._instance(), "features": FEATURES})
                     async for msg in ws:
                         if msg.type != aiohttp.WSMsgType.TEXT:
                             continue
@@ -2181,6 +2215,12 @@ class Agent:
                 continue
             kind, ref = self._pending.pop(key)
             res = r.get("result")
+            if kind == "config_entries/get:all":
+                # Every integration: its id, title and domain only — no options, no state; a title with an e-mail
+                # (a cloud account) without it; never a phone's (its title is whose phone).
+                r["result"] = _scrub_entries(res)
+                scrubbed = True
+                continue
             if kind == "config_entries/get":
                 # Of «template» only the rule sensors Hauflo made: the integrator's own helpers stay in the house.
                 r["result"] = [e for e in res if isinstance(e, dict) and e.get("entry_id") in self.owned_entries] if isinstance(res, list) else []
@@ -2330,6 +2370,33 @@ class Agent:
     def _ask_ranges(self, items: set[str]) -> None:
         ranges.ask(self.hass, items)
 
+    def _foreign_write(self, msg: dict[str, Any]) -> bool:
+        """A device / entity registry update of another integration's item the wizard's plan allows (п.57)."""
+        t = msg.get("type")
+        if t == "config/device_registry/update":
+            own = _own_device(self.hass, msg.get("device_id"))
+        elif t == "config/entity_registry/update":
+            own = _own_entity(self.hass, msg.get("entity_id"), self.owned_entries)
+        else:
+            return False
+        return not own and foreign.wizard_refusal(self.hass, msg) is None
+
+    def _foreign_reason(self, msg: dict[str, Any]) -> str | None:
+        """Why the wizard's write was refused (the reason the deploy shows per item), None for anything else."""
+        t = msg.get("type")
+        if t == "config/entity_registry/update":
+            eid = msg.get("entity_id")
+            if isinstance(eid, str) and eid.startswith(_NEVER_EXPOSE):
+                return "protected_domain"
+            if _own_entity(self.hass, eid, self.owned_entries):
+                return None
+        elif t == "config/device_registry/update":
+            if _own_device(self.hass, msg.get("device_id")):
+                return None
+        else:
+            return None
+        return foreign.wizard_refusal(self.hass, msg) or "not_allowed"
+
     def _dashboard_ok(self, config: Any) -> bool:
         return _lovelace_ok(self.hass, config, self.owned, self.owned_entries)
 
@@ -2379,12 +2446,26 @@ class Agent:
             return
         elif not _ws_allowed(msg, self.hass, self.owned, self.owned_entries):
             # Only what Hauflo deploys and reads — never backups, add-ons, arbitrary services (security review 25.10).
-            _LOGGER.warning("Hauflo: «%s» isn't allowed through the tunnel", msg.get("type"))
-            await self.send({"t": "ws_msg", "ch": ch, "data": json.dumps({"id": msg.get("id"), "type": "result", "success": False, "error": {"code": "not_allowed", "message": "Hauflo agent: not allowed"}})})
+            # Another integration's device / entity: why, in the message (the wizard's deploy says it per item, п.57).
+            why = self._foreign_reason(msg)
+            _LOGGER.warning("Hauflo: «%s» isn't allowed through the tunnel%s", msg.get("type"), f" ({why})" if why else "")
+            await self.send({"t": "ws_msg", "ch": ch, "data": json.dumps({"id": msg.get("id"), "type": "result", "success": False, "error": {"code": "not_allowed", "message": f"Hauflo agent: not allowed ({why})" if why else "Hauflo agent: not allowed"}})})
             return
         if _ws_changes(msg) and not backup.fresh():
             await self.send({"t": "ws_msg", "ch": ch, "data": json.dumps({"id": msg.get("id"), "type": "result", "success": False, "error": {"code": "backup_required", "message": "Hauflo agent: a backup first"}})})
             return
+        if self._foreign_write(msg):
+            # The wizard's write (п.57): the values as they were kept first, role labels merged with the family's own.
+            sent, created = foreign.wizard_prepare(self.hass, msg)
+            if created:
+                self.owned_entries.update(f"label:{lid}" for lid in created)  # Hauflo's: deleted by it when unused
+                self._owned_store.async_delay_save(self._owned_data, 0)
+            if sent is None:
+                await self.send({"t": "ws_msg", "ch": ch, "data": json.dumps({"id": msg.get("id"), "type": "result", "success": False, "error": {"code": "not_allowed", "message": "Hauflo agent: not allowed (label_conflict)"}})})
+                return
+            msg, data = sent, json.dumps(sent)
+        if msg.get("type") == "config_entries/get" and "domain" not in msg:
+            self._pending[(ch, msg.get("id"))] = ("config_entries/get:all", None)
         if msg.get("type") in _SCRUBBED:
             self._pending[(ch, msg.get("id"))] = (str(msg["type"]), None)
         if msg.get("type") == "config_entries/get" and msg.get("domain") in _ENTRY_OWNED_ONLY:
@@ -2512,6 +2593,7 @@ class Agent:
         return {
             "haVersion": HA_VERSION,
             "agentVersion": VERSION,
+            "features": FEATURES,
             "knx": self._knx(),
             "unavailable": {"count": len(unavailable), "sample": unavailable[:10]},
             "monitored": monitored,

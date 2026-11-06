@@ -384,6 +384,8 @@ async def test_save_merges_keeps_a_copy_and_only_three(hass: HomeAssistant, entr
     for i in range(4):
         r = await t.send({"id": 3 + i, "type": dashmerge.SAVE, "url_path": "hauflo-home", "config": hauflo(f"Люстра {i}"), "title": "Дом"})
         assert r["success"] and re.fullmatch(r"hauflo-home-copy-\d{14}-[0-9a-f]{6}", r["result"]["copy"]), r
+        # The fourth copy prunes the first — and says so (the backend tells the integrator; acceptance A 06.11).
+        assert r["result"].get("copies_removed") == (1 if i == 3 else None), r
         made.append(r["result"]["copy"])
         assert MY_CARD in cards_of(dash.config, 0, 0) and cards_of(dash.config, 0, 0)[1]["name"] == f"Люстра {i}"
         cards_of(dash.config, 0, 0)[0]["heading"] = f"правка {i}"  # he edits again: the next deploy copies again

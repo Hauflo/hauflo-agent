@@ -89,7 +89,11 @@
     "sync_delay_s": 20,
     "protect_max": 500,
     "foreign_max": 2000,
-    "foreign_name_max": 100
+    "foreign_name_max": 100,
+    "foreign_plan_ttl_s": 3600,
+    "foreign_labels_max": 10,
+    "foreign_roles": ["climate", "lights", "covers", "devices", "status", "leaks", "security", "media", "camera", "readings", "diag", "hidden"],
+    "foreign_deviceless_domains": ["climate", "water_heater", "humidifier", "fan", "light", "cover", "switch", "valve", "button", "number", "select", "text", "input_number", "input_select", "input_boolean", "siren", "lock", "alarm_control_panel", "camera", "image", "media_player", "remote", "vacuum", "lawn_mower", "binary_sensor", "event", "sensor", "weather"]
   },
   "presence": {
     "learn_days": 14,

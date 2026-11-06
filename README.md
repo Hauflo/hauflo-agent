@@ -44,7 +44,7 @@ No hand-built cards. Change the ETS project, re-import: the dashboard follows.
 
 ## Automations the family sets
 
-In the dashboard: **Settings → Automations**. The family sets blinds and lights to sunrise, sunset, a time or the phone’s alarm clock. A rule can run up to two hours earlier or later, on the days they choose. There’s a wake-up light that brightens slowly, ready suggestions for this home, and a timeline of what happens next.
+In the dashboard: **Settings → Automations**. The family sets blinds and lights to sunrise, sunset, a time or the phone’s alarm clock (read directly on Android; on iPhone through a Shortcuts command). A rule can run up to two hours earlier or later, on the days they choose. There’s a wake-up light that brightens slowly, a timeline of what happens next, and 20 ready recipes for this home (sun, wake-up, night, leaving and arriving, air by CO₂ and humidity). The agent offers only those the home’s devices fit, with safe default values the family edits before saving.
 
 Rules only use Hauflo’s own lights, blinds and scenes. They never touch locks, the alarm, valves, garage doors or gates. Each rule is a plain Home Assistant automation, so it runs without Hauflo and without the internet.
 
@@ -158,13 +158,14 @@ Hauflo can ask only for what is on the agent's fixed list, and the agent edits s
 - hide Home Assistant's extra sidebar panels (Map, Energy, Logbook…) for the family (everyone but Home Assistant administrators — they keep the full menu unless **Administrators too** is on), with the **Clean up the menu** option;
 - copy its card files to `/config/www/hauflo`;
 - set up the KNX connection to an interface in the house, light groups, voice exposure and the Apple Home bridge;
+- set the room, the name and the dashboard block (a `hauflo_role_*` label) of another integration’s devices and entities, only as the integrator chose in **Set up** and only in a deploy plan. What opens the house (locks, alarm panels, valves, gates, garage doors), the KNX bus and phones are never moved to a room or given a block. Every first value is kept, and **Revert** restores it (what you changed yourself afterwards stays);
 - read states for monitoring and alarms;
 - send KNX commands only to the group address ranges you confirmed.
 
 **It may not:**
 
 - download backups, or touch add-ons, other automations or arbitrary services;
-- change or delete devices and entities it didn’t create (your hand-made ones stay yours);
+- delete devices and entities it didn’t create, or change them beyond the room, name and block above (your hand-made ones stay yours);
 - read KNX Secure keys or passwords;
 - give a lock, an alarm panel or a valve to a voice assistant, a group or a scene.
 
@@ -216,7 +217,7 @@ The home keeps working. It is plain Home Assistant with standard KNX devices. Th
 <details>
 <summary><b>Will Hauflo overwrite what I made by hand?</b></summary>
 
-No. Hauflo keeps a list of what it created and changes only that. Your own entities, automations and dashboards stay as they are. If you edited something Hauflo made, it notices and keeps your edit.
+No. Hauflo keeps a list of what it created and changes only that. The one exception is another integration’s devices that the integrator set up in **Set up** (room, name, block), and **Revert** undoes it. Your own entities, automations and dashboards stay as they are. If you edited something Hauflo made, it notices and keeps your edit.
 
 </details>
 
@@ -280,7 +281,7 @@ Winter or summer is chosen in the dashboard (**Settings**) or in Hauflo, not by 
 
 - **A Hauflo account is needed.** Without one the integration can't be set up.
 - **One agent per Home Assistant.** One Home Assistant serves one Hauflo project.
-- **The project import is KNX only** (`.knxproj` or ETS CSV). Devices of other integrations can be placed on the dashboard, not imported.
+- **The project import is KNX only** (`.knxproj` or ETS CSV). Devices of other integrations are not imported: they are placed on the dashboard, and **Set up** assigns their rooms, names and blocks.
 - **Home Assistant 2026.9 or newer.** The agent reads parts of Home Assistant’s KNX integration that are not a public API. If a new Home Assistant changes them, the agent switches off only those features and says which in **Repairs**.
 - **Hand-formatted `automations.yaml` / `scenes.yaml`** (comments, `!include`, `!secret`) are never rewritten, so the family’s own automations and scenes can’t be saved there until the file is plain.
 - **Dashboard resources in YAML mode** can’t be added by the agent. On removal (or **Make the site independent**) the cards are copied to `/config/www/hauflo` and Home Assistant shows a notification with the two lines to add to `configuration.yaml`.
@@ -307,7 +308,7 @@ Winter or summer is chosen in the dashboard (**Settings**) or in Hauflo, not by 
 | Automations `hauflo_auto_…` | The family’s own rules, plain HA automations | **Settings → Automations & scenes** → delete them |
 | Scenes `hauflo_…` and `hauflo_fam_…` | Plain HA scenes | **Settings → Automations & scenes → Scenes** → delete them |
 | `automations.yaml.hauflo-bak-*`, `scenes.yaml.hauflo-bak-*` (last 3 each) | Copies before each write | Delete the files in `/config` |
-| The labels **Hauflo** and **Hauflo monitoring** (and the category labels a deploy made) | Labels on your entities: **Hauflo** still tells what Hauflo made | **Settings → Areas, labels & zones → Labels** |
+| The labels **Hauflo** and **Hauflo monitoring** (and the category and `hauflo_role_*` labels a deploy made) | Labels on your entities: **Hauflo** still tells what Hauflo made | **Settings → Areas, labels & zones → Labels** |
 | Automations `hauflo_independent_…` (if you made the house independent) | Your alarms, now plain HA automations | **Settings → Automations & scenes** |
 | `/config/.storage/hauflo.*` (what Hauflo made, titles, order, scenes, automations, presence, season, open alarms) | A re-added agent picks up where it left | Stop Home Assistant, delete `/config/.storage/hauflo.*`, start it |
 | Rooms, floors, KNX entities, light groups, the HomeKit bridge, voice exposure | The home itself | As any Home Assistant item, in **Settings** |

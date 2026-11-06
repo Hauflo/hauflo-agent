@@ -1337,13 +1337,13 @@ class DashboardMerge:
             # the cloud sent or the merge did; nothing is written.
             _LOGGER.warning("Hauflo: dashboard %s not saved — %s blocks outside the plan would change", url_path, report["untouched"])
             raise MergeError("merge_untouched_changed", f"{report['untouched']} blocks the plan doesn't change would change; nothing saved")
-        copy_url = None
+        copy_url, pruned = None, 0
         if current is not None and merged != current and (base is None or current != base):
             # What the integrator made is in it: kept as a hidden copy before anything is written.
             if title is None:
                 shown = getattr(self._dashboard(url_path), "config", None) or {}
                 title = shown.get("title") if isinstance(shown.get("title"), str) else None
-            copy_url = await self._copy(url_path, current, title, local_ws, lang, before_take=bool(report.get("taken")))
+            copy_url, pruned = await self._copy(url_path, current, title, local_ws, lang, before_take=bool(report.get("taken")))
         if merged != current:
             await self._dashboard(url_path).async_save(merged)
             # Owner 05.11 п.54д: read back from HA — exactly what was planned is there, or the alarm.
@@ -1355,9 +1355,11 @@ class DashboardMerge:
         await self.store.async_save(self.bases)
         # «upgrade»: no Hauflo version stored yet (first save by this agent) — the copy is only a precaution, nobody is
         # known to have edited the dashboard; «edited»: it differs from what Hauflo saved last.
-        return {**report, "saved": merged != current, **({"copy": copy_url, "copy_reason": "upgrade" if base is None else "edited"} if copy_url else {})}
+        # «copies_removed»: the oldest of the agent's own copies pruned with this one (п.8 acceptance A: the backend said nothing of them).
+        return {**report, "saved": merged != current, **({"copy": copy_url, "copy_reason": "upgrade" if base is None else "edited"} if copy_url else {}), **({"copies_removed": pruned} if pruned else {})}
 
-    async def _copy(self, url_path: str, config: Any, title: str | None, local_ws: Callable[[list[dict[str, Any]]], Any], lang: str | None = None, before_take: bool = False) -> str:
+    async def _copy(self, url_path: str, config: Any, title: str | None, local_ws: Callable[[list[dict[str, Any]]], Any], lang: str | None = None, before_take: bool = False) -> tuple[str, int]:
+        """The copy's url_path and how many old copies went with it."""
         now = dt_util.now()
         # Seconds and a random tail (security re-review 28.10): two saves a minute apart (or less) never meet one copy,
         # and the cloud can't guess a name ahead.
@@ -1383,17 +1385,19 @@ class DashboardMerge:
         marked = [u for u in mine if u in self.taken_copies]
         drop = set(plain[: max(0, len(plain) - MAX_COPIES)] + marked[: max(0, len(marked) - MAX_TAKEN_COPIES)])
         ids = {str(d.get("url_path")): d.get("id") for d in dashboards if isinstance(d, dict)}
+        pruned = 0
         for old in [u for u in mine if u in drop]:
             mine.remove(old)
             self.taken_copies.discard(old)
             if ids.get(old):
                 try:
                     await local_ws([{"type": "lovelace/dashboards/delete", "dashboard_id": ids[old]}])
+                    pruned += 1
                 except Exception as err:  # noqa: BLE001 — an old copy left is no harm
                     _LOGGER.warning("Hauflo: old dashboard copy %s not removed: %s", old, err)
         self.copies[url_path] = mine
         await self._save_meta()
-        return copy_url
+        return copy_url, pruned
 
 
 class MergeError(Exception):

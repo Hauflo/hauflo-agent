@@ -608,3 +608,54 @@ async def test_old_rules_keep_their_file_and_digest(hass: HomeAssistant, hass_cl
     assert before["conditions"] == [] and "only_if" not in r
     listed = (await (await client.get(URL)).json())["rules"]
     assert listed[0]["changed"] is False
+
+
+async def test_recipes_are_offered_accepted_and_the_alarm_clock_yaml(hass: HomeAssistant, hass_client, entry, bus) -> None:
+    """p6d: every recipe the house can run is accepted by the engine as offered; the wake-up chain end to end."""
+    reg = er.async_get(hass)
+    area_reg = __import__("homeassistant.helpers.area_registry", fromlist=["x"]).async_get(hass)
+    bed = area_reg.async_create("Спальня")
+    for eid, uid, extra in (
+        ("light.bed_lamp", "u-bedlamp", {"supported_color_modes": ["brightness"]}),
+        ("cover.bed_blind", "u-bedblind", {"supported_features": 15}),
+        ("climate.bed", "u-bedclimate", {"supported_features": 1, "min_temp": 7, "max_temp": 30, "target_temp_step": 0.5, "hvac_modes": ["off", "heat"]}),
+        ("fan.bed", "u-bedfan", {}),
+    ):
+        domain, obj = eid.split(".")
+        reg.async_get_or_create(domain, "knx", uid, suggested_object_id=obj)
+        hass.states.async_set(eid, "off" if domain != "cover" else "open", {"friendly_name": obj, **extra})
+        reg.async_update_entity(eid, area_id=bed.id)
+    entry.runtime_data.owned |= {"u-bedlamp", "u-bedblind"}
+    reg.async_get_or_create("sensor", "knx", "bed-co2", suggested_object_id="bed_co2")
+    hass.states.async_set("sensor.bed_co2", "700", {"device_class": "carbon_dioxide", "unit_of_measurement": "ppm", "friendly_name": "co2"})
+    reg.async_update_entity("sensor.bed_co2", area_id=bed.id)
+    client = await hass_client()
+    got = await (await client.get(URL)).json()
+    offered = {r["key"]: r for r in got["recipes"]}
+    assert {"sunset_covers", "wake_covers", "wake_light", "wake_climate", "night_off", "night_climate", "co2_fan_on", "co2_fan_off"} <= set(offered)
+    assert "away_off" not in offered or got["targets"]["people"]  # «nobody home» is never known without a person
+    # Whatever is offered, the engine saves as offered (and writes a real HA automation).
+    for key, r in offered.items():
+        res = await client.post(URL, json={"op": "save", "rule": r["rule"]})
+        assert res.status == 200, (key, await res.text())
+    await hass.async_block_till_done()
+    by_from = {x.get("description"): x for x in _file(hass)}
+    assert len([a for a in _file(hass) if str(a.get("id", "")).startswith("hauflo_auto_")]) == len(offered)
+
+    # The alarm clock, Android (the phone's next_alarm sensor): the chain at -20 min.
+    light = next(a for a in _file(hass) if a["alias"].startswith("Hauflo ·") and any(s.get("data", {}).get("brightness_pct") == 25 for s in a["actions"] if "action" in s))
+    assert light["triggers"] == [{"trigger": "time", "at": {"entity_id": PHONE_ALARM, "offset": "-00:20:00"}}]
+    levels = [s["data"]["brightness_pct"] for s in light["actions"] if "action" in s]
+    assert len(levels) == 12 and levels[-1] == 25 and levels == sorted(levels)
+    warm = next(a for a in _file(hass) if any(s.get("action") == "climate.set_temperature" and s["data"] == {"temperature": 21.0} for s in a["actions"]))
+    assert warm["triggers"] == [{"trigger": "time", "at": {"entity_id": PHONE_ALARM, "offset": "-00:30:00"}}]
+    # Failure cases: the sensor goes «unavailable» (alarm cleared / phone off) — the rule stays, HA simply does not fire
+    # (a time trigger on a non-timestamp state is skipped); the page's «Проверить» says which step is missing.
+    hass.states.async_set(PHONE_ALARM, "unavailable", {"device_class": "timestamp"})
+    got = await (await client.get(URL)).json()
+    assert [a["entity_id"] for a in got["targets"]["alarms"]] == [PHONE_ALARM] and got["targets"]["alarms"][0]["next"] == "unavailable"
+    # No Android sensor at all: the same recipes fall back to the iPhone event, a new code per rule.
+    reg.async_remove(PHONE_ALARM)
+    got = await (await client.get(URL)).json()
+    iphone = next(r for r in got["recipes"] if r["key"] == "wake_light")
+    assert iphone["rule"]["when"] == {"event": "alarm_iphone"}

@@ -1,16 +1,27 @@
 """Other integrations' entities as alarm sources (п.63.6): the integrator's «Уведомлять» switch in Hauflo's list, apart
 from the panel's (a leak sensor hidden from the room card still alarms). The deploy sends the whole map; True works as
 the «Hauflo мониторинг» label, False silences one the label would watch. Not in the map — the label decides, as before.
-Hauflo's own entities are never silenced by it (notify._source_ok checks them first)."""
+Hauflo's own entities are never silenced by it (notify._source_ok checks them first).
+
+The wizard of other integrations (п.57, agent 0.23.0, feature «foreign_wizard»): the deploy first sends its plan — the
+project's rooms and the very devices / entities it may touch — then writes, through the tunnel, a device's room / name /
+role labels and an entity's room / name / hidden / role labels (also an entity with no device: a template, an MQTT one).
+Never a KNX / Hauflo / phone one, never a service device, never one outside the plan, never a room outside it, never
+a label not Hauflo's role one (hauflo_role_*) — and the family's own labels are always kept (merged, not replaced).
+Before Hauflo's first write to an item its values as they were are kept here; «Вернуть как было» puts them back
+(a field the integrator changed by hand since stays his)."""
 
 from __future__ import annotations
 
+import re
+import time
 from typing import Any
 
 from homeassistant.components.http import KEY_HASS, HomeAssistantView
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import area_registry as ar, config_validation as cv, device_registry as dr, entity_registry as er, label_registry as lr
 
+from . import backup
 from .const import DOMAIN
 from .storage import HaufloStore
 from .tuning import TUNING
@@ -18,21 +29,51 @@ from .tuning import TUNING
 STORE_KEY = f"{DOMAIN}.foreign"
 DATA = f"{DOMAIN}_foreign"
 MAX_IDS = TUNING["ownership"]["foreign_max"]  # a house's other integrations' entities, never a flood
+NAME_MAX = TUNING["ownership"]["foreign_name_max"]
+PLAN_TTL = TUNING["ownership"]["foreign_plan_ttl_s"]  # a deploy's plan: written within the hour, or sent again
+LABELS_MAX = TUNING["ownership"]["foreign_labels_max"]
+FEATURE = "foreign_wizard"
+ROLE_PREFIX = "hauflo_role_"
+_ROLE_RE = re.compile(r"^hauflo_role_[a-z0-9_]{1,40}$")
+# Only the canon's roles (the cards'): any other name would make a label of its own — the registry flooded (red team 3).
+ROLES = frozenset(TUNING["ownership"]["foreign_roles"])
+# An entity with no device: only of a domain the cards draw — never HA's machinery (a person, an automation, a zone).
+DEVICELESS_DOMAINS = frozenset(TUNING["ownership"]["foreign_deviceless_domains"])
+# What a name never carries into HA: C0 / C1 controls and the bidi overrides that flip how it reads (red team 3).
+UNSAFE_NAME = re.compile("[\x00-\x1f\x7f-\x9f\u200e\u200f\u202a-\u202e\u2066-\u2069]")
+# Never the wizard's, whatever the plan says: the bus (KNX — Hauflo's own deploy owns it), Hauflo's own, the phones.
+NEVER_PLATFORMS = frozenset({"knx", DOMAIN, "mobile_app"})
+DEVICE_KEYS = frozenset({"area_id", "name_by_user", "labels"})
+ENTITY_KEYS = frozenset({"area_id", "name", "hidden_by", "labels"})
+DEVICE_UPDATE = "config/device_registry/update"
+ENTITY_UPDATE = "config/entity_registry/update"
 
 
 class Flags:
     def __init__(self, hass: HomeAssistant) -> None:
         self.notify: dict[str, bool] = {}
+        # The deploy's plan (in memory: a restart asks the deploy for it again): {"areas", "devices", "entities": set, "at"}.
+        self.plan: dict[str, Any] | None = None
+        # Before Hauflo's first write: "d:<device id>" / "e:<entity registry id>" → {"was": {...}, "set": {...}}.
+        self.journal: dict[str, dict[str, dict[str, Any]]] = {}
         self._store = HaufloStore(hass, STORE_KEY)
 
     async def async_load(self) -> None:
         data = await self._store.async_load() or {}
         raw = data.get("notify") if isinstance(data, dict) else None
         self.notify = {k: v for k, v in raw.items() if isinstance(k, str) and isinstance(v, bool)} if isinstance(raw, dict) else {}
+        j = data.get("journal") if isinstance(data, dict) else None
+        self.journal = {k: v for k, v in j.items() if isinstance(k, str) and isinstance(v, dict) and isinstance(v.get("was"), dict) and isinstance(v.get("set"), dict)} if isinstance(j, dict) else {}
+
+    def _data(self) -> dict[str, Any]:
+        return {"notify": self.notify, "journal": self.journal}
+
+    def save(self) -> None:
+        self._store.async_delay_save(self._data, 0)
 
     def set_notify(self, m: dict[str, bool]) -> None:
         self.notify = dict(m)
-        self._store.async_delay_save(lambda: {"notify": self.notify}, 0)
+        self.save()
 
     async def async_remove(self) -> None:
         await self._store.async_remove()
@@ -72,8 +113,271 @@ def notify_ok(m: Any) -> bool:
     return isinstance(m, dict) and len(m) <= MAX_IDS and all(isinstance(k, str) and cv.valid_entity_id(k) and isinstance(v, bool) for k, v in m.items())
 
 
+# --- the wizard (п.57) ----------------------------------------------------------------------------------------------
+
+
+def _ids(v: Any, check: Any = None) -> set[str] | None:
+    if not isinstance(v, list) or len(v) > MAX_IDS or not all(isinstance(x, str) and x and len(x) <= 255 for x in v):
+        return None
+    if check is not None and not all(check(x) for x in v):
+        return None
+    return set(v)
+
+
+def plan_ok(p: Any) -> dict[str, set[str]] | None:
+    """{"areas": [area_id], "devices": [device_id], "entities": [entity_id]} — each list required (may be empty)."""
+    if not isinstance(p, dict) or set(p) != {"areas", "devices", "entities"}:
+        return None
+    out = {"areas": _ids(p["areas"]), "devices": _ids(p["devices"]), "entities": _ids(p["entities"], cv.valid_entity_id)}
+    return out if all(v is not None for v in out.values()) else None  # type: ignore[return-value]
+
+
+def active_plan(hass: HomeAssistant | None) -> dict[str, Any] | None:
+    f = flags(hass)
+    if f is None or f.plan is None:
+        return None
+    if time.time() - float(f.plan.get("at") or 0) > PLAN_TTL:
+        f.plan = None
+        return None
+    return f.plan
+
+
+def planned(hass: HomeAssistant | None, msg: dict[str, Any]) -> bool:
+    """The item of this registry update is in the deploy's active plan: the wizard's rules alone decide."""
+    plan = active_plan(hass)
+    if plan is None:
+        return False
+    if msg.get("type") == DEVICE_UPDATE:
+        return msg.get("device_id") in plan["devices"]
+    return msg.get("type") == ENTITY_UPDATE and msg.get("entity_id") in plan["entities"]
+
+
+def _labels_ok(hass: HomeAssistant, labels: Any) -> str | None:
+    if not isinstance(labels, list) or len(labels) > LABELS_MAX or not all(isinstance(x, str) for x in labels):
+        return "bad_labels"
+    if not all(_ROLE_RE.match(x) and x[len(ROLE_PREFIX):] in ROLES for x in labels):
+        return "label_not_hauflo_role"
+    # Never one a voice assistant exposes by (Alice «by label»): a role label is the cards', not the voice's.
+    alice = {str(e.options.get("label")) for e in hass.config_entries.async_entries("yandex_smart_home") if e.options.get("label")}
+    if set(labels) & alice:
+        return "label_not_hauflo_role"
+    return None
+
+
+def _name_ok(v: Any) -> bool:
+    return v is None or (isinstance(v, str) and bool(v.strip()) and len(v) <= NAME_MAX and not UNSAFE_NAME.search(v))
+
+
+def _device_refusal(hass: HomeAssistant, device_id: Any) -> str | None:
+    """A device the wizard may touch: another integration's, a real one (not a service), nothing of the bus / Hauflo /
+    a phone on it."""
+    device = dr.async_get(hass).async_get(device_id) if isinstance(device_id, str) else None
+    if device is None:
+        return "unknown_device"
+    if getattr(device, "entry_type", None) is not None:
+        return "service_device"
+    domains = {e.domain for eid in device.config_entries if (e := hass.config_entries.async_get_entry(eid))}
+    ents = er.async_entries_for_device(er.async_get(hass), device.id, include_disabled_entities=True)
+    if (domains | {e.platform for e in ents}) & NEVER_PLATFORMS:
+        return "platform_not_allowed"
+    return None
+
+
+def _area_refusal(hass: HomeAssistant, plan: dict[str, Any], area_id: Any, was: Any, allow_none: bool) -> str | None:
+    """Into a room of the plan that exists — or back to where it was before Hauflo (the journal's)."""
+    if area_id is None:
+        return None if allow_none or was is None else "area_not_in_plan"
+    if not isinstance(area_id, str):
+        return "bad_area"
+    if area_id != was and area_id not in plan["areas"]:
+        return "area_not_in_plan"
+    return None if ar.async_get(hass).async_get_area(area_id) is not None else "unknown_area"
+
+
+def _journal_key(hass: HomeAssistant, msg: dict[str, Any]) -> str | None:
+    if msg.get("type") == DEVICE_UPDATE:
+        return f"d:{msg.get('device_id')}"
+    entry = er.async_get(hass).async_get(str(msg.get("entity_id")))
+    return f"e:{entry.id}" if entry is not None else None
+
+
+def _was(hass: HomeAssistant, msg: dict[str, Any], field: str) -> Any:
+    """The value before Hauflo's first write (the journal's), or the current one."""
+    f = flags(hass)
+    key = _journal_key(hass, msg)
+    rec = f.journal.get(key) if f is not None and key else None
+    if rec is not None and field in rec["was"]:
+        return rec["was"][field]
+    return _current(hass, msg).get(field)
+
+
+def _current(hass: HomeAssistant, msg: dict[str, Any]) -> dict[str, Any]:
+    if msg.get("type") == DEVICE_UPDATE:
+        d = dr.async_get(hass).async_get(str(msg.get("device_id")))
+        return {} if d is None else {"area_id": d.area_id, "name_by_user": d.name_by_user, "labels": sorted(d.labels)}
+    e = er.async_get(hass).async_get(str(msg.get("entity_id")))
+    return {} if e is None else {"area_id": e.area_id, "name": e.name, "hidden_by": e.hidden_by.value if e.hidden_by is not None else None, "labels": sorted(e.labels)}
+
+
+def _is_protected(hass: HomeAssistant, entity_id: str) -> bool:
+    from . import _protected  # noqa: PLC0415 — the package imports this module
+
+    return _protected(hass, entity_id)
+
+
+def wizard_refusal(hass: HomeAssistant | None, msg: dict[str, Any]) -> str | None:
+    """Why a device / entity registry update of another integration's item is refused (None — allowed). The reason
+    goes back to Hauflo in the error message («Hauflo agent: not allowed (<reason>)»)."""
+    t = msg.get("type")
+    if hass is None or t not in (DEVICE_UPDATE, ENTITY_UPDATE):
+        return "not_allowed"
+    device = t == DEVICE_UPDATE
+    keys, ref = (DEVICE_KEYS, "device_id") if device else (ENTITY_KEYS, "entity_id")
+    extra = set(msg) - {"id", "type", ref} - keys
+    if extra:
+        return f"field_not_allowed:{sorted(extra)[0]}"
+    if not set(msg) & keys:
+        return "nothing_to_change"
+    plan = active_plan(hass)
+    if plan is None:
+        return "no_plan"
+    if device:
+        if (why := _device_refusal(hass, msg.get("device_id"))) is not None:
+            return why
+        if msg["device_id"] not in plan["devices"]:
+            return "not_in_plan"
+        if "name_by_user" in msg and not _name_ok(msg["name_by_user"]):
+            return "bad_name"
+    else:
+        entry = er.async_get(hass).async_get(str(msg.get("entity_id")))
+        if entry is None:
+            return "unknown_entity"
+        if entry.platform in NEVER_PLATFORMS:
+            return "platform_not_allowed"
+        if entry.device_id:
+            if (why := _device_refusal(hass, entry.device_id)) is not None:
+                return why
+        elif not entry.unique_id:
+            return "no_unique_id"
+        elif entry.domain not in DEVICELESS_DOMAINS:
+            return "system_entity"
+        if entry.entity_id not in plan["entities"]:
+            return "not_in_plan"
+        # What opens the house (a gate / garage cover, a «Switch as X» over one, a group with a lock inside): never placed
+        # in a room nor given a role by the wizard — the same rule as voice / scenes (_protected); name / hidden stay.
+        if set(msg) & {"area_id", "labels"} and _is_protected(hass, entry.entity_id):
+            return "protected_domain"
+        if "hidden_by" in msg and msg["hidden_by"] not in ("user", None):
+            return "bad_hidden_by"
+        if "name" in msg and not _name_ok(msg["name"]):
+            return "bad_name"
+    if "area_id" in msg and (why := _area_refusal(hass, plan, msg["area_id"], _was(hass, msg, "area_id"), allow_none=not device)) is not None:
+        return why
+    if "labels" in msg and (why := _labels_ok(hass, msg["labels"])) is not None:
+        return why
+    return None
+
+
+def wizard_prepare(hass: HomeAssistant, msg: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
+    """Before an allowed write goes to HA: keeps the item's values as they were (first write only), merges the role
+    labels with the family's own (HA replaces the whole list), creates a missing hauflo_role_* label. Returns the
+    message to send (None — refused: a label of that id can't be made) and the label ids it created."""
+    f = flags(hass)
+    created: list[str] = []
+    out = dict(msg)
+    if "labels" in msg:
+        reg = lr.async_get(hass)
+        for lid in dict.fromkeys(msg["labels"]):
+            if reg.async_get_label(lid) is not None:
+                continue
+            if reg.async_get_label_by_name(lid) is not None:
+                return None, created  # a label of that name but another id: never guessed
+            label = reg.async_create(lid, icon="mdi:tag-outline", description="Hauflo")
+            if label.label_id != lid:
+                reg.async_delete(label.label_id)
+                return None, created
+            created.append(lid)
+        cur = _current(hass, msg).get("labels") or []
+        out["labels"] = sorted({x for x in cur if not x.startswith(ROLE_PREFIX)} | set(msg["labels"]))
+    key = _journal_key(hass, msg)
+    if f is not None and key is not None:
+        cur = _current(hass, msg)
+        rec = f.journal.setdefault(key, {"was": {}, "set": {}})
+        fields = (DEVICE_KEYS if msg.get("type") == DEVICE_UPDATE else ENTITY_KEYS) & set(out)
+        for k in fields:
+            rec["was"].setdefault(k, cur.get(k))
+            rec["set"][k] = sorted(out[k]) if k == "labels" else out[k]
+        f.save()
+    return out, created
+
+
+def revert(hass: HomeAssistant, devices: set[str], entities: set[str]) -> dict[str, Any]:
+    """«Вернуть как было»: what Hauflo wrote to these items back to the values before it. A field the integrator
+    changed in HA since (not Hauflo's value any more) stays as he set it; role labels go, the family's stay."""
+    f = flags(hass)
+    out: dict[str, Any] = {"devices": [], "entities": [], "kept": {}, "unknown": []}
+    if f is None:
+        return out
+    dreg, ereg = dr.async_get(hass), er.async_get(hass)
+    targets: list[tuple[str, str, Any]] = [("d", d, dreg.async_get(d)) for d in sorted(devices)]
+    # A device goes back with its entities Hauflo wrote (the wizard's name template renamed them, the page sends the
+    # device alone — acceptance B 06.11, D3); an entity named twice is one target.
+    seen = set(entities)
+    for d in sorted(devices):
+        if dreg.async_get(d) is None:
+            continue
+        for e in er.async_entries_for_device(ereg, d, include_disabled_entities=True):
+            if e.entity_id not in seen and f"e:{e.id}" in f.journal:
+                seen.add(e.entity_id)
+                entities = entities | {e.entity_id}
+    for eid in sorted(entities):
+        e = ereg.async_get(eid)
+        targets.append(("e", eid, e))
+    for kind, ref, item in targets:
+        key = f"{kind}:{ref}" if kind == "d" else (f"e:{item.id}" if item is not None else None)
+        rec = f.journal.get(key) if key else None
+        if item is None or rec is None:
+            out["unknown"].append(ref)
+            continue
+        msg = {"type": DEVICE_UPDATE, "device_id": ref} if kind == "d" else {"type": ENTITY_UPDATE, "entity_id": ref}
+        cur = _current(hass, msg)
+        changes: dict[str, Any] = {}
+        kept: list[str] = []
+        for k, was in rec["was"].items():
+            if k == "labels":
+                if cur.get("labels") != rec["set"].get("labels"):
+                    kept.append(k)  # his own labels since: only Hauflo's role labels go
+                ours = {x for x in cur.get("labels") or [] if x.startswith(ROLE_PREFIX) and x not in (was or [])}
+                if ours:
+                    changes["labels"] = {x for x in cur.get("labels") or [] if x not in ours}
+            elif cur.get(k) == rec["set"].get(k):
+                if cur.get(k) != was:
+                    changes[k] = was
+            else:
+                kept.append(k)
+        if "area_id" in changes and changes["area_id"] is not None and ar.async_get(hass).async_get_area(changes["area_id"]) is None:
+            changes.pop("area_id")  # the room was deleted since: left where it is
+            kept.append("area_id")
+        if kind == "d":
+            dreg.async_update_device(ref, **changes)
+        else:
+            if "hidden_by" in changes:
+                changes["hidden_by"] = er.RegistryEntryHider(changes["hidden_by"]) if changes["hidden_by"] else None
+            ereg.async_update_entity(ref, **changes)
+        f.journal.pop(key, None)
+        out["devices" if kind == "d" else "entities"].append(ref)
+        if kept:
+            out["kept"][ref] = sorted(set(kept))
+    f.save()
+    return out
+
+
 class ForeignView(HomeAssistantView):
-    """GET → {"notify": {...}}; POST {"notify": {entity_id: bool}} replaces the map (admin only)."""
+    """GET → {"notify": {...}, "features": [...], "plan": bool, "journal": {"devices": [...], "entities": [...]}};
+    POST (admin only), any of:
+      {"notify": {entity_id: bool}} — replaces the alarm sources map;
+      {"plan": {"areas": [...], "devices": [...], "entities": [...]} | null} — the wizard's plan for the next hour (п.57);
+      {"revert": {"devices": [...], "entities": [...]}} — «Вернуть как было» (a fresh backup first, as any change)."""
 
     url = "/api/hauflo/foreign"
     name = "api:hauflo:foreign"
@@ -82,8 +386,9 @@ class ForeignView(HomeAssistantView):
     async def get(self, request):
         if not request["hass_user"].is_admin:
             return self.json_message("admin only", 403)
-        f = flags(request.app[KEY_HASS])
-        return self.json({"notify": f.notify if f is not None else {}})
+        hass = request.app[KEY_HASS]
+        f = flags(hass)
+        return self.json({"notify": f.notify if f is not None else {}, "features": [FEATURE], "plan": active_plan(hass) is not None, "journal": _journal_list(hass)})
 
     async def post(self, request):
         if not request["hass_user"].is_admin:
@@ -92,11 +397,40 @@ class ForeignView(HomeAssistantView):
             body = await request.json()
         except ValueError:
             return self.json_message("invalid JSON", 400)
-        m = body.get("notify") if isinstance(body, dict) else None
-        if not isinstance(body, dict) or set(body) - {"notify"} or not notify_ok(m):
+        if not isinstance(body, dict) or not body or set(body) - {"notify", "plan", "revert"}:
+            return self.json_message("notify / plan / revert expected", 400)
+        if "notify" in body and not notify_ok(body["notify"]):
             return self.json_message("notify: {entity_id: bool} expected", 400)
-        f = flags(request.app[KEY_HASS])
+        plan = plan_ok(body["plan"]) if body.get("plan") is not None else None
+        if "plan" in body and body["plan"] is not None and plan is None:
+            return self.json_message("plan: {areas, devices, entities} lists of ids expected", 400)
+        rv = body.get("revert")
+        if "revert" in body and (not isinstance(rv, dict) or set(rv) - {"devices", "entities"} or _ids(rv.get("devices", [])) is None or _ids(rv.get("entities", [])) is None):
+            return self.json_message("revert: {devices, entities} lists of ids expected", 400)
+        hass = request.app[KEY_HASS]
+        f = flags(hass)
         if f is None:
             return self.json_message("not ready", 409)
-        f.set_notify(m)
-        return self.json({"notify": f.notify})
+        if "revert" in body and not backup.fresh():
+            return self.json({"code": "backup_required", "message": "Hauflo agent: a backup first"}, 428)
+        out: dict[str, Any] = {}
+        if "notify" in body:
+            f.set_notify(body["notify"])
+        if "plan" in body:
+            f.plan = {**plan, "at": time.time()} if plan is not None else None
+        if "revert" in body:
+            out["reverted"] = revert(hass, set(rv.get("devices", [])), set(rv.get("entities", [])))
+        return self.json({"notify": f.notify, "plan": active_plan(hass) is not None, **out})
+
+
+def _journal_list(hass: HomeAssistant) -> dict[str, list[str]]:
+    """What Hauflo changed and can put back: device ids, entity ids (as they are now)."""
+    f = flags(hass)
+    if f is None:
+        return {"devices": [], "entities": []}
+    ereg = er.async_get(hass)
+    ids = {e.id: e.entity_id for e in ereg.entities.values()}
+    return {
+        "devices": sorted(k[2:] for k in f.journal if k.startswith("d:")),
+        "entities": sorted(ids[k[2:]] for k in f.journal if k.startswith("e:") and k[2:] in ids),
+    }

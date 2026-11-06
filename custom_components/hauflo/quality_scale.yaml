@@ -60,8 +60,8 @@ rules:
   entity-unavailable:
     status: exempt
     comment: >-
-      «Link» is the link's own state (on / off, never unavailable). «Comfort · room» and «House mode» hold the
-      family's settings in HA and keep working whatever a floor thermostat says (no current temperature then).
+      «Link» is the link's own state (on / off, never unavailable). Rule and daylight entities are computed by the
+      agent from HA state; a missing source gives the rule's safe state (see rules.py), not an error.
   integration-owner: done
   log-when-unavailable: done
   parallel-updates:
@@ -111,8 +111,8 @@ rules:
   entity-disabled-by-default:
     status: exempt
     comment: >-
-      No noisy or rarely used entities — «Link» is the agent's one health signal, «Comfort · room» and «House mode»
-      exist only when the integrator turned the comfort floor on.
+      No noisy or rarely used entities — «Link» is the agent's one health signal; rule entities exist only for the
+      rules the integrator created (the retired comfort floor's entities are removed by retired.py).
   entity-translations: done
   exception-translations:
     status: done
@@ -121,7 +121,7 @@ rules:
       of its own HTTP views, not raised to the HA UI.
   icon-translations:
     status: done
-    comment: icons.json for «Comfort» and «House mode»; «Link» takes its icon from its device class.
+    comment: icons.json for the rule, daylight, ownership and derived entities; «Link» takes its icon from its device class.
   reconfiguration-flow: done
   repair-issues:
     status: done
