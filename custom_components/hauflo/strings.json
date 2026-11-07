@@ -6,11 +6,11 @@
         "description": "The connection code is in Hauflo: your project → “Connect the site” → “Get a code”. It works once, for 30 minutes. Enter only the code — the server is picked from it.",
         "data": {
           "code": "Connection code",
-          "confirm_takeover": "Yes, move this Home Assistant to this project (it leaves the other Hauflo account)"
+          "confirm_takeover": "Yes, move this Home Assistant to this project (it leaves the other company in Hauflo)"
         },
         "data_description": {
           "code": "The code from Hauflo: your project → “Connect the site” → “Get a code” (9 characters, an “RU-” or “EU-” region in front is fine). Spaces and dashes don't matter. It works once, for 30 minutes.",
-          "confirm_takeover": "Tick only if this Home Assistant really moves to this project: the other Hauflo account's site loses its connection."
+          "confirm_takeover": "Tick only if this Home Assistant really moves to this project: the other company's site in Hauflo loses its connection."
         },
         "sections": {
           "advanced": {
@@ -29,11 +29,11 @@
         "description": "Hauflo no longer knows this Home Assistant: the agent was disconnected or the project deleted. Get a new code in Hauflo (your project → “Connect the site” → “Get a code”). This entry is updated, no need to remove it.",
         "data": {
           "code": "Connection code",
-          "confirm_takeover": "Yes, move this Home Assistant to this project (it leaves the other Hauflo account)"
+          "confirm_takeover": "Yes, move this Home Assistant to this project (it leaves the other company in Hauflo)"
         },
         "data_description": {
           "code": "The code from Hauflo: your project → “Connect the site” → “Get a code” (9 characters, an “RU-” or “EU-” region in front is fine). Spaces and dashes don't matter. It works once, for 30 minutes.",
-          "confirm_takeover": "Tick only if this Home Assistant really moves to this project: the other Hauflo account's site loses its connection."
+          "confirm_takeover": "Tick only if this Home Assistant really moves to this project: the other company's site in Hauflo loses its connection."
         },
         "sections": {
           "advanced": {
@@ -52,11 +52,11 @@
         "description": "Get a new code in Hauflo (your project → “Connect the site” → “Get a code”). This entry is updated; the agent's Home Assistant user stays.",
         "data": {
           "code": "Connection code",
-          "confirm_takeover": "Yes, move this Home Assistant to this project (it leaves the other Hauflo account)"
+          "confirm_takeover": "Yes, move this Home Assistant to this project (it leaves the other company in Hauflo)"
         },
         "data_description": {
           "code": "The code from Hauflo: your project → “Connect the site” → “Get a code” (9 characters, an “RU-” or “EU-” region in front is fine). Spaces and dashes don't matter. It works once, for 30 minutes.",
-          "confirm_takeover": "Tick only if this Home Assistant really moves to this project: the other Hauflo account's site loses its connection."
+          "confirm_takeover": "Tick only if this Home Assistant really moves to this project: the other company's site in Hauflo loses its connection."
         },
         "sections": {
           "advanced": {
@@ -190,7 +190,7 @@
         "data_description": {
           "allow_changes": "Off: Hauflo changes nothing in Home Assistant — deploys, dashboards, rooms, KNX entities and backups started by Hauflo are refused. Monitoring, alarms and voice keep working.",
           "ranges": "Remove any Hauflo must not control (a gate, a lock).",
-          "independent": "Next step explains it: the dashboard cards stay in /config/www/hauflo and the alarm rules become ordinary Home Assistant automations. Nothing is deleted."
+          "independent": "Next step explains it: the dashboard cards stay in /config/www/hauflo and the alarm automations are brought up to date. Nothing is deleted."
         }
       },
       "init_pending": {
@@ -206,12 +206,12 @@
           "allow_changes": "Off: Hauflo changes nothing in Home Assistant — deploys, dashboards, rooms, KNX entities and backups started by Hauflo are refused. Monitoring, alarms and voice keep working.",
           "ranges": "Remove any Hauflo must not control (a gate, a lock).",
           "accept_pending": "Tick only your own project's addresses. Check each one: it may be a gate or a lock.",
-          "independent": "Next step explains it: the dashboard cards stay in /config/www/hauflo and the alarm rules become ordinary Home Assistant automations. Nothing is deleted."
+          "independent": "Next step explains it: the dashboard cards stay in /config/www/hauflo and the alarm automations are brought up to date. Nothing is deleted."
         }
       },
       "independent": {
         "title": "Make the site independent",
-        "description": "What happens:\n- The Hauflo dashboard cards are copied to /config/www/hauflo and added as dashboard resources, so the family's dashboard works without the agent.\n- Every enabled Hauflo alarm rule becomes an ordinary automation in automations.yaml: the same sensors and alarm states, a push to the same Home Assistant app phones (critical where the rule is), a notification in HA and the rule's button. A backup copy of automations.yaml is made first. Automations made earlier this way are left as they are.\n- Nothing is deleted. Hauflo keeps working until you remove the integration; until then an alarm comes twice.\n\nWhat stops working once Hauflo is removed:\n- Cloud monitoring: “agent offline”, “KNX bus silent”, the monitoring page and the service company's view.\n- Email alarms and the alarm history in Hauflo; repeats until “Accept”.\n- Deploys and updates from the project, guest links, “Away” presence simulation, voice sentences, editing the family's automations and scenes on the dashboard (the ones already made keep running).\n\nSubmit to do it."
+        "description": "What happens:\n- The Hauflo dashboard cards are copied to /config/www/hauflo and added as dashboard resources, so the family's dashboard works without the agent.\n- Every enabled Hauflo alarm rule is brought up to date as an ordinary automation `hauflo_alarm_…` in automations.yaml: the same sensors and alarm states, a push to the same Home Assistant app phones (critical where the rule is), a notification in HA and the rule's button. A backup copy of automations.yaml is made first. An automation edited by hand is left as it is.\n- Nothing is deleted. The alarm automations keep working after the integration is removed.\n\nWhat stops working once Hauflo is removed:\n- Cloud monitoring: “agent offline”, “KNX bus silent”, the monitoring page and the service company's view.\n- Telegram alarms and the alarm history in Hauflo.\n- Deploys and updates from the project, guest links, “Away” presence simulation, voice sentences, editing the family's automations and scenes on the dashboard (the ones already made keep running).\n\nSubmit to do it."
       },
       "independent_done": {
         "title": "The site is independent",
@@ -747,6 +747,84 @@
     },
     "season_auto_staff": {
       "message": "Only an administrator can change the automatic season switch."
+    },
+    "alarm_native_alias": {
+      "message": "Alarm: {title}"
+    },
+    "alarm_native_description": {
+      "message": "Made by Hauflo from the alarm rule “{title}”. Phones: {phones}. “Accepted” is the helper {helper}, a chattering sensor's memory — {chatter}. Runs without Hauflo and without the agent. Hauflo updates it when a project is applied and never writes over one edited by hand; to remove one — Settings → Automations & scenes; all of them while Hauflo is installed — “Remove Hauflo alarms” (hauflo.remove_alarms)."
+    },
+    "alarm_native_nobody": {
+      "message": "nobody — only a notification in HA"
+    },
+    "alarm_native_helper": {
+      "message": "Hauflo · accepted: {title}"
+    },
+    "alarm_native_accept": {
+      "message": "Accept"
+    },
+    "alarm_native_close": {
+      "message": "Close: {name}"
+    },
+    "alarm_native_off": {
+      "message": "Turn off: {name}"
+    },
+    "alarm_native_title": {
+      "message": "🚨 {title}"
+    },
+    "alarm_native_alarm": {
+      "message": "{names}: alarm."
+    },
+    "alarm_native_repeat": {
+      "message": "{names}: alarm, nobody has accepted it."
+    },
+    "alarm_native_back_title": {
+      "message": "✅ {title}"
+    },
+    "alarm_native_back": {
+      "message": "{name}: back to normal."
+    },
+    "alarm_native_accepted": {
+      "message": "Accepted."
+    },
+    "alarm_native_accepted_by": {
+      "message": "Accepted: {who}."
+    },
+    "alarm_native_done": {
+      "message": "{button}: done."
+    },
+    "alarm_native_nodata_title": {
+      "message": "📵 {title}: no data"
+    },
+    "alarm_native_nodata": {
+      "message": "No data for {minutes} min: {name}. Until it is back, no alarm can come from it."
+    },
+    "alarm_native_no_automation": {
+      "message": "configuration.yaml has no “automation: !include automations.yaml” — the alarms stay with the Hauflo agent."
+    },
+    "alarm_native_kept_title": {
+      "message": "Hauflo: the alarms stay in Home Assistant"
+    },
+    "alarm_native_kept": {
+      "message": "Hauflo is removed, its alarms keep working: the automations “Alarm: …” and the helpers “Hauflo · accepted: …” and “Hauflo · chatter: …”. To remove them, delete them like any automation and helper (Settings → Automations / Helpers)."
+    },
+    "alarm_native_write_failed": {
+      "message": "automations.yaml couldn't be written — the reason is in Home Assistant's log."
+    },
+    "alarm_native_not_plain": {
+      "message": "automations.yaml isn't in Home Assistant's own format — nothing removed."
+    },
+    "alarm_native_chatter_helper": {
+      "message": "Hauflo · chatter: {title}"
+    },
+    "alarm_native_chatter_title": {
+      "message": "📳 {title}"
+    },
+    "alarm_native_chatter": {
+      "message": "{name}: keeps going off and back ({count} times in {minutes} min) — looks like a faulty sensor. The rule's notifications are muted until its sensors stay calm for {minutes} min; the screen still shows them."
+    },
+    "alarm_native_calm": {
+      "message": "Calm for {minutes} min, all back to normal — notifications as usual again."
     }
   },
   "selector": {},
@@ -778,6 +856,10 @@
           "description": "Addresses to clear (e.g. 7/7/1), for an entity already deleted."
         }
       }
+    },
+    "remove_alarms": {
+      "name": "Remove Hauflo alarms",
+      "description": "For Home Assistant's admin only (Hauflo's cloud can't call it). Removes every alarm automation “Alarm: …” and helper “Hauflo · accepted: …” Hauflo made, edited ones too; the Hauflo agent sends the alarms itself again until the next project is applied."
     }
   }
 }

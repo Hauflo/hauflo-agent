@@ -312,3 +312,51 @@ async def test_manual_pairs_survive_a_restart_and_clear_goes_back_to_the_mapping
     d.clear_pair("sensor.never_set")
     await run(hass, ins, STEP)
     assert d.pairs[F.format(1)]["exec"] == V.format(1) and not d.manual
+
+
+async def test_another_integrations_or_a_roomless_entity_is_never_paired(hass: HomeAssistant):
+    """w6a2 D-B10: «HeatPump ← HeatPump / термостат комнаты «без комнаты»» — a demo climate of another integration, in no
+    room, paired with itself. Pairs are made of Hauflo's own (or marked for monitoring) entities in a room only."""
+    area = ar.async_get(hass).async_create("Кухня")
+    for k in (1, 2, 3):
+        reg(hass, area, "binary_sensor", f"kitchen_valve_{k}", "")
+        reg(hass, area, "sensor", f"kitchen_floor_{k}", "")
+    reg(hass, area, "climate", "kitchen_floor", "")
+    reg(hass, area, "climate", "kitchen_air", "")
+    r = er.async_get(hass)
+    heatpump = r.async_get_or_create("climate", "demo", "heatpump", suggested_object_id="heatpump").entity_id  # foreign, in no room
+    own_roomless = r.async_get_or_create("climate", "test", "hall_air", suggested_object_id="hall_air").entity_id  # ours, in no room
+    roomless_floor = r.async_get_or_create("sensor", "test", "attic_floor_9", suggested_object_id="attic_floor_9").entity_id
+    engine = Insights(hass, lambda eid: eid != heatpump, lambda: None)
+    engine.clock = Clock()
+    await engine.async_start()
+    try:
+        setup(hass)
+        for eid, name in ((AIR, "Воздух"), (heatpump, "HeatPump"), (own_roomless, "Холл")):
+            hass.states.async_set(eid, "heat", {"friendly_name": name, "temperature": 22.0, "current_temperature": 21.0, "hvac_action": "heating"})
+        hass.states.async_set(roomless_floor, "20", {"device_class": "temperature", "friendly_name": "Температура пола 9"})
+        await run(hass, engine, STEP)
+        view = det(engine).pairs_view()
+        effects = {p["effect"] for p in view["pairs"]}
+        assert AIR in effects and F.format(1) in effects
+        assert heatpump not in effects and own_roomless not in effects and roomless_floor not in effects
+        assert heatpump not in {c["id"] for c in view["candidates"]["air"]}
+        assert roomless_floor not in {u["effect"] for u in view["unpaired"]}
+    finally:
+        engine.async_stop()
+
+
+async def test_a_floor_thermostat_without_loops_is_a_floor_and_a_gone_entity_is_not_shown(hass, ins):
+    """Integrator review 07.11 С-7: «без комнаты · climate.komnata_1_teplyi_pol ← climate.komnata_1_teplyi_pol», class
+    «Воздух»: a floor thermostat with no loop sensors of its own was judged as the room's air; after a new deploy renamed
+    it, the old entity_id still showed until the next refresh."""
+    hass.states.async_set(CL, "heat", {"friendly_name": "Тёплый пол", "temperature": 27.0, "current_temperature": 25.0, "hvac_action": "heating"})
+    hass.states.async_set(AIR, "heat", {"friendly_name": "Воздух", "temperature": 22.0, "current_temperature": 21.0, "hvac_action": "heating"})
+    await run(hass, ins, STEP)
+    d = det(ins)
+    kinds = {p["effect"]: p["kind"] for p in d.pairs_view()["pairs"]}
+    assert kinds[CL] == "floor" and kinds[AIR] == "air"
+    assert d._read(CL, d.pairs[CL]) == (1, 25.0, 27.0)  # its own reading, as a thermostat
+    hass.states.async_remove(CL)
+    await hass.async_block_till_done()
+    assert CL not in {p["effect"] for p in d.pairs_view()["pairs"]}

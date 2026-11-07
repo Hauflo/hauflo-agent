@@ -96,9 +96,9 @@ def sync_degraded(hass: HomeAssistant) -> None:
 def sync_ranges(hass: HomeAssistant, pending: set[str] | None, project: str = "") -> None:
     """Fixable: «Allow / Decline» in one click (repairs.py), the exact addresses in its form."""
     if pending:
-        from .ranges import count, range_key  # noqa: PLC0415 — ranges imports this module
+        from .ranges import count, describe  # noqa: PLC0415 — ranges imports this module
 
-        raise_issue(hass, RANGES_PENDING, fixable=True, ranges=", ".join(sorted(pending, key=range_key)), count=str(count(pending)), project=project or "—")
+        raise_issue(hass, RANGES_PENDING, fixable=True, ranges=describe(pending), count=str(count(pending)), project=project or "—")
     else:
         clear_issue(hass, RANGES_PENDING)
 

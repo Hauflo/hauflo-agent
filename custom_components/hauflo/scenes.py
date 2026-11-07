@@ -47,13 +47,13 @@ from typing import Any
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
-from homeassistant.util import dt as dt_util
 
 from .daylight import Daylight, Invalid as DayInvalid, SensorRefused
 from .house import refuse
 from .storage import HaufloStore
 from .const import LOCKED_CODE, wants_ru
 from .tuning import TUNING
+from . import yamlfile
 
 _LOGGER = logging.getLogger(__name__)
 STORE_KEY = "hauflo.scenes"
@@ -129,21 +129,7 @@ def clean_name(value: Any) -> str:
 
 
 def _plain(text: str) -> list[Any]:
-    import yaml  # noqa: PLC0415
-    from homeassistant.util.yaml import dump  # noqa: PLC0415
-
-    body = text.strip()
-    if body in ("", "[]"):
-        return []
-    try:
-        data = yaml.safe_load(text)
-    except yaml.YAMLError as err:
-        raise NotPlain(f"not YAML: {err}") from err
-    if not isinstance(data, list):
-        raise NotPlain("not a list")
-    if dump(data).strip() != body:
-        raise NotPlain("hand formatting")
-    return data
+    return yamlfile.parse(text, NotPlain)
 
 
 class FamilyScenes:
@@ -201,39 +187,12 @@ class FamilyScenes:
 
     # --- scenes.yaml --------------------------------------------------------------------------------------------------
     async def _read(self) -> tuple[list[dict[str, Any]], str | None]:
-        import os  # noqa: PLC0415
+        return await yamlfile.async_read(self.hass, self.hass.config.path(SCENES), NotPlain)
 
-        path = self.hass.config.path(SCENES)
-
-        def read() -> str | None:
-            if not os.path.isfile(path):
-                return None
-            with open(path, encoding="utf-8") as f:
-                return f.read()
-
-        text = await self.hass.async_add_executor_job(read)
-        return ([], None) if text is None else (_plain(text), text)
-
-    async def _write(self, data: list[dict[str, Any]], before: str | None) -> None:
-        import os  # noqa: PLC0415
-
-        from homeassistant.util.file import write_utf8_file_atomic  # noqa: PLC0415
-        from homeassistant.util.yaml import dump  # noqa: PLC0415
-
-        path = self.hass.config.path(SCENES)
-        contents = dump(data)
-        _plain(contents)
-
-        def write() -> None:
-            if before is not None:
-                stamp = dt_util.utcnow().strftime("%Y%m%d-%H%M%S-%f")
-                write_utf8_file_atomic(self.hass.config.path(BACKUP + stamp), before)
-                folder = self.hass.config.path()
-                for name in sorted(n for n in os.listdir(folder) if n.startswith(BACKUP))[:-KEEP_BACKUPS]:
-                    os.remove(os.path.join(folder, name))
-            write_utf8_file_atomic(path, contents)
-
-        await self.hass.async_add_executor_job(write)
+    async def _write(self, data: list[dict[str, Any]], before: str | None, redo: Callable[[list[Any]], list[Any]] | None = None) -> list[Any]:
+        """Atomic, the replaced text kept as a backup copy; changed since ``before`` (HA's scene editor saved
+        meanwhile) — ``redo`` makes the change again on it (yamlfile.write)."""
+        return await yamlfile.async_write(self.hass, self.hass.config.path(SCENES), self.hass.config.path(BACKUP), KEEP_BACKUPS, data, before, NotPlain, redo)
 
     async def _edit(self, scene_id: str, change: Callable[[dict[str, Any] | None], dict[str, Any] | None]) -> dict[str, Any] | None:
         """One read-modify-write of one of Hauflo's scenes; `change` gets the current config (None — none yet) and
@@ -244,12 +203,17 @@ class FamilyScenes:
             data, before = await self._read()
             now = next((s for s in data if isinstance(s, dict) and s.get("id") == scene_id), None)
             new = change(dict(now) if now is not None else None)
-            kept = [s for s in data if not (isinstance(s, dict) and s.get("id") == scene_id)]
-            if new is not None:
-                # In its place (the scene editor's list order), a new one at the end.
-                at = data.index(now) if now is not None else len(kept)
-                kept.insert(min(at, len(kept)), new)
-            await self._write(kept, before)
+
+            def put(rows: list[Any]) -> list[Any]:
+                there = next((s for s in rows if isinstance(s, dict) and s.get("id") == scene_id), None)
+                kept = [s for s in rows if not (isinstance(s, dict) and s.get("id") == scene_id)]
+                if new is not None:
+                    # In its place (the scene editor's list order), a new one at the end.
+                    at = rows.index(there) if there is not None else len(kept)
+                    kept.insert(min(at, len(kept)), new)
+                return kept
+
+            await self._write(put(data), before, put)
         await self.hass.services.async_call("scene", "reload", {}, blocking=True)
         if new is None and (eid := self.entity_of(scene_id)):
             er.async_get(self.hass).async_remove(eid)

@@ -18,57 +18,74 @@ def rule(**kw):
 
 
 def engine(rules, english=False):
-    return NS(config={"rules": rules}, _english=lambda: english, _targets=lambda r: [{"service": "mobile_app_ivan", "os": "ios"}])
+    async def set_native(native):
+        eng.native = native
+
+    eng = NS(config={"rules": rules}, native={}, locked=None, _english=lambda config=None: english, _targets=lambda r, config=None: [{"service": "mobile_app_ivan", "os": "ios"}],
+             _name=lambda e: e, async_set_native=set_native)
+    return eng
 
 
-async def test_export_skips_disabled_and_says_what_it_made(hass: HomeAssistant) -> None:
-    hass.config.components.add("automation")
-    async def add_new(_hass, configs):
-        return [configs[0]["id"]], []
-
-    with patch.object(keep, "async_make_independent", AsyncMock(return_value=keep.ADDED)), patch.object(automations, "async_add_new", add_new):
-        out = await independent.async_export(hass, engine([rule(), rule(id="off", enabled=False, title="Off"), rule(id="empty", sources=[], title="Empty")]))
-    assert out["added"] == ["Авария: Протечка"] and out["already"] == [] and out["skipped"] == ["Off", "Empty"] and out["cards"] == keep.ADDED
+async def test_export_without_automations_leaves_the_rules_with_the_agent(hass: HomeAssistant) -> None:
+    ru, en = engine([rule(), rule(id="off", enabled=False, title="Off"), rule(id="empty", sources=[], title="Empty")]), engine([rule()], english=True)
+    ru.native = {"r1": {"automation": "hauflo_alarm_x", "helper": "input_boolean.x"}}
+    with patch.object(keep, "async_make_independent", AsyncMock(return_value=keep.ADDED)):
+        out = await independent.async_export(hass, ru)
+        assert out["skipped"] == ["Off", "Empty"] and out["cards"] == keep.ADDED
+        assert [(e["title"], e["reason"]) for e in out["engine"]] == [("Протечка", "no_automation")] and "automation: !include" in out["error"]
+        assert ru.native == {}  # nothing in HA runs them: the engine does
+        assert "automation: !include" in (await independent.async_export(hass, en))["error"]
+        # no engine at all: only the cards
+        assert (await independent.async_export(hass, None))["added"] == []
+    # dry run says the same, changes nothing
+    ru.native = {"r1": {}}
+    assert (await independent.async_sync(hass, ru, dry_run=True))["engine"] and ru.native == {"r1": {}}
 
 
 async def test_export_failures_are_said_never_half_written(hass: HomeAssistant) -> None:
-    ru, en = engine([rule()]), engine([rule()], english=True)
-    # cards fail: the automations are still made
-    hass.config.components.add("automation")
-    with patch.object(keep, "async_make_independent", AsyncMock(side_effect=RuntimeError("disk full"))), patch.object(automations, "async_add_new", AsyncMock(return_value=([], []))):
+    ru = engine([rule()])
+    with patch.object(keep, "async_make_independent", AsyncMock(side_effect=RuntimeError("disk full"))), patch.object(independent, "async_sync", AsyncMock(side_effect=OSError("read-only"))):
         out = await independent.async_export(hass, ru)
-    assert out["cards"] == "error: disk full" and out["error"] is None
-    # no `automation:` in configuration.yaml
-    hass.config.components.remove("automation")
-    with patch.object(keep, "async_make_independent", AsyncMock(return_value=keep.ADDED)):
-        assert "automation: !include" in (await independent.async_export(hass, ru))["error"]
-        assert "no «automation: !include" in (await independent.async_export(hass, en))["error"]
-    hass.config.components.add("automation")
-    with patch.object(keep, "async_make_independent", AsyncMock(return_value=keep.ADDED)):
-        with patch.object(automations, "async_add_new", AsyncMock(side_effect=automations.NotPlain())):
-            assert (await independent.async_export(hass, ru))["error"] == automations.NotPlain.RU
-            assert (await independent.async_export(hass, en))["error"] == automations.NotPlain.EN
-        with patch.object(automations, "async_add_new", AsyncMock(side_effect=OSError("read-only"))):
-            assert (await independent.async_export(hass, ru))["error"] == "read-only"
-        # no engine at all: only the cards
-        assert (await independent.async_export(hass, None))["added"] == []
+    assert out["cards"] == "error: disk full" and out["error"] == "read-only"
 
 
 def test_summary_in_both_languages():
     for ru in (True, False):
-        s = independent.summary({"cards": keep.ADDED, "added": ["A"], "already": ["B"], "skipped": ["C"], "error": None}, ru)
-        assert "A" in s and "B" in s and "C" in s and s.count("\n") == 4
+        s = independent.summary({"cards": keep.ADDED, "added": ["A"], "unchanged": ["B"], "kept_edited": ["K"], "engine": [{"title": "E"}], "skipped": ["C"],
+                                 "warnings": [{"code": "double", "title": "Old"}], "error": None}, ru)
+        assert all(x in s for x in "ABKECO") and s.count("\n") == 5
         assert "configuration.yaml" in independent.summary({"cards": keep.YAML}, ru)
         assert "boom" in independent.summary({"cards": "boom", "error": "bad"}, ru) and "bad" in independent.summary({"cards": "boom", "error": "bad"}, ru)
         assert independent.summary({"cards": keep.ADDED}, ru).count("\n") == 1  # "no alarm rules"
 
 
-def test_alarm_automation_with_a_button():
-    rl = rule(action={"title": "Закрыть", "service": "valve.close_valve", "entity_id": "valve.main"})
-    cfg = independent.automation_for({**rl, "kind": "leak"}, [{"service": "mobile_app_ivan", "os": "ios"}], True, "2026-10-29")
-    assert cfg["mode"] == "parallel" and cfg["alias"] == "Авария: Протечка"
-    en = independent.automation_for(rule(), [], False, "2026-10-29")
-    assert en["alias"] == "Alarm: Протечка" and en["triggers"][0]["to"] == ["on"]
+async def test_alarm_automation_shape(hass: HomeAssistant) -> None:
+    ru, en = await independent.texts(hass, False), await independent.texts(hass, True)
+    the = independent.ids("r1")
+    rl = rule(title="Вода {50%}", priority="critical", repeat_min=10, action={"title": "Закрыть", "service": "valve.close_valve", "entity_id": "valve.main"})
+    cfg = independent.automation_for(rl, [{"service": "mobile_app_ivan", "os": "ios"}], ru, "input_boolean.x", names={"valve.main": "Кран #1"})
+    assert cfg["id"] == the["automation"] and cfg["alias"] == "Авария: Вода {50%}" and cfg["mode"] == "queued"
+    ids = [t["id"] for t in cfg["triggers"]]
+    assert ids == ["alarm", "back", "ack", "accepted", "entered", "returned", "lost", "repeat", "run", "nodata", "data", "calm", "calm"]
+    assert cfg["triggers"][0]["for"] == {"seconds": independent.HOLD}
+    # Told unless its source chatters (R3-1): the push inside, the memory written last and never stopping the run.
+    alarm = cfg["actions"][2]["choose"][0]["sequence"][1]["then"]
+    assert cfg["actions"][2]["choose"][0]["sequence"][-1]["continue_on_error"] is True
+    assert cfg["trigger_variables"]["chatter"] == "input_text." + the["chatter"]
+    push = alarm[-1]["parallel"][0]
+    # A person's text with template characters is said as it is (a JSON literal, never a template of theirs).
+    assert push["data"]["title"].startswith('🚨 {{ "') and "{50%}" not in push["data"]["title"]
+    assert push["continue_on_error"] is True and push["data"]["data"]["push"]["interruption-level"] == "critical"
+    assert push["data"]["data"]["actions"][0]["action"] == the["run"] and "Кран" in push["data"]["data"]["actions"][0]["title"]
+    # English; a link sensor: no «no data» of its own, no repeat, no button; nobody to tell — said in the description.
+    link = independent.automation_for(rule(kind="link", title="Связь"), [], en, "input_boolean.y")
+    assert link["alias"] == "Alarm: Связь" and [t["id"] for t in link["triggers"]] == ["alarm", "back", "ack", "accepted", "entered", "returned", "lost", "calm", "calm"]
+    assert en["nobody"] in link["description"]
+    assert all("parallel" not in step for b in link["actions"][2]["choose"] for step in b["sequence"])
+    # A button HA's own service can't run (not in RUN_SERVICES): no button at all.
+    odd = independent.automation_for(rule(action={"title": "x", "service": "script.turn_on", "entity_id": "script.s"}), [], ru, "input_boolean.z")
+    assert "run" not in [t["id"] for t in odd["triggers"]]
+    assert independent._lit("plain") == "plain" and independent._lit('a"{#}') == '{{ "a\\"\\u007b\\u0023\\u007d" }}'
 
 
 # --- the season switch ------------------------------------------------------------------------------------------------
@@ -149,3 +166,24 @@ def test_answer_language_follows_the_card():
     assert wants_ru({}, "ru") is True
     assert wants_ru({"lang": " "}, "en") is False
     assert wants_ru(None, None) is False
+
+
+async def test_started_once_listener_is_not_removed_twice(hass: HomeAssistant, caplog) -> None:
+    """HA review round 2 N-1: Season and Habits started before HA was up, HA starts, then the entry reloads — no
+    «Unable to remove unknown job listener» ERROR (HA drops a fired once-listener itself)."""
+    from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
+    from homeassistant.core import CoreState
+
+    from custom_components.hauflo import habits
+
+    hass.set_state(CoreState.starting)
+    sea = season.Season(hass, lambda: None)
+    hab = habits.Habits(hass, lambda _e: False, lambda: [], lambda _e: None)
+    await sea.async_start()
+    await hab.async_start()
+    hass.set_state(CoreState.running)
+    hass.bus.async_fire(EVENT_HOMEASSISTANT_STARTED)
+    await hass.async_block_till_done()
+    sea.async_stop()
+    await hab.async_stop()
+    assert "Unable to remove unknown job listener" not in caplog.text

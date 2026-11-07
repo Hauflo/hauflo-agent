@@ -361,9 +361,12 @@ class Season:
 
             @callback
             def _started(_event: Event) -> None:
+                if once in self._unsubs:  # fired: HA drops a once-listener itself, removing it again would log an error
+                    self._unsubs.remove(once)
                 self._unsubs.append(async_call_later(self.hass, START_DELAY, _later))
 
-            self._unsubs.append(self.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _started))
+            once = self.hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _started)
+            self._unsubs.append(once)
 
     @callback
     def async_stop(self) -> None:

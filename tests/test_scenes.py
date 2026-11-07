@@ -288,3 +288,32 @@ async def test_config_admin_only(hass: HomeAssistant, hass_client, hass_read_onl
 async def test_tunnel_cannot_reach_daylight(hass: HomeAssistant) -> None:
     for body in ({"op": "apply", "entity_id": "scene.x"}, {"op": "daylight_skip", "entity_id": LAMP, "on": True}, {"op": "daylight_config", "lux": 500}):
         assert not _http_allowed(hass, "POST", URL, body)
+
+
+async def test_scene_editor_saving_meanwhile_is_never_lost(hass: HomeAssistant, hass_client, entry) -> None:
+    """HA review M-2 (the same in scenes.yaml): HA's scene editor saves between Hauflo's read and write — its change
+    stays, Hauflo's goes on top; the backup copy holds the text replaced."""
+    from custom_components.hauflo import scenes, yamlfile
+
+    other = {"id": "1700000000009", "name": "Integrator: night", "entities": {HAND: {"state": "off"}}}
+    real = yamlfile.write
+
+    def editor_first(path, *args, **kwargs):
+        if path.endswith("scenes.yaml"):
+            Path(path).write_text(dump([{**THEIRS, "name": "Integrator: evening 2"}, HAUFLO, other]))
+        return real(path, *args, **kwargs)
+
+    client = await hass_client()
+    with patch.object(yamlfile, "write", editor_first):
+        res = await client.post(URL, json={"op": "add", "room": "bed", "kind": "l", "name": "Кино", "entities": [LIGHT]})
+    assert res.status == 200, await res.text()
+    ids = [s["id"] for s in _file(hass)]
+    assert ids[:3] == [THEIRS["id"], HAUFLO["id"], other["id"]] and ids[3].startswith("hauflo_fam_bed_l_")
+    assert _file(hass)[0]["name"] == "Integrator: evening 2"
+    backup = sorted(Path(hass.config.path()).glob("scenes.yaml.hauflo-bak-*"))[-1].read_text()
+    assert "Integrator: night" in backup
+    # A hand-formatted file meanwhile: nothing written over it.
+    Path(hass.config.path("scenes.yaml")).write_text("# by hand\n- id: x\n  name: X\n  entities: {}\n")
+    with pytest.raises(scenes.NotPlain):
+        yamlfile.write(hass.config.path("scenes.yaml"), hass.config.path(scenes.BACKUP), 3, [], dump([THEIRS]), scenes.NotPlain, lambda rows: rows)
+    assert Path(hass.config.path("scenes.yaml")).read_text().startswith("# by hand")

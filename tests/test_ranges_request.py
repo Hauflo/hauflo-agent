@@ -134,3 +134,14 @@ async def test_what_the_owner_allows_is_what_was_shown(hass: HomeAssistant, entr
     # The rest still waits for its own click, the issue raised again after Repairs closed this one.
     assert ranges.state(hass)["pending"] == ["9/6/9"]
     assert _issue(hass) is not None
+
+
+def test_a_long_list_of_ranges_reads_short():
+    """Integrator review 07.11, Н-10: a reconfigure said ~250 groups «0/3, 0/4, … 31/7» would go — unreadable."""
+    groups = [f"{m}/{s}" for m in range(32) for s in range(8)][3:]
+    assert ranges.describe(groups) == "0/3 – 31/7"
+    assert ranges.describe(["1/1/1", "1/1/2", "1/1/3", "1/2", "1/3", "2/0/7"]) == "1/1/1-3, 1/2 – 1/3, 2/0/7"
+    many = [f"3/0/{a}" for a in range(0, 60, 2)]
+    text = ranges.describe(many)
+    assert text.startswith("3/0/0, 3/0/2") and text.endswith(f"… +{30 - ranges.SHOWN_ITEMS}")
+    assert ranges.describe([]) == ""

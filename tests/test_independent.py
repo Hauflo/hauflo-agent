@@ -1,8 +1,9 @@
 """«Сделать дом независимым» (service-company review 29.10): the owner, in the integration's options, keeps the dashboard
-cards for good and turns Hauflo's alarm rules into plain HA automations — the same sensors and states, the same
-phones, critical where the rule is, the rule's button — written like the dashboard automations (plain-file check,
-backup copy); nothing is deleted, a second run adds nothing twice."""
+cards for good and makes sure Hauflo's alarm rules are HA's own automations (0.26: the same sync as a deploy,
+test_alarms_native.py) — the same sensors and states, the same phones, critical where the rule is, the rule's button —
+written like the dashboard automations (plain-file check, backup copy); a second run adds nothing twice."""
 
+from datetime import timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -12,7 +13,7 @@ from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
 from homeassistant.util.yaml import dump, load_yaml
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
 from custom_components.hauflo import independent, keep, notify
 from custom_components.hauflo.const import CONF_ALLOW_CHANGES, CONF_RANGES, CONF_SECRET, CONF_SERVER, DOMAIN
@@ -74,16 +75,16 @@ async def _run_options(hass: HomeAssistant, entry) -> str:
     return report
 
 
-async def test_alarm_rules_become_ha_automations_and_cards_stay(hass: HomeAssistant, house) -> None:
+async def test_alarm_rules_become_ha_automations_and_cards_stay(hass: HomeAssistant, house, freezer) -> None:
     entry, config, pushes, closed = house
     report = await _run_options(hass, entry)
     await hass.async_block_till_done()
     assert entry.options[CONF_RANGES] == ["1/1"]  # the settings saved as they were
     data = load_yaml(str(config / "automations.yaml"))
     assert data[0] == THEIRS  # the integrator's own untouched
-    ours = [a for a in data if str(a["id"]).startswith(independent.PREFIX)]
+    ours = [a for a in data if str(a["id"]).startswith("hauflo_alarm_")]
     assert [a["alias"] for a in ours] == ["Авария: Протечка"]  # the disabled rule skipped, said
-    assert "Котёл" in report and "Авария: Протечка" in report and "/config/www/hauflo" in report
+    assert "Котёл" in report and "Аварии работают в Home Assistant сами" in report and "/config/www/hauflo" in report
     assert list(config.glob("automations.yaml.hauflo-bak-*"))  # a copy before the write
     assert keep.ADDED and await keep.async_independent(hass)
     assert (config / "www" / "hauflo" / "hauflo-cards.js").is_file()
@@ -91,23 +92,27 @@ async def test_alarm_rules_become_ha_automations_and_cards_stay(hass: HomeAssist
     assert eid and hass.states.get(eid).state == "on"
     # It works without Hauflo: the leak → both phones (critical for each OS) and a note in HA.
     hass.states.async_set(LEAK, "on", {"device_class": "moisture", "friendly_name": "Протечка на кухне"})
+    freezer.tick(timedelta(seconds=independent.HOLD + 1))
+    async_fire_time_changed(hass)
     await hass.async_block_till_done()
     by = {c.service: c.data for c in pushes}
     assert set(by) == {"mobile_app_anna", "mobile_app_ivan"}
-    assert by["mobile_app_anna"]["message"] == "Протечка на кухне" and by["mobile_app_anna"]["title"] == "Протечка"
+    assert by["mobile_app_anna"]["message"] == "Протечка на кухне: авария." and by["mobile_app_anna"]["title"] == "🚨 Протечка"
     assert by["mobile_app_anna"]["data"]["channel"] == "alarm_stream"
     assert by["mobile_app_ivan"]["data"]["push"]["interruption-level"] == "critical"
     button = by["mobile_app_ivan"]["data"]["actions"][0]
-    assert button["title"] == "Перекрыть воду"
+    assert button["title"].startswith("Закрыть: ")
     # The push's button closes the valve, as the rule's did.
     hass.bus.async_fire(notify.ACTION_EVENT, {"action": button["action"]})
     await hass.async_block_till_done()
     assert [c.data["entity_id"] for c in closed] == [[VALVE]]
     # Again: nothing twice, nothing removed.
     report2 = await _run_options(hass, entry)
-    assert "Уже были" in report2
+    assert "Аварии работают в Home Assistant сами" in report2 and "Протечка" in report2
     again = load_yaml(str(config / "automations.yaml"))
     assert [a["id"] for a in again] == [a["id"] for a in data]
+    # A timer of the rule (chatter window) may be left: the automations stop with the test.
+    await hass.services.async_call("automation", "turn_off", {"entity_id": "all"}, blocking=True)
 
 
 async def test_a_hand_formatted_file_is_not_rewritten(hass: HomeAssistant, house) -> None:

@@ -26,3 +26,4 @@ unprotect:
       selector:
         text:
           multiple: true
+remove_alarms:

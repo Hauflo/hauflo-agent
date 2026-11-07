@@ -34,7 +34,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
 from homeassistant.util import dt as dt_util
 
-from . import automations, backup, dashmerge, daylight, foreign, guest, house, insight, issues, keep, noeffect, notify, ownership, presence, protect, ranges, retired, rules, scenes, season, servers, service, sidebar, stock, theme, timers, titles, voice
+from . import automations, backup, dashmerge, daylight, foreign, guest, house, independent, insight, issues, keep, noeffect, notify, ownership, presence, protect, ranges, retired, rules, scenes, season, servers, service, sidebar, stock, theme, timers, titles, voice
 from . import derived as dv
 from . import order as block_order
 from . import habits as habits_mod
@@ -2994,6 +2994,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
     # updates the entry (HA reviewer r2: async_update_reload_and_abort with an update listener breaks in 2026.12).
     entry.async_on_unload(entry.add_update_listener(_entry_changed))
     timers.async_setup(hass)
+    independent.async_setup_service(hass, lambda: _engine(hass))
     issues.sync_degraded(hass)
     return True
 
@@ -3248,6 +3249,11 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         _LOGGER.exception("Hauflo: dashboard cards not kept")
     with contextlib.suppress(Exception):
         await notify.NotifyEngine(hass).async_remove()
+    # The alarm rules made HA's own automations keep working without the agent (0.26, 5B) — the owner told so.
+    try:
+        await independent.async_removed(hass)
+    except Exception:  # noqa: BLE001 — never stops the removal
+        _LOGGER.exception("Hauflo: kept alarms not told")
     with contextlib.suppress(Exception):
         await HaufloStore(hass, retired.COMFORT_STORE).async_remove()
     with contextlib.suppress(Exception):

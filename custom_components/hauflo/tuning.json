@@ -2,10 +2,16 @@
   "version": 1,
   "notify": {
     "repeat_min": 5,
+    "native_hold_s": 5,
+    "native_max_runs": 25,
     "group_window_s": 3,
     "nodata_after_s": 900,
     "chatter_count": 3,
     "chatter_window_s": 600,
+    "chatter_window_life_s": 60,
+    "chatter_memory_max": 255,
+    "rule_states_max": 8,
+    "life_safety_kinds": ["leak", "flood", "smoke", "fire", "gas", "co", "carbon_monoxide"],
     "push_hour_max": 20,
     "push_day_max": 80,
     "push_day_critical": 200,
@@ -355,5 +361,8 @@
   },
   "theme": {
     "reload_note_s": 600
+  },
+  "ranges": {
+    "shown_items": 12
   }
 }

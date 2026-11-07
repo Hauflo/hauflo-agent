@@ -256,6 +256,7 @@
   "icon-l": "28px",
   "caps-ls": ".14em",
   "hit": "44px",
+  "row-gap": "8px",
   "fill-top-bright": "var(--eh-fill-top-bright,50%)",
   "fill-bottom-deep": "var(--eh-fill-bottom-deep,70%)"
  }

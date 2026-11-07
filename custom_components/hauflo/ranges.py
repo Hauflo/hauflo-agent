@@ -15,6 +15,7 @@ from homeassistant.core import HomeAssistant, callback
 
 from . import issues
 from .const import CONF_RANGES, DATA_PENDING_RANGES
+from .tuning import TUNING
 
 # What the ask would take away (allowed items no address of the project falls into), its project, what was declined.
 DATA_PENDING_REMOVE = "hauflo_pending_ranges_remove"
@@ -23,6 +24,8 @@ DATA_DECLINED = "hauflo_declined_ranges"
 NOTIFICATION_ID = "hauflo_ranges"
 # A request names at most this many items (a villa's project compacts to a few hundred spans).
 MAX_ITEMS = 2048
+# A text shows at most this many spans, then «… +N» (integrator review 07.11, Н-10: a reconfigure listed ~250 groups).
+SHOWN_ITEMS = TUNING["ranges"]["shown_items"]
 
 
 def range_key(r: str) -> tuple[int, ...]:
@@ -86,6 +89,34 @@ def compress(raws: set[int]) -> list[str]:
     return out
 
 
+def describe(items: Any) -> str:
+    """Items as a reader sees them: covered addresses re-compacted, a run of whole middle groups as «0/3 – 31/7», at
+    most SHOWN_ITEMS spans then «… +N» (the exact list stays in the field / the stored options)."""
+    out: list[str] = []
+    run: list[int] = []
+
+    def close() -> None:
+        if run:
+            a, b = run[0], run[-1]
+            out.append(f"{a >> 3}/{a & 7}" if a == b else f"{a >> 3}/{a & 7} – {b >> 3}/{b & 7}")
+            run.clear()
+
+    for item in compress(expand(items)):
+        nums = [int(p) for p in re.split(r"[/-]", item)]
+        if len(nums) == 2:
+            g = (nums[0] << 3) | nums[1]
+            if run and g != run[-1] + 1:
+                close()
+            run.append(g)
+            continue
+        close()
+        out.append(item)
+    close()
+    if len(out) > SHOWN_ITEMS:
+        return f"{', '.join(out[:SHOWN_ITEMS])} … +{len(out) - SHOWN_ITEMS}"
+    return ", ".join(out)
+
+
 def count(items: Any) -> int:
     return len(expand(items))
 
@@ -124,8 +155,8 @@ def notify(hass: HomeAssistant) -> None:
     ru = str(hass.config.language or "").startswith("ru")
     persistent_notification.async_create(
         hass,
-        (f"Hauflo просит разрешить отправлять команды в групповые адреса KNX {', '.join(add)}. Разрешите или отклоните в один клик: [Настройки → Ремонт](/config/repairs). Ворота, замки и чужие группы не разрешайте."
-         if ru else f"Hauflo asks to send commands to KNX group addresses {', '.join(add)}. Allow or decline in one click: [Settings → Repairs](/config/repairs). Don't allow gates, locks or others' groups."),
+        (f"Hauflo просит разрешить отправлять команды в групповые адреса KNX {describe(add)}. Разрешите или отклоните в один клик: [Настройки → Ремонт](/config/repairs). Ворота, замки и чужие группы не разрешайте."
+         if ru else f"Hauflo asks to send commands to KNX group addresses {describe(add)}. Allow or decline in one click: [Settings → Repairs](/config/repairs). Don't allow gates, locks or others' groups."),
         "Hauflo",
         NOTIFICATION_ID,
     )

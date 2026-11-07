@@ -13,6 +13,18 @@
    "params": {}
   },
   {
+   "file": "ha/alarmRulesDeploy.ts",
+   "kind": "rest",
+   "call": "GET /api/hauflo/notify",
+   "params": {}
+  },
+  {
+   "file": "ha/alarmRulesDeploy.ts",
+   "kind": "rest",
+   "call": "POST /api/hauflo/notify",
+   "params": {}
+  },
+  {
    "file": "ha/alisa.ts",
    "kind": "rest",
    "call": "DELETE /api/config/config_entries/flow/{x}",
@@ -559,6 +571,12 @@
    "params": {
     "integration": "hauflo"
    }
+  },
+  {
+   "file": "ha/foreignDeploy.ts",
+   "kind": "rest",
+   "call": "GET /api/hauflo/foreign",
+   "params": {}
   },
   {
    "file": "ha/foreignDeploy.ts",

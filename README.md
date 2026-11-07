@@ -33,8 +33,8 @@ No hand-built cards. Change the ETS project, re-import: the dashboard follows.
 
 No ETS file, or Home Assistant already runs at the site? Create a project with **I have Home Assistant** and link the site with the agent's code. The ETS file is one source among others and can be added at any moment.
 
-- **Moving into this Home Assistant** (a card on Import): what the house already has, with the source of every number; a verdict — **Good to go**, **Possible, with caveats** or **Not yet**; and a plan of what Hauflo creates, leaves alone and asks about. Read-only.
-- **Take rooms from HA:** Home Assistant's floors and areas become the project's floors and rooms as they are, with a preview and no change in Home Assistant.
+- **Moving into this Home Assistant** (a card on Import): what the house already has, with the source of every number; a verdict — **Ready to deploy**, **Ready to deploy, with notes** or **Cannot deploy**; and a plan of what Hauflo creates, leaves alone and asks about. Read-only.
+- **Import from Home Assistant:** Home Assistant's floors and areas become the project's floors and rooms as they are, with a preview and no change in Home Assistant.
 - **Deploy without KNX:** the Atelier dashboard is built by Home Assistant's rooms; devices of other integrations sit on the room pages.
 - **What the agent reads for this:** the registries (entities, devices, areas, floors, integrations), the list of dashboards and Home Assistant's and the agent's versions. **What it does not read:** the contents of other automations, scripts and dashboards — it only counts them.
 
@@ -64,7 +64,7 @@ Rules only use Hauflo’s own lights, blinds and scenes. They never touch locks,
 - **Re-import without starting over.** Rooms, names and scenes stay. A second deploy with no changes changes nothing.
 - **No ports, no tokens.** One outgoing encrypted connection. No port forwarding.
 - **Every site on one screen.** Connection to each site, KNX bus, devices gone quiet, an event log.
-- **Alarms the way you set them.** Push, Telegram and email, repeated until someone accepts.
+- **Alarms the way you set them.** Each rule becomes an ordinary Home Assistant automation: push with **Accept**, repeated until someone accepts; Telegram on top. No email.
 
 ## Install
 
@@ -189,9 +189,10 @@ Hauflo can ask only for what is on the agent's fixed list, and the agent edits s
 
 Set up in Hauflo → **Alarms**. A rule is: what happened → which sensors → who gets it → how.
 
-- **Push to the family’s phones** through the Home Assistant app. Critical alarms ring even in silent mode (iOS Critical Alerts, the Android alarm stream). They repeat until someone taps **Accept**. An action button does the obvious thing, such as “Shut off water”.
-- **Telegram** through [@hauflo_bot](https://t.me/hauflo_bot), and **email**, for you, the engineer on duty or the client. Each person gets only the alarms of their own sites.
-- The push rules live in this Home Assistant, so they keep working when Hauflo or the internet is down.
+- **Push to the family’s phones** through the Home Assistant app. Critical alarms ring even in silent mode (iOS Critical Alerts, the Android alarm stream). They repeat until someone taps **Accept**; “back to normal” clears the notification. An action button does the obvious thing, such as “Shut off water”.
+- **Telegram** through [@hauflo_bot](https://t.me/hauflo_bot), for you, the engineer on duty or the client. Each person gets only the alarms of their own sites.
+- Every rule is an automation `hauflo_alarm_…` in this Home Assistant with an **Accept** switch, named “Alarm: <rule>”. It runs without Hauflo and without the agent, also when the internet is down, and stays after the integration is removed. A rule Home Assistant can't hold (a hand-formatted `automations.yaml`, changes closed by the owner) stays with the agent, and you're told so. An automation you edited by hand is never overwritten.
+- Alarms go by push and Telegram only; email is not an alarm channel.
 
 To watch any other entity (a boiler fault, ventilation, a battery), give it the label **Hauflo monitoring** in Home Assistant.
 
@@ -290,7 +291,7 @@ Winter or summer is chosen in the dashboard (**Settings**) or in Hauflo, not by 
 
 - **A Hauflo account is needed.** Without one the integration can't be set up.
 - **One agent per Home Assistant.** One Home Assistant serves one Hauflo project.
-- **The project file import is KNX only** (`.knxproj` or ETS CSV). In a house without KNX the rooms come from Home Assistant's areas (**Take rooms from HA**). Devices of other integrations are not imported from a file: they are placed on the dashboard, and **Set up** assigns their rooms, names and blocks.
+- **The project file import is KNX only** (`.knxproj` or ETS CSV). In a house without KNX the rooms come from Home Assistant's areas (**Import from Home Assistant**). Devices of other integrations are not imported from a file: they are placed on the dashboard, and **Set up** assigns their rooms, names and blocks.
 - **Home Assistant 2026.9 or newer.** The agent reads parts of Home Assistant’s KNX integration that are not a public API. If a new Home Assistant changes them, the agent switches off only those features and says which in **Repairs**.
 - **Hand-formatted `automations.yaml` / `scenes.yaml`** (comments, `!include`, `!secret`) are never rewritten, so the family’s own automations and scenes can’t be saved there until the file is plain.
 - **Dashboard resources in YAML mode** can’t be added by the agent. On removal (or **Make the site independent**) the cards are copied to `/config/www/hauflo` and Home Assistant shows a notification with the two lines to add to `configuration.yaml`.
@@ -303,7 +304,7 @@ Winter or summer is chosen in the dashboard (**Settings**) or in Hauflo, not by 
 
 **Remove** in **Settings → Devices & services → Hauflo → Delete**, then in the Marketplace (Hauflo → **Uninstall**; Home Assistant may offer it itself when the entry is deleted; on older Home Assistant — HACS). In Hauflo the project shows “agent offline”. Disconnect it there, or connect again later.
 
-**Removal takes with it:** the agent’s system user, its voice sentences (`custom_sentences/ru/hauflo.yaml`), the alarm rules and the Winter/Summer settings, the guest links and the guest log, who services the home and its access history (`.storage/hauflo.service`), the last plan shown on **Made in this home**, and the hidden sidebar panels come back for everyone. The lights “Away” turned on are switched off. Alarms stop with the agent: to keep them, run **Make the site independent** first.
+**Removal takes with it:** the agent’s system user, its voice sentences (`custom_sentences/ru/hauflo.yaml`), the alarm rules and the Winter/Summer settings, the guest links and the guest log, who services the home and its access history (`.storage/hauflo.service`), the last plan shown on **Made in this home**, and the hidden sidebar panels come back for everyone. The lights “Away” turned on are switched off. The alarm automations `hauflo_alarm_…` a deploy wrote (agent 0.26+) stay and keep ringing without the agent; the service `hauflo.remove_alarms` (Home Assistant administrator) removes them, see below. An older agent’s alarms stop with it unless you run **Make the site independent** first.
 
 **The family’s dashboard keeps working** (checked on a clean Home Assistant: removed, the integration’s files deleted, restarted). At removal the cards, icons and font are copied to `/config/www/hauflo` and added as dashboard resources `/local/hauflo/hauflo-icons.js` and `/local/hauflo/hauflo-cards.js`. Only the Hauflo Atelier theme goes: the cards fall back to Home Assistant’s look. In YAML resource mode Home Assistant shows what to add.
 
@@ -319,6 +320,7 @@ Winter or summer is chosen in the dashboard (**Settings**) or in Hauflo, not by 
 | `automations.yaml.hauflo-bak-*`, `scenes.yaml.hauflo-bak-*` (last 3 each) | Copies before each write | Delete the files in `/config` |
 | The labels **Hauflo** and **Hauflo monitoring** (and the category and `hauflo_role_*` labels a deploy made) | Labels on your entities: **Hauflo** still tells what Hauflo made | **Settings → Areas, labels & zones → Labels** |
 | Automations `hauflo_independent_…` (if you made the house independent) | Your alarms, now plain HA automations | **Settings → Automations & scenes** |
+| Automations `hauflo_alarm_…` and helpers `input_boolean.hauflo_ack_…` (“Hauflo · accepted: …”) | The alarms keep reaching the phones without Hauflo; Home Assistant shows a notification saying so | Before removing: **Developer tools → Actions → `hauflo.remove_alarms`** (admin). After: **Settings → Automations & scenes** and **Settings → Devices & services → Helpers** |
 | `/config/.storage/hauflo.*` (what Hauflo made, titles, order, scenes, automations, presence, season, open alarms) | A re-added agent picks up where it left | Stop Home Assistant, delete `/config/.storage/hauflo.*`, start it |
 | Rooms, floors, KNX entities, light groups, the HomeKit bridge, voice exposure | The home itself | As any Home Assistant item, in **Settings** |
 | Backups Hauflo made | Your safety net | **Settings → System → Backups** |
@@ -328,10 +330,10 @@ Winter or summer is chosen in the dashboard (**Settings**) or in Hauflo, not by 
 **Settings → Devices & services → Hauflo → Configure → Make the site independent of Hauflo.** It asks first, then:
 
 - keeps the dashboard cards in `/config/www/hauflo` as dashboard resources for good, also while the agent is installed (refreshed at each start), so the dashboard doesn’t depend on the agent however it is removed;
-- writes each enabled Hauflo alarm rule as a plain automation in `automations.yaml`, named “Alarm: <rule>”: the same sensors and alarm states, a push to the same Home Assistant app phones (critical where the rule is), a notification in Home Assistant, and the rule’s button (such as “Shut off water”) on the push. A copy of `automations.yaml` is made first. A hand-formatted file is left alone and you’re told so. An automation made this way before is left as it is;
-- deletes nothing. Until you remove the integration, an alarm comes twice (Hauflo and the automation).
+- brings every enabled alarm rule up to date as a plain automation `hauflo_alarm_…` in `automations.yaml` (the same sensors and alarm states, a push to the same Home Assistant app phones, critical where the rule is, the **Accept** switch and the rule’s button such as “Shut off water”). A copy of `automations.yaml` is made first. A hand-formatted file is left alone and you’re told so;
+- deletes nothing.
 
-**What stops once Hauflo is removed:** cloud monitoring (“agent offline”, “KNX bus silent”, the monitoring page), email and Telegram alarms, the alarm history, repeats until **Accept**, deploys and updates from the project, guest links, the “Away” presence simulation, the Winter/Summer resend and suggestion, voice sentences, and editing the family’s automations and scenes on the dashboard (the ones already made keep running). The phones in the automations are the ones the app had then: a new phone needs to be added to them by hand.
+**What stops once Hauflo is removed:** cloud monitoring (“agent offline”, “KNX bus silent”, the monitoring page), Telegram alarms, the alarm history in Hauflo, deploys and updates from the project, guest links, the “Away” presence simulation, the Winter/Summer resend and suggestion, voice sentences, and editing the family’s automations and scenes on the dashboard (the ones already made keep running). The phones in the automations are the ones the app had then: a new phone needs to be added to them by hand.
 
 ## Support
 

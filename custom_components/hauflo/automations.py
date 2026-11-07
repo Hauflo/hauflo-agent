@@ -56,6 +56,7 @@ from .const import DOMAIN, wants_ru
 from .storage import HaufloStore
 from . import recipes
 from .tuning import TUNING
+from . import yamlfile
 _LOGGER = logging.getLogger(__name__)
 STORE_KEY = "hauflo.automations"
 PREFIX = "hauflo_auto_"
@@ -184,7 +185,12 @@ async def async_add_new(hass: HomeAssistant, configs: list[dict[str, Any]]) -> t
         have = {a.get("id") for a in data if isinstance(a, dict)}
         new = [c for c in configs if c["id"] not in have]
         if new:
-            await helper._write_file([*data, *new], before)
+
+            def redo(fresh: list[Any]) -> list[Any]:
+                there = {a.get("id") for a in fresh if isinstance(a, dict)}
+                return [*fresh, *(c for c in new if c["id"] not in there)]
+
+            await helper._write_file([*data, *new], before, redo)
     if new:
         await hass.services.async_call("automation", "reload", {}, blocking=True)
     return [c["id"] for c in new], [c["id"] for c in configs if c["id"] in have]
@@ -799,58 +805,16 @@ class Automations:
     @staticmethod
     def _plain(text: str) -> list[Any]:
         """automations.yaml as data — only when a dump gives back the same text (HA's editor's own format); else
-        NotPlain. An empty file / «[]» is plain."""
-        import yaml  # noqa: PLC0415
-        from homeassistant.util.yaml import dump  # noqa: PLC0415
-
-        body = text.strip()
-        if body in ("", "[]"):
-            return []
-        try:
-            data = yaml.safe_load(text)  # no HA tags: one would fail here, not be followed
-        except yaml.YAMLError as err:
-            raise NotPlain(f"not YAML: {err}") from err
-        if not isinstance(data, list):
-            raise NotPlain("not a list")
-        if dump(data).strip() != body:
-            raise NotPlain("hand formatting")
-        return data
+        NotPlain. An empty file / «[]» is plain. Blocking (a big file parses for seconds): the executor's."""
+        return yamlfile.parse(text, NotPlain)
 
     async def _read_file(self) -> tuple[list[dict[str, Any]], str | None]:
-        import os  # noqa: PLC0415
+        return await yamlfile.async_read(self.hass, self.hass.config.path(AUTOMATIONS), NotPlain)
 
-        path = self.hass.config.path(AUTOMATIONS)
-
-        def read() -> str | None:
-            if not os.path.isfile(path):
-                return None
-            with open(path, encoding="utf-8") as f:
-                return f.read()
-
-        text = await self.hass.async_add_executor_job(read)
-        return ([], None) if text is None else (self._plain(text), text)
-
-    async def _write_file(self, data: list[dict[str, Any]], before: str | None) -> None:
-        import os  # noqa: PLC0415
-
-        from homeassistant.util.file import write_utf8_file_atomic  # noqa: PLC0415
-        from homeassistant.util.yaml import dump  # noqa: PLC0415
-
-        path = self.hass.config.path(AUTOMATIONS)
-        contents = dump(data)  # before the file is opened: a dump error never truncates it
-        self._plain(contents)  # what is written reads back the same (never a file the next write would refuse)
-
-        def write() -> None:
-            if before is not None:
-                stamp = dt_util.utcnow().strftime("%Y%m%d-%H%M%S-%f")
-                write_utf8_file_atomic(self.hass.config.path(BACKUP + stamp), before)
-                folder = self.hass.config.path()
-                old = sorted(n for n in os.listdir(folder) if n.startswith(BACKUP))
-                for name in old[:-KEEP_BACKUPS]:
-                    os.remove(os.path.join(folder, name))
-            write_utf8_file_atomic(path, contents)
-
-        await self.hass.async_add_executor_job(write)
+    async def _write_file(self, data: list[dict[str, Any]], before: str | None, redo: Callable[[list[Any]], list[Any]] | None = None) -> list[Any]:
+        """One atomic write, the replaced text kept as a backup copy; the file changed since ``before`` (HA's editor
+        saved meanwhile) — ``redo`` makes the change again on it (none — NotPlain, nothing written)."""
+        return await yamlfile.async_write(self.hass, self.hass.config.path(AUTOMATIONS), self.hass.config.path(BACKUP), KEEP_BACKUPS, data, before, NotPlain, redo)
 
     def entity_of(self, rule_id: str) -> str | None:
         return er.async_get(self.hass).async_get_entity_id("automation", "automation", rule_id)
@@ -866,10 +830,12 @@ class Automations:
             await async_validate_config_item(self.hass, rule_id, cfg)
         async with _FILE_LOCK:
             data, before = await self._read_file()
-            kept = [a for a in data if not (isinstance(a, dict) and a.get("id") == rule_id)]
-            if cfg is not None:
-                kept.append(cfg)
-            await self._write_file(kept, before)
+
+            def put(rows: list[Any]) -> list[Any]:
+                kept = [a for a in rows if not (isinstance(a, dict) and a.get("id") == rule_id)]
+                return [*kept, cfg] if cfg is not None else kept
+
+            await self._write_file(put(data), before, put)
         if cfg is not None:
             await self.hass.services.async_call("automation", "reload", {"id": rule_id}, blocking=True)
         elif eid := self.entity_of(rule_id):

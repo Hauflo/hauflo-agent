@@ -198,7 +198,7 @@ class HaufloConfigFlow(ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="ranges",
             data_schema=vol.Schema({vol.Optional(CONF_RANGES, default=proposed): TextSelector(TextSelectorConfig(multiline=True))}),
-            description_placeholders={"project": str(body.get("project", "")), "ranges": proposed or "—"},
+            description_placeholders={"project": str(body.get("project", "")), "ranges": ranges_mod.describe(proposed) or "—"},
         )
 
     @staticmethod
@@ -261,7 +261,7 @@ class HaufloConfigFlow(ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="relink_ranges",
             data_schema=vol.Schema({vol.Optional(CONF_RANGES, default=text): TextSelector(TextSelectorConfig(multiline=True))}),
-            description_placeholders={"project": str(body.get("project", "")), "ranges": text or "—", "removed": ", ".join(removed) or "—"},
+            description_placeholders={"project": str(body.get("project", "")), "ranges": ranges_mod.describe(proposed) or "—", "removed": ranges_mod.describe(removed) or "—"},
         )
 
     def _transfer_end(self, errors: dict[str, str]) -> ConfigFlowResult | None:
@@ -370,7 +370,7 @@ class HaufloOptionsFlow(OptionsFlow):
                 }
             ),
             description_placeholders={
-                "pending": ", ".join(pending),
+                "pending": ranges_mod.describe(pending),
                 "project": project or "—",
                 "server": urlparse(server).hostname or server or "—",
                 "url": server,

@@ -31,9 +31,9 @@ class RangesFixFlow(RepairsFlow):
             menu_options=["allow", "decline"],
             description_placeholders={
                 "project": str(self.hass.data.get(ranges.DATA_PENDING_PROJECT) or "—"),
-                "ranges": ", ".join(st["pending"]),
+                "ranges": ranges.describe(st["pending"]),
                 "count": str(st["pendingCount"]),
-                "removed": ", ".join(st["remove"]) or "—",
+                "removed": ranges.describe(st["remove"]) or "—",
             },
         )
 

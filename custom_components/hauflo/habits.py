@@ -119,9 +119,12 @@ class Habits:
             # A restart writes every state anew: no person's hand until HA has been up for a while.
             @callback
             def _up(_event: Event) -> None:
+                if once in self._unsubs:  # fired: HA drops a once-listener itself, removing it again would log an error
+                    self._unsubs.remove(once)
                 self._since = dt_util.utcnow().timestamp() + T["start_delay_s"]
 
-            self._unsubs.append(bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _up))
+            once = bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _up)
+            self._unsubs.append(once)
         self.mine()
 
     async def async_stop(self) -> None:

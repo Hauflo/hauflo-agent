@@ -348,7 +348,7 @@ async def test_reconfigure_asks_for_the_new_projects_addresses(hass: HomeAssista
     result = await entry.start_reconfigure_flow(hass)
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {"code": "RU-ABC-DEF-GHK"})
     assert result["type"] is FlowResultType.FORM and result["step_id"] == "relink_ranges"
-    assert result["description_placeholders"] == {"project": "B", "ranges": "0/0/1-3, 1/0/0-255", "removed": "7/7/1"}
+    assert result["description_placeholders"] == {"project": "B", "ranges": "0/0/1-3, 1/0", "removed": "7/7/1"}
     # Nothing changes before the owner confirms.
     assert entry.data[CONF_SECRET] == "old" and entry.options["ranges"] == ["0/0/1", "7/7/1"]
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {"ranges": "0/0/1-3, 1/0/0-255"})

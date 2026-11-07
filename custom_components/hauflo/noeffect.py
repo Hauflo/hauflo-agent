@@ -35,6 +35,7 @@ from homeassistant.core import State
 
 from .derived import NOT_A_STATE, SECONDS_PER_HOUR, num
 from .insight import ACTIONS, GONE_AFTER, MODES, Detector, _iso, _round
+from .notify import labelled
 from .tuning import TUNING
 
 if TYPE_CHECKING:
@@ -121,12 +122,17 @@ class PairEffect(Detector):
     def pairs_view(self) -> dict[str, Any]:
         """What the integrator sees and may refine: the pairs found, the effects left without an unambiguous executor."""
         who = self.ctx.who
+        here = lambda eid: self.ctx.hass.states.get(eid) is not None  # noqa: E731
         pairs = []
+        # An entity HA no longer has (renamed / removed by a new deploy — integrator review 07.11 С-7) is not shown as a
+        # pair «без комнаты» until the next refresh: only what HA has now.
         for e, p in self.pairs.items():
+            if not here(e) or not here(p["exec"]):
+                continue
             m = e in self.manual
             st = self.ctx.hass.states.get(e)
             pairs.append({"effect": e, "kind": p["kind"], "exec": p["exec"], "manual": m, **{"name": who(e)["name"], "area": who(e)["area"], "execName": who(p["exec"])["name"], "why": "manual" if m else self.why.get(e, "single"), "number": (_tail(st) if st else None)}})
-        unpaired = [{**u, "name": who(u["effect"])["name"], "area": who(u["effect"])["area"]} for u in self.unpaired]
+        unpaired = [{**u, "name": who(u["effect"])["name"], "area": who(u["effect"])["area"]} for u in self.unpaired if here(u["effect"])]
         cands = {k: [{"id": s.entity_id, **who(s.entity_id)} for s in self._executors(k)] for k in KINDS}
         ignored = [{"effect": e, "kind": m["kind"], "name": who(e)["name"], "area": who(e)["area"]} for e, m in self.manual.items() if m["exec"] == ""]
         return {"pairs": pairs, "unpaired": unpaired, "ignored": ignored, "candidates": cands}
@@ -142,15 +148,20 @@ class PairEffect(Detector):
         return sorted(found, key=lambda s: _text(s))
 
     def _states(self, domains: list[str]) -> list[State]:
-        return [s for d in domains for s in self.ctx.hass.states.async_all(d) if self.ctx.visible(s.entity_id)]
+        """The entities a pair is made of: shown in HA, Hauflo's own or marked for monitoring by the integrator (the same
+        rule as the stuck-sensor detector) — never another integration's own (w6a2 D-B10: a demo «HeatPump» paired with
+        itself, «без комнаты»)."""
+        return [s for d in domains for s in self.ctx.hass.states.async_all(d) if self.ctx.visible(s.entity_id) and (self.ctx.owns(s.entity_id) or labelled(self.ctx.hass, s.entity_id))]
 
     def _find(self, kind: str) -> tuple[dict[str, str | None], list[dict[str, str]]]:
         """effect → executor (None: house-wide ambiguous / none) for a kind, from area + class + words + trailing numbers."""
         cfg = KINDS[kind]
         eff_re, exe_re, tgt_re = _words(cfg["effect_words"]), _words(cfg["exec_words"]), _words(cfg["target_words"])
         if kind == "air":
-            self.why.update({s.entity_id: "own" for s in self._states(["climate"])})
-            return {s.entity_id: s.entity_id for s in self._states(["climate"])}, []
+            # A thermostat is its room's: one in no room has no air to judge (w6a2 D-B10).
+            own = [s for s in self._states(["climate"]) if self.ctx._area_id(s.entity_id) is not None]
+            self.why.update({s.entity_id: "own" for s in own})
+            return {s.entity_id: s.entity_id for s in own}, []
         effects = [s for s in self._states([cfg["effect_domain"]]) if (not cfg["effect_class"] or s.attributes.get("device_class") == cfg["effect_class"]) and (eff_re is None or eff_re.search(_text(s))) and not EXCLUDE.search(_text(s))]
         eff_ids = {s.entity_id for s in effects}
         execs = [s for s in self._states(cfg["exec_domains"]) if s.entity_id not in eff_ids and (exe_re is None or exe_re.search(_text(s))) and not EXCLUDE.search(_text(s)) and s.attributes.get("device_class") != "problem"]
@@ -163,8 +174,8 @@ class PairEffect(Detector):
         left: list[dict[str, str]] = []
         for area, grp in by_area.items():
             e, x = grp["e"], grp["x"]
-            if not e:
-                continue
+            if not e or area is None:
+                continue  # an effect in no room is paired by hand only: the house's one executor is not its by default
             tails_e, tails_x = [_tail(s) for s in e], [_tail(s) for s in x]
             if area is not None and len(e) == 1 and len(x) == 1:
                 found[e[0].entity_id] = x[0].entity_id
@@ -205,8 +216,14 @@ class PairEffect(Detector):
                 if exe:
                     pairs[eff] = {"kind": kind, "exec": exe, "target": exe if kind == "air" else targets.get(eff)}
         floor_thermostats = {p["target"] for p in pairs.values() if p["kind"] == "floor" and p["target"]}
-        for eff in [e for e, p in pairs.items() if p["kind"] == "air" and e in floor_thermostats]:
-            del pairs[eff]  # the floor's thermostat is the loops' setpoint (judged per loop), not a room's air
+        floor_re = _words(KINDS["floor"]["target_words"]) if "floor" in KINDS else None
+        for eff in [e for e, p in pairs.items() if p["kind"] == "air"]:
+            if eff in floor_thermostats:
+                del pairs[eff]  # the floor's thermostat is the loops' setpoint (judged per loop), not a room's air
+            elif floor_re and (st := self.ctx.hass.states.get(eff)) is not None and floor_re.search(_text(st)):
+                # A floor thermostat with no loops of its own measures the floor, not the air: judged as a floor (its
+                # slower bar), shown under «Пол» (integrator review 07.11 С-7: «Тёплый пол» under «Воздух»).
+                pairs[eff]["kind"] = "floor"
         for eff, m in self.manual.items():
             if m["exec"] == "":
                 pairs.pop(eff, None)
@@ -232,7 +249,7 @@ class PairEffect(Detector):
         es, xs = self.ctx.hass.states.get(eff), self.ctx.hass.states.get(p["exec"])
         if es is None or xs is None or es.state in NOT_A_STATE or xs.state in NOT_A_STATE:
             return None
-        if p["kind"] == "air":
+        if es.domain == "climate":  # a thermostat is its own effect (air, or a floor without loops): its reading and setpoint
             val, tgt = num(es.attributes.get("current_temperature")), num(es.attributes.get("temperature"))
             action = es.attributes.get("hvac_action")
             if val is None or tgt is None or es.state not in MODES["heat"]:
@@ -310,8 +327,8 @@ class PairEffect(Detector):
             return
         season = self.ctx.season_now()
         wrong_season = not cfg["falls"] and season not in (None, "heat")
-        if p["kind"] == "air" and (wrong_season or self._learned(eff)):
-            run["bad_since"] = None  # off-season / the zone's own norm judges (ClimateEffect)
+        if eff.startswith("climate.") and (wrong_season or self._learned(eff)):
+            run["bad_since"] = None  # off-season / the zone's own norm judges (ClimateEffect) — any thermostat, a floor's too
             return
         if cfg["windows"] and self.ctx.opening_open(eff):
             run["samples"], run["bad_since"] = [s[-1]], None  # a window open: nothing is expected; a fresh window after it closes

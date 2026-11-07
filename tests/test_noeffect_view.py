@@ -26,7 +26,8 @@ async def entry(hass: HomeAssistant):
     area = ar.async_get(hass).async_create("Гардероб")
     reg = er.async_get(hass)
     for eid in V + F:
-        e = reg.async_get_or_create(eid.split(".")[0], "test", eid, suggested_object_id=eid.split(".")[1])
+        # Hauflo's own (its own platform): pairs are never made of another integration's entities (w6a2 D-B10).
+        e = reg.async_get_or_create(eid.split(".")[0], DOMAIN, eid, suggested_object_id=eid.split(".")[1])
         reg.async_update_entity(e.entity_id, area_id=area.id)
     for eid, name in zip(V, ("Клапан 2.8", "Клапан 2.10")):
         hass.states.async_set(eid, "on", {"device_class": "opening", "friendly_name": name})
