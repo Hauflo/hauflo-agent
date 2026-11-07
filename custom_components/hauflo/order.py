@@ -6,7 +6,8 @@ the cloud adds later goes at the end, what it removed is dropped.
 A block is `<dashboard>|<view path>|<slot>`: the slot is the card's kind and its block / kind / title — the same in
 the cards (hauflo-cards.js `orderSlot`), so the phone and tablet copies of a room's block share one order; the room
 tiles of a page are one block (`room:tiles`, items = their paths). Only a block that is on that Hauflo dashboard now,
-and only the items it holds (entity ids in its cards, an area card's entities, the tiles' paths) are kept.
+and only the items it holds (entity ids in its cards, an area card's entities, the tiles' paths) are kept. An area
+card's sub-blocks («Свет», «Шторы», «Климат»… — hauflo-cards.js AREA_CLASS, 399-51) are items too: `cls:<class>`.
 
 GET/POST /api/hauflo/order — any signed-in person of this HA (the client isn't an admin), as the titles; never through
 the tunnel (not in the tunnel's list of the agent's views), so the owner's lock on Hauflo doesn't concern it.
@@ -33,6 +34,10 @@ _DASH = re.compile(r"^hauflo-[a-z0-9_-]{1,100}$")
 _COPY = re.compile(r"-copy-\d")
 _ENTITY = re.compile(r"^[a-z_]+\.[a-z0-9_]+$")
 _CONTROL = re.compile("[\x00-\x1f\x7f-\x9f  ]")
+
+# The classes an area card lays «Управление» out by (hauflo-cards.js AREA_CLASS): the family orders them as items.
+AREA_CLASSES = ("lights", "covers", "climate", "sockets", "media", "devices", "security", "camera", "settings", "buttons", "other")
+CLS = "cls:"
 
 
 def slot(card: dict[str, Any]) -> str | None:
@@ -114,6 +119,8 @@ def items_of(hass: HomeAssistant, view: dict[str, Any], want: str) -> set[str] |
             out.add(c["path"])
         if isinstance(c.get("area"), str):
             out |= _area_members(hass, c["area"])
+        if c.get("type") == f"{PREFIX}area":
+            out |= {f"{CLS}{k}" for k in AREA_CLASSES}
         # The family's own scenes of the block's room (scenes.py `hauflo_fam_<room>_…`): drawn after the integrator's.
         rows = c.get("rows") if isinstance(c.get("rows"), list) else []
         for room in [c.get("scene_room"), *(r.get("scene_room") for r in rows if isinstance(r, dict))]:

@@ -46,7 +46,7 @@ No ETS file, or Home Assistant already runs at the site? Create a project with *
 - **Rooms that glow** when something is on. One tap opens a room.
 - **Climate** with a 24-hour chart. Heat and cool setpoints where the thermostat has both. Floor heating says “heating” or “holding”.
 - **Blinds** for the whole room or one by one.
-- **Their own look.** Scenes in their blocks or on top, climate large or compact. One tap back to the integrator’s choice.
+- **Their own look.** Scenes in their blocks or on top, rooms and climate large or compact (compact — rows, as the best panels do). One tap back to the integrator’s choice.
 - **Settings.** Light or dark theme for each person. Winter or summer (or Heating / Cooling, as the integrator names it) for the thermostats the integrator chose, at once; a suggestion when the outdoor temperature says it's time.
 - **Alarms** that ring even on silent, with an action button and **Accept**.
 - **Phone and wall tablet**, with kiosk mode and a night screen. English and Russian.

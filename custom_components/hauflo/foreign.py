@@ -9,7 +9,15 @@ role labels and an entity's room / name / hidden / role labels (also an entity w
 Never a KNX / Hauflo / phone one, never a service device, never one outside the plan, never a room outside it, never
 a label not Hauflo's role one (hauflo_role_*) — and the family's own labels are always kept (merged, not replaced).
 Before Hauflo's first write to an item its values as they were are kept here; «Вернуть как было» puts them back
-(a field the integrator changed by hand since stays his)."""
+(a field the integrator changed by hand since stays his).
+
+Other integrations' lights and blinds in Hauflo's scenes and groups (399-6, agent 0.28.0, feature «foreign_scene_members»):
+a house with no KNX (Matter, Zigbee) — the integrator picks a room's lamps and blinds on «Сцены»; the deploy sends that
+very list ({"members": [...]}, the whole set each time, kept across restarts: a family scene «remember again» and a
+group's options need it later too). Only a listed light / cover of a real integration, enabled, not hidden by the
+family, never protected (a lock / gate / garage door, a group or a «Switch as X» / template helper over one, a cover
+named as a gate) — member_refusal says why not. The registry of such an entity stays out of Hauflo's reach (_own_entity
+is unchanged): a scene / group of Hauflo deleted never touches it, a group never hides it."""
 
 from __future__ import annotations
 
@@ -48,6 +56,8 @@ PLAN_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 LEGACY_PLAN = ""  # a plan sent with no id (a backend before plan ids): one such, replaced by the next
 LABELS_MAX = TUNING["ownership"]["foreign_labels_max"]
 FEATURE = "foreign_wizard"
+MEMBERS_FEATURE = "foreign_scene_members"
+MEMBER_DOMAINS = frozenset({"light", "cover"})
 ROLE_PREFIX = "hauflo_role_"
 _ROLE_RE = re.compile(r"^hauflo_role_[a-z0-9_]{1,40}$")
 # Only the canon's roles (the cards'): any other name would make a label of its own — the registry flooded (red team 3).
@@ -72,6 +82,8 @@ class Flags:
         self.plans: dict[str, dict[str, Any]] = {}
         # Before Hauflo's first write: "d:<device id>" / "e:<entity registry id>" → {"was": {...}, "set": {...}}.
         self.journal: dict[str, dict[str, dict[str, Any]]] = {}
+        # Other integrations' lights / blinds the integrator put in Hauflo's scenes and groups (399-6): entity ids.
+        self.members: set[str] = set()
         self._store = HaufloStore(hass, STORE_KEY)
 
     async def async_load(self) -> None:
@@ -80,15 +92,20 @@ class Flags:
         self.notify = {k: v for k, v in raw.items() if isinstance(k, str) and isinstance(v, bool)} if isinstance(raw, dict) else {}
         j = data.get("journal") if isinstance(data, dict) else None
         self.journal = {k: v for k, v in j.items() if isinstance(k, str) and isinstance(v, dict) and isinstance(v.get("was"), dict) and isinstance(v.get("set"), dict)} if isinstance(j, dict) else {}
+        self.members = members_ok(data.get("members") if isinstance(data, dict) else None) or set()
 
     def _data(self) -> dict[str, Any]:
-        return {"notify": self.notify, "journal": self.journal}
+        return {"notify": self.notify, "journal": self.journal, "members": sorted(self.members)}
 
     def save(self) -> None:
         self._store.async_delay_save(self._data, 0)
 
     def set_notify(self, m: dict[str, bool]) -> None:
         self.notify = dict(m)
+        self.save()
+
+    def set_members(self, ids: set[str]) -> None:
+        self.members = set(ids)
         self.save()
 
     async def async_remove(self) -> None:
@@ -127,6 +144,54 @@ async def async_setup(hass: HomeAssistant) -> Flags:
 
 def notify_ok(m: Any) -> bool:
     return isinstance(m, dict) and len(m) <= MAX_IDS and all(isinstance(k, str) and cv.valid_entity_id(k) and isinstance(v, bool) for k, v in m.items())
+
+
+def members_ok(v: Any) -> set[str] | None:
+    """{"members": [...]}: entity ids of lights / covers only, at most MAX_IDS (anything else — the whole body refused)."""
+    if not isinstance(v, list) or len(v) > MAX_IDS:
+        return None
+    if not all(isinstance(x, str) and len(x) <= 255 and cv.valid_entity_id(x) and x.split(".", 1)[0] in MEMBER_DOMAINS for x in v):
+        return None
+    return set(v)
+
+
+def member_refusal(hass: HomeAssistant | None, entity_id: Any) -> str | None:
+    """Why another integration's entity may not be in a Hauflo scene / group (None — it may). Each check fails closed;
+    a Hauflo entity is never judged here (_hauflo_entity is)."""
+    if not isinstance(entity_id, str) or entity_id.split(".", 1)[0] not in MEMBER_DOMAINS:
+        return "domain_not_allowed"
+    f = flags(hass)
+    if hass is None or f is None or entity_id not in f.members:
+        return "not_in_plan"
+    reg = er.async_get(hass).async_get(entity_id)
+    if reg is None:
+        return "unknown_entity"  # no registry entry: a YAML one nobody can read
+    if reg.platform in NEVER_PLATFORMS:
+        return "platform_not_allowed"
+    if reg.disabled_by is not None:
+        return "disabled"
+    if reg.hidden_by == er.RegistryEntryHider.USER:
+        return "hidden_by_user"
+    if not reg.config_entry_id:
+        return "no_config_entry"
+    st = hass.states.get(entity_id)
+    if st is None:
+        return "no_state"  # not loaded: what a group holds can't be read
+    if _is_protected(hass, entity_id):
+        return "protected"
+    from . import _GATE_NAME, _PROTECTED_COVERS, _helper_operates_known  # noqa: PLC0415 — the package imports this module
+
+    if _helper_operates_known(hass, reg) is False:
+        return "unreadable_helper"  # a template light / cover whose actions name nothing
+    if entity_id.startswith("cover."):
+        names = (st.attributes.get("friendly_name"), reg.name, reg.original_name, entity_id.split(".", 1)[1].replace("_", " "))
+        if st.attributes.get("device_class") in _PROTECTED_COVERS or any(isinstance(n, str) and _GATE_NAME.search(n) for n in names):
+            return "gate"  # a cover named / classed as a gate, whatever its integration says
+    return None
+
+
+def member_ok(hass: HomeAssistant | None, entity_id: Any) -> bool:
+    return member_refusal(hass, entity_id) is None
 
 
 # --- the wizard (п.57) ----------------------------------------------------------------------------------------------
@@ -460,7 +525,9 @@ class ForeignView(HomeAssistantView):
       {"notify": {entity_id: bool}} — replaces the alarm sources map;
       {"plan": {"areas": [...], "devices": [...], "entities": [...]} | null, "plan_id": "<id>"} — a deploy's plan (п.57),
         by its id (none — the one legacy plan): each item written once, gone when idle PLAN_TTL; null — dropped;
-      {"revert": {"devices": [...], "entities": [...]}} — «Вернуть как было» (a fresh backup first, as any change)."""
+      {"revert": {"devices": [...], "entities": [...]}} — «Вернуть как было» (a fresh backup first, as any change);
+      {"members": [entity_id, ...]} — other integrations' lights / covers for Hauflo's scenes and groups (399-6), the
+        whole set; the answer says each one refused and why ({"refused": {entity_id: reason}})."""
 
     url = "/api/hauflo/foreign"
     name = "api:hauflo:foreign"
@@ -471,7 +538,7 @@ class ForeignView(HomeAssistantView):
             return self.json_message("admin only", 403)
         hass = request.app[KEY_HASS]
         f = flags(hass)
-        return self.json({"notify": f.notify if f is not None else {}, "features": [FEATURE, PLAN_FEATURE, WRITE_PLAN_FEATURE], "plan": bool(active_plans(hass)), "journal": _journal_list(hass)})
+        return self.json({"notify": f.notify if f is not None else {}, "features": [FEATURE, PLAN_FEATURE, WRITE_PLAN_FEATURE, MEMBERS_FEATURE], "plan": bool(active_plans(hass)), "journal": _journal_list(hass)})
 
     async def post(self, request):
         if not request["hass_user"].is_admin:
@@ -480,13 +547,16 @@ class ForeignView(HomeAssistantView):
             body = await request.json()
         except ValueError:
             return self.json_message("invalid JSON", 400)
-        if not isinstance(body, dict) or not body or set(body) - {"notify", "plan", "plan_id", "revert"}:
-            return self.json_message("notify / plan / revert expected", 400)
+        if not isinstance(body, dict) or not body or set(body) - {"notify", "plan", "plan_id", "revert", "members"}:
+            return self.json_message("notify / plan / revert / members expected", 400)
         pid = body.get("plan_id", LEGACY_PLAN)
         if "plan_id" in body and ("plan" not in body or not isinstance(pid, str) or not PLAN_ID.match(pid)):
             return self.json_message("plan_id: [A-Za-z0-9_-]{1,64} with a plan expected", 400)
         if "notify" in body and not notify_ok(body["notify"]):
             return self.json_message("notify: {entity_id: bool} expected", 400)
+        members = members_ok(body.get("members")) if "members" in body else None
+        if "members" in body and members is None:
+            return self.json_message("members: a list of light / cover entity ids expected", 400)
         plan = plan_ok(body["plan"]) if body.get("plan") is not None else None
         if "plan" in body and body["plan"] is not None and plan is None:
             return self.json_message("plan: {areas, devices, entities} lists of ids expected", 400)
@@ -511,6 +581,9 @@ class ForeignView(HomeAssistantView):
                 live.pop(pid, None)
             else:
                 live[pid] = {**plan, "at": time.time()}
+        if members is not None:
+            f.set_members(members)
+            out["refused"] = {e: r for e in sorted(members) if (r := member_refusal(hass, e)) is not None}
         if "revert" in body:
             out["reverted"] = revert(hass, set(rv.get("devices", [])), set(rv.get("entities", [])))
         return self.json({"notify": f.notify, "plan": bool(active_plans(hass)), **out})

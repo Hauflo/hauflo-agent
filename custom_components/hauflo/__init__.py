@@ -162,7 +162,7 @@ _ROUTES = [(r["id"], r["path"].split("/"), set(r["methods"])) for r in _TH["rout
 _HAUFLO_VIEWS = {(r["path"], m) for r in _TH["routes"] if r["id"] == "hauflo" for m in r["methods"]}
 _MAX_CHANNELS = 8
 # What this agent can do beyond its version (hello and status «features»): the backend gates a step on it.
-FEATURES = [foreign.FEATURE, foreign.PLAN_FEATURE, foreign.WRITE_PLAN_FEATURE]
+FEATURES = [foreign.FEATURE, foreign.PLAN_FEATURE, foreign.WRITE_PLAN_FEATURE, foreign.MEMBERS_FEATURE]
 
 
 # What a registry edit may touch: Hauflo's own — KNX entities/devices, its light/cover groups and scenes
@@ -1341,11 +1341,18 @@ def _flow_input_ok(hass: HomeAssistant, domain: str | None, data: dict[str, Any]
         return _template_step_ok(hass, data, step, owned, owned_entries, options)
     if domain == "switch_as_x":
         return _switch_as_x_step_ok(hass, data, step, owned, owned_entries, options)
-    if domain == "group" and "entities" in data:
+    if domain == "group" and ("entities" in data or data.get("hide_members")):
         # A Hauflo group holds only Hauflo's own (panel round 6: the integrator's gate relay inside «All covers» went to
-        # Siri with the group).
+        # Siri with the group) — and (399-6) another integration's light / blind the integrator listed for it
+        # (foreign.member_refusal), only in a light / cover group of its own domain (HA's current step), never hidden
+        # by the group (its registry is never Hauflo's to change). A «hide» with the members unknown — refused.
         ents = data.get("entities")
-        return isinstance(ents, list) and all(_hauflo_entity(hass, e, owned, owned_entries) for e in ents)
+        if not isinstance(ents, list):
+            return False
+        rest = [e for e in ents if not _hauflo_entity(hass, e, owned, owned_entries)]
+        if not rest:
+            return True
+        return step in foreign.MEMBER_DOMAINS and not data.get("hide_members") and all(isinstance(e, str) and e.split(".", 1)[0] == step and foreign.member_ok(hass, e) for e in rest)
     if domain == "yandex_smart_home":
         # The cloud link by a label, as Hauflo sets it up — no skill / cloud credentials of anyone's.
         if any(str(k).startswith(("skill", "cloud", "instance", "user_id", "token")) for k in data):
@@ -2014,9 +2021,10 @@ def _http_allowed(hass: HomeAssistant, method: str, path: str, body: Any, owned_
         if parts[4].startswith("hauflo_fam_"):
             return False
         # A scene only sets lights, blinds, relays, climate, fans, media — never a lock or the alarm.
-        # Only Hauflo's own (panel round 6: the integrator's gate relay in «Evening»).
+        # Only Hauflo's own (panel round 6: the integrator's gate relay in «Evening») and (399-6) another integration's
+        # light / blind the integrator listed (foreign.member_refusal: never protected, disabled, hidden by the family).
         ents = data.get("entities", {}) if method == "POST" else {}
-        return isinstance(ents, dict) and all(isinstance(k, str) and k.split(".")[0] in _SCENE_DOMAINS and _hauflo_entity(hass, k, owned, owned_entries) for k in ents)
+        return isinstance(ents, dict) and all(isinstance(k, str) and k.split(".")[0] in _SCENE_DOMAINS and (_hauflo_entity(hass, k, owned, owned_entries) or foreign.member_ok(hass, k)) for k in ents)
     if route == "flow":
         handler = str(data.get("handler"))
         # A second Alice link would be someone else's Yandex account on this house.
@@ -2714,7 +2722,7 @@ class Agent:
             problem = s.state == "unavailable" or (s.domain == "binary_sensor" and s.state == "on" and (dc in PROBLEM_ON or dc is None))
             if s.domain == "sensor" and dc == "battery":
                 with contextlib.suppress(ValueError):
-                    problem = problem or float(s.state) < 20
+                    problem = problem or float(s.state) < notify.LEVELS["battery"]["below"]  # the canon threshold (399-20)
             item = {"entityId": eid, "name": s.name, "state": s.state, "problem": problem}
             if s.domain == "event" and (ring := _recent_event(s.state, EVENT_RECENT)):
                 # Not a problem (the site isn't in alarm for a ring): one line in Telegram per press, never a back-to-normal line.
@@ -2953,6 +2961,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
     agent.engine = engine
     agent.insights = insight.Insights(hass, owns, agent.season.current)
     agent.insights.on_change = agent.status_now
+    agent.insights.watched = engine.watched
     try:
         await agent.insights.async_start()
     except Exception as err:  # noqa: BLE001 — never stops the agent
@@ -3157,7 +3166,7 @@ def _scenes(hass: HomeAssistant) -> scenes.FamilyScenes | None:
         if getattr(agent, "family_scenes", None) is None:
             agent.family_scenes = scenes.FamilyScenes(
                 hass,
-                lambda eid: _hauflo_entity(hass, eid, agent.owned, agent.owned_entries),
+                lambda eid: _hauflo_entity(hass, eid, agent.owned, agent.owned_entries) or foreign.member_ok(hass, eid),
                 knx=scenes.KnxScenes(
                     numbers=lambda: _knx_scenes_learnable(hass, agent.owned, agent.allowed_ranges()),
                     target=lambda eid: _knx_scene_target(hass, agent.owned, agent.allowed_ranges(), eid),

@@ -400,6 +400,9 @@ class Insights:
     def __init__(self, hass: HomeAssistant, owns: Callable[[str], bool], season_now: Callable[[], str | None]) -> None:
         self.hass = hass
         self.owns = owns
+        # What the alarm rules watch (their sources and picks — the integrator's own choice, 399-18): a foreign entity there
+        # (or its device's) is monitored like a labelled one. Set by the agent from its notify engine.
+        self.watched: Callable[[], set[str]] = set
         self.season_now = season_now
         self.store: HaufloStore = HaufloStore(hass, STORE_KEY)
         self.clock: Callable[[], float] = time.time

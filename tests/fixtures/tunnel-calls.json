@@ -621,6 +621,12 @@
    "params": {}
   },
   {
+   "file": "ha/foreignSceneMembers.ts",
+   "kind": "rest",
+   "call": "POST /api/hauflo/foreign",
+   "params": {}
+  },
+  {
    "file": "ha/haBackup.ts",
    "kind": "rest",
    "call": "GET /api/hauflo/backup",

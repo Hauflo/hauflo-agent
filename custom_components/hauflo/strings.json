@@ -254,6 +254,14 @@
       "title": "The Hauflo agent needs an update",
       "description": "This agent is version {version}; Hauflo needs at least {minimum} (latest: {latest}). Deploys and some features may fail until it is updated: Settings → Updates → Hauflo → Install, then restart Home Assistant."
     },
+    "cards_plugin_outdated": {
+      "title": "Hauflo Cards plugin is older than the agent's cards",
+      "description": "The Hauflo Cards plugin installed from Marketplace/HACS is version {plugin}; this agent ships cards {own}. The dashboards use the agent's cards meanwhile — nothing is broken. Update Hauflo Cards (Settings → Marketplace (HACS on older Home Assistant) → Hauflo Cards → Update) or remove the plugin, then restart Home Assistant. This message goes away by itself."
+    },
+    "cards_need_agent": {
+      "title": "Hauflo Cards {plugin} need a newer Hauflo agent",
+      "description": "The Hauflo Cards plugin {plugin} needs the Hauflo agent {agent_min} or newer; this one is {agent}. The dashboards use the agent's own cards meanwhile — nothing is broken. Update the agent (Settings → Updates → Hauflo → Install), then restart Home Assistant. This message goes away by itself."
+    },
     "rule_fault": {
       "title": "Value rule “{name}”: its sensor gives no data",
       "description": "The rule “{name}” watches {entity}, which gives no usable value now ({reason}). Hauflo doesn't act on an old value: the rule waits (a heater rule switches the heater off). Check the sensor and its connection; this goes by itself once the sensor answers. Hauflo assists — the installation's own protections stay in charge."

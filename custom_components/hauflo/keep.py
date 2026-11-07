@@ -16,6 +16,10 @@ card of the new dashboard until a reload (integrator review r2, D2). Removed or 
 
 Dashboards' resources kept in configuration.yaml (Lovelace YAML mode) can't be added by anyone but a person: the copy
 is made and HA says in a notification what to add.
+
+The «Hauflo Cards» plugin (Marketplace/HACS, п.13) beside the agent: cards.py picks the copy. The plugin's: the agent's
+own resources go and it adds no extra JS. The agent's: as above (the plugin's file loads too and stays idle). Removed, or
+made independent, with a plugin at least as new as the agent's cards: the plugin keeps the dashboard — no copy beside it.
 """
 
 from __future__ import annotations
@@ -27,6 +31,7 @@ from pathlib import Path
 from homeassistant.components import persistent_notification
 from homeassistant.core import HomeAssistant
 
+from . import cards
 from .const import CARDS_FILE, OLD_CARDS_FILES
 from .storage import HaufloStore
 
@@ -64,7 +69,12 @@ async def _copy(hass: HomeAssistant) -> None:
 
 async def async_keep_dashboard(hass: HomeAssistant, version: str) -> str:
     """Copies the cards to /config/www/hauflo and adds them as resources (a resource of another version is moved to
-    this one). Returns ADDED, or YAML when only a person can add them (said in a notification)."""
+    this one). Returns ADDED, or YAML when only a person can add them (said in a notification). A plugin at least as new
+    as these cards keeps the dashboard instead: the agent's resources go, nothing is copied."""
+    plugin = await cards.async_find_plugin(hass)
+    if plugin is not None and cards.at_least(plugin["version"], cards.OWN.get("version")):
+        await _release_ours(hass)
+        return ADDED
     await _copy(hass)
     res = _resources(hass)
     if res is None:
@@ -127,10 +137,16 @@ async def async_make_independent(hass: HomeAssistant, version: str) -> str:
 
 async def async_on_start(hass: HomeAssistant, version: str) -> bool:
     """At setup: an independent house gets its copy refreshed (this agent's cards); otherwise the fallback resources an
-    earlier removal left go — the agent serves the files. Returns whether the house is independent."""
+    earlier removal left go — the agent serves the files. Returns True when the agent adds no copy of its own (HA's extra
+    JS): an independent house, or the «Hauflo Cards» plugin serving (cards.py)."""
+    source, plugin = await cards.async_choose(hass)
+    if source == cards.PLUGIN:
+        await _release_ours(hass)
+        return True
     if await async_independent(hass):
         if await async_keep_dashboard(hass, version) == ADDED:
-            return True
+            # A plugin is on the page too: the agent's extra JS loads first, so its copy is the one used.
+            return plugin is None
         # The resources can't be kept any more (switched to YAML): the agent serves its cards again.
         return False
     await async_release(hass, version)
@@ -156,6 +172,18 @@ async def _drop(res, prefix: str) -> bool:
             await res.async_delete_item(item["id"])
             removed = True
     return removed
+
+
+async def _release_ours(hass: HomeAssistant) -> None:
+    """The plugin serves: the agent's resources (served and copied) go; the plugin's own resource stays."""
+    res = _resources(hass)
+    if res is None:
+        return
+    await res.async_get_info()
+    changed = await _drop(res, SERVED)
+    changed = await _drop(res, LOCAL) or changed
+    if changed:
+        await _save_now(res)
 
 
 async def async_release(hass: HomeAssistant, version: str | None = None) -> None:

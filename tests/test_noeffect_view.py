@@ -68,3 +68,14 @@ async def test_not_ready_without_insights(hass: HomeAssistant, hass_client, entr
     client = await hass_client()
     assert (await client.get("/api/hauflo/pairs")).status == 409
     assert (await client.post("/api/hauflo/pairs", json={"clear": F[0]})).status == 409
+
+
+async def test_unknown_entity_is_rejected(hass: HomeAssistant, hass_client, entry) -> None:
+    """Review B4 D-B4-4: a pair with an entity HA doesn't have is 400, nothing saved."""
+    client = await hass_client()
+    for eff, ex in (("climate.nonexistent_x", V[0]), (F[0], "binary_sensor.nonexistent_x")):
+        res = await client.post("/api/hauflo/pairs", json={"set": {"effect": eff, "kind": "floor", "exec": ex}})
+        assert res.status == 400
+        assert "unknown_entity" in await res.text()
+    got = await (await client.get("/api/hauflo/pairs")).json()
+    assert not any(p.get("manual") for p in got["pairs"])

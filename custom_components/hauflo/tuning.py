@@ -23,11 +23,17 @@ def _check(section: str, key: str, value: Any) -> None:
     where = f"tuning.json {section}.{key}"
     if isinstance(value, str):
         re.compile(value)  # a word list is a regex: a bad one fails here, not in the middle of an alarm
+    elif isinstance(value, dict):
+        # A small table (a device class → its levels, a domain → its services): one level of keys, the same values.
+        if not value:
+            raise ValueError(f"{where}: a non-empty object")
+        for k, v in value.items():
+            _check(section, f"{key}.{k}", v)
     elif isinstance(value, list):
         if not value or not (all(isinstance(x, str) for x in value) or all(_num(x) for x in value)):
             raise ValueError(f"{where}: a non-empty list of strings or of non-negative numbers")
     elif not _num(value):
-        raise ValueError(f"{where}: a non-negative number, a list or a word-list string")
+        raise ValueError(f"{where}: a non-negative number, a list, a table or a word-list string")
 
 
 def load(path: Path = FILE) -> dict[str, dict[str, Any]]:

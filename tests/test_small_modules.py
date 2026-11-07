@@ -66,7 +66,7 @@ async def test_alarm_automation_shape(hass: HomeAssistant) -> None:
     cfg = independent.automation_for(rl, [{"service": "mobile_app_ivan", "os": "ios"}], ru, "input_boolean.x", names={"valve.main": "Кран #1"})
     assert cfg["id"] == the["automation"] and cfg["alias"] == "Авария: Вода {50%}" and cfg["mode"] == "queued"
     ids = [t["id"] for t in cfg["triggers"]]
-    assert ids == ["alarm", "back", "ack", "accepted", "entered", "returned", "lost", "repeat", "run", "nodata", "data", "calm", "calm"]
+    assert ids == ["alarm", "back", "ack", "accepted", "entered", "returned", "lost", "repeat", "run", "nodata", "data", "nodata_tick", "start", "calm", "calm"]
     assert cfg["triggers"][0]["for"] == {"seconds": independent.HOLD}
     # Told unless its source chatters (R3-1): the push inside, the memory written last and never stopping the run.
     alarm = cfg["actions"][2]["choose"][0]["sequence"][1]["then"]
@@ -79,7 +79,7 @@ async def test_alarm_automation_shape(hass: HomeAssistant) -> None:
     assert push["data"]["data"]["actions"][0]["action"] == the["run"] and "Кран" in push["data"]["data"]["actions"][0]["title"]
     # English; a link sensor: no «no data» of its own, no repeat, no button; nobody to tell — said in the description.
     link = independent.automation_for(rule(kind="link", title="Связь"), [], en, "input_boolean.y")
-    assert link["alias"] == "Alarm: Связь" and [t["id"] for t in link["triggers"]] == ["alarm", "back", "ack", "accepted", "entered", "returned", "lost", "calm", "calm"]
+    assert link["alias"] == "Alarm: Связь" and [t["id"] for t in link["triggers"]] == ["alarm", "back", "ack", "accepted", "entered", "returned", "lost", "start", "calm", "calm"]
     assert en["nobody"] in link["description"]
     assert all("parallel" not in step for b in link["actions"][2]["choose"] for step in b["sequence"])
     # A button HA's own service can't run (not in RUN_SERVICES): no button at all.

@@ -10,7 +10,8 @@ Another scene (the integrator's own, HA's) is never touched.
 
 GET/POST /api/hauflo/scenes — any signed-in person of this HA (the client isn't an admin), as titles and «Автоматизации»;
 not through the tunnel (not in its list of the agent's views; the tunnel can't write a `hauflo_fam_` scene either). What a
-scene may hold: Hauflo's own lights and blinds only (owns() leaves out locks, the alarm, valves, garage doors, gates).
+scene may hold: Hauflo's own lights and blinds and the other integrations' ones the integrator listed for its scenes
+(foreign.member_refusal, 399-6) — owns() leaves out locks, the alarm, valves, garage doors, gates.
 
 scenes.yaml: like automations.yaml, written only while it is plain (what HA's own scene editor writes), with a copy
 scenes.yaml.hauflo-bak-<time> before each write (the last 3), one read-modify-write at a time.

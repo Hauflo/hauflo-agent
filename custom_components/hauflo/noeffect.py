@@ -31,7 +31,8 @@ from collections import defaultdict
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.http import HomeAssistantView
-from homeassistant.core import State
+from homeassistant.core import HomeAssistant, State
+from homeassistant.helpers import entity_registry as er
 
 from .derived import NOT_A_STATE, SECONDS_PER_HOUR, num
 from .insight import ACTIONS, GONE_AFTER, MODES, Detector, _iso, _round
@@ -60,6 +61,15 @@ def _words(pattern: str) -> re.Pattern[str] | None:
 
 def _text(st: State) -> str:
     return f"{st.attributes.get('friendly_name') or ''} {st.entity_id}"
+
+
+def integration(hass: HomeAssistant, eid: str) -> dict[str, str]:
+    """Whose entity it is (399-18): the integration's domain and the name its entry has in HA («Daikin», «Tado»)."""
+    entry = er.async_get(hass).async_get(eid)
+    if entry is None:
+        return {"platform": "", "integration": ""}
+    ce = hass.config_entries.async_get_entry(entry.config_entry_id) if entry.config_entry_id else None
+    return {"platform": entry.platform, "integration": (ce.title if ce else "") or entry.platform}
 
 
 def _tail(st: State) -> int | None:
@@ -131,11 +141,27 @@ class PairEffect(Detector):
                 continue
             m = e in self.manual
             st = self.ctx.hass.states.get(e)
-            pairs.append({"effect": e, "kind": p["kind"], "exec": p["exec"], "manual": m, **{"name": who(e)["name"], "area": who(e)["area"], "execName": who(p["exec"])["name"], "why": "manual" if m else self.why.get(e, "single"), "number": (_tail(st) if st else None)}})
-        unpaired = [{**u, "name": who(u["effect"])["name"], "area": who(u["effect"])["area"]} for u in self.unpaired if here(u["effect"])]
-        cands = {k: [{"id": s.entity_id, **who(s.entity_id)} for s in self._executors(k)] for k in KINDS}
+            pairs.append({"effect": e, "kind": p["kind"], "exec": p["exec"], "manual": m, **{"name": who(e)["name"], "area": who(e)["area"], "execName": who(p["exec"])["name"], "why": "manual" if m else self.why.get(e, "single"), "number": (_tail(st) if st else None)},
+                          **integration(self.ctx.hass, e)})
+        unpaired = [{**u, "name": who(u["effect"])["name"], "area": who(u["effect"])["area"], **integration(self.ctx.hass, u["effect"])} for u in self.unpaired if here(u["effect"])]
+        cands = {k: [{"id": s.entity_id, **who(s.entity_id), **integration(self.ctx.hass, s.entity_id)} for s in self._executors(k)] for k in KINDS}
         ignored = [{"effect": e, "kind": m["kind"], "name": who(e)["name"], "area": who(e)["area"]} for e, m in self.manual.items() if m["exec"] == ""]
-        return {"pairs": pairs, "unpaired": unpaired, "ignored": ignored, "candidates": cands}
+        return {"pairs": pairs, "unpaired": unpaired, "ignored": ignored, "candidates": cands, "offered": self._offered()}
+
+    def _offered(self) -> list[dict[str, Any]]:
+        """Another integration's thermostats (399-18: a Daikin / Tado climate.*) not paired yet: offered as their own pair
+        («Следить» → set_pair(effect = exec = it)) — one not monitored is never judged before the integrator says so; a
+        monitored one in no room (no air to judge by default) is paired the same way. A floor one by its words."""
+        who, taken = self.ctx.who, {*self.pairs, *self.manual}
+        floor_re = _words(KINDS["floor"]["target_words"]) if "floor" in KINDS else None
+        out = []
+        for s in self.ctx.hass.states.async_all("climate"):
+            if s.entity_id in taken or not self.ctx.visible(s.entity_id) or self.ctx.owns(s.entity_id):
+                continue
+            kind = "floor" if floor_re and floor_re.search(_text(s)) else "air"
+            if kind in KINDS:
+                out.append({"effect": s.entity_id, "kind": kind, "name": who(s.entity_id)["name"], "area": who(s.entity_id)["area"], **integration(self.ctx.hass, s.entity_id)})
+        return sorted(out, key=lambda o: (o["area"], o["name"]))
 
     def _executors(self, kind: str) -> list[State]:
         """Every entity the integrator may name as this kind's executor (the same filter the mapping uses), by name."""
@@ -151,7 +177,21 @@ class PairEffect(Detector):
         """The entities a pair is made of: shown in HA, Hauflo's own or marked for monitoring by the integrator (the same
         rule as the stuck-sensor detector) — never another integration's own (w6a2 D-B10: a demo «HeatPump» paired with
         itself, «без комнаты»)."""
-        return [s for d in domains for s in self.ctx.hass.states.async_all(d) if self.ctx.visible(s.entity_id) and (self.ctx.owns(s.entity_id) or labelled(self.ctx.hass, s.entity_id))]
+        return [s for d in domains for s in self.ctx.hass.states.async_all(d) if self.ctx.visible(s.entity_id) and self._monitored(s.entity_id)]
+
+    def _monitored(self, eid: str) -> bool:
+        """Hauflo's own, marked «Hauflo мониторинг», or watched by an alarm rule (its entity or another of its device —
+        a Daikin's error sensor in a rule makes its climate a pair too, 399-18)."""
+        if self.ctx.owns(eid) or labelled(self.ctx.hass, eid):
+            return True
+        watched = self.ctx.watched()
+        if not watched:
+            return False
+        if eid in watched:
+            return True
+        reg = er.async_get(self.ctx.hass)
+        entry = reg.async_get(eid)
+        return bool(entry and entry.device_id and any((w := reg.async_get(x)) is not None and w.device_id == entry.device_id for x in watched))
 
     def _find(self, kind: str) -> tuple[dict[str, str | None], list[dict[str, str]]]:
         """effect → executor (None: house-wide ambiguous / none) for a kind, from area + class + words + trailing numbers."""
@@ -443,6 +483,10 @@ class PairsView(HomeAssistantView):
             b = body["set"]
             if set(b) != {"effect", "kind", "exec"} or not ok_id(b["effect"]) or b["kind"] not in KINDS or not (b["exec"] == "" or ok_id(b["exec"])):
                 return self.json_message("set: {effect, kind, exec} expected", 400)
+            # An entity HA doesn't have is no pair (review B4 D-B4-4: climate.nonexistent_x was saved and only hidden in the UI).
+            for eid in (b["effect"], b["exec"]):
+                if eid and det.ctx.hass.states.get(eid) is None:
+                    return self.json_message(f"unknown_entity: {eid}", 400)
             det.set_pair(b["effect"], b["kind"], b["exec"])
         elif isinstance(body, dict) and set(body) == {"clear"} and ok_id(body["clear"]):
             det.clear_pair(body["clear"])

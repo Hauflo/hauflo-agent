@@ -114,6 +114,20 @@ TEST_PER_MIN = _T["test_per_min"]
 GROUP_MIN = _T["group_min"]  # from this many devices at once — one message instead of one per device
 LIST_MAX = _T["list_max"]
 HEARTBEAT = re.compile(_T["heartbeat_words"], re.I)
+# Alarm outputs (399-15, «исполнитель тревоги»): what a rule switches itself — a siren on when its alarm is told, off on
+# «Принято» or once the rule is back to normal. Only a domain of this table, only its services, only an entity the
+# integrator chose for this very rule (saved in it — the same trust as a picked source: the cloud checked it against
+# what this agent reported). A light's flash or a relay is one more row of the table, never code.
+OUTPUTS: dict[str, dict[str, str]] = _T["outputs"]
+OUTPUTS_MAX = _T["outputs_max"]
+ENTITY_ID = re.compile(r"^[a-z_]+\.[a-z0-9_]+$")
+# Level rules (399-20): a number below / above a threshold — a battery under 20 %, CO2 over 1500 ppm — with hysteresis
+# (ISA-18.2 deadband): open, it ends only once the value is back past the threshold by `step` (battery: 20 → ≥ 25), so a
+# value wobbling at the line is one alarm, not a storm. The defaults by device class are one table (tuning.json
+# notify.levels); a class not in it gets `step` as a share of the threshold.
+LEVELS: dict[str, dict[str, float]] = _T["levels"]
+LEVEL_STEP_SHARE = _T["level_step_share"]
+LEVEL_ABS_MAX = _T["level_abs_max"]
 
 
 SOURCE_DOMAINS = ("binary_sensor.", "sensor.")
@@ -198,6 +212,103 @@ def loud_verdict(hass: HomeAssistant | None, sources: list[str]) -> str | None:
     return None
 
 
+def _output_ok(hass: HomeAssistant | None, eid: str) -> bool:
+    """An alarm output: a domain of OUTPUTS, a plain entity id, never a phone's, and one HA knows (registry or state)."""
+    if not ENTITY_ID.match(eid) or eid.partition(".")[0] not in OUTPUTS:
+        return False
+    if hass is None:
+        return True
+    entry = er.async_get(hass).async_get(eid)
+    if entry is not None and entry.platform == "mobile_app":
+        return False
+    return entry is not None or hass.states.get(eid) is not None
+
+
+def _clean_outputs(hass: HomeAssistant | None, raw: Any) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for o in raw if isinstance(raw, list) else []:
+        if not isinstance(o, dict) or not isinstance(o.get("entity_id"), str) or any(x["entity_id"] == o["entity_id"] for x in out):
+            continue
+        on_start, on_end = o.get("on_start", True) is not False, o.get("on_end", True) is not False
+        if (on_start or on_end) and _output_ok(hass, o["entity_id"]):
+            out.append({"entity_id": o["entity_id"], "on_start": on_start, "on_end": on_end})
+        else:
+            _LOGGER.warning("Hauflo: alarm output %r not accepted (allowed: %s, known in HA)", str(o.get("entity_id"))[:80], ", ".join(sorted(OUTPUTS)))
+    return out[:OUTPUTS_MAX]
+
+
+def _number(v: Any) -> float | None:
+    if isinstance(v, bool) or not isinstance(v, (int, float, str)):
+        return None
+    try:
+        x = float(v)
+    except ValueError:
+        return None
+    return x if x == x and abs(x) <= LEVEL_ABS_MAX else None  # never NaN / inf / a typo of a million
+
+
+def level_default(device_class: str | None) -> dict[str, float] | None:
+    """The canon threshold of a device class (tuning.json notify.levels): its first direction and its step."""
+    canon = LEVELS.get(str(device_class or ""))
+    if not canon:
+        return None
+    way = "below" if "below" in canon else "above"
+    return {way: canon[way], "step": canon["step"]}
+
+
+def _clean_thresholds(hass: HomeAssistant | None, raw: Any, sources: list[str]) -> dict[str, dict[str, float]]:
+    """Per source: exactly one of below / above (a number) and the hysteresis step — only for a level (sensor.*) source."""
+    out: dict[str, dict[str, float]] = {}
+    if not isinstance(raw, dict):
+        return out
+    for eid, th in raw.items():
+        if eid not in sources or not str(eid).startswith("sensor.") or not isinstance(th, dict):
+            continue
+        ways = [w for w in ("below", "above") if w in th]
+        value = _number(th.get(ways[0])) if len(ways) == 1 else None
+        if value is None:
+            _LOGGER.warning("Hauflo: threshold of %s not accepted: one number below / above expected, got %r", eid, th)
+            continue
+        canon = LEVELS.get(str(_device_class(hass, eid) or ""), {})
+        step = _number(th.get("step"))
+        if step is None or step < 0:
+            step = float(canon["step"]) if "step" in canon else round(abs(value) * LEVEL_STEP_SHARE, 3)
+        out[eid] = {ways[0]: value, "step": step}
+    return out
+
+
+def _value(state: State | None) -> float | None:
+    if state is None or state.state in NOT_A_STATE:
+        return None
+    return _number(state.state)
+
+
+def in_alarm(rule: dict[str, Any], state: State | None, open_now: bool = False) -> bool:
+    """Is this source in alarm for the rule: a signal — one of its alarm states; a level — past its threshold, and while
+    the alarm is open, until it is back past the threshold by its step (the hysteresis). Not a number: not an alarm."""
+    if state is None:
+        return False
+    th = (rule.get("thresholds") or {}).get(state.entity_id)
+    if th is None:
+        return state.state in rule["alarm_states"]
+    v = _value(state)
+    if v is None:
+        return False
+    slack = th["step"] if open_now else 0
+    return v < th["below"] + slack if "below" in th else v > th["above"] - slack
+
+
+def level_text(rule: dict[str, Any], state: State | None) -> str:
+    """« (18 % < 20 %)» — the value and its threshold, said in numbers (no words: any language)."""
+    th = (rule.get("thresholds") or {}).get(state.entity_id) if state is not None else None
+    v = _value(state)
+    if th is None or v is None or state is None:
+        return ""
+    unit = str(state.attributes.get("unit_of_measurement") or "")
+    way = "below" if "below" in th else "above"
+    return f" ({v:g} {unit} {'<' if way == 'below' else '>'} {th[way]:g} {unit})".replace("  ", " ").replace(" )", ")")
+
+
 def _action_ok(action: dict[str, Any] | None, owns: Callable[[str], bool] | None) -> bool:
     """A push button closes one of Hauflo's own valves or switches off one of its own switches — never the
     integrator's gate relay (integrator run 22) nor a valve that isn't Hauflo's (security review 28.10)."""
@@ -230,6 +341,10 @@ def narrowing(new: dict[str, Any], old: dict[str, Any]) -> str | None:
             return f"{r['id']}: new recipient"
         if r.get("action") and r.get("action") != p.get("action"):
             return f"{r['id']}: new button"
+        if any(o not in (p.get("outputs") or []) for o in r.get("outputs") or []):
+            return f"{r['id']}: new output"
+        if any((p.get("thresholds") or {}).get(e) != th for e, th in (r.get("thresholds") or {}).items()):
+            return f"{r['id']}: new threshold"
         if r["priority"] == "critical" and p["priority"] != "critical":
             return f"{r['id']}: critical"
         if r["repeat_min"] and (not p["repeat_min"] or r["repeat_min"] < p["repeat_min"]):
@@ -351,6 +466,13 @@ def _clean_rules(raw: Any, hass: HomeAssistant | None = None, owns: Callable[[st
         rec = r.get("recipients") or {}
         action = r.get("action") if isinstance(r.get("action"), dict) else None
         picked = frozenset(p for p in r["picked"] if isinstance(p, str)) if isinstance(r.get("picked"), list) else frozenset()
+        # A rule whose alarm_states are not valid state names («Alarm», «water leak») is refused with its reason, never
+        # read as «on»: it would silently never fire (review r3 R3-9). Absent / empty = the default «on».
+        states_raw = r.get("alarm_states")
+        if states_raw not in (None, []) and not (isinstance(states_raw, list) and len(states_raw) <= STATES_MAX and all(isinstance(s, str) and WORD.match(s) for s in states_raw)):
+            out.setdefault("rejected", []).append({"id": str(r["id"]), "reason": "bad_alarm_states", "value": [str(s)[:40] for s in states_raw][:STATES_MAX + 1] if isinstance(states_raw, list) else str(states_raw)[:40]})
+            _LOGGER.warning("Hauflo: alarm rule %s not accepted: alarm_states %r are not state names (a-z, 0-9, _), up to %d", str(r["id"])[:64], states_raw, STATES_MAX)
+            continue
         sources = [str(s) for s in r["sources"] if _source_ok(hass, str(s), owns, picked)]
         # Loud only for safety sources or classless ones (security review 28.10: a motion sensor rang through silent
         # mode every minute); repeats no more often than every REPEAT_MIN minutes.
@@ -360,6 +482,8 @@ def _clean_rules(raw: Any, hass: HomeAssistant | None = None, owns: Callable[[st
         critical = wanted and verdict is None
         downgrade = verdict if wanted else (str(r["downgrade"]) if DOWNGRADE.match(str(r.get("downgrade") or "")) else None)
         repeat = max(0, min(_int(r.get("repeat_min")), 240))
+        outputs = _clean_outputs(hass, r.get("outputs"))
+        thresholds = _clean_thresholds(hass, r.get("thresholds"), sources)
         out["rules"].append(
             {
                 "id": str(r["id"]),
@@ -367,7 +491,7 @@ def _clean_rules(raw: Any, hass: HomeAssistant | None = None, owns: Callable[[st
                 "title": str(r.get("title") or "Авария")[:80],
                 "sources": sources,
                 **({"picked": [s for s in sources if s in picked]} if any(s in picked for s in sources) else {}),
-                "alarm_states": [str(s) for s in (r.get("alarm_states") or []) if WORD.match(str(s))][:STATES_MAX] or ["on"],
+                "alarm_states": list(states_raw) if states_raw else ["on"],
                 "recipients": {
                     "all": bool(rec.get("all")),
                     "people": [str(p) for p in rec.get("people") or [] if str(p).startswith("person.")],
@@ -383,6 +507,8 @@ def _clean_rules(raw: Any, hass: HomeAssistant | None = None, owns: Callable[[st
                     if action and _action_ok(action, owns)
                     else {}
                 ),
+                **({"outputs": outputs} if outputs else {}),
+                **({"thresholds": thresholds} if thresholds else {}),
             }
         )
     lang = out.get("lang") or (str(getattr(getattr(hass, "config", None), "language", "") or "ru") if hass is not None else "ru")
@@ -468,6 +594,9 @@ class NotifyEngine:
         # engine — HA's automation only sees alarms that start after it exists.
         self._native_first: set[str] = set()
         self._unsub_automations = None
+        # rule id → the alarm outputs (sirens) this engine switched on for it: off again on «Принято», back to normal, or
+        # when the rule loses them.
+        self._sounding: dict[str, set[str]] = {}
 
     @callback
     def _changed(self) -> None:
@@ -575,13 +704,13 @@ class NotifyEngine:
                     self._watch_nodata(rule, entity_id)
                 if key in self.active or not state or state.state in NOT_A_STATE:
                     continue
-                if state.state not in rule["alarm_states"]:
+                if not in_alarm(rule, state):
                     self._seen_ok.add(entity_id)
                 if key in self._restored:
                     self._adopt(rule, key)
-                    if state.state not in rule["alarm_states"]:
+                    if not in_alarm(rule, state, open_now=True):
                         self._clear(rule, state)
-                elif state.state in rule["alarm_states"]:
+                elif in_alarm(rule, state):
                     self._start(rule, state)
         # Incidents of rules or sources no longer there end quietly.
         keep = {f"{r['id']}|{s}" for r in self.config["rules"] if r["enabled"] for s in r["sources"]}
@@ -593,6 +722,12 @@ class NotifyEngine:
         self._restored = {k: v for k, v in self._restored.items() if k in keep or k.partition("|")[0] not in known}
         for rule_id in [r for r in self.groups if not any(k.startswith(r + "|") for k in [*self.active, *self._restored])]:
             self._end_group(rule_id)
+        # A siren the engine switched on for a rule that no longer has it (rule removed, off, output taken away): off.
+        outs = {r["id"]: {o["entity_id"] for o in r.get("outputs") or []} for r in self.config["rules"] if r["enabled"]}
+        for rule_id, eids in list(self._sounding.items()):
+            gone = eids - outs.get(rule_id, set())
+            if gone:
+                self.hass.async_create_task(self._switch(rule_id, sorted(gone), "on_end", "rule changed"))
         self._save()
 
     @callback
@@ -605,11 +740,11 @@ class NotifyEngine:
             if not rule["enabled"] or new.entity_id not in rule["sources"]:
                 continue
             key = f"{rule['id']}|{new.entity_id}"
-            alarm = new.state in rule["alarm_states"]
+            alarm = in_alarm(rule, new, open_now=key in self.active or key in self._restored)
             if not alarm and new.state not in NOT_A_STATE and new.entity_id not in self._seen_ok:
                 self._seen_ok.add(new.entity_id)
                 self._save()
-            was = bool(old and old.state in rule["alarm_states"])
+            was = in_alarm(rule, old, open_now=key in self.active)
             if new.state in NOT_A_STATE:
                 self._watch_nodata(rule, new.entity_id)
             elif (cancel := self._nodata_timers.pop(key, None)) is not None:
@@ -646,14 +781,14 @@ class NotifyEngine:
     def _name(self, entity_id: str) -> str:
         return label(self.hass, entity_id)
 
-    def _where_list(self, keys: list[str]) -> str:
+    def _where_list(self, keys: list[str], rule: dict[str, Any] | None = None) -> str:
         """«Гостиная: Ошибка тёплого пола 3; Холл: Ошибка тёплого пола 1» — every device with its room,
         same names in different rooms kept apart (integrator run 25.10: four sensors read as three)."""
         by: dict[str, list[str]] = {}
         for k in keys:
             entity_id = k.partition("|")[2]
             state = self.hass.states.get(entity_id)
-            by.setdefault(self._where(state) if state else "", []).append(self._name(entity_id))
+            by.setdefault(self._where(state) if state else "", []).append(self._name(entity_id) + (level_text(rule, state) if rule else ""))
         parts, shown = [], 0
         for area in sorted(by, key=lambda a: (a == "", natural_key(a))):
             if shown >= LIST_MAX:
@@ -833,6 +968,9 @@ class NotifyEngine:
             keys = [k for k in keys if k in self.active]
             if not rule or not keys:
                 continue
+            if rule.get("outputs") and (not self._in_ha(rule_id) or rule_id in self._native_first):
+                # First the siren (not waiting for it: a slow one never holds the pushes), then the phones.
+                self.hass.async_create_task(self._switch(rule_id, [o["entity_id"] for o in rule["outputs"] if o["on_start"]], "on_start", "alarm"))
             if len(keys) >= GROUP_MIN or (rule_id in self.groups and not self.groups[rule_id]["acked_by"]):
                 # Open single alarms of the rule not accepted yet go into the summary too.
                 for k, inc in self.active.items():
@@ -861,6 +999,8 @@ class NotifyEngine:
             rule = rules.get(rule_id)
             if not rule:
                 continue
+            if rule.get("outputs") and not self._in_ha(rule_id) and not any(k.startswith(rule_id + "|") and not inc.get("nodata") for k, inc in self.active.items()):
+                await self._switch(rule_id, [o["entity_id"] for o in rule["outputs"] if o["on_end"]], "on_end", "back to normal")
             grouped = [(k, s) for k, inc, s in items if inc.get("group")]
             single = [(k, s) for k, inc, s in items if not inc.get("group")]
             if grouped:
@@ -902,7 +1042,7 @@ class NotifyEngine:
         inc["last"] = dt_util.utcnow().isoformat()
         inc["own"] = True  # its own message is on the phones: taken back by its own tag too
         where = self._where(state)
-        name = label(self.hass, state.entity_id, state)
+        name = label(self.hass, state.entity_id, state) + level_text(rule, state)
         title = f"🚨 {rule['title']}" + (f" — {where}" if where else "")
         at = self._hhmm(inc["since"])
         message = f"{name}: авария в {at}." if inc["count"] == 1 else f"{name}: авария с {at}, никто не подтвердил. Повтор {inc['count']}."
@@ -941,7 +1081,7 @@ class NotifyEngine:
         rule = next((r for r in self.config["rules"] if r["id"] == rule_id), None)
         state = self.hass.states.get(entity_id)
         key = f"{rule_id}|{entity_id}"
-        if rule and state and key in self.active and state.state in rule["alarm_states"]:
+        if rule and state and key in self.active and in_alarm(rule, state, open_now=True):
             await self._send_alarm(rule, state, key)
 
     async def _send_group(self, rule: dict[str, Any], *, repeat: bool = False, back: list[str] | None = None) -> None:
@@ -965,7 +1105,7 @@ class NotifyEngine:
             at = f"{at} (последняя в {latest})"
         n = len(members)
         title = f"🚨 {rule['title']} — {n} {_devices(n)}"
-        lines = [f"С {at}: {self._where_list(members)}."]
+        lines = [f"С {at}: {self._where_list(members, rule)}."]
         if back:
             lines.append("Снова в норме: " + self._where_list(back) + ".")
         if repeat:
@@ -1017,6 +1157,34 @@ class NotifyEngine:
         # Its notice in HA's bell goes too (integrator run 23: a deleted rule's «🚨 …» stayed there for good).
         if inc:
             persistent_notification.async_dismiss(self.hass, self._tag(key))
+
+    def watched(self) -> set[str]:
+        """Every entity an enabled rule watches (its sources and the integrator's picks): monitored (399-18)."""
+        return {e for r in self.config["rules"] if r["enabled"] for e in (*r["sources"], *(r.get("picked") or []))}
+
+    async def _switch(self, rule_id: str, eids: list[str], when: str, why: str) -> None:
+        """An alarm output of a rule (399-15): its service from OUTPUTS for `when` («on_start» / «on_end») on each entity —
+        only one of this rule's saved outputs (or, off, one this engine switched on for it). Every call logged."""
+        rule = next((r for r in self.config["rules"] if r["id"] == rule_id), None)
+        saved = {o["entity_id"] for o in (rule or {}).get("outputs") or []}
+        sounding = self._sounding.setdefault(rule_id, set())
+        for eid in eids:
+            domain = eid.partition(".")[0]
+            service = OUTPUTS.get(domain, {}).get(when)
+            if service is None or not (eid in saved or (when == "on_end" and eid in sounding)):
+                _LOGGER.warning("Hauflo: alarm rule %s: output %s refused (%s)", rule_id, eid, when)
+                continue
+            try:
+                await self.hass.services.async_call(domain, service, {"entity_id": eid}, blocking=True)
+                _LOGGER.info("Hauflo: alarm rule %s: %s.%s %s (%s)", rule_id, domain, service, eid, why)
+                if when == "on_start":
+                    sounding.add(eid)
+                else:
+                    sounding.discard(eid)
+            except Exception as err:  # noqa: BLE001 — a siren that fails never stops the alarm's pushes
+                _LOGGER.warning("Hauflo: alarm rule %s: %s.%s %s failed: %s", rule_id, domain, service, eid, err)
+        if not sounding:
+            self._sounding.pop(rule_id, None)
 
     @staticmethod
     def _tag(key: str) -> str:
@@ -1236,6 +1404,8 @@ class NotifyEngine:
             if inc.get("repeat"):
                 inc["repeat"]()
                 inc["repeat"] = None
+        if rule and rule.get("outputs"):
+            await self._switch(rule_id, [o["entity_id"] for o in rule["outputs"] if o["on_end"]], "on_end", f"accepted: {who}")
         self._save()
         self._changed()  # monitoring says who accepted it now, not at the next status (integrator run 20)
         native = self.native.get(rule_id)
@@ -1479,20 +1649,32 @@ class NotifyEngine:
             # A panel's heartbeat / link signal without a class reads as connectivity (off = lost).
             if dc is None and s.domain == "binary_sensor" and HEARTBEAT.search(s.attributes.get("friendly_name") or s.entity_id):
                 dc = "connectivity"
-            if dc in ALARM_CLASSES:
+            # A level (sensor.*) of a class with a canon threshold (399-20): a battery %, CO2, humidity, temperature.
+            if dc in ALARM_CLASSES or (s.domain == "sensor" and dc in LEVELS):
                 entry = er.async_get(self.hass).async_get(s.entity_id)
                 # Whose it is: Hauflo's own (suggested by itself) or another integration's — taken only when the
                 # integrator picks it (owner 27.10: a suggested rule rang about another integration's gas boiler).
-                candidates.append({"entity_id": s.entity_id, "name": s.attributes.get("friendly_name") or s.entity_id, "device_class": dc, "area": self._where(s), "state": s.state, "own": bool(self.owns and self.owns(s.entity_id)), "monitored": labelled(self.hass, s.entity_id), "platform": entry.platform if entry else ""})
+                candidates.append({"entity_id": s.entity_id, "name": s.attributes.get("friendly_name") or s.entity_id, "device_class": dc, "area": self._where(s), "state": s.state, "own": bool(self.owns and self.owns(s.entity_id)), "monitored": labelled(self.hass, s.entity_id), "platform": entry.platform if entry else "", **({"unit": str(s.attributes.get("unit_of_measurement") or "")} if s.domain == "sensor" else {})})
         valves = [
             {"entity_id": s.entity_id, "name": s.attributes.get("friendly_name") or s.entity_id, "area": self._where(s)}
             for s in self.hass.states.async_all(["valve", "switch"])
             # A switch only of Hauflo's own: the integrator's gate relay is never a button's (integrator run 22).
             if s.domain == "valve" or (self.owns is not None and self.owns(s.entity_id))
         ]
+        reg = er.async_get(self.hass)
+        outputs = [
+            {"entity_id": s.entity_id, "name": s.attributes.get("friendly_name") or s.entity_id, "area": self._where(s), "platform": (e.platform if (e := reg.async_get(s.entity_id)) else ""), "own": bool(self.owns and self.owns(s.entity_id))}
+            for s in self.hass.states.async_all(list(OUTPUTS))
+            if _output_ok(self.hass, s.entity_id)
+        ]
         return {
             "config": self.config,
             "people": self.people(),
+            # What a rule may switch itself (399-15): the house's sirens, any integration — taken only when the integrator
+            # picks one for a rule.
+            "outputs": sorted(outputs, key=lambda c: (natural_key(c["area"]), natural_key(c["name"]))),
+            # The canon thresholds by device class (399-20): the app's defaults for a level source.
+            "levels": LEVELS,
             "phones": self.phones(),
             "candidates": sorted(candidates, key=lambda c: (natural_key(c["area"]), natural_key(c["name"]))),
             "actuators": sorted(valves, key=lambda c: (natural_key(c["area"]), natural_key(c["name"]))),

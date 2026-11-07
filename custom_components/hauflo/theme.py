@@ -196,7 +196,8 @@ async def async_setup(hass: HomeAssistant) -> None:
         hass.data[DATA_WWW] = True
         hass.http.register_view(StaticView(www))
         hass.data[DATA_CARDS_FILE] = CARDS_URL
-        # An independent house loads them from /config/www/hauflo (keep.py) — not twice.
+        # An independent house loads them from /config/www/hauflo (keep.py), a house with the «Hauflo Cards» plugin newer
+        # than these cards from the plugin (cards.py) — not twice.
         if not hass.data.get(DATA_CARDS_LOCAL):
             add_extra_js_url(hass, ICONS_URL)
             add_extra_js_url(hass, hass.data[DATA_CARDS_FILE])

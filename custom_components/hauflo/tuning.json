@@ -24,7 +24,17 @@
     "alarm_classes": ["connectivity", "moisture", "smoke", "gas", "carbon_monoxide", "problem", "safety", "heat", "cold", "tamper", "door", "window", "opening", "motion", "battery"],
     "heartbeat_words": "heartbeat|hearbeat|связь|связи|link|alive|online|пульс",
     "quiet_name_words": "motion|presence|occupan|движен|присутств|(?<![a-z])(door|window|gate|contact|reed)|(?<![а-я])(окн|окон|двер|створк|ворот|калитк|геркон)|(?<![a-z])(okn|okon|dver|stvork|vorot|kalitk|gerkon)",
-    "loud_name_words": "leak|flood|water|smoke|fire|(?<![a-z])gas|протеч|залив|вод[аы]|дым|пожар|(?<![а-я])газ|protech|zaliv|dym"
+    "loud_name_words": "leak|flood|water|smoke|fire|(?<![a-z])gas|протеч|залив|вод[аы]|дым|пожар|(?<![а-я])газ|protech|zaliv|dym",
+    "outputs": {"siren": {"on_start": "turn_on", "on_end": "turn_off"}},
+    "outputs_max": 4,
+    "levels": {
+      "battery": {"below": 20, "step": 5},
+      "carbon_dioxide": {"above": 1500, "step": 100},
+      "humidity": {"above": 70, "step": 5},
+      "temperature": {"below": 5, "above": 35, "step": 1}
+    },
+    "level_step_share": 0.05,
+    "level_abs_max": 1000000
   },
   "backup": {
     "wait_s": 20,

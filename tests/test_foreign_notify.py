@@ -42,7 +42,7 @@ async def entry(hass: HomeAssistant):
 async def test_the_switch_over_the_label(hass: HomeAssistant, hass_client, entry) -> None:
     client = await hass_client()
     got = await (await client.get("/api/hauflo/foreign")).json()
-    assert got["notify"] == {} and got["features"] == [foreign.FEATURE, foreign.PLAN_FEATURE, foreign.WRITE_PLAN_FEATURE] == ["foreign_wizard", "foreign_plan_id", "foreign_write_plan"] and got["plan"] is False
+    assert got["notify"] == {} and got["features"] == [foreign.FEATURE, foreign.PLAN_FEATURE, foreign.WRITE_PLAN_FEATURE, foreign.MEMBERS_FEATURE] == ["foreign_wizard", "foreign_plan_id", "foreign_write_plan", "foreign_scene_members"] and got["plan"] is False
     assert not notify.labelled(hass, LEAK) and notify.labelled(hass, BOILER)
     res = await client.post("/api/hauflo/foreign", json={"notify": {LEAK: True, BOILER: False, OWN: False}})
     assert res.status == 200, await res.text()

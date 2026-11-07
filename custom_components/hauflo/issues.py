@@ -21,7 +21,10 @@ UNLINKED = "unlinked"
 RANGES_PENDING = "ranges_pending"
 DEGRADED_FEATURE = "degraded"
 OUTDATED = "outdated"
-ALL = (LINK_LOST, UNLINKED, RANGES_PENDING, DEGRADED_FEATURE, OUTDATED)
+# The «Hauflo Cards» plugin beside the agent (cards.py): older than the agent's cards / needs a newer agent.
+CARDS_OUTDATED = "cards_plugin_outdated"
+CARDS_NEED_AGENT = "cards_need_agent"
+ALL = (LINK_LOST, UNLINKED, RANGES_PENDING, DEGRADED_FEATURE, OUTDATED, CARDS_OUTDATED, CARDS_NEED_AGENT)
 _SEVERITY = {UNLINKED: ir.IssueSeverity.ERROR, OUTDATED: ir.IssueSeverity.ERROR}
 
 # HA internals the agent leans on (theme store, Lovelace resources, the frontend user store, xknx): when one of

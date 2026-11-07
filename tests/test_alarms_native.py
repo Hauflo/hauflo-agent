@@ -984,8 +984,12 @@ async def test_rule_words_are_plain(hass: HomeAssistant, house) -> None:
     """Security N-6: a template or markup in alarm_states / kind never reaches an automation."""
     entry, engine, *_ = house
     bad = {**LEAK_RULE, "kind": "{{ x }}", "alarm_states": ["{{ 'off' }}", "on", "Wet<b>"]}
-    got = notify._clean_rules({"lang": "ru", "rules": [bad]}, hass, engine.owns)["rules"][0]
+    # A bad kind falls to «custom»; bad alarm_states reject the rule with a reason, never a silent `on` (review r3 R3-9).
+    ok = {**bad, "alarm_states": ["on"]}
+    got = notify._clean_rules({"lang": "ru", "rules": [ok]}, hass, engine.owns)["rules"][0]
     assert got["kind"] == "custom" and got["alarm_states"] == ["on"]
+    out = notify._clean_rules({"lang": "ru", "rules": [bad]}, hass, engine.owns)
+    assert out["rules"] == [] and out["rejected"][0]["reason"] == "bad_alarm_states"
 
 
 async def test_alarm_then_a_long_outage_then_normal(hass: HomeAssistant, house) -> None:
@@ -1167,3 +1171,84 @@ async def test_rule_removed_takes_its_chatter_memory(hass: HomeAssistant, house)
         res = await independent.async_sync(hass, engine)
     await hass.async_block_till_done()
     assert [e["reason"] for e in res["engine"]] == ["helper"] and hass.states.get(ACK) is None and _ours(config) == []
+
+
+async def _start(hass: HomeAssistant) -> None:
+    """The automation's `homeassistant: start` trigger (HA fires it only while the automation loads at startup)."""
+    eid = er.async_get(hass).async_get_entity_id("automation", "automation", AID)
+    ent = hass.data["automation"].get_entity(eid)
+    await ent.async_trigger({"trigger": {"platform": "homeassistant", "event": "start", "id": "start"}}, skip_condition=False)
+    await hass.async_block_till_done()
+
+
+async def test_two_sources_lost_is_one_no_data_message(hass: HomeAssistant, house) -> None:
+    """HA M-4: a gateway down takes every source of the rule — one «нет связи» (to each phone), cleared by the last one back."""
+    entry, engine, config, pushes, _, freezer = house
+    await independent.async_sync(hass, engine)
+    await hass.async_block_till_done()
+    hass.states.async_set(LEAK, "unavailable")
+    hass.states.async_set(LEAK2, "unavailable")
+    await _later(hass, freezer, notify.NODATA_AFTER + 1)
+    nd = [c for c in pushes if c.data["data"]["tag"] == AID + "_nd"]
+    assert len(nd) == len(PHONES)
+    pushes.clear()
+    hass.states.async_set(LEAK, "off")
+    await hass.async_block_till_done()
+    assert pushes == []  # the other one is still lost: the message stands
+    hass.states.async_set(LEAK2, "off")
+    await hass.async_block_till_done()
+    assert {c.data["message"] for c in pushes} == {"clear_notification"} and len(pushes) == len(PHONES)
+
+
+async def test_restart_with_a_source_lost_tells_no_data_once(hass: HomeAssistant, house) -> None:
+    """HA M-4: a source already lost when HA starts has no state change — the minute's template tells it NODATA_AFTER later."""
+    entry, engine, config, pushes, _, freezer = house
+    hass.states.async_set(LEAK, "unavailable")
+    await independent.async_sync(hass, engine)
+    await hass.async_block_till_done()
+    for _ in range(notify.NODATA_AFTER // 60 + 3):  # the template is rendered each minute
+        await _later(hass, freezer, 60)
+    nd = [c for c in pushes if c.data["data"]["tag"] == AID + "_nd"]
+    assert len(nd) == len(PHONES)
+
+
+async def test_restart_closes_an_alarm_that_ended_meanwhile(hass: HomeAssistant, house) -> None:
+    """HA N-2: the «back» timer is gone with a restart — at the start, all in normal: «Принято» resets, the phones' message is cleared."""
+    entry, engine, config, pushes, _, freezer = house
+    await independent.async_sync(hass, engine)
+    await hass.async_block_till_done()
+    await hass.services.async_call("input_boolean", "turn_on", {"entity_id": ACK}, blocking=True)
+    await hass.async_block_till_done()
+    pushes.clear()
+    await _start(hass)
+    assert hass.states.get(ACK).state == "off"
+    assert {c.data["message"] for c in pushes} == {"clear_notification"}
+    # Still in alarm at the start: nothing is closed.
+    hass.states.async_set(LEAK, "on")
+    await _later(hass, freezer, 6)
+    await hass.services.async_call("input_boolean", "turn_on", {"entity_id": ACK}, blocking=True)
+    await hass.async_block_till_done()
+    pushes.clear()
+    await _start(hass)
+    assert hass.states.get(ACK).state == "on" and pushes == []
+
+
+async def test_nodata_tick_condition_renders_with_a_last_triggered(hass: HomeAssistant) -> None:
+    """HA M-4 (merge 07.11): the restart branch compares `last_triggered` with the first lost source's `last_changed` — a
+    datetime of the state, not an attribute of its entity_id string (that raised, and the branch never ran after a restart)."""
+    from datetime import timedelta
+    from homeassistant.helpers import template as tpl
+    from homeassistant.util import dt as dt_util
+
+    t = await independent.texts(hass, False)
+    a = independent.automation_for(LEAK_RULE, PHONES, t, ACK)
+    branch = next(b for b in a["actions"][2]["choose"] if b["conditions"][0] == {"condition": "trigger", "id": "nodata_tick"})
+    cond = branch["conditions"][1]["value_template"]
+    hass.states.async_set(LEAK, "unavailable")
+    hass.states.async_set(LEAK2, "off")
+    await hass.async_block_till_done()
+    # Any object with `attributes`: last_triggered an hour before the loss.
+    this = type("S", (), {"attributes": {"last_triggered": dt_util.utcnow() - timedelta(hours=1)}})()
+    assert tpl.Template(cond, hass).async_render({"sources": [LEAK, LEAK2], "this": this}) is True
+    this.attributes["last_triggered"] = dt_util.utcnow() + timedelta(hours=1)
+    assert tpl.Template(cond, hass).async_render({"sources": [LEAK, LEAK2], "this": this}) is False

@@ -123,6 +123,17 @@ async def test_area_block_holds_the_areas_entities(hass: HomeAssistant, hass_cli
     assert got["order"][key] == ["sensor.boiler_t", "switch.boiler"]
 
 
+async def test_area_sub_blocks_are_items_too(hass: HomeAssistant, hass_client, entry) -> None:
+    """399-51: the family's order of «Свет» / «Шторы» / «Климат»… under «Управление» — `cls:<class>`, an area card's only."""
+    client = await hass_client()
+    key = f"hauflo-home|floor_1_kitchen|area:{CONFIG['views'][1]['sections'][2]['cards'][0]['area']}:"
+    got = await (await client.post("/api/hauflo/order", json={"key": key, "items": ["cls:climate", "cls:lights", "cls:bogus", "cls:", "cls:lights", "lock.door"]})).json()
+    assert got["order"][key] == ["cls:climate", "cls:lights"]
+    # A lights block has no sub-blocks: dropped there.
+    got = await (await client.post("/api/hauflo/order", json={"key": KEY, "items": ["cls:lights", "light.b"]})).json()
+    assert got["order"][KEY] == ["light.b"]
+
+
 async def test_family_scenes_of_the_blocks_room(hass: HomeAssistant, hass_client, entry) -> None:
     # A scenes row with `scene_room` draws the family's own scenes of that room after the integrator's: they can be ordered.
     CONFIG["views"][1]["sections"][0]["cards"].append({"type": "custom:hauflo-scenes", "block": "scenes", "title": "Сценарии", "rows": [{"kind": "light", "scene_room": "kitchen", "scenes": [{"entity": "scene.evening"}]}]})

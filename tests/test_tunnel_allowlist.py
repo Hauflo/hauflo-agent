@@ -9,7 +9,7 @@ import logging
 sys.path.insert(0, str(pathlib.Path(__file__).parents[1] / "custom_components/hauflo"))
 from tunnel import TUNNEL  # noqa: E402 — plain Python, no HA
 from tuning import TUNING  # noqa: E402
-ns = {"theme": types.SimpleNamespace(names=lambda: {"Hauflo Atelier", "Hauflo Atelier · тёмная"}), "TUNNEL": TUNNEL, "TUNING": TUNING, "json": json, "re": re, "contextlib": contextlib, "ipaddress": ipaddress, "Any": object, "HomeAssistant": object, "logging": logging, "__name__": "agent", "DOMAIN": "hauflo", "degrade": lambda feature, err: None, "foreign": types.SimpleNamespace(wizard_refusal=lambda hass, msg: "no_plan", planned=lambda hass, msg: False, UNSAFE_NAME=re.compile("[\x00-\x1f\x7f-\x9f\u200e\u200f\u202a-\u202e\u2066-\u2069]"))}  # foreign.UNSAFE_NAME
+ns = {"theme": types.SimpleNamespace(names=lambda: {"Hauflo Atelier", "Hauflo Atelier · тёмная"}), "TUNNEL": TUNNEL, "TUNING": TUNING, "json": json, "re": re, "contextlib": contextlib, "ipaddress": ipaddress, "Any": object, "HomeAssistant": object, "logging": logging, "__name__": "agent", "DOMAIN": "hauflo", "degrade": lambda feature, err: None, "foreign": types.SimpleNamespace(wizard_refusal=lambda hass, msg: "no_plan", planned=lambda hass, msg: False, member_ok=lambda hass, eid: False, MEMBER_DOMAINS=frozenset({"light", "cover"}), UNSAFE_NAME=re.compile("[\x00-\x1f\x7f-\x9f\u200e\u200f\u202a-\u202e\u2066-\u2069]"))}  # foreign.UNSAFE_NAME
 # Compiled as the module is (`from __future__ import annotations`): annotations stay strings, so a name used only in
 # a signature (Callable, ConfigEntry…) needs no stub here — Python 3.13 evaluated them and the whole file failed to load.
 import __future__

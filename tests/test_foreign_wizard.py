@@ -278,7 +278,7 @@ async def test_plan_bodies(hass: HomeAssistant, hass_client, hass_read_only_acce
     assert (await user.post("/api/hauflo/foreign", json={"plan": p})).status == 403
     assert not foreign.active_plans(hass)
     got = await (await client.get("/api/hauflo/foreign")).json()
-    assert got == {"notify": {}, "features": ["foreign_wizard", "foreign_plan_id", "foreign_write_plan"], "plan": False, "journal": {"devices": [], "entities": []}}
+    assert got == {"notify": {}, "features": ["foreign_wizard", "foreign_plan_id", "foreign_write_plan", "foreign_scene_members"], "plan": False, "journal": {"devices": [], "entities": []}}
 
 
 async def test_revert_puts_back_what_hauflo_wrote(hass: HomeAssistant, hass_client, house) -> None:
@@ -384,5 +384,5 @@ async def test_reads_the_wizard_needs(hass: HomeAssistant, house) -> None:
 
 
 async def test_the_agent_says_it_can(hass: HomeAssistant, house) -> None:
-    assert house["agent"].status()["features"] == ["foreign_wizard", "foreign_plan_id", "foreign_write_plan"]
+    assert house["agent"].status()["features"] == ["foreign_wizard", "foreign_plan_id", "foreign_write_plan", "foreign_scene_members"]
     assert '"features": FEATURES' in inspect.getsource(hauflo.Agent.run)  # in the hello too
