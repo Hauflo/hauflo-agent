@@ -62,7 +62,7 @@ STORE_KEY = "hauflo.automations"
 PREFIX = "hauflo_auto_"
 ALARM_EVENT = "hauflo_alarm_"
 AUTOMATIONS = "automations.yaml"
-EVENTS = ("sunrise", "sunset", "time", "alarm_android", "alarm_iphone", "value", "presence")
+EVENTS = ("sunrise", "sunset", "time", "alarm_android", "alarm_iphone", "value", "presence", "state")
 # «По показаниям» (owner 03.11: «не смог сделать по средней температуре»): a reading of one sensor, or the mean / min / max
 # of several through HA's own min_max helper («Combine the state of several sensors») — HA's standard, no engine of ours.
 VALUE_KINDS = ("temperature", "humidity", "carbon_dioxide", "illuminance")
@@ -71,6 +71,15 @@ OPS = ("above", "below")
 _T = TUNING["automations"]
 MAX_SENSORS = _T["max_sensors"]
 MAX_FOR_MIN = _T["max_for_min"]
+# «Движение / дверь» (p6d): a binary sensor's state or a media player's, held for N minutes — HA's own state trigger with
+# `for`. A binary sensor's kind by its device class (tuning.json state_classes); a media player is kind «media».
+STATE_CLASSES: dict[str, str] = {c: kind for kind, classes in _T["state_classes"].items() for c in classes}
+MEDIA = "media"
+STATE_KINDS = (*_T["state_classes"], MEDIA)
+TOS = ("on", "off")
+# «Nowhere for N min» over several sensors: the condition's `for` a little shorter than the trigger's — HA's state
+# condition is strict (now − for > last_changed) and the trigger fires at that very moment.
+STATE_ALL_MARGIN_S = _T["state_all_margin_s"]
 # «Только если …»: HA's own conditions — sun, a time window, anyone home (zone.home counts the people in it), a reading.
 IFS = ("dark", "light", "between", "home", "away", "value")
 MAX_ONLY_IF = _T["max_only_if"]
@@ -297,6 +306,40 @@ class Automations:
             return None
         return str(kind)
 
+    def _state_kind(self, eid: Any) -> str | None:
+        """A state a rule may follow: a motion / presence, door, window or opening sensor (binary_sensor by its device
+        class) or a media player — any integration's (reading is harmless), one the person sees in HA."""
+        if not isinstance(eid, str) or (domain := eid.split(".")[0]) not in ("binary_sensor", "media_player") or (s := self.hass.states.get(eid)) is None:
+            return None
+        ent = er.async_get(self.hass).async_get(eid)
+        if ent is not None and (ent.disabled_by or ent.hidden_by or ent.entity_category is not None):
+            return None
+        if domain == "media_player":
+            return MEDIA
+        classes = [s.attributes.get("device_class"), *((ent.device_class, ent.original_device_class) if ent else ())]
+        return next((STATE_CLASSES[c] for c in classes if c in STATE_CLASSES), None)
+
+    def _state_spec(self, raw: dict[str, Any]) -> dict[str, Any]:
+        """{kind, sensors, to, for_min} → the clean state trigger: 1…8 sensors of one kind, on / off, 0…240 min."""
+        sensors = raw.get("sensors")
+        if not isinstance(sensors, list) or not 1 <= len(sensors) <= MAX_SENSORS or len(set(map(str, sensors))) != len(sensors):
+            raise Invalid(f"when.sensors: 1…{MAX_SENSORS} different sensors")
+        kinds = {self._state_kind(e) for e in sensors}
+        if None in kinds:
+            raise Invalid("when.sensors: a motion, door, window or opening sensor or a media player the person sees in HA")
+        if len(kinds) != 1:
+            raise Invalid(f"when.sensors: one kind, not a mix of {', '.join(sorted(kinds))}")
+        kind = kinds.pop()
+        if raw.get("kind") not in (None, kind):
+            raise Invalid(f"when.kind: the sensors are {kind}, not {raw.get('kind')}")
+        if raw.get("to") not in TOS:
+            raise Invalid("when.to: on (motion / open / playing) or off (none / closed / not playing)")
+        if kind == MEDIA and raw["to"] == "off" and len(sensors) > 1:
+            # «Nothing plays for N min» over several players has no exact HA condition (paused → idle restarts a
+            # player's last_changed): one player per such rule.
+            raise Invalid("when.sensors: «not playing» follows one media player")
+        return {"kind": kind, "sensors": sorted(sensors), "to": raw["to"], "for_min": _int(raw.get("for_min", 0), 0, MAX_FOR_MIN, "when.for_min (minutes)")}
+
     def _value_spec(self, raw: Any, what: str) -> dict[str, Any]:
         """{sensors, stat, op, x} → the clean reading condition: 1…8 sensors of one kind and unit; stat only for several."""
         if not isinstance(raw, dict):
@@ -497,13 +540,21 @@ class Automations:
                 continue
             s = self.hass.states.get(eid)
             sensors.append({"entity_id": eid, "name": s.attributes.get("friendly_name") or eid, "area": self._area(eid), "kind": kind, "unit": s.attributes.get("unit_of_measurement"), "value": s.state})
-        for i in sensors:
+        binaries = []
+        for domain in ("binary_sensor", "media_player"):
+            for eid in sorted(self.hass.states.async_entity_ids(domain)):
+                if (kind := self._state_kind(eid)) is None:
+                    continue
+                s = self.hass.states.get(eid)
+                binaries.append({"entity_id": eid, "name": s.attributes.get("friendly_name") or eid, "area": self._area(eid), "kind": kind, "state": s.state})
+        for i in (*sensors, *binaries):
             if i["area"] and i["area"] not in names:
                 names[i["area"]] = area.name if (area := areas.async_get_area(i["area"])) else i["area"]
         # People whose phones HA follows: without one, «nobody home» is always true — the page says so, not offers it.
         people = sum(1 for eid in self.hass.states.async_entity_ids("person") if (self.hass.states.get(eid).attributes.get("device_trackers") or []))
         return {
             "sensors": sensors,
+            "binaries": binaries,
             "people": people,
             "alarms": sorted(alarms, key=lambda a: str(a["phone"])),
             "covers": out["cover"],
@@ -524,12 +575,14 @@ class Automations:
             raise Invalid("rule: an object")
         when = raw.get("when")
         if not isinstance(when, dict) or when.get("event") not in EVENTS:
-            raise Invalid("when.event: sunrise, sunset, time, alarm_android, alarm_iphone, value or presence")
+            raise Invalid("when.event: sunrise, sunset, time, alarm_android, alarm_iphone, value, presence or state")
         rule_when: dict[str, Any] = {"event": when["event"]}
         if when["event"] == "value":
             # Fires when the reading crosses the threshold (HA's numeric_state) and stays there for_min minutes.
             rule_when.update(self._value_spec(when, "when"))
             rule_when["for_min"] = _int(when.get("for_min", 0), 0, MAX_FOR_MIN, "when.for_min (minutes)")
+        elif when["event"] == "state":
+            rule_when.update(self._state_spec(when))
         elif when["event"] == "presence":
             if when.get("to") not in ("away", "home"):
                 raise Invalid("when.to: away (the last one left) or home (the first one came)")
@@ -692,6 +745,7 @@ class Automations:
     def automation(self, rule_id: str, rule: dict[str, Any]) -> dict[str, Any]:
         """The HA automation of a rule (the new syntax: triggers / conditions / actions)."""
         when = rule["when"]
+        also: list[dict[str, Any]] = []  # a condition the trigger itself needs (state: «nowhere»)
         if when["event"] == "time":
             trigger: dict[str, Any] = {"trigger": "time", "at": when["at"] + ":00"}
         elif when["event"] == "alarm_iphone":
@@ -702,6 +756,8 @@ class Automations:
             trigger = {"trigger": "numeric_state", "entity_id": when["entity"], when["op"]: when["x"]}
             if when.get("for_min"):
                 trigger["for"] = {"minutes": when["for_min"]}
+        elif when["event"] == "state":
+            trigger, also = self._state_trigger(when)
         elif when["event"] == "presence":
             # zone.home's state is how many people are in it (HA's own count of the people whose phones it follows).
             trigger = {"trigger": "numeric_state", "entity_id": "zone.home", **({"below": 1} if when["to"] == "away" else {"above": 0})}
@@ -717,12 +773,34 @@ class Automations:
             # Neutral: it keeps working after Hauflo is removed (HA expert 28.10), the page it named may be gone.
             "description": "Создано в Hauflo." if ru else "Made in Hauflo.",
             "triggers": [trigger],
-            "conditions": ([{"condition": "time", "weekday": list(rule["days"])}] if len(rule["days"]) < 7 else []) + [self._condition(c) for c in rule.get("only_if", [])],
+            "conditions": also + ([{"condition": "time", "weekday": list(rule["days"])}] if len(rule["days"]) < 7 else []) + [self._condition(c) for c in rule.get("only_if", [])],
             "actions": self._service_calls(rule),
             "mode": "single",
             # No initial_state: HA keeps the on / off a person set (in HA or here) over restarts (HA expert 28.10).
         }
         return cfg
+
+    @staticmethod
+    def _state_trigger(when: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """HA's state trigger of a «Движение / дверь» rule, and the condition it needs. A binary sensor: from off to on
+        (from on to off) as HA's own motion_light blueprint — a sensor coming back from «unavailable» isn't a change. A
+        media player: to «playing»; «not playing» — from «playing» to anything (HA keeps `for` while it stays away from
+        playing). Several sensors and «off»: any one's trigger plus the condition that ALL are off for those minutes —
+        «no motion anywhere for 5 min», not «one of them quiet for 5 min»."""
+        eids, n = list(when["sensors"]), when["for_min"]
+        if when["kind"] == MEDIA:
+            trigger: dict[str, Any] = {"trigger": "state", "entity_id": eids, **({"to": "playing"} if when["to"] == "on" else {"from": "playing"})}
+        else:
+            trigger = {"trigger": "state", "entity_id": eids, "from": "off" if when["to"] == "on" else "on", "to": when["to"]}
+        if n:
+            trigger["for"] = {"minutes": n}
+        also: list[dict[str, Any]] = []
+        if when["to"] == "off" and len(eids) > 1:
+            cond: dict[str, Any] = {"condition": "state", "entity_id": eids, "state": "off"}
+            if n:
+                cond["for"] = {"seconds": n * 60 - STATE_ALL_MARGIN_S}
+            also.append(cond)
+        return trigger, also
 
     @staticmethod
     def _condition(c: dict[str, Any]) -> dict[str, Any]:

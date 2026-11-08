@@ -14,6 +14,8 @@ from pathlib import Path
 import re
 from typing import Any
 
+from .tuning import TUNING
+
 PATH = Path(__file__).with_name("automation_recipes.json")
 LANGS = ("ru", "en")
 DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
@@ -21,7 +23,10 @@ _TIME = re.compile(r"([01]\d|2[0-3]):([0-5]\d)")
 _VAR = re.compile(r"-?\$([a-z]+)")
 KINDS = ("int", "temp", "time")
 DOS = ("room_covers", "room_off", "set", "on", "off", "ramp", "temp")
-EVENTS = ("sunrise", "sunset", "time", "alarm", "value", "presence")
+EVENTS = ("sunrise", "sunset", "time", "alarm", "value", "presence", "state")
+# The engine's «Движение / дверь» kinds (automations.STATE_KINDS: tuning.json state_classes + a media player).
+STATE_KINDS = (*TUNING["automations"]["state_classes"], "media")
+WITH = {"fan": "fans", "light": "lights"}
 
 
 def load() -> dict[str, Any]:
@@ -87,6 +92,8 @@ def check(data: dict[str, Any]) -> list[str]:
         when = r.get("when", {})
         if when.get("event") not in EVENTS:
             bad.append(f"{rid}: when.event")
+        if when.get("event") == "state" and (when.get("to") not in ("on", "off") or when.get("sensors", {}).get("kind") not in STATE_KINDS or when.get("sensors", {}).get("with") not in (None, *WITH)):
+            bad.append(f"{rid}: state — sensors.kind {'/'.join(STATE_KINDS)}, to on/off, with light/fan")
         if bool(r.get("alarm")) != (when.get("event") == "alarm"):
             bad.append(f"{rid}: `alarm` flag must match the alarm event")
         days = r.get("days")
@@ -164,21 +171,27 @@ def _one(data: dict[str, Any], r: dict[str, Any], t: dict[str, Any]) -> dict[str
         else:
             rule_when = {"event": "alarm_iphone"}
             src = dict(data["alarm_src"]["iphone"])
-    elif when["event"] == "value":
+    elif when["event"] in ("value", "state"):
+        # The first room (by name) that has the sensor kind — and the device the actions need («with»); its sensors.
         s = when["sensors"]
         by_area: dict[str | None, list[dict[str, Any]]] = {}
-        for x in t.get("sensors", []):
+        for x in t.get("sensors" if when["event"] == "value" else "binaries", []):
             if x["kind"] == s["kind"] and x.get("area") and area_ok(x["area"], s.get("match")):
                 by_area.setdefault(x["area"], []).append(x)
-        have = {i.get("area") for i in t.get({"fan": "fans", "light": "lights"}[s["with"]], [])} if s.get("with") else set(by_area)
+        have = {i.get("area") for i in t.get(WITH[s["with"]], [])} if s.get("with") else set(by_area)
         rooms = sorted((a for a in by_area if a in have), key=lambda a: areas.get(a, a))
         if not rooms:
             return None
         room_in = rooms[0]
-        picked = [x for x in by_area[room_in] if x.get("unit") == by_area[room_in][0].get("unit")][: data["limits"]["per_rule_devices"]]
-        rule_when.update({"sensors": [x["entity_id"] for x in picked], "kind": s["kind"], "op": when["op"], "x": _value(when["x"], vals), "for_min": _value(when["for_min"], vals)})
-        if len(picked) > 1:
-            rule_when["stat"] = "mean"
+        if when["event"] == "value":
+            picked = [x for x in by_area[room_in] if x.get("unit") == by_area[room_in][0].get("unit")][: data["limits"]["per_rule_devices"]]
+            rule_when.update({"sensors": [x["entity_id"] for x in picked], "kind": s["kind"], "op": when["op"], "x": _value(when["x"], vals), "for_min": _value(when["for_min"], vals)})
+            if len(picked) > 1:
+                rule_when["stat"] = "mean"
+        else:
+            # «Not playing» follows one player (the engine's rule); the other kinds — the room's sensors together.
+            picked = by_area[room_in][: 1 if s["kind"] == "media" and when["to"] == "off" else data["limits"]["per_rule_devices"]]
+            rule_when.update({"kind": s["kind"], "sensors": [x["entity_id"] for x in picked], "to": when["to"], "for_min": _value(when.get("for_min", 0), vals)})
         names.append(areas.get(room_in, room_in))
         src = {"ru": "", "en": ""}
     else:
@@ -205,7 +218,7 @@ def _one(data: dict[str, Any], r: dict[str, Any], t: dict[str, Any]) -> dict[str
                 actions.append({"do": "room_covers", "area_id": x["area_id"], "cover": a["cover"]})
                 names.append(x["name"])
         elif each == "rooms":
-            rooms = [x for x in t.get("rooms", []) if area_ok(x["area_id"], match, skip)][: lim["per_rule_rooms"]]
+            rooms = [x for x in t.get("rooms", []) if area_ok(x["area_id"], match, skip, only)][: lim["per_rule_rooms"]]
             if not rooms:
                 return None
             for x in rooms:

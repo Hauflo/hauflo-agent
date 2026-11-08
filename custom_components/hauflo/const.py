@@ -9,7 +9,7 @@ from homeassistant.util.hass_dict import HassKey
 from . import servers as _servers
 
 DOMAIN = "hauflo"
-VERSION = "0.28.2"
+VERSION = "0.29.0"
 
 
 def _www_hash() -> str:

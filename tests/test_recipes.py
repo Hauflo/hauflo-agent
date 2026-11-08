@@ -15,13 +15,19 @@ def _house(**extra):
         "people": 1,
         "alarms": [],
         "lights": [{"entity_id": "light.bed", "area": "bed", "dim": True}, {"entity_id": "light.liv", "area": "liv", "dim": True}, {"entity_id": "light.hall", "area": "hall", "dim": True}],
-        "rooms": [{"area_id": "bed", "name": "Спальня", "lights": 1}, {"area_id": "liv", "name": "Living room", "lights": 1}],
+        "rooms": [{"area_id": "bed", "name": "Спальня", "lights": 1}, {"area_id": "liv", "name": "Living room", "lights": 1}, {"area_id": "hall", "name": "Коридор", "lights": 1}],
         "cover_rooms": [{"area_id": "bed", "name": "Спальня", "covers": 1, "position": True}, {"area_id": "liv", "name": "Living room", "covers": 2, "position": True}],
         "climates": [{"entity_id": "climate.bed", "area": "bed", "temp": True, "min": 7.0, "max": 30.0}, {"entity_id": "climate.bath", "area": "bath", "temp": True, "min": 7.0, "max": 30.0}],
         "fans": [{"entity_id": "fan.bath", "area": "bath"}, {"entity_id": "fan.bed", "area": "bed"}],
         "sensors": [
             {"entity_id": "sensor.bath_h", "area": "bath", "kind": "humidity", "unit": "%"},
             {"entity_id": "sensor.bed_co2", "area": "bed", "kind": "carbon_dioxide", "unit": "ppm"},
+        ],
+        "binaries": [
+            {"entity_id": "binary_sensor.hall_motion", "area": "hall", "kind": "motion"},
+            {"entity_id": "binary_sensor.front_door", "area": "hall", "kind": "door"},
+            {"entity_id": "binary_sensor.bath_window", "area": "bath", "kind": "window"},
+            {"entity_id": "media_player.liv_tv", "area": "liv", "kind": "media"},
         ],
     }
     t.update(extra)
@@ -176,3 +182,37 @@ def test_wake_light_follows_the_phone_whose_alarm_ha_reads_now():
     dead = _by_key(_house(alarms=[alarms[0], alarms[2]]))["wake_light"]["rule"]
     assert dead["when"]["sensor"] == "sensor.iphone_next_alarm"
 
+
+
+def test_motion_door_media_follow_the_room_of_the_sensor():
+    """«Движение и двери»: the sensor's own room gets the light; held-for minutes from the recipe's parameter."""
+    got = _by_key(_house())
+    on, off, door, media = (got[k]["rule"] for k in ("motion_light_on", "motion_light_off", "door_hall_light", "media_dim"))
+    assert on["when"] == {"event": "state", "kind": "motion", "sensors": ["binary_sensor.hall_motion"], "to": "on", "for_min": 0}
+    assert on["actions"] == [{"entity_id": "light.hall", "do": "on", "value": 60}] and on["only_if"] == [{"if": "dark"}]
+    assert off["when"]["to"] == "off" and off["when"]["for_min"] == 5 and off["actions"] == [{"do": "room_off", "area_id": "hall"}]
+    assert door["when"]["kind"] == "door" and door["when"]["sensors"] == ["binary_sensor.front_door"] and door["actions"][0]["entity_id"] == "light.hall"
+    assert media["when"] == {"event": "state", "kind": "media", "sensors": ["media_player.liv_tv"], "to": "on", "for_min": 1}
+    assert media["actions"] == [{"entity_id": "light.liv", "do": "on", "value": 30}]
+
+
+def test_no_binaries_no_motion_recipes():
+    motion = {r["id"] for r in DATA["recipes"] if r["when"]["event"] == "state"}
+    assert len(motion) == 4
+    assert not motion & set(_by_key(_house(binaries=[])))
+    assert not motion & set(_by_key({k: v for k, v in _house().items() if k != "binaries"}))
+    # A motion sensor in a room without lights, a TV outside the living room, a window: nothing to do.
+    odd = _by_key(_house(binaries=[
+        {"entity_id": "binary_sensor.bath_motion", "area": "bath", "kind": "motion"},
+        {"entity_id": "media_player.bed_tv", "area": "bed", "kind": "media"},
+        {"entity_id": "binary_sensor.bath_window", "area": "bath", "kind": "window"},
+    ]))
+    assert not motion & set(odd)
+
+
+def test_check_catches_broken_state_recipes():
+    for broken in ({"to": "open"}, {"sensors": {"kind": "smoke", "with": "light"}}, {"sensors": {"kind": "motion", "with": "cover"}}):
+        bad = copy.deepcopy(DATA)
+        r = next(x for x in bad["recipes"] if x["id"] == "motion_light_on")
+        r["when"].update(broken)
+        assert recipes.check(bad), broken

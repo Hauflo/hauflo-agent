@@ -610,6 +610,34 @@ async def test_old_rules_keep_their_file_and_digest(hass: HomeAssistant, hass_cl
     assert listed[0]["changed"] is False
 
 
+M1, M2 = "binary_sensor.living_motion", "binary_sensor.living_presence"
+DOOR = "binary_sensor.front_door"
+TV, TV2 = "media_player.living_tv", "media_player.kitchen_tv"
+
+
+def _binaries(hass: HomeAssistant, entry) -> None:
+    """Motion (two classes of one kind), a door known only by its registry class, a TV; and what never qualifies."""
+    reg = er.async_get(hass)
+    for eid, uid, attrs in (
+        (M1, "u-m1", {"device_class": "motion"}),
+        (M2, "u-m2", {"device_class": "occupancy"}),
+        (DOOR, "u-door", {}),
+        ("binary_sensor.hidden_motion", "u-hm", {"device_class": "motion"}),
+        ("binary_sensor.diag_door", "u-dd", {"device_class": "door"}),
+        ("binary_sensor.link", "u-link", {"device_class": "connectivity"}),
+        (TV, "u-tv", {}),
+        (TV2, "u-tv2", {}),
+    ):
+        domain, obj = eid.split(".")
+        reg.async_get_or_create(domain, "zha", uid, suggested_object_id=obj)
+        hass.states.async_set(eid, "off" if domain == "binary_sensor" else "idle", {"friendly_name": obj, **attrs})
+    reg.async_update_entity(DOOR, device_class="door")
+    reg.async_update_entity("binary_sensor.hidden_motion", hidden_by=er.RegistryEntryHider.USER)
+    reg.async_update_entity("binary_sensor.diag_door", entity_category=er.EntityCategory.DIAGNOSTIC)
+    for eid in (M1, M2, TV):
+        reg.async_update_entity(eid, area_id=entry.area)
+
+
 async def test_recipes_are_offered_accepted_and_the_alarm_clock_yaml(hass: HomeAssistant, hass_client, entry, bus) -> None:
     """p6d: every recipe the house can run is accepted by the engine as offered; the wake-up chain end to end."""
     reg = er.async_get(hass)
@@ -629,10 +657,11 @@ async def test_recipes_are_offered_accepted_and_the_alarm_clock_yaml(hass: HomeA
     reg.async_get_or_create("sensor", "knx", "bed-co2", suggested_object_id="bed_co2")
     hass.states.async_set("sensor.bed_co2", "700", {"device_class": "carbon_dioxide", "unit_of_measurement": "ppm", "friendly_name": "co2"})
     reg.async_update_entity("sensor.bed_co2", area_id=bed.id)
+    _binaries(hass, entry)
     client = await hass_client()
     got = await (await client.get(URL)).json()
     offered = {r["key"]: r for r in got["recipes"]}
-    assert {"sunset_covers", "wake_covers", "wake_light", "wake_climate", "night_off", "night_climate", "co2_fan_on", "co2_fan_off"} <= set(offered)
+    assert {"sunset_covers", "wake_covers", "wake_light", "wake_climate", "night_off", "night_climate", "co2_fan_on", "co2_fan_off", "motion_light_on", "motion_light_off", "media_dim"} <= set(offered)
     assert "away_off" not in offered or got["targets"]["people"]  # «nobody home» is never known without a person
     # Whatever is offered, the engine saves as offered (and writes a real HA automation).
     for key, r in offered.items():
@@ -659,3 +688,96 @@ async def test_recipes_are_offered_accepted_and_the_alarm_clock_yaml(hass: HomeA
     got = await (await client.get(URL)).json()
     iphone = next(r for r in got["recipes"] if r["key"] == "wake_light")
     assert iphone["rule"]["when"] == {"event": "alarm_iphone"}
+
+
+async def test_state_rule_motion_door_media(hass: HomeAssistant, hass_client, entry, bus, freezer) -> None:
+    """p6d «Движение / дверь»: HA's state trigger held N minutes; «нет движения» over several sensors = none of them
+    for N minutes (the condition), checked live with HA's own clock."""
+    from datetime import timedelta  # noqa: PLC0415
+
+    from homeassistant.util import dt as dt_util  # noqa: PLC0415
+    from pytest_homeassistant_custom_component.common import async_fire_time_changed  # noqa: PLC0415
+
+    _binaries(hass, entry)
+    client = await hass_client()
+    got = (await (await client.get(URL)).json())["targets"]
+    assert {(b["entity_id"], b["kind"]) for b in got["binaries"]} == {(M1, "motion"), (M2, "motion"), (DOOR, "door"), (TV, "media"), (TV2, "media")}
+    assert next(b for b in got["binaries"] if b["entity_id"] == M1)["area"] == entry.area
+
+    lights_on = {"do": "set", "domain": "light", "cmd": "on", "rooms": [entry.area]}
+    on = {"when": {"event": "state", "kind": "motion", "sensors": [M1], "to": "on", "for_min": 0}, "actions": [lights_on]}
+    r = await client.post(URL, json={"op": "save", "rule": on})
+    assert r.status == 200, await r.text()
+    mine = [a for a in _file(hass) if a.get("id") == (await r.json())["id"]][0]
+    assert mine["triggers"] == [{"trigger": "state", "entity_id": [M1], "from": "off", "to": "on"}] and mine["conditions"] == []
+    # Live: motion → the room's lights; a sensor back from «unavailable» already on is not motion.
+    hass.states.async_set(M1, "unavailable", {"device_class": "motion"})
+    await hass.async_block_till_done()
+    hass.states.async_set(M1, "on", {"device_class": "motion"})
+    await hass.async_block_till_done()
+    assert not [m for m in bus if m[0] == "light.turn_on"]
+    hass.states.async_set(M1, "off", {"device_class": "motion"})
+    await hass.async_block_till_done()
+    hass.states.async_set(M1, "on", {"device_class": "motion"})
+    await hass.async_block_till_done()
+    assert len([m for m in bus if m[0] == "light.turn_on"]) == 1
+
+    off = {"when": {"event": "state", "sensors": [M2, M1], "to": "off", "for_min": 5}, "actions": [{"do": "room_off", "area_id": entry.area}]}
+    r = await client.post(URL, json={"op": "save", "rule": off})
+    assert r.status == 200, await r.text()
+    rule = await r.json()
+    assert rule["when"] == {"event": "state", "kind": "motion", "sensors": [M1, M2], "to": "off", "for_min": 5}
+    mine = [a for a in _file(hass) if a.get("id") == rule["id"]][0]
+    assert mine["triggers"] == [{"trigger": "state", "entity_id": [M1, M2], "from": "on", "to": "off", "for": {"minutes": 5}}]
+    assert mine["conditions"] == [{"condition": "state", "entity_id": [M1, M2], "state": "off", "for": {"seconds": 299}}]
+    # Live: M1 quiet since 0, M2 since 4 min — nothing at 5 min (M2 quiet only 1 min), lights off at 9 min.
+    hass.states.async_set(M2, "on", {"device_class": "occupancy"})
+    await hass.async_block_till_done()
+    hass.states.async_set(M1, "off", {"device_class": "motion"})
+    await hass.async_block_till_done()
+    async def tick(minutes: int) -> None:
+        freezer.tick(timedelta(minutes=minutes))
+        async_fire_time_changed(hass, dt_util.utcnow())
+        await hass.async_block_till_done()
+
+    await tick(4)
+    hass.states.async_set(M2, "off", {"device_class": "occupancy"})
+    await hass.async_block_till_done()
+    await tick(1)
+    assert [m for m in bus if m[0] == "light.turn_off"] == []  # 5 min: M2 has been quiet for 1
+    await tick(4)
+    assert len([m for m in bus if m[0] == "light.turn_off"]) == 1  # 9 min: nowhere for 5
+
+    # A door known only by its registry class; a TV playing / not playing.
+    r = await client.post(URL, json={"op": "save", "rule": {"when": {"event": "state", "sensors": [DOOR], "to": "on"}, "actions": [lights_on], "only_if": [{"if": "dark"}]}})
+    assert r.status == 200, await r.text()
+    assert (await r.json())["when"]["kind"] == "door"
+    r = await client.post(URL, json={"op": "save", "rule": {"when": {"event": "state", "sensors": [TV, TV2], "to": "on", "for_min": 1}, "actions": [lights_on]}})
+    mine = [a for a in _file(hass) if a.get("id") == (await r.json())["id"]][0]
+    assert mine["triggers"] == [{"trigger": "state", "entity_id": [TV2, TV], "to": "playing", "for": {"minutes": 1}}] and mine["conditions"] == []
+    r = await client.post(URL, json={"op": "save", "rule": {"when": {"event": "state", "sensors": [TV], "to": "off", "for_min": 2}, "actions": [lights_on]}})
+    mine = [a for a in _file(hass) if a.get("id") == (await r.json())["id"]][0]
+    assert mine["triggers"] == [{"trigger": "state", "entity_id": [TV], "from": "playing", "for": {"minutes": 2}}] and mine["conditions"] == []
+
+    good = {"when": {"event": "state", "sensors": [M1], "to": "on"}, "actions": [lights_on]}
+    for bad in (
+        {"event": "state", "sensors": [M1, DOOR], "to": "on"},  # a mix of kinds
+        {"event": "state", "sensors": [TV, TV2], "to": "off"},  # «not playing» — one player
+        {"event": "state", "sensors": [M1], "to": "open"},
+        {"event": "state", "sensors": [M1]},
+        {"event": "state", "sensors": [], "to": "on"},
+        {"event": "state", "sensors": [M1, M1], "to": "on"},
+        {"event": "state", "sensors": [M1], "to": "on", "for_min": 241},
+        {"event": "state", "sensors": [M1], "to": "on", "for_min": -1},
+        {"event": "state", "sensors": [M1], "to": "on", "for_min": 1.5},
+        {"event": "state", "kind": "door", "sensors": [M1], "to": "on"},  # the sensors decide the kind
+        {"event": "state", "sensors": ["binary_sensor.hidden_motion"], "to": "on"},
+        {"event": "state", "sensors": ["binary_sensor.diag_door"], "to": "on"},
+        {"event": "state", "sensors": ["binary_sensor.link"], "to": "on"},
+        {"event": "state", "sensors": ["binary_sensor.nowhere"], "to": "on"},
+        {"event": "state", "sensors": [T1], "to": "on"},
+        {"event": "state", "sensors": [LIGHT], "to": "on"},
+        {"event": "state", "sensors": [f"binary_sensor.m{i}" for i in range(9)], "to": "on"},
+    ):
+        res = await client.post(URL, json={"op": "save", "rule": {**good, "when": bad}})
+        assert res.status == 400, bad

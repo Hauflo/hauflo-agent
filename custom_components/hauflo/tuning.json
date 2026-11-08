@@ -179,7 +179,9 @@
     "max_sensors": 8,
     "max_for_min": 240,
     "max_only_if": 5,
-    "max_set": 100
+    "max_set": 100,
+    "state_classes": {"motion": ["motion", "occupancy", "presence"], "door": ["door"], "window": ["window"], "opening": ["opening", "garage_door"]},
+    "state_all_margin_s": 1
   },
   "insight": {
     "tick_s": 60,

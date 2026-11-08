@@ -8399,7 +8399,7 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
         min: "мин", h: "ч", d: "д", today: "сегодня", tomorrow: "завтра", at: "в",
         wd: ["пн", "вт", "ср", "чт", "пт", "сб", "вс"],
         every: "каждый день", workdays: "по будням", weekend: "по выходным",
-        ev: { sunrise: "Рассвет", sunset: "Закат", time: "Время", alarm: "Будильник", value: "Датчики", presence: "Дома / нет дома" },
+        ev: { sunrise: "Рассвет", sunset: "Закат", time: "Время", alarm: "Будильник", value: "Датчики", presence: "Дома / нет дома", state: "Движение / дверь" },
         evGen: { sunrise: "рассвета", sunset: "заката", alarm: "будильника" },
         kind: { temperature: "Температура", humidity: "Влажность", carbon_dioxide: "CO₂", illuminance: "Освещённость" },
         stat: { mean: "Среднее", min: "Минимум", max: "Максимум" },
@@ -8411,6 +8411,14 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
         valueNote: "Несколько датчиков — Hauflo заведёт в Home Assistant помощник «Мин/макс»: недоступный датчик в расчёт не попадёт.",
         valueHow: "Сработает в момент, когда значение перейдёт порог, — не всё время, пока оно за порогом.",
         presence: { away: "Все ушли из дома", home: "Кто-то пришёл домой" },
+        // «Движение / дверь» (p6d): a motion / door / window / opening sensor or a media player, held N minutes.
+        stKind: { motion: "Движение", door: "Двери", window: "Окна", opening: "Ворота и проёмы", media: "Медиа" },
+        stTo: { motion: { on: "Есть движение", off: "Нет движения" }, door: { on: "Открыто", off: "Закрыто" }, window: { on: "Открыто", off: "Закрыто" }, opening: { on: "Открыто", off: "Закрыто" }, media: { on: "Играет", off: "Не играет" } },
+        stWhen: { motion: { on: "Есть движение", off: "Нет движения" }, door: { on: "Дверь открыта", off: "Дверь закрыта" }, window: { on: "Окно открыто", off: "Окно закрыто" }, opening: { on: "Открыто", off: "Закрыто" }, media: { on: "Медиа играет", off: "Медиа не играет" } },
+        stateWhen: (p, src, f) => `${p}${src ? `: ${src}` : ""}${f ? ` · дольше ${f} мин` : ""}`,
+        stHow: "Сработает, когда состояние наступит и продержится указанное время. Несколько датчиков: «есть» — на любом, «нет» — ни на одном.",
+        stOne: "«Не играет» — по одному плееру.",
+        noBinaries: "Нет датчиков движения, дверей, окон или медиаплееров.",
         noPeople: "В Home Assistant нет людей с телефонами — «дома / нет дома» не узнать. Добавьте человека и приложение Home Assistant на его телефон.",
         onlyIf: "Только если", addIf: "Добавить условие…", ifFrom: "с", ifTo: "до",
         ifs: { dark: "Темно", light: "Светло", between: "В промежутке времени", home: "Кто-то дома", away: "Никого нет дома", value: "По датчику" },
@@ -8555,7 +8563,7 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
         min: "min", h: "h", d: "d", today: "today", tomorrow: "tomorrow", at: "at",
         wd: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
         every: "every day", workdays: "on weekdays", weekend: "at weekends",
-        ev: { sunrise: "Sunrise", sunset: "Sunset", time: "Time", alarm: "Alarm", value: "Sensors", presence: "Home / away" },
+        ev: { sunrise: "Sunrise", sunset: "Sunset", time: "Time", alarm: "Alarm", value: "Sensors", presence: "Home / away", state: "Motion / door" },
         evGen: { sunrise: "sunrise", sunset: "sunset", alarm: "the alarm" },
         kind: { temperature: "Temperature", humidity: "Humidity", carbon_dioxide: "CO₂", illuminance: "Light level" },
         stat: { mean: "Average", min: "Minimum", max: "Maximum" },
@@ -8567,6 +8575,13 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
         valueNote: "Several sensors — Hauflo adds a “Min / max” helper in Home Assistant: an unavailable sensor is left out of it.",
         valueHow: "Runs the moment the value crosses the threshold — not all the time it stays past it.",
         presence: { away: "Everyone left home", home: "Someone came home" },
+        stKind: { motion: "Motion", door: "Doors", window: "Windows", opening: "Gates and openings", media: "Media" },
+        stTo: { motion: { on: "Motion", off: "No motion" }, door: { on: "Open", off: "Closed" }, window: { on: "Open", off: "Closed" }, opening: { on: "Open", off: "Closed" }, media: { on: "Playing", off: "Not playing" } },
+        stWhen: { motion: { on: "Motion", off: "No motion" }, door: { on: "Door open", off: "Door closed" }, window: { on: "Window open", off: "Window closed" }, opening: { on: "Open", off: "Closed" }, media: { on: "Media playing", off: "Media not playing" } },
+        stateWhen: (p, src, f) => `${p}${src ? `: ${src}` : ""}${f ? ` · for ${f} min` : ""}`,
+        stHow: "Runs when the state comes and lasts the set time. Several sensors: «on» — any of them, «off» — none of them.",
+        stOne: "“Not playing” follows one player.",
+        noBinaries: "No motion, door or window sensors or media players.",
         noPeople: "Home Assistant has no people with phones — it can't tell home from away. Add a person and the Home Assistant app on their phone.",
         onlyIf: "Only if", addIf: "Add a condition…", ifFrom: "from", ifTo: "to",
         ifs: { dark: "It's dark", light: "It's light", between: "Between times", home: "Someone is home", away: "Nobody is home", value: "By a sensor" },
@@ -8727,6 +8742,12 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
     const KIND_STEP = { temperature: 0.5, humidity: 5, carbon_dioxide: 100, illuminance: 50 };
     const KIND_X = { temperature: 24, humidity: 60, carbon_dioxide: 1000, illuminance: 200 };
     const KIND_ICON = { temperature: "mdi:thermometer", humidity: "mdi:water-percent", carbon_dioxide: "mdi:molecule-co2", illuminance: "mdi:brightness-5" };
+    // «Движение / дверь»: the kinds the agent sends (automations.py STATE_KINDS) in this order, their icons, «держится» steps.
+    const STATE_ICON = { motion: "mdi:motion-sensor", door: "mdi:door", window: "mdi:window-open-variant", opening: "mdi:garage", media: "mdi:play-circle-outline" };
+    const STATE_KINDS = Object.keys(STATE_ICON);
+    const STATE_ON = ["on", "playing"];
+    const VALUE_HOLD = [0, 5, 10, 15, 30, 60, 120, 240];
+    const STATE_HOLD = [0, 1, 2, 3, 5, 10, 15, 20, 30, 45, 60, 120, 240];
     // Little drawings of the iPhone steps (family review 28.10: «Команды → Автоматизация, Fire Event» lost a person).
     const svg = (d) => `<svg viewBox="0 0 32 32" width="32" height="32" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
     const STEP_ART = [
@@ -9275,11 +9296,22 @@ ${logHtml}</section>`;
         if (w.event === "alarm_iphone") return t.alarmOf("iPhone");
         if (w.event === "value") return this.valueText(w);
         if (w.event === "presence") return t.presence[w.to] || t.ev.presence;
+        if (w.event === "state") return this.stateText(w);
         const base = w.event === "alarm_android" ? t.alarmOf(this.phone(w.sensor)) : t.ev[w.event];
         return w.offset ? `${base} ${sign(w.offset)} ${t.min}` : base;
       }
       sensor(eid) {
         return (this.data?.targets?.sensors || []).find((s) => s.entity_id === eid);
+      }
+      binary(eid) {
+        return (this.data?.targets?.binaries || []).find((s) => s.entity_id === eid);
+      }
+      // «Нет движения: Прихожая · дольше 5 мин» / «Дверь открыта: Входная» — rooms of the sensors, a name without a room.
+      stateText(v) {
+        const t = this.w;
+        const names = [...new Set((v.sensors || []).map((e) => this.binary(e)).map((b, i) => (b ? (b.area ? this.room(b.area) : clientName(b.name, b.entity_id)) : v.sensors[i])))];
+        const src = names.length > 3 ? `${names.slice(0, 2).join(", ")}${t.more(names.length - 2)}` : names.join(", ");
+        return t.stateWhen(t.stWhen[v.kind]?.[v.to] || t.ev.state, src, v.for_min);
       }
       // «Температура (среднее по 3 датч.) выше 24 °C» / «Температура (Спальня) ниже 18 °C».
       valueText(v, hold = true) {
@@ -9349,6 +9381,7 @@ ${logHtml}</section>`;
       }
       icon(w) {
         if (w.event === "value") return KIND_ICON[w.kind] || "mdi:gauge";
+        if (w.event === "state") return STATE_ICON[w.kind] || "mdi:motion-sensor";
         if (w.event === "presence") return w.to === "away" ? "mdi:home-export-outline" : "mdi:home-import-outline";
         return w.event === "sunrise" ? "mdi:weather-sunset-up" : w.event === "sunset" ? "mdi:weather-sunset-down" : w.event === "time" ? "mdi:clock-outline" : "mdi:alarm";
       }
@@ -9602,6 +9635,7 @@ ${this.locMsg ? `<p class="msg ${this.locBad ? "bad" : ""}" role="status">${esc(
           const mins = [...new Set([...Array.from({ length: 12 }, (_, i) => i * 5), mm || 0])].sort((a, b) => a - b);
           whenBody = `<div class="fld tm"><select data-ath aria-label="${esc(this.lang === "en" ? "Hours" : "Часы")}">${Array.from({ length: 24 }, (_, i) => opt(i, hh || 0)).join("")}</select><b>:</b><select data-atm aria-label="${esc(this.lang === "en" ? "Minutes" : "Минуты")}">${mins.map((m) => opt(m, mm || 0)).join("")}</select></div>`;
         } else if (ev === "value") whenBody = `<div class="fld">${this.valueHtml("w", r.when)}</div>`;
+        else if (ev === "state") whenBody = `<div class="fld">${this.stateHtml(r.when)}</div>`;
         else if (ev === "presence")
           whenBody = `<div class="fld"><div class="seg" role="group">${["away", "home"].map((x) => `<button data-pres="${x}" aria-pressed="${r.when.to === x}">${esc(w.presence[x])}</button>`).join("")}</div>${t.people ? "" : `<p class="tn">${esc(w.noPeople)}</p>`}</div>`;
         else {
@@ -9628,7 +9662,7 @@ ${this.locMsg ? `<p class="msg ${this.locBad ? "bad" : ""}" role="status">${esc(
         const saved = !!r.id;
         return `<div class="row"><button class="btn sm" data-back>← ${esc(w.back)}</button></div>
 <section class="box"><h2>${esc(saved ? r.name || this.autoName(r) : w.newRule)}</h2>
-<div class="fld"><div class="caps">${esc(w.when)}</div><div class="chips" role="group">${["sunrise", "sunset", "time", "alarm", "value", "presence"].map((e) => `<button data-ev="${e}" aria-pressed="${ev === e}">${esc(w.ev[e])}</button>`).join("")}</div>${whenBody}</div>
+<div class="fld"><div class="caps">${esc(w.when)}</div><div class="chips" role="group">${["sunrise", "sunset", "time", "alarm", "value", "presence", "state"].filter((e) => e !== "state" || ev === e || (t.binaries || []).length).map((e) => `<button data-ev="${e}" aria-pressed="${ev === e}">${esc(w.ev[e])}</button>`).join("")}</div>${whenBody}</div>
 <div class="fld"><div class="caps">${esc(w.days)}</div><div class="chips">${DAYS.map((d, i) => `<button data-day="${d}" aria-pressed="${days.includes(d)}">${esc(w.wd[i])}</button>`).join("")}</div></div>
 <div class="fld"><div class="caps">${esc(w.what)}</div>${acts}${picker}</div>
 ${ifBlock}
@@ -9667,6 +9701,27 @@ ${cur !== null ? `<p class="hint" data-vnow>${esc(w.nowVal(`${fmtNum(cur)}${unit
 <div class="caps">${esc(w.limit)}</div>${seg("vop", ["above", "below"].map((x) => [x, w.op[x]]), v.op)}
 <div class="step"><button data-vx="${k}:-1" aria-label="−">−</button><span>${esc(`${fmtNum(v.x)}${unit}`)}</span><button data-vx="${k}:1" aria-label="+">+</button></div>
 ${k === "w" ? `<div class="caps">${esc(w.hold)}</div><div class="step"><button data-vf="-1" aria-label="−">−</button><span>${esc(w.holdTxt(v.for_min || 0))}</span><button data-vf="1" aria-label="+">+</button></div><p class="hint">${esc(w.valueHow)}</p>` : ""}</div>`;
+      }
+      /** «Движение / дверь» as a trigger: the kind (only the ones the house has), which sensors, on / off, «держится». */
+      stateHtml(v) {
+        const w = this.w;
+        const all = this.data.targets.binaries || [];
+        if (!all.length) return `<p class="tn">${esc(w.noBinaries)}</p>`;
+        const kinds = STATE_KINDS.filter((x) => all.some((s) => s.kind === x));
+        const kind = kinds.includes(v.kind) ? v.kind : kinds[0];
+        const mine = all.filter((s) => s.kind === kind);
+        const sel = new Set(v.sensors || []);
+        const bare = (s) => clientName(s.name, s.entity_id);
+        const label = (s) => (s.area ? `${this.room(s.area)}${mine.filter((x) => x.area === s.area).length > 1 ? ` · ${bare(s)}` : ""}` : bare(s));
+        const live = (s) => {
+          const st = this._hass?.states[s.entity_id]?.state ?? s.state;
+          return st === "unavailable" || st === "unknown" || st == null ? w.noData : w.stTo[kind][STATE_ON.includes(st) ? "on" : "off"];
+        };
+        const seg = (attr, opts, on) => `<div class="seg" role="group">${opts.map(([x, l]) => `<button data-${attr}="${x}" aria-pressed="${x === on}">${esc(l)}</button>`).join("")}</div>`;
+        return `<div class="vbox">${kinds.length > 1 ? seg("sk", kinds.map((x) => [x, w.stKind[x]]), kind) : ""}
+<div class="caps">${esc(w.sensors)}</div><div class="chips">${mine.map((s) => `<button data-ss="${esc(s.entity_id)}" aria-pressed="${sel.has(s.entity_id)}">${esc(label(s))}<small>${esc(live(s))}</small></button>`).join("")}</div>
+${seg("sto", ["on", "off"].map((x) => [x, w.stTo[kind][x]]), v.to)}${kind === "media" && v.to === "off" ? `<p class="hint">${esc(w.stOne)}</p>` : ""}
+<div class="caps">${esc(w.hold)}</div><div class="step"><button data-vf="-1" aria-label="−">−</button><span>${esc(w.holdTxt(v.for_min || 0))}</span><button data-vf="1" aria-label="+">+</button></div><p class="hint">${esc(w.stHow)}</p></div>`;
       }
       tmSel(key, val) {
         const all = [...new Set([...Array.from({ length: 96 }, (_, i) => `${String(Math.floor(i / 4)).padStart(2, "0")}:${String((i % 4) * 15).padStart(2, "0")}`), val])].sort();
@@ -9985,6 +10040,9 @@ ${k === "w" ? `<div class="caps">${esc(w.hold)}</div><div class="step"><button d
             const s = this.data.targets.sensors || [];
             const kind = s.some((x) => x.kind === "temperature") ? "temperature" : s[0]?.kind || "temperature";
             r.when = { event: "value", kind, sensors: [], op: "above", x: KIND_X[kind], for_min: 0 };
+          } else if (e === "state") {
+            const b = this.data.targets.binaries || [];
+            r.when = { event: "state", kind: STATE_KINDS.find((k) => b.some((x) => x.kind === k)) || STATE_KINDS[0], sensors: [], to: "on", for_min: 0 };
           } else if (e === "presence") {
             r.when = { event: "presence", to: "away" };
             r.only_if = (r.only_if || []).filter((c) => c.if !== "home" && c.if !== "away");
@@ -10061,9 +10119,29 @@ ${k === "w" ? `<div class="caps">${esc(w.hold)}</div><div class="step"><button d
           redraw();
         });
         on("[data-vf]", (el) => {
-          const steps = [0, 5, 10, 15, 30, 60, 120, 240];
+          const steps = r.when.event === "state" ? STATE_HOLD : VALUE_HOLD;
           const at = steps.findIndex((m) => m >= (r.when.for_min || 0));
           r.when.for_min = steps[Math.max(0, Math.min(steps.length - 1, (at < 0 ? steps.length - 1 : at) + Number(el.dataset.vf)))];
+          redraw();
+        });
+        // «Движение / дверь»: the kind (its sensors start empty), a sensor on / off, the state it waits for.
+        const oneOnly = () => r.when.kind === "media" && r.when.to === "off";  // the agent's rule: «not playing» — one player
+        on("[data-sk]", (el) => {
+          Object.assign(r.when, { kind: el.dataset.sk, sensors: [] });
+          redraw();
+        });
+        on("[data-ss]", (el) => {
+          const e = el.dataset.ss;
+          const set = new Set(r.when.sensors || []);
+          if (set.has(e)) set.delete(e);
+          else if (oneOnly()) set.clear(), set.add(e);
+          else if (set.size < 8) set.add(e);
+          r.when.sensors = [...set];
+          redraw();
+        });
+        on("[data-sto]", (el) => {
+          r.when.to = el.dataset.sto;
+          if (oneOnly()) r.when.sensors = (r.when.sensors || []).slice(0, 1);
           redraw();
         });
         sr.querySelector("[data-addif]")?.addEventListener("change", (e) => {
@@ -10295,7 +10373,7 @@ ${k === "w" ? `<div class="caps">${esc(w.hold)}</div><div class="step"><button d
         this.bad = true;
         this.warn = false;
         if (!r.actions.length) this.msg = w.needAction;
-        else if ([r.when, ...(r.only_if || [])].some((x) => (x.event === "value" || x.if === "value") && !(x.sensors || []).length)) this.msg = w.needSensor;
+        else if ([r.when, ...(r.only_if || [])].some((x) => (x.event === "value" || x.event === "state" || x.if === "value") && !(x.sensors || []).length)) this.msg = w.needSensor;
         else if (!(r.days || DAYS).length) this.msg = w.needDay;
         else {
           this.busy = true;
