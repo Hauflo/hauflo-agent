@@ -38,6 +38,9 @@ _CONTROL = re.compile("[\x00-\x1f\x7f-\x9f  ]")
 # The classes an area card lays «Управление» out by (hauflo-cards.js AREA_CLASS): the family orders them as items.
 AREA_CLASSES = ("lights", "covers", "climate", "sockets", "media", "devices", "security", "camera", "settings", "buttons", "other")
 CLS = "cls:"
+# 399-59 Д-3: the order of the classes is for the whole house (one dashboard), not for a room: its key is `<dash>|*|cls`.
+HOUSE_VIEW = "*"
+HOUSE_SLOT = "cls"
 
 
 def slot(card: dict[str, Any]) -> str | None:
@@ -155,8 +158,16 @@ async def clean_items(hass: HomeAssistant, key: Any, items: Any) -> list[str] | 
     parsed = parse_key(key)
     if parsed is None or not isinstance(items, list):
         return None
-    view = await _view(hass, parsed[0], parsed[1])
-    allowed = items_of(hass, view, parsed[2]) if view is not None else None
+    if parsed[1] == HOUSE_VIEW:
+        from homeassistant.components.lovelace.const import LOVELACE_DATA  # noqa: PLC0415
+
+        data = hass.data.get(LOVELACE_DATA)
+        if parsed[2] != HOUSE_SLOT or parsed[0] not in getattr(data, "dashboards", {}):
+            return None
+        allowed = {f"{CLS}{k}" for k in AREA_CLASSES}
+    else:
+        view = await _view(hass, parsed[0], parsed[1])
+        allowed = items_of(hass, view, parsed[2]) if view is not None else None
     if allowed is None:
         return None
     out: list[str] = []

@@ -191,7 +191,7 @@ Set up in Hauflo → **Alarms**. A rule is: what happened → which sensors → 
 
 - **Push to the family’s phones** through the Home Assistant app. Critical alarms ring even in silent mode (iOS Critical Alerts, the Android alarm stream). They repeat until someone taps **Accept**; “back to normal” clears the notification. An action button does the obvious thing, such as “Shut off water”.
 - **Telegram** through [@hauflo_bot](https://t.me/hauflo_bot), for you, the engineer on duty or the client. Each person gets only the alarms of their own sites.
-- Every rule is an automation `hauflo_alarm_…` in this Home Assistant with an **Accept** switch, named “Alarm: <rule>”. It runs without Hauflo and without the agent, also when the internet is down, and stays after the integration is removed. A rule Home Assistant can't hold (a hand-formatted `automations.yaml`, changes closed by the owner) stays with the agent, and you're told so. An automation you edited by hand is never overwritten.
+- Every rule is an automation in this Home Assistant with an **Accept** switch, named “Alarm: <rule>” (its id in `automations.yaml` is `hauflo_alarm_…`; the entity id Home Assistant gives it comes from the name, e.g. `automation.avariia_…`, and is never renamed). It runs without Hauflo and without the agent, also when the internet is down, and stays after the integration is removed. A rule Home Assistant can't hold (a hand-formatted `automations.yaml`, changes closed by the owner) stays with the agent, and you're told so. An automation you edited by hand is never overwritten.
 - Alarms go by push and Telegram only; email is not an alarm channel.
 
 To watch any other entity (a boiler fault, ventilation, a battery), give it the label **Hauflo monitoring** in Home Assistant.

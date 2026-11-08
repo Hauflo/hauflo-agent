@@ -202,3 +202,15 @@ async def test_kept_after_a_restart_of_the_integration(hass: HomeAssistant, hass
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
     assert (await (await client.get("/api/hauflo/order")).json())["order"] == {KEY: ["light.c", "light.a"]}
+
+
+async def test_class_order_is_for_the_whole_house(hass: HomeAssistant, hass_client, entry) -> None:
+    """399-59 Д-3: the order of the classes is one for the house: `<dash>|*|cls`, only the classes, only a dashboard that is there."""
+    client = await hass_client()
+    key = "hauflo-home|*|cls"
+    got = await (await client.post("/api/hauflo/order", json={"key": key, "items": ["cls:climate", "cls:lights", "cls:bogus", "light.a", "cls:climate"]})).json()
+    assert got["order"][key] == ["cls:climate", "cls:lights"]
+    assert (await client.post("/api/hauflo/order", json={"key": "hauflo-nope|*|cls", "items": ["cls:lights"]})).status == 400
+    assert (await client.post("/api/hauflo/order", json={"key": "hauflo-home|*|lights", "items": ["cls:lights"]})).status == 400
+    got = await (await client.post("/api/hauflo/order", json={"key": key, "items": []})).json()
+    assert key not in got["order"]

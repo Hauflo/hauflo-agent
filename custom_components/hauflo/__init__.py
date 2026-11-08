@@ -2967,6 +2967,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
     except Exception as err:  # noqa: BLE001 — never stops the agent
         agent.insights = None
         degrade("insights", err)
+    # The stock-card table (www/stock.json) is read once and cached (stock.table): warmed here off the event loop — its
+    # first use is inside a request (the deploy plan's guarded entities), and HA flags a file read in the loop
+    # («Detected blocking call to open», ha-fresh 07.11).
+    await hass.async_add_executor_job(stock.table)
     if not hass.data.get(DATA_NOTIFY_VIEWS):
         hass.data[DATA_NOTIFY_VIEWS] = True
         hass.http.register_view(notify.NotifyView(lambda: _engine(hass)))

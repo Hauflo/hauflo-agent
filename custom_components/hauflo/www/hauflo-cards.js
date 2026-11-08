@@ -955,7 +955,52 @@ ${HFROW_CSS}@container (max-width:440px){.scn.hfrow button{flex-direction:column
   const rowAlarms = (row) => [].concat(row?.alarms || []).filter((x) => typeof x === "string");
   const rowAlarm = (hass, row) => rowAlarms(row).map((id) => st(hass, id)).find((a) => a && a.state === "on");
   const brightnessPct = (s) => (s && s.state === "on" ? (num(s.attributes.brightness) !== undefined ? Math.round((num(s.attributes.brightness) / 255) * 100) : 100) : 0);
-  const call = (hass, domain, service, data) => hass.callService(domain, service, data);
+  /** Д-1 (399, 08.11): a lamp fed by a wall relay that is off, a device whose radio sleeps — HA takes the command, nothing
+   * moves, the tile stays as it was and the family taps again and again. After a command that must change ONE entity
+   * (on / off / open / close, a mode, a value) its state and attributes are compared 8 s later: unchanged and still
+   * reachable — one toast names the device (Apple Home: «Нет ответа»). Never a false alarm where HA itself changes the
+   * state at once (`assumed_state`, a KNX actuator without a status address), where the value asked for is already there,
+   * where HA rejected the call (its own toast), or where a newer command on the same entity took over (a slider's drag,
+   * a second tap). Scenes, scripts, buttons and players (a TV takes long) are not watched. */
+  const REPLY_MS = 8000;
+  const REPLY_SVC = new Set(["turn_on", "turn_off", "toggle", "open_cover", "close_cover", "set_cover_position", "set_cover_tilt_position", "set_hvac_mode", "set_temperature", "set_preset_mode", "set_fan_mode", "set_percentage", "set_value", "select_option", "lock", "unlock", "set_humidity", "set_valve_position"]);
+  const REPLY_SKIP = new Set(["scene", "script", "button", "input_button", "automation", "media_player", "remote", "notify", "camera"]);
+  const REPLY_SAME = { temperature: "temperature", position: "current_position", tilt_position: "current_tilt_position", percentage: "percentage", humidity: "humidity", valve_position: "current_position", preset_mode: "preset_mode", fan_mode: "fan_mode", brightness_pct: (s) => Math.round(((num(s.attributes.brightness) ?? 0) / 255) * 100), value: (s) => s.state, option: (s) => s.state, hvac_mode: (s) => s.state };
+  const REPLY_T = {};
+  const replyShape = (s) => s.state + "|" + JSON.stringify(Object.fromEntries(Object.entries(s.attributes).filter(([k]) => !/^(friendly_name|icon|entity_picture|attribution|supported_|device_class|state_class|unit_of|restored|assumed_state|.*_modes$|.*_list$|options|min|max|step|mode$|color_mode$|last_)/.test(k)).sort()));
+  const watchReply = (hass, domain, service, data, p) => {
+    if (!REPLY_SVC.has(service)) return;
+    const ids = [].concat(data?.entity_id ?? []).filter((x) => typeof x === "string");
+    const id = ids.length === 1 ? ids[0] : "";
+    const s0 = id && hass?.states?.[id];
+    if (!s0 || REPLY_SKIP.has(id.split(".")[0]) || s0.state === "unavailable" || s0.attributes.assumed_state) return;
+    // Asked for what is already there: «on» again, the set temperature once more — nothing is expected to move.
+    const keys = Object.keys(data).filter((k) => k !== "entity_id");
+    if (service === "turn_on" && s0.state === "on" && !keys.length) return;
+    if (service === "turn_off" && s0.state === "off") return;
+    if (/^(open|close)_cover$/.test(service) && s0.state === (service === "open_cover" ? "open" : "closed")) return;
+    if ((service === "lock" || service === "unlock") && s0.state === (service === "lock" ? "locked" : "unlocked")) return;
+    if (keys.length && keys.every((k) => REPLY_SAME[k] !== undefined && String(typeof REPLY_SAME[k] === "function" ? REPLY_SAME[k](s0) : s0.attributes[REPLY_SAME[k]]) === String(data[k]))) return;
+    const before = replyShape(s0);
+    let failed = false;
+    p?.catch?.(() => (failed = true));
+    clearTimeout(REPLY_T[id]);
+    REPLY_T[id] = setTimeout(() => {
+      delete REPLY_T[id];
+      const now = document.querySelector("home-assistant")?.hass?.states?.[id];
+      if (failed || !now || now.state === "unavailable" || replyShape(now) !== before) return;
+      okToast(`${nameOf(now, id)}: нет ответа от устройства`, true);
+    }, REPLY_MS);
+  };
+  const call = (hass, domain, service, data) => {
+    const p = hass.callService(domain, service, data);
+    try {
+      watchReply(hass, domain, service, data, p);
+    } catch {
+      // a watch is a hint, never in the way of the command
+    }
+    return p;
+  };
   /** A tap that sends a command (a scene, «Вкл./Выкл. все», ▲ ■ ▼): a tick and «отправлено» for a moment, as the KNX
    * preset buttons (final review 28.10: «нажал — непонятно, ушло ли»); «нет ответа от дома» when HA says the call
    * failed or nothing came back in 10 s. HA's own technical error toast is off for these calls. */
@@ -1557,6 +1602,11 @@ ${HFROW_CSS}@container (max-width:440px){.scn.hfrow button{flex-direction:column
     if (Array.isArray(c.rows)) out.rows = c.rows.map((r) => (r && Array.isArray(r.scenes) ? { ...r, scenes: orderSort(list, r.scenes) } : r));
     card._config = out;
   };
+  /** 399-59 Д-3: the key of the house's one order of the classes of «Управление» (`<dash>|*|cls`, agent order.py HOUSE_VIEW). */
+  const houseKey = (card) => {
+    const k = orderKey(card);
+    return k ? `${k.split("|")[0]}|*|cls` : "";
+  };
   /** Ids a card finds itself (an area's entities) in the block's order. */
   const orderIds = (card, ids) => orderSort(ORDER.data?.[orderKey(card)], ids, (x) => x);
   /** The cell of HA's grid a card sits in (a room tile is a card of its own: the tiles are ordered by CSS `order`). */
@@ -1759,19 +1809,28 @@ button:focus-visible{outline:2px solid var(--hf-ice);outline-offset:1px}
     let dirty = false;
     let inflight = null;
     const ids = () => [...new Set(secs.flatMap((s) => s.items.map((x) => x.id)))];
+    const hasCls = secs.some((s) => s.items.some((x) => x.id.startsWith(CLS)));
+    const kept = () => !!(ORDER.data?.[key] || (hasCls && ORDER.data?.[houseKey(card)]));
     const save = (items) => {
       clearTimeout(saveT);
       dirty = false;
       const run = (inflight || Promise.resolve()).then(async () => {
         try {
-          const r = await h.callApi("POST", "hauflo/order", { key, items });
+          // The classes (`cls:`) are the house's one order, the rest is this block's own.
+          const hk = houseKey(card);
+          const cls = items.filter((x) => x.startsWith(CLS));
+          if (hk && hasCls) {
+            const rc = await h.callApi("POST", "hauflo/order", { key: hk, items: cls });
+            ORDER.data = rc?.order || {};
+          }
+          const r = await h.callApi("POST", "hauflo/order", { key, items: hk ? items.filter((x) => !x.startsWith(CLS)) : items });
           ORDER.data = r?.order || {};
           orderSave();
           orderRedraw();
           if (orderOpen === host) {
             sheetToast(sr, w.saved);
             const reset = sr.querySelector("[data-reset]");
-            if (reset) reset.hidden = !ORDER.data?.[key];
+            if (reset) reset.hidden = !kept();
           }
           return true;
         } catch (e) {
@@ -1872,7 +1931,7 @@ button:focus-visible{outline:2px solid var(--hf-ice);outline-offset:1px}
 <div class="hd"><h2>${esc(w.title)} · ${esc(orderName(card))}</h2><button class="x" data-x aria-label="${esc(w.close)}"><ha-icon icon="mdi:close"></ha-icon></button></div>
 <p class="hint">${esc(w.hint)}</p>
 <div data-lists></div>
-<div class="ft"><button class="lnk" data-reset${ORDER.data?.[key] ? "" : " hidden"}>${esc(w.reset)}</button><span class="sp"></span><button class="b1" data-done>${esc(w.done)}</button></div></div>`;
+<div class="ft"><button class="lnk" data-reset${kept() ? "" : " hidden"}>${esc(w.reset)}</button><span class="sp"></span><button class="b1" data-done>${esc(w.done)}</button></div></div>`;
     lists();
     sr.querySelector("[data-x]").onclick = done;
     sr.querySelector("[data-done]").onclick = done;
@@ -2551,7 +2610,8 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
   const trimSep = (s) => String(s ?? "").replace(/^[\s,;·•|/\-–—:]+|[\s,;·•|/\-–—:]+$/g, "").trim();
   let TOAST_T;
   /** A short confirmation at the bottom (no button): «Сценарий «Вечер» включён». */
-  const okToast = (text) => {
+  /** `bad` — a note that something did NOT happen («нет ответа от устройства»): the alarm colour and «!», no tick. */
+  const okToast = (text, bad = false) => {
     document.getElementById("hf-undo")?.remove();
     clearTimeout(TOAST_T);
     const el = document.createElement("div");
@@ -2559,7 +2619,7 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
     el.className = "hf-ok";
     el.setAttribute("role", "status");
     el.style.cssText = "position:fixed;left:50%;transform:translateX(-50%);bottom:calc(20px + env(safe-area-inset-bottom));z-index:2147483000;display:flex;align-items:center;gap:10px;max-width:calc(100vw - 32px);min-height:48px;padding:10px 18px 10px 14px;border-radius:16px;background:var(--hf-charcoal);color:var(--hf-white);font:500 calc(15px*var(--hf-ts,1)) Onest,sans-serif;line-height:1.3;box-shadow:0 8px 28px var(--hf-shade-28)";
-    el.innerHTML = `<span aria-hidden="true" style="color:var(--hf-toast-ok);font-size:18px">✓</span><span>${esc(text)}</span>`;
+    el.innerHTML = `<span aria-hidden="true" style="color:var(${bad ? "--hf-alarm" : "--hf-toast-ok"});font-size:18px">${bad ? "!" : "✓"}</span><span>${esc(tr(text))}</span>`;
     document.body.appendChild(el);
     TOAST_T = setTimeout(() => el.remove(), 3000);
   };
@@ -2589,6 +2649,7 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
     [/^Текущее состояние (света и штор|штор|света) комнаты запомнится в сцене «(.+)»\. Сцена изменится и на настенных выключателях\.$/, (m, w, n) => `The room's ${w === "штор" ? "blinds" : w === "света" ? "lights" : "lights and blinds"} as they are now go into the scene «${n}». It changes on the wall switches too.`],
     [/^Команда ушла на выключатели\. Проверьте: нажмите «(.+)»\. Если сцена осталась прежней — у этих выключателей сохранение сцен выключено, спросите интегратора\.$/, "The command went to the switches. Check it: tap «$1». If the scene stayed as before, scene saving is off on these switches — ask your installer."],
   );
+  EN_RX.push([/^(.+): нет ответа от устройства$/, "$1: no response from the device"]);
   EN_RX.push([/^Авария: (\d+)$/, "Fault: $1"], [/^Неисправность: (.+)$/, "Problem: $1"], [/^Неисправностей: (\d+)$/, "Problems: $1"], [/^неисправность: (\d+)$/, "problem: $1"]);
   Object.assign(EN, { "Включить всё": "Turn all on", "Выключить всё": "Turn all off", "Часы": "Hours", "Минуты": "Minutes", "Защита от замерзания": "Frost protection", "Авария": "Fault" });
   Object.assign(EN, { "Свет у меня": "My light", "Потеплее": "Warmer", "Моя комната ›": "My room ›" });
@@ -5161,7 +5222,7 @@ ${settable ? "" : `<div class="ud">${coverButtons(coverKindOf(e, this._config), 
         // A long name's note in brackets goes to the second line: «Основной свет в коридоре (где…» cut on a phone (review round 2).
         const nb = name.length > 20 ? /^(.{6,}?)\s*\(([^()]{2,})\)\s*$/.exec(name) : null;
         const zoneTag = nb ? `${nb[2]} · ${zoneTagAll}` : zoneTagAll;
-        name = nb ? nb[1] : name;
+        name = nb ? trimSep(nb[1]) : name;
         return `<div class="pill ${on ? "on" : ""} ${settable ? "" : "solo"} ${unavailable ? "unavail" : ""}" data-e="${esc(e.entity)}" data-set="${settable ? 1 : 0}"><div class="f" style="width:${on && settable ? pct : 0}%"></div>
 <ha-icon icon="${esc(e.icon || (!String(e.entity).startsWith("light.") ? e.s.attributes.icon || "hauflo:power" : on ? "hauflo:bulb-on" : "hauflo:bulb"))}"></ha-icon><div class="tx"><div class="nm">${esc(name)}</div><div class="lv">${esc(zoneTag)}${stateBox(assumed(e.s) ? "" : nd(e.s) ? "нет связи" : on ? (settable ? `${pct}\u00a0%` : "вкл") : "выкл", settable ? ["100 %", "выкл"] : ["выкл"])}</div></div>${ruleBadge(this, e.entity, "rbell-mark")}</div>`;
       };
@@ -6341,7 +6402,10 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
   const areaClassOrder = (card) => {
     const c = card._raw || card._config || {};
     const base = [...(Array.isArray(c.order) ? c.order : []).flatMap((k) => AREA_ALIAS[k] || [k]), ...Object.keys(AREA_CLASS)].filter((k, n, a) => Object.hasOwn(AREA_CLASS, k) && a.indexOf(k) === n);
-    return orderIds(card, base.map((k) => CLS + k)).map((k) => k.slice(CLS.length));
+    // One order for the house (399-59 Д-3); an order kept per room by an earlier version stays until the house has its own.
+    const hk = houseKey(card);
+    const own = (hk && ORDER.data?.[hk]) || ORDER.data?.[orderKey(card)];
+    return orderSort(own, base.map((k) => CLS + k), (x) => x).map((k) => k.slice(CLS.length));
   };
   // The canon card a class is drawn with in «Крупно» (its own header says the class): lights / sockets — hauflo-lights,
   // blinds — hauflo-covers; `block` — the client's name of that block (Настройки → Вид), as on a KNX room.
@@ -6847,7 +6911,8 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
       const devN = dev?.name_by_user || dev?.name || "";
       if (devN && !/\p{L}/u.test(n.replace(/\([^()]*\)/g, "")) && !nameOf(s, id).toLowerCase().startsWith(n.toLowerCase())) {
         const key = /^(switch|light)\./.test(id) ? keyWord(id) : "";
-        return `${devN} ·\u00a0${[key, n].filter(Boolean).join(" ")}`;
+        // 399-59 Д-4: a bare note follows the device in brackets as it is («Выключатель (для шторы)»), never after a lone «·».
+        return key ? `${devN} ·\u00a0${[key, n].join(" ")}` : `${devN} ${n}`;
       }
       return n ? n[0].toUpperCase() + n.slice(1) : nameOf(s, id);
     }
@@ -6967,6 +7032,7 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
 .v.st.nolink .vn,.v.st.nolink .vt{color:var(--ink3)}.v.st.nolink i{background:var(--ink3);box-shadow:none}
 /* 399-52 «Компактно» = HA tile / Mushroom horizontal: 56 px rows, the icon in a tinted shape (its colour = the state), the
 row itself neutral; readings — rows too (icon · name · value); a thermostat's modes — icons (tile's HVAC-modes feature). */
+.mst{display:flex;align-items:center;gap:10px;margin-top:8px;min-width:0;flex-wrap:wrap}.mst .ms{font:400 13px Onest,sans-serif;color:var(--ink2);flex:1 1 auto;min-width:0}.mst .mbr{flex:1 1 120px;min-width:80px;max-width:100%;accent-color:var(--amberT)}.mst .mall{min-height:var(--hf-hit);padding:0 14px;border-radius:var(--hf-r-sm);font:500 13px Onest,sans-serif;color:var(--ink);box-shadow:inset 0 0 0 1px var(--line);max-width:100%}.mst .mall.arm{background:color-mix(in srgb,var(--amber) 22%,transparent)}
 .d.cp .sub{margin-top:12px}.d.cp .tg{padding:8px 10px;gap:10px}.d.cp .tg.on{background:transparent;box-shadow:inset 0 0 0 1px var(--hair)}
 .d.cp :is(.tg,.it,.cl)>ha-icon{width:36px;height:36px;border-radius:12px;align-items:center;justify-content:center;background:color-mix(in srgb,var(--ink) 8%,transparent);color:var(--ink2)}
 .d.cp .tg.on>ha-icon{background:color-mix(in srgb,var(--amber) 22%,transparent);color:var(--amberT)}.d.cp :is(.tg.warn,.it.bad)>ha-icon{background:color-mix(in srgb,var(--amber) 22%,transparent)}.d.cp :is(.tg.alarm,.it.alarm)>ha-icon{background:color-mix(in srgb,var(--alert) 22%,transparent)}
@@ -7061,6 +7127,29 @@ ${RULE_CSS}`;
       const on = s.state === "on";
       const br = on && d === "light" && num(s.attributes.brightness) !== undefined ? ` · ${Math.round(num(s.attributes.brightness) / 2.55)}\u00a0%` : "";
       return `<div class="tg${on ? " on" : ""}" data-info="${esc(id)}"><ha-icon icon="${esc(icon)}"></ha-icon><div class="tx"><div class="nm">${esc(this.label(id))}</div><div class="w">${esc(nd(s) ? this.word(s)[0] : w + br)}</div></div><button class="sw" data-tog="${esc(id)}" aria-label="Вкл/выкл"${nd(s) ? " disabled" : ""}><i></i></button></div>`;
+    }
+    /** 399-59 Д-5: «Компактно» loses nothing of «Крупно»: the class's master — a line with what is on and «Выключить весь свет»
+     * / «Включить всё» (lights, sockets) with the master dimmer, the blinds' «Открыть / Стоп / Закрыть» for all of them —
+     * as HA's light / cover group tile and Mushroom do. Not for one device: its own row is the master then. */
+    masterRow(cls, list) {
+      const h = this._hass;
+      const ids = list.filter((id) => h.states[id] && !AREA_GUARDED(h.states[id]) && !nd(h.states[id]));
+      if (ids.length < 2) return "";
+      const mids = esc(ids.join(","));
+      if (cls === "covers") {
+        const open = ids.filter((id) => h.states[id].state === "open").length;
+        const kind = coverBlockKind(ids.map((id) => ({ entity: id, s: h.states[id] })), {});
+        return `<div class="mst"><span class="ms">${esc(open ? LL(`${open} из ${ids.length} открыто`, `${open} of ${ids.length} open`) : LL("Все закрыты", "All closed"))}</span><div class="cv" data-mids="${mids}">${coverButtons(kind, "data-mcov")}</div></div>`;
+      }
+      const on = ids.filter((id) => h.states[id].state === "on");
+      const lightsOnly = cls === "lights" && ids.every((id) => id.startsWith("light."));
+      const [offL, onL] = lightsOnly ? [LL("Выключить весь свет", "Turn off all lights"), LL("Включить весь свет", "Turn on all lights")] : [LL("Выключить всё", "Turn off all"), LL("Включить всё", "Turn on all")];
+      const dim = on.filter((id) => id.startsWith("light.") && (h.states[id].attributes.supported_color_modes || []).some((m) => m !== "onoff"));
+      const lv = dim.map((id) => num(h.states[id].attributes.brightness)).filter((x) => x !== undefined).map((x) => x / 2.55);
+      const pct = lv.length ? Math.round(avg(lv)) : undefined;
+      const sum = on.length ? `${LL(`${on.length} из ${ids.length}`, `${on.length} of ${ids.length}`)}${pct !== undefined ? ` · ${pct}\u00a0%` : ""}` : LL("Выключен", "Off");
+      const dimmer = dim.length > 1 ? `<input class="mbr" type="range" min="1" max="100" step="1" value="${pct ?? 100}" data-mbr="${esc(dim.join(","))}" aria-label="${esc(LL("Общая яркость", "Master brightness"))}">` : "";
+      return `<div class="mst"><span class="ms">${esc(sum)}</span>${dimmer}<button class="mall${on.length ? " on" : ""}" data-mall="${on.length ? "turn_off" : "turn_on"}" data-mids="${mids}"${on.length ? ` data-ask="Точно? Выключить"` : ""} data-gh="${esc(on.length ? onL : offL)}">${esc(on.length ? offL : onL)}</button></div>`;
     }
     /** 399-52 «Компактно»: a player as one row (HA tile's media card with its play feature inline): art or icon, name, what
      * plays, play / pause (power when off); a tap — its dialog, a hold — our sheet, as every row. */
@@ -7325,7 +7414,7 @@ ${RULE_CSS}`;
           const items = ok.map((id) => ({ entity: id, name: this.label(id), ...(cls === "lights" && !id.startsWith("light.") ? { icon: h.states[id].attributes.icon || "hauflo:bulb" } : {}) }));
           return ok.length ? emb(e[0], `${cls}:${ok.join(",")}`, { entities: items, title: LL(...AREA_CLASS[cls]), block: e[1], ...lang }, true) : "";
         }
-        if (e) return `${cap(cls)}<div class="vals tgs">${list.map((id) => this.toggleRow(id)).join("")}</div>`;
+        if (e) return `${cap(cls)}${compact ? this.masterRow(cls, list) : ""}<div class="vals tgs">${list.map((id) => this.toggleRow(id)).join("")}</div>`;
         return `${cap(cls)}${bodies(kinds(list), cls)[cls] || ""}`;
       };
       const controlHtml = (list) => {
@@ -7512,6 +7601,38 @@ ${RULE_CSS}`;
           if (!this.member(id)) return;
           haptic(this);
           call(h(), "media_player", ["off", "standby"].includes(h().states[id].state) ? "turn_on" : "media_play_pause", { entity_id: id });
+        }),
+      );
+      // 399-59 Д-5: the compact class master — the ids it names are only the room's, never a protected one.
+      const mids = (el) => (el.dataset.mids || el.dataset.mbr || "").split(",").filter((id) => id && this.member(id) && h().states[id] && !AREA_GUARDED(h().states[id]));
+      root.querySelectorAll("button[data-mall]").forEach((b) =>
+        b.addEventListener("click", () => {
+          const ids = mids(b);
+          if (!ids.length) return;
+          if (b.dataset.mall === "turn_off" && b.dataset.arm !== "1") {
+            askShow(b, 1);
+            clearTimeout(this._armT);
+            this._armT = setTimeout(() => b.isConnected && b.dataset.arm === "1" && askShow(b, 0), 4000);
+            return;
+          }
+          haptic(this);
+          sendAck(this, b, "homeassistant", b.dataset.mall, { entity_id: ids });
+        }),
+      );
+      root.querySelectorAll("[data-mids] button[data-mcov]").forEach((b) =>
+        b.addEventListener("click", () => {
+          const ids = mids(b.parentElement);
+          if (!ids.length || !["open_cover", "close_cover", "stop_cover"].includes(b.dataset.mcov)) return;
+          haptic(this);
+          call(h(), "cover", b.dataset.mcov, { entity_id: ids });
+        }),
+      );
+      root.querySelectorAll("input[data-mbr]").forEach((r) =>
+        r.addEventListener("change", () => {
+          const ids = mids(r).filter((id) => h().states[id].state === "on");
+          if (!ids.length) return;
+          haptic(this);
+          call(h(), "light", "turn_on", { entity_id: ids, brightness_pct: Math.max(1, Math.min(100, Number(r.value) || 1)) });
         }),
       );
       root.querySelectorAll("button[data-cover]").forEach((b) =>
@@ -10648,7 +10769,7 @@ details.pro{color:var(--eh-ink,var(--primary-text-color))}.ed .lim{margin-left:a
           if (v.scene_layout && out.scenes === undefined) out.scenes = v.scene_layout;
           if (v.scene_layout && out.cover_scenes === undefined) out.cover_scenes = v.cover_scene_layout || v.scene_layout;
           // The blocks the client may rename, each with the title the integrator's deploy gave it (the first one seen).
-          if (typeof v.block === "string" && typeof v.type === "string" && v.type.startsWith("custom:hauflo-") && !(v.block in (out._blocks ||= {}))) out._blocks[v.block] = String(v.title || v.block);
+          if (typeof v.block === "string" && typeof v.type === "string" && v.type.startsWith("custom:hauflo-") && !(v.block in (out._blocks ||= {}))) out._blocks[v.block] = String(v.title || (v.type === "custom:hauflo-area" && Object.hasOwn(AREA_BLOCK, v.block) ? AREA_BLOCK[v.block][langOf(h) === "en" ? 1 : 0] : v.block));
           // 399-36: other integrations' devices (hauflo-area) large or one row each — the first such card says the default.
           if (v.type === "custom:hauflo-area" && out.area === undefined) out.area = v.compact === true ? "compact" : "large";
           if (v.type === "custom:hauflo-climate" && v.size_class && !v.zones) {

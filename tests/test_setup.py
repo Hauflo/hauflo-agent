@@ -49,6 +49,15 @@ async def test_link_entity_follows_the_link(hass: HomeAssistant, entry) -> None:
     assert hass.states.get(link).state == STATE_OFF
 
 
+async def test_the_stock_table_is_read_at_setup_off_the_loop(hass: HomeAssistant, entry) -> None:
+    """www/stock.json is cached by setup (executor): its first use in a request would be a file read inside the event
+    loop, which HA flags («Detected blocking call to open», ha-fresh 07.11)."""
+    from custom_components.hauflo import stock
+
+    assert stock.table.cache_info().currsize == 1
+    assert stock.table()["guarded"]["domains"]
+
+
 async def test_diagnostics_redact_the_secret(hass: HomeAssistant, hass_client, entry) -> None:
     diag = await get_diagnostics_for_config_entry(hass, hass_client, entry)
     assert "top-secret" not in str(diag)

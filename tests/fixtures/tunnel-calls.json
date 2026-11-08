@@ -623,7 +623,19 @@
   {
    "file": "ha/foreignSceneMembers.ts",
    "kind": "rest",
+   "call": "GET /api/hauflo/foreign",
+   "params": {}
+  },
+  {
+   "file": "ha/foreignSceneMembers.ts",
+   "kind": "rest",
    "call": "POST /api/hauflo/foreign",
+   "params": {}
+  },
+  {
+   "file": "ha/foreignSceneMembers.ts",
+   "kind": "ws",
+   "call": "config/entity_registry/list",
    "params": {}
   },
   {
