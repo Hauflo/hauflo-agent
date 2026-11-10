@@ -760,13 +760,16 @@
       "message": "Авария: {title}"
     },
     "alarm_native_description": {
-      "message": "Создано Hauflo из правила аварии «{title}». Телефоны: {phones}. «Принято» — помощник {helper}, память о дребезге датчиков — {chatter}. Работает без Hauflo и без агента. Hauflo обновляет её при применении проекта и не перезаписывает изменённую вручную; удалить — «Настройки → Автоматизации и сцены»; все сразу, пока Hauflo установлен, — действие «Убрать аварии Hauflo» (hauflo.remove_alarms)."
+      "message": "Создано Hauflo из правила аварии «{title}». Телефоны: {phones}. «Принято» — помощник {helper}, «авария открыта» — {open}. Работает без Hauflo и без агента; о неисправном (дребезжащем) датчике и «нет связи» сообщает агент Hauflo. Hauflo обновляет её при применении проекта и не перезаписывает изменённую вручную; удалить — «Настройки → Автоматизации и сцены»; все сразу, пока Hauflo установлен, — действие «Убрать аварии Hauflo» (hauflo.remove_alarms)."
     },
     "alarm_native_nobody": {
       "message": "никому — только уведомление в HA"
     },
     "alarm_native_helper": {
       "message": "Hauflo · принято: {title}"
+    },
+    "alarm_native_open_helper": {
+      "message": "Hauflo · авария открыта: {title}"
     },
     "alarm_native_accept": {
       "message": "Принято"
@@ -801,12 +804,6 @@
     "alarm_native_done": {
       "message": "{button}: выполнено."
     },
-    "alarm_native_nodata_title": {
-      "message": "📵 {title}: нет связи"
-    },
-    "alarm_native_nodata": {
-      "message": "Нет данных {minutes} мин: {name}. Пока связь не вернётся, авария с него не придёт."
-    },
     "alarm_native_no_automation": {
       "message": "В configuration.yaml нет «automation: !include automations.yaml» — аварии остаются у агента Hauflo."
     },
@@ -814,7 +811,7 @@
       "message": "Hauflo: аварии остались в Home Assistant"
     },
     "alarm_native_kept": {
-      "message": "Hauflo удалён, его аварии продолжают работать: автоматизации «Авария: …» и помощники «Hauflo · принято: …» и «Hauflo · дребезг: …». Чтобы убрать их, удалите их как обычные автоматизации и помощники (Настройки → Автоматизации / Помощники)."
+      "message": "Hauflo удалён, его аварии продолжают работать: автоматизации «Авария: …» и помощники «Hauflo · принято: …» и «Hauflo · авария открыта: …». Чтобы убрать их, удалите их как обычные автоматизации и помощники (Настройки → Автоматизации / Помощники)."
     },
     "alarm_native_write_failed": {
       "message": "Не удалось записать automations.yaml — причина в журнале Home Assistant."
@@ -822,8 +819,17 @@
     "alarm_native_not_plain": {
       "message": "automations.yaml не в формате самого Home Assistant — ничего не удалено."
     },
-    "alarm_native_chatter_helper": {
-      "message": "Hauflo · дребезг: {title}"
+    "alarm_native_nodata_title": {
+      "message": "📵 {title}: нет связи"
+    },
+    "alarm_native_nodata": {
+      "message": "Нет данных {minutes} мин: {names}. Пока связь не вернётся, авария с них не придёт."
+    },
+    "alarm_native_nodata_back_title": {
+      "message": "✅ {title}: связь есть"
+    },
+    "alarm_native_nodata_back": {
+      "message": "Снова на связи: {names}."
     },
     "alarm_native_chatter_title": {
       "message": "📳 {title}"
@@ -831,8 +837,17 @@
     "alarm_native_chatter": {
       "message": "{name}: срабатывает и сбрасывается ({count}-й раз за {minutes} мин) — похоже на неисправный датчик. Уведомления правила приглушены, пока датчики не успокоятся на {minutes} мин; на экране они видны."
     },
-    "alarm_native_calm": {
-      "message": "Спокойно уже {minutes} мин, всё в норме — уведомления снова как обычно."
+    "alarm_native_chatter_ha": {
+      "message": "{name}: срабатывает и сбрасывается ({count}-й раз за {minutes} мин) — похоже на неисправный датчик. Проверьте его: аварии правила продолжают приходить."
+    },
+    "alarm_native_ring_title": {
+      "message": "🔔 {name}"
+    },
+    "alarm_native_ring": {
+      "message": "{name}: звонок в дверь"
+    },
+    "alarm_native_fired": {
+      "message": "{name}: сработало событие"
     }
   },
   "selector": {},

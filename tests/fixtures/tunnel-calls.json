@@ -326,6 +326,12 @@
   {
    "file": "ha/deploy.ts",
    "kind": "rest",
+   "call": "POST /api/hauflo/pairs",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "rest",
    "call": "POST /api/hauflo/protect",
    "params": {}
   },

@@ -30,6 +30,7 @@ from homeassistant.const import EVENT_STATE_CHANGED, STATE_UNAVAILABLE, STATE_UN
 from homeassistant.core import Context, Event, HomeAssistant, State, callback
 from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er, label_registry as lr, translation
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
+from homeassistant.helpers.start import async_at_started
 from homeassistant.util import dt as dt_util, slugify
 
 from .natural import natural_key
@@ -72,6 +73,38 @@ LIFE_SAFETY_KINDS = frozenset(_T["life_safety_kinds"])
 def chatter_window(rule: dict[str, Any] | None) -> int:
     """The rule's chatter window (seconds): short for life safety, the common one for the rest."""
     return CHATTER_WINDOW_LIFE if rule and rule.get("kind") in LIFE_SAFETY_KINDS else CHATTER_WINDOW
+
+
+# How long a rule's alarm state must hold before it counts (ISA-18.2 on-delay, HA's own `for:` — owner 09.11 «дребезг:
+# устойчивое on > 60 с»): the rule's own `hold_s` (seconds, 0 = at once), else the canon by its kind and its sources'
+# classes — life safety at once, doors / windows / motion / links and classless signals a minute, levels two (tuning
+# notify.hold; the app and Hauflo read the same canon). Several sources — the shortest: a leak never waits for a door.
+HOLD_CANON = _T["hold"]
+HOLD_MAX = HOLD_CANON["max_s"]
+# The shortest hold of a rule HA runs (its `for:`): a flicker of a few seconds is nothing there, even for a leak.
+NATIVE_HOLD = _T["native_hold_s"]
+
+
+def native_back(rule: dict[str, Any]) -> int:
+    """Seconds a source of a rule HA runs stays in normal before its «back» (its chatter window, at least NATIVE_HOLD —
+    ISA-18.2 / Nagios flap hysteresis on the return; HA's own `for:`); in alarm again sooner — the same open alarm."""
+    return max(NATIVE_HOLD, chatter_window(rule))
+
+
+def hold_value(v: Any) -> int | None:
+    """A rule's own hold as sent: a whole number of seconds 0..HOLD_MAX; anything else (absent, an older Hauflo) — None."""
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or v != int(v) or not 0 <= v <= HOLD_MAX:
+        return None
+    return int(v)
+
+
+def default_hold(hass: HomeAssistant | None, kind: str, sources: list[str], thresholds: dict[str, Any]) -> int:
+    """The canon hold of a rule with no own: its kind's, each source's (a level — level_s, a signal — by its class,
+    classless — default_s); the shortest."""
+    found = [HOLD_CANON["kinds"][kind]] if kind in HOLD_CANON["kinds"] else []
+    for eid in sources:
+        found.append(HOLD_CANON["level_s"] if eid in thresholds else HOLD_CANON["classes"].get(str(_device_class(hass, eid) or ""), HOLD_CANON["default_s"]))
+    return int(min(found)) if found else int(HOLD_CANON["default_s"])
 LINK_KINDS = ("connection", "link", "connectivity")
 # The HA app's push fails quietly — mobile_app logs it and the service call returns (narrow round 25.10, D4: «sent»
 # for a phone that never got it). Which phone a log line is about: the task sending to it.
@@ -102,6 +135,7 @@ PUSH_DAY_MAX = _T["push_day_max"]
 PUSH_DAY_CRITICAL = _T["push_day_critical"]
 # Repeats of an unaccepted alarm at the rule's pace this many times; then at most hourly until someone accepts.
 REPEAT_FAST = _T["repeat_fast"]
+REPEAT_SLOW = _T["repeat_slow_min"]
 SCOPES = ("all", "critical", "off")
 PHONE_ID = re.compile(r"^mobile_app_[a-z0-9_]+$")
 # A rule's kind and alarm states are plain HA words (security N-6 07.11, same rule as backend bodyEnums.badRuleField):
@@ -114,6 +148,9 @@ TEST_PER_MIN = _T["test_per_min"]
 GROUP_MIN = _T["group_min"]  # from this many devices at once — one message instead of one per device
 LIST_MAX = _T["list_max"]
 HEARTBEAT = re.compile(_T["heartbeat_words"], re.I)
+# A classless binary sensor named a fault («ГК ошибка», «Вентмашина Авария»): a problem (09.11 п.18 — the boiler picker
+# found nothing). The cards' FAULT_NAME, the entity_id's transliteration too.
+FAULT_NAME = re.compile(_T["fault_name_words"], re.I)
 # Alarm outputs (399-15, «исполнитель тревоги»): what a rule switches itself — a siren on when its alarm is told, off on
 # «Принято» or once the rule is back to normal. Only a domain of this table, only its services, only an entity the
 # integrator chose for this very rule (saved in it — the same trust as a picked source: the cloud checked it against
@@ -128,6 +165,10 @@ ENTITY_ID = re.compile(r"^[a-z_]+\.[a-z0-9_]+$")
 LEVELS: dict[str, dict[str, float]] = _T["levels"]
 LEVEL_STEP_SHARE = _T["level_step_share"]
 LEVEL_ABS_MAX = _T["level_abs_max"]
+# An event entity (a doorbell press) is one push per press: a second press within this many seconds is the same visit,
+# and an event older than `event_recent_s` is a restored state after a restart, not a press.
+RING_WINDOW = _T["ring_window_s"]
+RING_FRESH = TUNING["link"]["event_recent_s"]
 
 
 SOURCE_DOMAINS = ("binary_sensor.", "sensor.")
@@ -294,8 +335,11 @@ def in_alarm(rule: dict[str, Any], state: State | None, open_now: bool = False) 
     v = _value(state)
     if v is None:
         return False
-    slack = th["step"] if open_now else 0
-    return v < th["below"] + slack if "below" in th else v > th["above"] - slack
+    # Back strictly past the step, as HA's own numeric_state in the rule's automation (independent.py): battery < 20 →
+    # alarm, 25 still in it, > 25 → back.
+    if "below" in th:
+        return v < th["below"] or (open_now and v <= th["below"] + th["step"])
+    return v > th["above"] or (open_now and v >= th["above"] - th["step"])
 
 
 def level_text(rule: dict[str, Any], state: State | None) -> str:
@@ -430,6 +474,12 @@ def label(hass: HomeAssistant, entity_id: str, state: State | None = None) -> st
 
 
 @callback
+def _event_entity(data: Any) -> bool:
+    """State changes of event entities only (a doorbell press)."""
+    return str(data.get("entity_id") or "").startswith("event.")
+
+
+@callback
 def _automation_event(data: Any) -> bool:
     """State changes of automations only (the engine's watch of the alarm rules' own, H-1)."""
     return str(data.get("entity_id") or "").startswith("automation.")
@@ -484,10 +534,12 @@ def _clean_rules(raw: Any, hass: HomeAssistant | None = None, owns: Callable[[st
         repeat = max(0, min(_int(r.get("repeat_min")), 240))
         outputs = _clean_outputs(hass, r.get("outputs"))
         thresholds = _clean_thresholds(hass, r.get("thresholds"), sources)
+        kind = str(r.get("kind")) if WORD.match(str(r.get("kind") or "")) else "custom"
+        own_hold = hold_value(r.get("hold_s"))
         out["rules"].append(
             {
                 "id": str(r["id"]),
-                "kind": str(r.get("kind")) if WORD.match(str(r.get("kind") or "")) else "custom",
+                "kind": kind,
                 "title": str(r.get("title") or "Авария")[:80],
                 "sources": sources,
                 **({"picked": [s for s in sources if s in picked]} if any(s in picked for s in sources) else {}),
@@ -509,6 +561,9 @@ def _clean_rules(raw: Any, hass: HomeAssistant | None = None, owns: Callable[[st
                 ),
                 **({"outputs": outputs} if outputs else {}),
                 **({"thresholds": thresholds} if thresholds else {}),
+                # As sent (None — the canon's; Hauflo sees by the key that this agent knows holds) and the one used.
+                "hold_s": own_hold,
+                "hold": own_hold if own_hold is not None else default_hold(hass, kind, sources, thresholds),
             }
         )
     lang = out.get("lang") or (str(getattr(getattr(hass, "config", None), "language", "") or "ru") if hass is not None else "ru")
@@ -545,8 +600,14 @@ class NotifyEngine:
         # Open alarms survive an HA restart: an alarm already told isn't told again on start.
         self.active_store: HaufloStore = HaufloStore(hass, ACTIVE_KEY)
         self.config: dict[str, Any] = {"rules": [], "groups": []}
+        # Whether the rules are known at all: a stored config (even with no rules) or one Hauflo sent. A re-added agent
+        # before its first rules reports «not ready» and the cloud keeps its open alarms; a site that simply has no rules
+        # is ready — before 0.31 it never was, and the cloud never closed its «нет данных» (prod ГВГ, 10.11: 33 open).
+        self.ready = False
         self._unsub_state = None
         self._unsub_action = None
+        self._unsub_events = None
+        self._rang: dict[str, float] = {}  # event entity → monotonic time of its last push
         # incident key (rule id|entity) → {"since", "acked_by", "repeat": cancel, "count", "group"}
         self.active: dict[str, dict[str, Any]] = {}
         # rule id → {"since", "acked_by", "count", "repeat"}: many devices of one rule told as one message
@@ -563,6 +624,8 @@ class NotifyEngine:
         # «returned, unacknowledged» — SCADA expert 25.10: it vanished, nobody knew the boiler room had flooded).
         self.unacked_rtn: dict[str, dict[str, Any]] = {}
         self._chatter: dict[str, Callable[[], None]] = {}
+        # incident key → cancel: in alarm, not yet for the rule's hold (its `for:`) — started only if it stays.
+        self._holding: dict[str, Callable[[], None]] = {}
         self._flush_unsub = None
         self.sent_log: list[dict[str, Any]] = []
         # Set by the link to Hauflo: called when open alarms or the rules change.
@@ -593,6 +656,9 @@ class NotifyEngine:
         # Rules just handed to HA with an alarm the engine hadn't told yet (open when the rules came): told once by the
         # engine — HA's automation only sees alarms that start after it exists.
         self._native_first: set[str] = set()
+        # A rule HA runs, its alarm open over a restart of HA: whether its sources came back meanwhile (see _missed_back).
+        self._missed: dict[str, Any] = {}
+        self._missed_src: dict[str, list[str]] = {}  # … and its sources open then (the saved alarms)
         self._unsub_automations = None
         # rule id → the alarm outputs (sirens) this engine switched on for it: off again on «Принято», back to normal, or
         # when the rule loses them.
@@ -604,7 +670,9 @@ class NotifyEngine:
             self.on_change()
 
     async def async_start(self) -> None:
-        self.config = _clean_rules(await self.store.async_load(), self.hass, self.owns)
+        stored = await self.store.async_load()
+        self.config = _clean_rules(stored, self.hass, self.owns)
+        self.ready = stored is not None
         saved = await self.active_store.async_load() or {}
         self._seen_ok = {str(x) for x in saved.get("seen_ok") or []}
         self._pushes = {str(k): [float(t) for t in v if isinstance(t, (int, float))] for k, v in (saved.get("pushes") or {}).items() if isinstance(v, list)}
@@ -618,10 +686,25 @@ class NotifyEngine:
         self._unsub_action = self.hass.bus.async_listen(ACTION_EVENT, self._on_action)
         self._watch_helpers()
         self._unsub_automations = self.hass.bus.async_listen(EVENT_STATE_CHANGED, self._on_automation, event_filter=_automation_event)
+        self._unsub_events = self.hass.bus.async_listen(EVENT_STATE_CHANGED, self._on_event_entity, event_filter=_event_entity)
         self._apply()
+
+        self._missed_src = {}
+        for key, inc in self._restored.items():
+            if not inc.get("nodata"):
+                self._missed_src.setdefault(key.partition("|")[0], []).append(key.partition("|")[2])
+
+        async def _started(_hass: HomeAssistant) -> None:
+            for rule_id in list(self.native):
+                self._watch_missed(rule_id)
+
+        async_at_started(self.hass, _started)
 
     @callback
     def async_stop(self) -> None:
+        if self._unsub_events:
+            self._unsub_events()
+            self._unsub_events = None
         if self._unsub_automations:
             self._unsub_automations()
             self._unsub_automations = None
@@ -637,10 +720,12 @@ class NotifyEngine:
         if self._flush_unsub:
             self._flush_unsub()
             self._flush_unsub = None
-        for cancel in [*self._nodata_timers.values(), *self._chatter.values()]:
+        for cancel in [*self._nodata_timers.values(), *self._chatter.values(), *self._holding.values(), *self._missed.values()]:
             cancel()
         self._nodata_timers.clear()
         self._chatter.clear()
+        self._holding.clear()
+        self._missed.clear()
         snapshot = self._snapshot()
         self.active_store.async_delay_save(lambda: snapshot, 0)
         for inc in [*self.active.values(), *self.groups.values()]:
@@ -659,6 +744,7 @@ class NotifyEngine:
     async def async_set(self, raw: Any) -> dict[str, Any]:
         config = self.check(raw)
         self.config = config
+        self.ready = True
         await self.store.async_save(self.config)
         self._apply()
         self._changed()
@@ -692,6 +778,10 @@ class NotifyEngine:
         sources = sorted({s for r in self.config["rules"] if r["enabled"] for s in r["sources"]})
         if sources:
             self._unsub_state = async_track_state_change_event(self.hass, sources, self._on_state)
+        # The rules (and their holds) may have changed: a held alarm is weighed again below, from its state's own time.
+        for cancel in self._holding.values():
+            cancel()
+        self._holding.clear()
         # Already in alarm when the rules arrive: said once now (many at once — one message).
         # Told before an HA restart: taken back quietly; ended while HA was down — «снова в норме».
         for rule in self.config["rules"]:
@@ -711,7 +801,7 @@ class NotifyEngine:
                     if not in_alarm(rule, state, open_now=True):
                         self._clear(rule, state)
                 elif in_alarm(rule, state):
-                    self._start(rule, state)
+                    self._start_held(rule, state)
         # Incidents of rules or sources no longer there end quietly.
         keep = {f"{r['id']}|{s}" for r in self.config["rules"] if r["enabled"] for s in r["sources"]}
         for key in [k for k in self.active if k not in keep]:
@@ -745,6 +835,8 @@ class NotifyEngine:
                 self._seen_ok.add(new.entity_id)
                 self._save()
             was = in_alarm(rule, old, open_now=key in self.active)
+            if not alarm:
+                self._unhold(key)
             if new.state in NOT_A_STATE:
                 self._watch_nodata(rule, new.entity_id)
             elif (cancel := self._nodata_timers.pop(key, None)) is not None:
@@ -756,16 +848,51 @@ class NotifyEngine:
                 self._pending_back.setdefault(rule["id"], []).append(key)
                 self._later()
                 if alarm:
-                    self._start(rule, new)
+                    self._start_held(rule, new)
                 continue
             if key in self._restored and new.state not in NOT_A_STATE:
                 self._adopt(rule, key)
                 if not alarm:
                     self._clear(rule, new)
             elif alarm and not was and key not in self.active:
-                self._start(rule, new)
+                if old is not None and old.state in NOT_A_STATE and self._ha_misses(rule, old, new):
+                    self._native_first.add(rule["id"])
+                self._start_held(rule, new)
             elif not alarm and key in self.active and new.state not in NOT_A_STATE:
                 self._clear(rule, new)
+
+    @callback
+    def _on_event_entity(self, event: Event) -> None:
+        """A press of an event entity the house watches (a doorbell; a button / motion only once the integrator turned it
+        on — `labelled`): one push to the HA app by the alarms' own path, never an alarm state or «снова в норме»."""
+        new: State | None = event.data.get("new_state")
+        old: State | None = event.data.get("old_state")
+        if new is None or (old is not None and old.state == new.state):
+            return
+        at = dt_util.parse_datetime(new.state)
+        if at is None or at.tzinfo is None or abs((dt_util.utcnow() - at).total_seconds()) > RING_FRESH:
+            return  # unknown / unavailable / a restored old press
+        eid = new.entity_id
+        now = time.monotonic()
+        if now - self._rang.get(eid, -RING_WINDOW) < RING_WINDOW or not labelled(self.hass, eid):
+            return
+        self._rang[eid] = now
+        self.hass.async_create_task(self._send_ring(new))
+
+    async def _send_ring(self, state: State) -> None:
+        name, where = self._name(state.entity_id), self._where(state)
+        kind = "ring" if state.attributes.get("device_class") == "doorbell" else "fired"
+        try:
+            got = await translation.async_get_translations(self.hass, "en" if self._english() else "ru", "exceptions", [DOMAIN])
+        except Exception:  # noqa: BLE001 — words not loaded: the name alone still tells which
+            got = {}
+        text = got.get(f"component.{DOMAIN}.exceptions.alarm_native_{kind}.message") or "{name}"
+        title = got.get(f"component.{DOMAIN}.exceptions.alarm_native_ring_title.message") or "{name}"
+        # Not a rule: every phone that takes the alarms (scope «all»), normal priority, no repeats, nothing to accept.
+        rule = {"id": "event", "title": name, "priority": "normal", "recipients": {"all": True, "people": [], "groups": [], "phones": []}}
+        message = text.format(name=name)
+        head = title.format(name=name) + (f" — {where}" if where else "")
+        await self._send(rule, head, message, tag=self._tag(f"event|{state.entity_id}"), critical=False)
 
     # --- incidents ------------------------------------------------------------------------------
 
@@ -846,23 +973,64 @@ class NotifyEngine:
     async def _flush_nodata(self, rules: dict[str, dict[str, Any]]) -> None:
         lost, back = self._pending_nodata, self._pending_back
         self._pending_nodata, self._pending_back = {}, {}
+        t = await self._words() if lost or back else {}
         for rule_id, keys in lost.items():
             rule = rules.get(rule_id)
             keys = [k for k in keys if k in self.active]
             if not rule or not keys:
                 continue
             names = self._where_list(keys)
-            title = f"📵 {rule['title']}: нет связи" + (f" — {len(keys)} {_devices(len(keys))}" if len(keys) > 1 else "")
-            message = f"Нет данных {NODATA_AFTER // 60} мин: {names}. Пока связь не вернётся, авария с них не придёт."
-            await self._send(rule, title, message, tag=self._gtag(rule_id) + "_nd", critical=False)
-            self._note(message, title=title, notification_id=self._gtag(rule_id) + "_nd", rule=rule)
+            title = t.get("nodata_title", "📵 {title}").format(title=rule["title"]) + (f" — {len(keys)} {_devices(len(keys))}" if len(keys) > 1 else "")
+            message = t.get("nodata", "{names}").format(minutes=NODATA_AFTER // 60, names=names)
+            own = self._engine_says(rule_id)
+            await self._send(rule, title, message, tag=self._gtag(rule_id) + "_nd", critical=False, force=own)
+            self._note(message, title=title, notification_id=self._gtag(rule_id) + "_nd", rule=None if own else rule)
         for rule_id, keys in back.items():
             rule = rules.get(rule_id)
             if not rule:
                 continue
             if not any(k.startswith(rule_id + "|") and inc.get("nodata") for k, inc in self.active.items()):
                 persistent_notification.async_dismiss(self.hass, self._gtag(rule_id) + "_nd")
-            await self._send(rule, f"✅ {rule['title']}: связь есть", f"Снова на связи: {self._where_list(keys)}.", tag=self._gtag(rule_id) + "_nd", critical=False)
+            await self._send(rule, t.get("nodata_back_title", "✅ {title}").format(title=rule["title"]), t.get("nodata_back", "{names}").format(names=self._where_list(keys)),
+                             tag=self._gtag(rule_id) + "_nd", critical=False, force=self._engine_says(rule_id))
+
+    @callback
+    def _start_held(self, rule: dict[str, Any], state: State) -> None:
+        """An alarm state that counts only once it has held for the rule's hold (HA's `for:` in its automation): at once
+        when it has (0, or in it since long enough), else a timer — any change out of alarm cancels it (_unhold). The
+        flaps (ISA-18.2 chattering, Hauflo's «дребезжит») count only alarms that held."""
+        key = f"{rule['id']}|{state.entity_id}"
+        # A rule HA runs: held as its automation holds (never under NATIVE_HOLD), so the engine's «дребезжит» counts the
+        # alarms HA told, not flickers it ignored.
+        hold = max(NATIVE_HOLD, int(rule.get("hold") or 0)) if self._engine_says(rule["id"]) else int(rule.get("hold") or 0)
+        left = hold - (dt_util.utcnow() - state.last_changed).total_seconds()
+        if left <= 0:
+            if (cancel := self._holding.pop(key, None)) is not None:
+                cancel()
+            self._start(rule, state)
+            return
+        if key in self._holding:
+            return
+        rule_id, eid = rule["id"], state.entity_id
+
+        @callback
+        def _held(_now) -> None:
+            self._holding.pop(key, None)
+            now_rule = next((r for r in self.config["rules"] if r["id"] == rule_id and r["enabled"] and eid in r["sources"]), None)
+            st = self.hass.states.get(eid)
+            if now_rule is not None and st is not None and key not in self.active and in_alarm(now_rule, st):
+                self._start(now_rule, st)
+
+        self._holding[key] = async_call_later(self.hass, left, _held)
+
+    @callback
+    def _unhold(self, key: str) -> None:
+        if (cancel := self._holding.pop(key, None)) is not None:
+            cancel()
+            rule_id = key.partition("|")[0]
+            # Nothing of the rule held any more: a rule just handed to HA tells its alarms itself again (async_set_native).
+            if rule_id not in self._pending_start and not any(k.startswith(rule_id + "|") for k in self._holding):
+                self._native_first.discard(rule_id)
 
     @callback
     def _start(self, rule: dict[str, Any], state: State) -> None:
@@ -905,20 +1073,31 @@ class NotifyEngine:
 
         self._chatter[key] = async_call_later(self.hass, CHATTER_WINDOW, _calm)
 
+    async def _words(self) -> dict[str, str]:
+        """The engine's own words in the project's language (translations, R3-7 — not Russian in the code): the
+        ``alarm_native_*`` messages by their short key. Not loaded yet — empty; the callers say the names at least."""
+        try:
+            got = await translation.async_get_translations(self.hass, "en" if self._english() else "ru", "exceptions", [DOMAIN])
+        except Exception:  # noqa: BLE001 — words missing never stop an alarm
+            return {}
+        pre = f"component.{DOMAIN}.exceptions.alarm_native_"
+        return {k.removeprefix(pre).removesuffix(".message"): v for k, v in got.items() if k.startswith(pre)}
+
     async def _say_chatter(self, rule: dict[str, Any], state: State) -> None:
         name = self._name(state.entity_id)
         where = self._where(state)
         # The words of the rule's automation (translations, R3-7: the project's language, not only Russian).
         try:
-            got = await translation.async_get_translations(self.hass, "en" if self._english() else "ru", "exceptions", [DOMAIN])
-            pre = f"component.{DOMAIN}.exceptions.alarm_native_"
+            got = await self._words()
             # A missing key (translations not loaded yet) says the rule and the sensor rather than nothing (review 07.11).
-            t_title = got.get(pre + "chatter_title.message") or "{title}"
-            t_msg = got.get(pre + "chatter.message") or "{name}: {count}/{minutes}"
+            t_title = got.get("chatter_title") or "{title}"
+            # A rule HA runs (0.31) keeps telling its alarms there: never «приглушены», only the sensor's fault.
+            own = self._engine_says(rule["id"])
+            t_msg = got.get("chatter_ha" if own else "chatter") or "{name}: {count}/{minutes}"
             title = t_title.format(title=rule["title"]) + (f" — {where}" if where else "")
             message = t_msg.format(name=name, count=CHATTER_COUNT, minutes=max(1, CHATTER_WINDOW // 60))
-            await self._send(rule, title, message, tag=self._tag(f"{rule['id']}|{state.entity_id}") + "_chatter", critical=False)
-            self._note(message, title=title, notification_id=self._tag(f"{rule['id']}|{state.entity_id}") + "_chatter", rule=rule)
+            await self._send(rule, title, message, tag=self._tag(f"{rule['id']}|{state.entity_id}") + "_chatter", critical=False, force=own)
+            self._note(message, title=title, notification_id=self._tag(f"{rule['id']}|{state.entity_id}") + "_chatter", rule=None if own else rule)
         finally:
             self._calm_later(f"{rule['id']}|{state.entity_id}")  # the calm timer runs whatever the words did
 
@@ -999,8 +1178,11 @@ class NotifyEngine:
             rule = rules.get(rule_id)
             if not rule:
                 continue
-            if rule.get("outputs") and not self._in_ha(rule_id) and not any(k.startswith(rule_id + "|") and not inc.get("nodata") for k, inc in self.active.items()):
-                await self._switch(rule_id, [o["entity_id"] for o in rule["outputs"] if o["on_end"]], "on_end", "back to normal")
+            if not self._in_ha(rule_id) and not any(k.startswith(rule_id + "|") and not inc.get("nodata") for k, inc in self.active.items()):
+                if rule.get("outputs"):
+                    await self._switch(rule_id, [o["entity_id"] for o in rule["outputs"] if o["on_end"]], "on_end", "back to normal")
+                # Its automation off: the engine says this «back» — «авария открыта» ends with it (not said again).
+                await self._set_helper(rule_id, False, "open")
             grouped = [(k, s) for k, inc, s in items if inc.get("group")]
             single = [(k, s) for k, inc, s in items if not inc.get("group")]
             if grouped:
@@ -1060,7 +1242,7 @@ class NotifyEngine:
         """Time to the next repeat on the original schedule — a restart or a re-pair doesn't push it back
         (integrator run 25.10: the 11:41 repeat came at 11:46). After REPEAT_FAST repeats nobody accepted — hourly:
         every 5 minutes all night is ~290 pushes a phone, past HA's daily limit (owner 27.10)."""
-        full = timedelta(minutes=rule["repeat_min"] if count <= REPEAT_FAST else max(rule["repeat_min"], 60))
+        full = timedelta(minutes=rule["repeat_min"] if count <= REPEAT_FAST else max(rule["repeat_min"], REPEAT_SLOW))
         sent = dt_util.parse_datetime(last) if last else None
         return max(timedelta(seconds=5), full - (dt_util.utcnow() - sent)) if sent else full
 
@@ -1075,6 +1257,8 @@ class NotifyEngine:
         def _again(_now) -> None:
             self.hass.async_create_task(self._repeat(rule_id, entity_id))
 
+        if inc.get("repeat"):  # scheduled twice (taken back while its alarm was being told): one repeat, not two
+            inc["repeat"]()
         inc["repeat"] = async_call_later(self.hass, self._left(rule, inc.get("last"), int(inc.get("count") or 0)), _again)
 
     async def _repeat(self, rule_id: str, entity_id: str) -> None:
@@ -1139,6 +1323,8 @@ class NotifyEngine:
             if (r := next((x for x in self.config["rules"] if x["id"] == rule_id), None)) and self.groups.get(rule_id) is group:
                 self.hass.async_create_task(self._send_group(r, repeat=True))
 
+        if group.get("repeat"):
+            group["repeat"]()
         group["repeat"] = async_call_later(self.hass, self._left(rule, group.get("last"), int(group.get("count") or 0)), _again)
 
     @callback
@@ -1231,14 +1417,16 @@ class NotifyEngine:
             self._save()
             self._changed()
 
-    async def _set_helper(self, rule_id: str, on: bool) -> None:
+    async def _set_helper(self, rule_id: str, on: bool, which: str = "helper") -> None:
+        """The rule's «Принято» (``helper``) or «авария открыта» (``open``, 0.31) helper switched quietly."""
         rec = self.native.get(rule_id)
-        if not rec or (state := self.hass.states.get(rec["helper"])) is None or state.state == ("on" if on else "off"):
+        eid = (rec or {}).get(which)
+        if not eid or (state := self.hass.states.get(eid)) is None or state.state == ("on" if on else "off"):
             return
         try:
-            await self.hass.services.async_call("input_boolean", f"turn_{'on' if on else 'off'}", {"entity_id": rec["helper"]}, blocking=True, context=Context(parent_id=QUIET_PARENT))
+            await self.hass.services.async_call("input_boolean", f"turn_{'on' if on else 'off'}", {"entity_id": eid}, blocking=True, context=Context(parent_id=QUIET_PARENT))
         except Exception as err:  # noqa: BLE001 — the list is right either way; the automation may repeat once more
-            _LOGGER.warning("Hauflo: «accepted» helper %s not switched: %s", rec["helper"], err)
+            _LOGGER.warning("Hauflo: helper %s not switched: %s", eid, err)
 
     async def async_set_native(self, native: dict[str, dict[str, Any]]) -> None:
         """Which rules HA's automations run now (independent.async_sync). A rule handed over brings its open alarms: the
@@ -1248,7 +1436,13 @@ class NotifyEngine:
         self._watch_helpers()
         rules = {r["id"]: r for r in self.config["rules"]}
         for rule_id in self.native:
+            # An alarm held (not yet for the rule's hold) when its automation came or changed: HA's `for:` waits only
+            # for a change after that, so the engine tells it once when it holds.
+            if (rule_id not in before or before[rule_id].get("digest") != self.native[rule_id].get("digest")) and any(k.startswith(rule_id + "|") for k in self._holding):
+                self._native_first.add(rule_id)
             if rule_id in before:
+                if "open" in self.native[rule_id] and "open" not in before[rule_id]:  # 0.30 → 0.31: its open alarms are HA's to end
+                    await self._set_helper(rule_id, any(k.startswith(rule_id + "|") and not inc.get("nodata") for k, inc in self.active.items()), "open")
                 continue
             if rule_id in self._pending_start:
                 self._native_first.add(rule_id)
@@ -1270,6 +1464,21 @@ class NotifyEngine:
         if st is None:
             return "missing"
         return "ha" if st.state == "on" else "unavailable" if st.state in (STATE_UNAVAILABLE, STATE_UNKNOWN) else "off"
+
+    def _engine_says(self, rule_id: str | None) -> bool:
+        """A rule HA runs in the simple form (0.31: alarm, back, «Принято», repeat — its record has no chatter memory):
+        «нет связи» and a chattering sensor are still the engine's to tell."""
+        rec = self.native.get(str(rule_id)) if rule_id is not None else None
+        return rec is not None and "chatter" not in rec and self._in_ha(rule_id)
+
+    def _ha_misses(self, rule: dict[str, Any], old: State, new: State) -> bool:
+        """A new source of a rule HA runs in alarm straight out of a short no-data blip (a second sensor waking up wet)
+        while the rule's alarm is open: HA's automation keeps no memory of which sources it told, so it takes it for the
+        open one (gap < the back window) and says nothing — the engine tells it once, with the automation's tag."""
+        rec = self.native.get(rule["id"]) or {}
+        opn = self.hass.states.get(rec.get("open") or "")
+        return (self._engine_says(rule["id"]) and rule.get("kind") not in LINK_KINDS and opn is not None and opn.state == "on"
+                and (new.last_changed - old.last_changed).total_seconds() < native_back(rule))
 
     def _in_ha(self, rule_id: str | None) -> bool:
         """HA's own automation tells this rule's alarms now — its record, and the automation itself on in HA (H-1).
@@ -1312,6 +1521,85 @@ class NotifyEngine:
             group["repeat"]()
             group["repeat"] = None
         await self._set_helper(rule_id, bool(keys) and all(self.active[k].get("acked_by") for k in keys))
+        # Open alarms handed over: HA's automation says their «back» (and its «Принято» works). None in the engine while
+        # «авария открыта» is on (HA restarted, the sources not read yet or normal again meanwhile — acceptance 10.11):
+        # not switched off quietly — it ends with «снова в норме» once its sources hold normal (_missed_back).
+        if keys:
+            await self._set_helper(rule_id, True, "open")
+        else:
+            self._watch_missed(rule_id)
+        if keys:
+
+            async def _go(_hass: HomeAssistant) -> None:
+                await self._kick(rule_id)
+
+            async_at_started(self.hass, _go)
+
+    async def _kick(self, rule_id: str) -> None:
+        """An open alarm HA's automation didn't start (it was off, HA restarted, its config reloaded): its repeat and
+        button live in a run of it, and HA's `for:` triggers wait for a change — the run is started without a trigger
+        (HA's own «Выполнить»): no branch of its ``choose`` matches, its loop waits for the repeat / button / «Принято»."""
+        rec = self.native.get(rule_id) or {}
+        st = self._automation(rec) if rec.get("automation") else None
+        opn = self.hass.states.get(rec.get("open") or "")
+        if st is None or st.state != "on" or st.attributes.get("current") or opn is None or opn.state != "on":
+            return
+        ent = getattr(self.hass.data.get("automation"), "get_entity", lambda _e: None)(st.entity_id)
+        variables = dict((getattr(ent, "raw_config", None) or {}).get("trigger_variables") or {})
+        try:
+            await self.hass.services.async_call("automation", "trigger", {"entity_id": st.entity_id, "skip_condition": True, "variables": variables},
+                                                blocking=False, context=Context(parent_id=QUIET_PARENT))
+        except Exception as err:  # noqa: BLE001 — the alarm is on the phones and in the list; only its repeat is late
+            _LOGGER.warning("Hauflo: alarm automation %s not started: %s", st.entity_id, err)
+
+    @callback
+    def _watch_missed(self, rule_id: str, delay: float | None = None) -> None:
+        """After HA's start: an open alarm of a rule HA runs is looked at once its sources could have held normal for
+        the automation's back window (and the engine's group window on top)."""
+        if (cancel := self._missed.pop(rule_id, None)) is not None:
+            cancel()
+        if (rule := next((r for r in self.config["rules"] if r["id"] == rule_id), None)) is None:
+            return
+
+        @callback
+        def _go(_now: Any) -> None:
+            self._missed.pop(rule_id, None)
+            self.hass.async_create_task(self._missed_back(rule_id))
+
+        self._missed[rule_id] = async_call_later(self.hass, native_back(rule) + GROUP_WINDOW if delay is None else delay, _go)
+
+    async def _missed_back(self, rule_id: str) -> None:
+        """HA restarted with the rule's alarm open and its sources came back to normal meanwhile (acceptance 10.11): the
+        automation's «back» waits for a change from alarm it never saw, so «авария открыта» stayed on for good, nobody
+        was told. The engine ends it as the automation would: «снова в норме» with its tag, both helpers off, its notice
+        gone, the outputs' «on_end». A source still in alarm — the automation's own (its run, _kick); one back too
+        recently — looked at again when it has held the back window (HA may still say it itself)."""
+        rule = next((r for r in self.config["rules"] if r["id"] == rule_id and r["enabled"]), None)
+        rec = self.native.get(rule_id) or {}
+        opn = self.hass.states.get(rec.get("open") or "")
+        if rule is None or opn is None or opn.state != "on" or not self._in_ha(rule_id):
+            return
+        states = [st for e in rule["sources"] if (st := self.hass.states.get(e)) is not None]
+        if any(in_alarm(rule, st, open_now=True) for st in states):
+            return
+        told = [e for e in self._missed_src.get(rule_id) or [] if e in rule["sources"]] or rule["sources"]
+        normal = [st for st in states if st.entity_id in told and st.state not in NOT_A_STATE]
+        if len(normal) < len(told):  # one of them not read yet (KNX reads the bus later): looked at again
+            self._watch_missed(rule_id)
+            return
+        wait = native_back(rule) + GROUP_WINDOW - min((dt_util.utcnow() - st.last_changed).total_seconds() for st in normal)
+        if wait > 0:
+            self._watch_missed(rule_id, wait)
+            return
+        self._missed_src.pop(rule_id, None)
+        await self._set_helper(rule_id, False, "open")
+        await self._set_helper(rule_id, False)
+        persistent_notification.async_dismiss(self.hass, rec["automation"])
+        if rule.get("outputs"):
+            await self._switch(rule_id, [o["entity_id"] for o in rule["outputs"] if o["on_end"]], "on_end", "back to normal")
+        t = await self._words()
+        names = ", ".join(self._name(st.entity_id) + (f" · {where}" if (where := self._where(st)) else "") for st in normal[:LIST_MAX])
+        await self._send(rule, t.get("back_title", "✅ {title}").format(title=rule["title"]), t.get("back", "{name}").format(name=names), tag=rec["automation"], critical=False, force=True)
 
     @callback
     def _taken_back(self, rule: dict[str, Any]) -> None:
@@ -1649,12 +1937,19 @@ class NotifyEngine:
             # A panel's heartbeat / link signal without a class reads as connectivity (off = lost).
             if dc is None and s.domain == "binary_sensor" and HEARTBEAT.search(s.attributes.get("friendly_name") or s.entity_id):
                 dc = "connectivity"
+            # Named a fault, or watched as an alarm anyway («Hauflo мониторинг» label / «Авария» on in Hauflo's list —
+            # its «on» is a problem in the status, 09.11 п.22): offered as a problem source.
+            elif dc is None and s.domain == "binary_sensor" and (FAULT_NAME.search(s.attributes.get("friendly_name") or "") or FAULT_NAME.search(s.entity_id) or labelled(self.hass, s.entity_id)):
+                dc = "problem"
             # A level (sensor.*) of a class with a canon threshold (399-20): a battery %, CO2, humidity, temperature.
             if dc in ALARM_CLASSES or (s.domain == "sensor" and dc in LEVELS):
+                # «Авария» off in Hauflo's list (п.63.6): a rule never takes it (_source_ok) — not offered either.
+                if foreign.notify_flag(self.hass, s.entity_id) is False and not (self.owns and self.owns(s.entity_id)):
+                    continue
                 entry = er.async_get(self.hass).async_get(s.entity_id)
                 # Whose it is: Hauflo's own (suggested by itself) or another integration's — taken only when the
                 # integrator picks it (owner 27.10: a suggested rule rang about another integration's gas boiler).
-                candidates.append({"entity_id": s.entity_id, "name": s.attributes.get("friendly_name") or s.entity_id, "device_class": dc, "area": self._where(s), "state": s.state, "own": bool(self.owns and self.owns(s.entity_id)), "monitored": labelled(self.hass, s.entity_id), "platform": entry.platform if entry else "", **({"unit": str(s.attributes.get("unit_of_measurement") or "")} if s.domain == "sensor" else {})})
+                candidates.append({"entity_id": s.entity_id, "name": s.attributes.get("friendly_name") or s.entity_id, "device_class": dc, "area": self._where(s), "state": s.state, "own": bool(self.owns and self.owns(s.entity_id)), "monitored": labelled(self.hass, s.entity_id), "platform": entry.platform if entry else "", **({"original": entry.original_name} if entry and entry.original_name and entry.original_name != s.attributes.get("friendly_name") else {}), **({"unit": str(s.attributes.get("unit_of_measurement") or "")} if s.domain == "sensor" else {})})
         valves = [
             {"entity_id": s.entity_id, "name": s.attributes.get("friendly_name") or s.entity_id, "area": self._where(s)}
             for s in self.hass.states.async_all(["valve", "switch"])

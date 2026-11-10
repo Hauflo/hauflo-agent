@@ -153,3 +153,25 @@ async def test_push_times_are_the_houses_clock(hass: HomeAssistant) -> None:
         await eng._send_alarm(rule, hass.states.get("binary_sensor.leak"), "r1|binary_sensor.leak")
     assert pushed and "04:46" in pushed[-1] and "01:46" not in pushed[-1]
     assert dt_util.parse_datetime(eng.active["r1|binary_sensor.leak"]["since"]).utcoffset() is not None
+
+
+async def test_classless_fault_and_monitored_sensors_are_problem_candidates(hass: HomeAssistant) -> None:
+    """09.11 п.18/22: the boiler picker («проблема / безопасность») found nothing for Zont «ГК ошибка» — a classless
+    binary sensor was never a candidate. Named a fault, or watched (label / «Авария» on in Hauflo's list) → a problem
+    candidate; «Авария» off in the list → not offered (a rule would never take it); a plain one stays out."""
+    from custom_components.hauflo import foreign
+
+    eng = _engine(hass)
+    hass.states.async_set("binary_sensor.zont_gk_oshibka", "off", {"friendly_name": "Zont ГК ошибка"})
+    hass.states.async_set("binary_sensor.vent_avariia", "off", {})
+    hass.states.async_set("binary_sensor.zont_gk_state", "on", {"friendly_name": "Zont ГК Состояние"})
+    hass.states.async_set("binary_sensor.fan_on", "on", {"friendly_name": "Вентилятор"})
+    hass.states.async_set("binary_sensor.boiler_fault", "off", {"device_class": "problem", "friendly_name": "Котёл неисправность"})
+    said = {"binary_sensor.zont_gk_state": True, "binary_sensor.boiler_fault": False}
+    with patch.object(foreign, "notify_flag", side_effect=lambda h, eid: said.get(eid)):
+        by = {c["entity_id"]: c for c in eng.status()["candidates"]}
+    assert by["binary_sensor.zont_gk_oshibka"]["device_class"] == "problem"
+    assert by["binary_sensor.vent_avariia"]["device_class"] == "problem"
+    assert by["binary_sensor.zont_gk_state"]["device_class"] == "problem" and by["binary_sensor.zont_gk_state"]["monitored"] is True
+    assert "binary_sensor.fan_on" not in by
+    assert "binary_sensor.boiler_fault" not in by

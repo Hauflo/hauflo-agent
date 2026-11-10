@@ -245,7 +245,10 @@ button:active,[role="button"]:active,.pill:active,.p:active,.it:active{transform
 .scn{display:flex;flex-wrap:wrap;gap:8px}.scn button{height:auto;min-height:44px;padding:6px 15px 6px 12px;border-radius:var(--hf-r-sm);display:flex;align-items:center;gap:8px;flex:0 1 auto;max-width:100%;min-width:0;color:var(--ink);box-shadow:var(--eh-edge,inset 0 0 0 1px var(--line));background:var(--eh-glass,transparent);font:500 13px Onest,sans-serif;transition:background .3s,box-shadow .3s}
 .scn button span{min-width:0;white-space:normal;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-height:1.2;overflow-wrap:anywhere;hyphens:auto;hyphenate-limit-chars:9 4 4;text-align:left}.scn button ha-icon{color:var(--sacc);flex:0 0 auto;--mdc-icon-size:var(--hf-icon-s)}
 ${HFROW_CSS}@container (max-width:440px){.scn.hfrow button{flex-direction:column;justify-content:center;gap:4px;padding:8px 4px}.scn.hfrow button span{text-align:center}.scn.hfrow button.add{padding:8px 4px}}
-.scn button[data-pre]{max-width:calc((100% - 16px) / 3)}.scn button.go{background:color-mix(in srgb,var(--sacc) 26%,transparent)}.scn button.lit{background:color-mix(in srgb,var(--sacc) 30%,transparent);box-shadow:inset 0 0 0 2px var(--sacc);transition:background .3s,box-shadow .3s}.scn.light,.scn button[data-kind=light]{--sacc:var(--amber)}.scn.cover,.scn button[data-kind=cover]{--sacc:var(--ice)}.scn.mixed,.scn button[data-kind=mixed]{--sacc:var(--mint)}
+/* Scenes are compact (icon over a short word on a phone): four in a row from 340 px, so a room's «Ярко · Средне · Тускло · Выключить» is
+   ONE row on an iPhone (owner 07.11/10.11: 3+1 per room, two rooms = half a screen). Other rows keep the canon (420 px). */
+@container (min-width:340px){.scn.hfrow.hfrow>*{--sp:var(--s4,4)}}@container (min-width:420px){.scn.hfrow.hfrow>*{--sp:var(--s4,4)}}@container (min-width:540px){.scn.hfrow.hfrow>*{--sp:var(--s5,5)}}@container (min-width:660px){.scn.hfrow.hfrow>*{--sp:var(--s6,6)}}
+.scg{display:flex;flex-direction:column;gap:8px}.scg .sgc{font:500 11px/1.2 Onest,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3);padding:4px 2px 0}.scg .sgc:first-child{padding-top:0}.scn button.go{background:color-mix(in srgb,var(--sacc) 26%,transparent)}.scn button.lit{background:color-mix(in srgb,var(--sacc) 30%,transparent);box-shadow:inset 0 0 0 2px var(--sacc);transition:background .3s,box-shadow .3s}.scn.light,.scn button[data-kind=light]{--sacc:var(--amber)}.scn.cover,.scn button[data-kind=cover]{--sacc:var(--ice)}.scn.mixed,.scn button[data-kind=mixed]{--sacc:var(--mint)}
 [data-scene-add]:not(button){-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}.scn button.add{box-shadow:inset 0 0 0 1px var(--line);background:transparent;color:var(--ink2);padding:0 14px 0 10px}.scn button.add ha-icon{color:var(--ink2)}
 .scn button{position:relative}.scn button .src{flex:0 0 auto;font:500 11px/1 Onest,sans-serif;font-style:normal;letter-spacing:.04em;color:var(--ink3);pointer-events:none}
 .srow{margin-top:14px}.srow>.caps{display:block;margin-bottom:8px}
@@ -503,7 +506,7 @@ ${HFROW_CSS}@container (max-width:440px){.scn.hfrow button{flex-direction:column
   const alarmTodo = (dc, phone, pushed, valve) =>
     TODO[dc]
       ? `${dc === "moisture" && valve ? `Перекройте воду — кнопка «${valve}» ниже (или кран на вводе у счётчика). Потом проверьте место протечки.` : TODO[dc]}${pushed && dc === "moisture" ? " Уведомление отправлено на телефоны (получено ли — неизвестно, пока кто-то не нажмёт «Принять»); «Принять» снимает повторы." : ""}`
-      : `Это неисправность оборудования, людям она не опасна. ${phone ? "Позвоните сервису — телефон в «Настройках»." : "Сообщите своему интегратору."}${pushed ? " Уведомление отправлено на телефоны (получено ли — неизвестно, пока кто-то не нажмёт «Принять»)." : ""}`;
+      : `Это неисправность оборудования. ${phone ? "Позвоните сервису — телефон в «Настройках»." : "Сообщите сервису."}${pushed ? " Уведомление отправлено на телефоны (получено ли — неизвестно, пока кто-то не нажмёт «Принять»)." : ""}`;
   // --- English (owner 25.10: Dubai is the main market) ------------------------------------------------
   // The cards are written in Russian; with HA's language not Russian, a rendered card's own words are put into
   // English: whole phrases by the table, phrases with numbers by patterns, then known fragments. Names the
@@ -561,14 +564,14 @@ ${HFROW_CSS}@container (max-width:440px){.scn.hfrow button{flex-direction:column
     "Свернуть": "Collapse", "Назад": "Back", "← Назад": "← Back", "Вперёд": "Next", "Выполнено": "Done", "выполнить": "run", "Включить": "Turn on",
     "Перекройте воду: закройте кран на вводе (обычно у счётчика). Потом проверьте место протечки. Уведомление отправлено на телефоны (получено ли — неизвестно, пока кто-то не нажмёт «Принять»); «Принять» снимает повторы.": "Shut the water off: close the main valve (usually by the meter). Then check where it leaks. Sent to the phones (whether it arrived isn't known until someone taps “Accept”); “Accept” stops the repeats.",
     "Перекройте воду: закройте кран на вводе (обычно у счётчика). Потом проверьте место протечки.": "Shut the water off: close the main valve (usually by the meter). Then check where it leaks.",
-    "Это неисправность оборудования, людям она не опасна. Позвоните сервису — телефон в «Настройках».": "Equipment fault — no danger to people. Call service — the number is in “Settings”.",
-    "Это неисправность оборудования, людям она не опасна. Сообщите своему интегратору.": "Equipment fault — no danger to people. Tell your integrator.",
+    "Это неисправность оборудования. Позвоните сервису — телефон в «Настройках».": "Equipment fault. Call your service — the number is in “Settings”.",
+    "Это неисправность оборудования. Сообщите сервису.": "Equipment fault. Please contact your service.",
     "Проверьте оборудование или позвоните сервису. Уведомление отправлено на телефоны (получено ли — неизвестно, пока кто-то не нажмёт «Принять»).": "Check the equipment or call service. Sent to the phones (whether it arrived isn't known until someone taps “Accept”).",
     "Если видите дым или огонь — выйдите на улицу и звоните 112.": "If you see smoke or fire, go outside and call emergency services.",
     "Не включайте свет и огонь, откройте окна, выйдите и звоните 112.": "Don't switch lights or flames on; open the windows, get out and call emergency services.",
     "Откройте окна, выйдите на воздух и звоните 112.": "Open the windows, get outside and call emergency services.",
-    "Это неисправность оборудования, людям она не опасна. Позвоните сервису — телефон в «Настройках». Уведомление отправлено на телефоны (получено ли — неизвестно, пока кто-то не нажмёт «Принять»).": "Equipment fault — no danger to people. Call service — the number is in “Settings”. Sent to the phones (whether it arrived isn't known until someone taps “Accept”).",
-    "Это неисправность оборудования, людям она не опасна. Сообщите своему интегратору. Уведомление отправлено на телефоны (получено ли — неизвестно, пока кто-то не нажмёт «Принять»).": "Equipment fault — no danger to people. Tell your integrator. Sent to the phones (whether it arrived isn't known until someone taps “Accept”).",
+    "Это неисправность оборудования. Позвоните сервису — телефон в «Настройках». Уведомление отправлено на телефоны (получено ли — неизвестно, пока кто-то не нажмёт «Принять»).": "Equipment fault. Call your service — the number is in “Settings”. Sent to the phones (whether it arrived isn't known until someone taps “Accept”).",
+    "Это неисправность оборудования. Сообщите сервису. Уведомление отправлено на телефоны (получено ли — неизвестно, пока кто-то не нажмёт «Принять»).": "Equipment fault. Please contact your service. Sent to the phones (whether it arrived isn't known until someone taps “Accept”).",
     "Погода": "Weather", "Нет погоды": "No weather", "Ясно": "Clear", "Солнечно": "Sunny", "Облачно": "Cloudy", "Переменная облачность": "Partly cloudy", "Дождь": "Rain",
     "Ливень": "Downpour", "Гроза": "Thunderstorm", "Гроза, дождь": "Thunderstorm, rain", "Снег": "Snow", "Мокрый снег": "Sleet", "Град": "Hail", "Туман": "Fog",
     "Ветер": "Wind", "Ветер, облака": "Wind, clouds", "Опасность": "Danger", "Пн": "Mon", "Вт": "Tue", "Ср": "Wed", "Чт": "Thu", "Пт": "Fri", "Сб": "Sat", "Вс": "Sun",
@@ -591,11 +594,11 @@ ${HFROW_CSS}@container (max-width:440px){.scn.hfrow button{flex-direction:column
     "Поставьте шторы как нужно — сцена запомнит их положение.": "Set the blinds the way you want — the scene remembers where they are.",
     "Включите свет как нужно — сцена запомнит, что горит и как ярко.": "Set the lights the way you want — the scene remembers what is on and how bright.",
     "Запомнить как сейчас": "Save as it is now", "Отмена": "Cancel", "Введите название": "Enter a name", "Переименовать": "Rename", "Сохранить": "Save", "Удалить сцену": "Delete scene", "Убрать с панели": "Remove from the dashboard",
-    "Сцену настроил интегратор. Её можно переименовать и перезаписать; убрать — только с этой панели.": "Your installer set up this scene. You can rename it and save it again; removing only takes it off this dashboard.",
+    "Сцену создал сервис. Можно переименовать и перезаписать.": "Your service created this scene. You can rename it and save it again.",
     "Сцена сохранится в Home Assistant: на панели, в голосе и автоматизациях. На настенных выключателях KNX её не будет.": "The scene is saved in Home Assistant: on the dashboard, in voice and in automations. It won't be on the KNX wall switches.",
     "Сцена — та же, что на настенных выключателях.": "The same scene as on the wall switches.", "Детский профиль: сцены меняют взрослые.": "Child profile: the adults change the scenes.", "Запомнить как сейчас?": "Save as it is now?", "Запомнить": "Save", "Отправлено": "Sent", "Готово": "Done",
-    "Сработает, только если в ETS у актуаторов разрешено сохранение сцен. Если сцена не изменилась — спросите интегратора.": "This works only if scene saving is allowed in the actuators' ETS parameters. If the scene didn't change, ask your installer.",
-    "Название на панели. Пусто — снова название от интегратора.": "The name on this dashboard. Empty — your installer's name again.",
+    "Если сцена не сохранилась, сообщите сервису.": "If the scene didn't save, please contact your service.",
+    "Название на панели. Пусто — снова название от сервиса.": "The name on this dashboard. Empty — your service's name again.",
     "пол сейчас": "floor now", "пол": "floor", "тёплый пол": "floor heating", "климат": "climate", "Все ждут": "All idle", "Греет": "Heating", "Греет · клапаны открыты": "Heating · valves open", "Греет · клапан открыт": "Heating · valve open", "Нагрев · клапаны открыты": "Heating · valves open", "Нагрев · клапан открыт": "Heating · valve open", "клапан открыт": "valve open", "клапан закрыт": "valve closed", "греет": "heating", "держит": "holding", "поддерживает": "keeping", "Сейчас не греют": "Not heating now", "сейчас": "now", "Пол": "Floor", "В комнате": "Room",
     "Состояние": "Status", "Управление": "Controls", "Настройки": "Settings", "охлаждает": "cooling", "осушает": "drying", "вентилирует": "ventilating", "Электро": "Electric", "Тепловой насос": "Heat pump", "Мощность": "Performance",
   };
@@ -1486,7 +1489,7 @@ ${HFROW_CSS}@container (max-width:440px){.scn.hfrow button{flex-direction:column
     ru: {
       title: "Порядок", hint: "Перетащите за ⠿ пальцем или мышью или нажимайте стрелки вверх и вниз. Сохраняется сразу — для всех и при следующих применениях.",
       done: "Готово", saved: "Сохранено", reset: "Как в Hauflo", up: "Выше", down: "Ниже", close: "Закрыть",
-      error: "Не сохранилось — нет связи с Home Assistant или агент Hauflo устарел (нужен 0.16.2+).",
+      error: "Не удалось сохранить. Проверьте связь или сообщите сервису.",
       groups: "Группы", scenes: "Сцены", alarms: "Аварии", blocks: "Подблоки", menu: "Порядок элементов", menuHint: "Блоки этой страницы. Ещё можно долго нажать на заголовок блока.",
       names: { lights: "Свет", covers: "Шторы", sliders: "Свет", scenes: "Сцены", climate: "Тёплый пол", acs: "Кондиционеры", devices: "Устройства", status: "Датчики", area: "Комната", alert: "Аварии", room: "Комнаты" },
       items: (n) => `${n} ${n % 10 === 1 && n % 100 !== 11 ? "элемент" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? "элемента" : "элементов"}`,
@@ -1494,7 +1497,7 @@ ${HFROW_CSS}@container (max-width:440px){.scn.hfrow button{flex-direction:column
     en: {
       title: "Order", hint: "Drag by ⠿ with a finger or the mouse, or tap the up and down arrows. Saved at once — for everyone, and it stays over the next deploys.",
       done: "Done", saved: "Saved", reset: "Hauflo's order", up: "Up", down: "Down", close: "Close",
-      error: "Not saved — no link to Home Assistant, or the Hauflo agent is out of date (0.16.2+ needed).",
+      error: "Couldn't save. Check the connection or please contact your service.",
       groups: "Groups", scenes: "Scenes", alarms: "Alarms", blocks: "Sub-blocks", menu: "Order of items", menuHint: "The blocks of this page. Or long-press a block's title.",
       names: { lights: "Lights", covers: "Blinds", sliders: "Lights", scenes: "Scenes", climate: "Floor heating", acs: "Air conditioners", devices: "Devices", status: "Sensors", area: "Room", alert: "Alarms", room: "Rooms" },
       items: (n) => `${n} item${n === 1 ? "" : "s"}`,
@@ -2187,14 +2190,38 @@ button:focus-visible{outline:2px solid var(--hf-ice);outline-offset:1px}
     };
     const add = sceneCanAdd(hass, kind, room) ? sceneAddBtn(hass, kind) : "";
     if (!all.length) return { btns: [], add };
-    // ≥2 series of this kind (`series` on the buttons, set by the generator): the series' name goes into its buttons
-    // («Гардеробная · Яркий»), the room's own series (`series_head: false`) stays bare; no caption rows (owner 07.11, п.69б).
-    const pre = (x) => (x.series && x.series_head !== false ? `${x.series} · ${sceneLabel(hass, x)}` : "");
-    return { btns: all.map((x) => one(x, pre(x))), add };
+    // ≥2 series of this kind (`series` on the buttons, set by the generator — the room's own carries `series_head: false`):
+    // the scenes go under a caption row with the room's name, the own room first; the family's HA scenes without a series
+    // join the own room (owner 10.11: «подзаголовок с названием комнаты, если комнат ≥2; одна комната — без подзаголовка»;
+    // 07.11 was about the row's wrapping only, never about the captions). One series: a bare row.
+    const names = [...new Set(all.filter((x) => x.series).map((x) => x.series))];
+    const ownName = all.find((x) => x.series && x.series_head === false)?.series || "";
+    if (names.length < 2) return { btns: all.map((x) => one(x, "")), add };
+    const ordered = [ownName, ...names.filter((n) => n !== ownName)].filter(Boolean);
+    if (!ownName) ordered.unshift("");
+    const groups = ordered.map((n) => ({ label: n, btns: all.filter((x) => (x.series || (n === ownName ? ownName : "")) === n).map((x) => one(x, "")) })).filter((g) => g.btns.length);
+    return { btns: all.map((x) => one(x, "")), add, groups };
   };
   /** The scenes block is ONE wrapping row of buttons: the kinds one after another (light, blinds), each followed by its own «+»;
    * kinds differ by icon and colour only — no labels. `parts`: [{kind, btns, add}]. */
   const sceneFlow = (parts) => {
+    // Rooms' captions (≥2 series in some part): one caption + one row per room, the kinds' groups of the same room merged;
+    // the «+» buttons go to the first (own) room — a new scene is this room's.
+    if (parts.some((p) => p.groups)) {
+      const rows = [];
+      const byLabel = new Map();
+      parts.forEach((p) => (p.groups || [{ label: "", btns: p.btns }]).forEach((g) => {
+        if (!byLabel.has(g.label)) byLabel.set(g.label, []);
+        byLabel.get(g.label).push(...g.btns);
+      }));
+      const adds = parts.flatMap((p) => (p.add ? [p.add] : []));
+      [...byLabel.entries()].forEach(([label, btns], i) => {
+        const items = i === 0 ? [...btns, ...adds] : btns;
+        if (!items.length) return;
+        rows.push(`${label ? `<div class="sgc caps">${esc(label)}</div>` : ""}<div class="scn ${parts[0].kind} hfrow">${items.join("")}</div>`);
+      });
+      return rows.length ? `<div class="scg">${rows.join("")}</div>` : "";
+    }
     const items = parts.flatMap((p) => [...p.btns, ...(p.add ? [p.add] : [])]);
     return items.length ? `<div class="scn ${parts[0].kind} hfrow">${items.join("")}</div>` : "";
   };
@@ -2317,7 +2344,7 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-save>�
       const menu = (err = "") => {
         const may = canEdit(card._hass);
         draw(`<div class="t">${esc(nameOf(s, entity))}</div>
-${!may ? `<div class="n">${esc(tr("Детский профиль: сцены меняют взрослые."))}</div>` : family ? "" : `<div class="n">Сцену настроил интегратор. Её можно переименовать и перезаписать; убрать — только с этой панели.</div>`}
+${!may ? `<div class="n">${esc(tr("Детский профиль: сцены меняют взрослые."))}</div>` : family ? "" : `<div class="n">Сцену создал сервис. Можно переименовать и перезаписать.</div>`}
 ${err ? `<div class="e">${esc(err)}</div>` : ""}${may ? `<button class="b go" data-again>Запомнить как сейчас</button>${newSceneBtn(card, kind)}
 <button class="b" data-rename>Переименовать</button>
 <button class="b bad" data-del>${family ? "Удалить сцену" : "Убрать с панели"}</button>` : ""}${favBtn(entity)}<button class="b" data-x>Отмена</button>`);
@@ -2411,13 +2438,13 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
       // Nothing on the bus says whether the actuators stored it: what to do if nothing changed.
       const sent = () => {
         draw(`<div class="t">Сцена перезаписана</div>
-<div class="n">Команда ушла на выключатели. Проверьте: нажмите «${esc(label())}». Если сцена осталась прежней — у этих выключателей сохранение сцен выключено, спросите интегратора.</div>
+<div class="n">Команда ушла на выключатели. Проверьте: нажмите «${esc(label())}». Если сцена осталась прежней, сообщите сервису.</div>
 <button class="b go" data-x>Готово</button>`);
         sr.querySelector("[data-x]").addEventListener("click", close);
       };
       const rename = (err = "") => {
         draw(`<div class="t">Переименовать</div><input maxlength="40" aria-label="Название" value="${esc(label())}">
-<div class="n">Название на панели. Пусто — снова название от интегратора.</div>${err ? `<div class="e">${esc(err)}</div>` : ""}
+<div class="n">Название на панели. Пусто — снова название от сервиса.</div>${err ? `<div class="e">${esc(err)}</div>` : ""}
 <button class="b go" data-save>Сохранить</button><button class="b" data-x>Отмена</button>`);
         const input = sr.querySelector("input");
         input.focus();
@@ -2647,7 +2674,7 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
     [/^«(.+)» запомнит, как горит свет в комнате сейчас\. Прежняя сцена пропадёт\.$/, "«$1» will remember how the room's lights are now. The old scene is gone."],
     [/^«(.+)» теперь — как сейчас в комнате\.$/, "«$1» is now as the room is."],
     [/^Текущее состояние (света и штор|штор|света) комнаты запомнится в сцене «(.+)»\. Сцена изменится и на настенных выключателях\.$/, (m, w, n) => `The room's ${w === "штор" ? "blinds" : w === "света" ? "lights" : "lights and blinds"} as they are now go into the scene «${n}». It changes on the wall switches too.`],
-    [/^Команда ушла на выключатели\. Проверьте: нажмите «(.+)»\. Если сцена осталась прежней — у этих выключателей сохранение сцен выключено, спросите интегратора\.$/, "The command went to the switches. Check it: tap «$1». If the scene stayed as before, scene saving is off on these switches — ask your installer."],
+    [/^Команда ушла на выключатели\. Проверьте: нажмите «(.+)»\. Если сцена осталась прежней, сообщите сервису\.$/, "The command went to the switches. Check it: tap «$1». If the scene stayed as before, please contact your service."],
   );
   EN_RX.push([/^(.+): нет ответа от устройства$/, "$1: no response from the device"]);
   EN_RX.push([/^Авария: (\d+)$/, "Fault: $1"], [/^Неисправность: (.+)$/, "Problem: $1"], [/^Неисправностей: (\d+)$/, "Problems: $1"], [/^неисправность: (\d+)$/, "problem: $1"]);
@@ -3021,6 +3048,8 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
 .tx{position:relative;height:16px;margin:6px 34px 0 0;font:400 11px Onest,sans-serif;color:var(--ink3);font-variant-numeric:tabular-nums}.tx span{position:absolute;top:0;transform:translateX(-50%);white-space:nowrap}.tx .now{left:auto;right:-34px;transform:none}
 .tno{position:absolute;inset:0;display:grid;place-items:center;border-radius:var(--hf-r-sm);background:var(--track);font:400 13px Onest,sans-serif;color:var(--ink3)}`;
 
+  /** A card's entity list as the cards read it: a non-empty string, or an object with a string `entity`; the rest is dropped. */
+  const entList = (list) => (Array.isArray(list) ? list.filter((e) => (typeof e === "string" ? e.trim() !== "" : !!e && typeof e === "object" && typeof e.entity === "string" && e.entity !== "")) : []);
   class EHCard extends HTMLElement {
     constructor() {
       super();
@@ -3046,6 +3075,15 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
     }
     setConfig(config) {
       this._config = { ...config };
+      // ONE normaliser for every entity list: `- null`, `- {name: x}` without `entity`, numbers are dropped, so no site below
+      // meets a null (tester 10.11: «Cannot read properties of null» left a blank card). Nothing usable left = a message, not a blank.
+      this._cfgBad = false;
+      for (const k of ["entities", "groups", "lamps"]) {
+        if (!Array.isArray(this._config[k])) continue;
+        const list = entList(this._config[k]);
+        if (!list.length && this._config[k].length) this._cfgBad = true;
+        this._config[k] = list;
+      }
       this._raw = this._config; // as configured — the block's order is put over a copy (orderApply)
       this._sig = "";
       // A card of a room tab keeps its own width, never stretched over a wider column (item 32; `card_w` from the generator).
@@ -3114,7 +3152,16 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
       this.toggleAttribute("fit", fixedRows(this._config) !== undefined && !this._config.panel);
       orderApply(this);
       this._hfHid = false;
-      let body = this.render();
+      let body;
+      try {
+        if (this._cfgBad) console.warn("hauflo-cards:", this.localName, "no valid entity in the list (an entity_id or {entity: ...} is needed)");
+        body = this._cfgBad
+          ? `<div class="glass d"><p class="empty">${LL("Эта карточка не настроена. Сообщите сервису.", "This card isn't set up. Please contact your service.")}</p></div>`
+          : this.render();
+      } catch (err) {
+        console.error("hauflo-cards:", this.localName, err);
+        body = `<div class="glass d"><p class="empty">${LL("Карточка не отрисовалась. Сообщите сервису.", "The card failed to render. Please contact your service.")}${this._hfPreview ? `: ${esc(String(err?.message || err))}` : ""}</p></div>`;
+      }
       // HA's edit mode (preview): a card hidden for now stays visible to whoever edits — an empty grid slot said
       // nothing (п.70: the room's alert before «Сцены»); HA does the same for its cards hidden by conditions.
       if (this._hfHid && this._hfPreview && !body) body = `<div class="glass hfh"><span class="caps">${this.hiddenName() || ""}</span><p>${LL("Скрыто, пока нечего показать", "Hidden while there's nothing to show")}</p></div>`;
@@ -3445,7 +3492,7 @@ ${(c.alarms || []).length && ok ? `<div><span class="caps">Датчики</span>
         const n = (a, ru, en) => `${a.length} ${LL(ru, en)}`;
         draw(`<div class="t">${LL("Что проверяется", "What is checked")}</div>
 <div class="n">${LL("Заголовок решается по этим проверкам сверху вниз: первая с проблемой — и есть заголовок.", "The headline comes from these checks, top to bottom: the first one with a problem is the headline.")}</div>
-${row(k.open.length ? true : !k.alarms.length ? null : false, LL("Аварийные датчики", "Alarm sensors"), !k.alarms.length ? LL("не выбраны интегратором", "none chosen by the integrator") : k.open.length ? `${LL("авария", "alarm")}: ${k.open.length} ${LL("из", "of")} ${k.alarms.length}` : `${LL("в норме", "all clear")} · ${n(k.alarms, "шт.", "in total")}`, k.open)}
+${row(k.open.length ? true : !k.alarms.length ? null : false, LL("Аварийные датчики", "Alarm sensors"), !k.alarms.length ? LL("не заданы — сообщите сервису", "not set — please contact your service") : k.open.length ? `${LL("авария", "alarm")}: ${k.open.length} ${LL("из", "of")} ${k.alarms.length}` : `${LL("в норме", "all clear")} · ${n(k.alarms, "шт.", "in total")}`, k.open)}
 ${row(k.loud.length ? true : !k.sirens.length ? null : false, LL("Сирены и охрана", "Sirens and security"), !k.sirens.length ? LL("нет", "none") : k.loud.length ? `${LL("звучит", "sounding")}: ${k.loud.length} ${LL("из", "of")} ${k.sirens.length}` : `${LL("тихо", "quiet")} · ${n(k.sirens, "шт. (все siren.* и alarm_control_panel.*)", "in total (every siren.* and alarm_control_panel.*)")}`, k.loud)}
 ${k.other ? row(k.wet.length ? true : !k.other.length ? null : false, LL("Протечка — другие датчики", "Leaks — other sensors"), !k.other.length ? LL("нет", "none") : k.wet.length ? `${LL("мокро", "wet")}: ${k.wet.length} ${LL("из", "of")} ${k.other.length}` : `${LL("сухо", "dry")} · ${n(k.other, "шт. (влага, не в аварийных)", "in total (moisture, not alarm sensors)")}`, k.wet) : ""}
 ${row(k.problems.length ? true : null, LL("Неисправности — другие датчики", "Faults — other sensors"), k.problems.length ? `${LL("включены", "on")}: ${k.problems.length}` : LL("нет", "none"), k.problems)}
@@ -3876,20 +3923,11 @@ ${sceneFlow(parts)}</div>`;
     /** A setpoint changed by ± / the scale: shown at once, sent once ~0.6 s after the last touch (tester 28.10: 5 quick taps
      * were 5 bus commands, all from the same stale value). The pending value is what the next tap adds to. */
     setSetpoint(kind, v, eid) {
-      const key = `${eid || this._config.entity}|${kind || ""}`;
-      this._spq = this._spq || {};
-      this._spT = this._spT || {};
-      this._spq[key] = { v, at: Date.now() };
-      clearTimeout(this._spT[key]);
-      this._spT[key] = setTimeout(() => {
-        delete this._spT[key];
-        Promise.resolve(this.sendSetpoint(kind, v, eid)).catch(() => {});
-      }, 600);
+      spSet(this, `${eid || this._config.entity}|${kind || ""}`, v, () => this.sendSetpoint(kind, v, eid));
     }
     /** The value being set (not sent / not heard back yet, ≤10 s), else what the thermostat says. */
     pendSp(eid, kind, fallback) {
-      const q = this._spq?.[`${eid || this._config.entity}|${kind || ""}`];
-      return q && Date.now() - q.at < 10000 ? q.v : fallback;
+      return spPend(this, `${eid || this._config.entity}|${kind || ""}`, fallback);
     }
     /** The setpoint ± and the scale move: the one chosen of two (heating / cooling), else the climate's own. */
     sendSetpoint(kind, v, eid) {
@@ -3962,7 +4000,7 @@ ${sceneFlow(parts)}</div>`;
       const ids = [...new Set([c.entity, c.history, ...readingsOf(c).map((r) => r.entity)].filter(Boolean))];
       const hs = ids.filter((i) => hasHistory(this._hass, i));
       if (!hs.length) return "";
-      return `<a class="thist" data-own href="${esc(historyPath(hs))}">${esc(LL("История в HA", "History in HA"))}<ha-icon icon="mdi:chevron-right"></ha-icon></a>`;
+      return `<a class="thist" data-own href="${esc(historyPath(hs))}">${esc(LL("История", "History"))}<ha-icon icon="mdi:chevron-right"></ha-icon></a>`;
     }
     css() {
       return `${TCHART_CSS}${VALVE_CSS}${TONE_CSS}.seg{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:4px;padding:4px;border-radius:var(--hf-r-md);background:var(--hf-track)}.seg button{font:500 14px Onest,sans-serif;color:inherit;border:0;border-radius:var(--hf-r-sm);min-height:44px;padding:6px 4px;background:none;cursor:pointer}.seg button[aria-pressed="true"]{background:var(--hf-card-bg);box-shadow:0 1px 3px var(--hf-shade-18);font-weight:600}
@@ -7053,7 +7091,8 @@ ${RULE_CSS}`;
       const wh = id.startsWith("water_heater.");
       const off = s.state === "off";
       const range = !wh && num(a.temperature) === undefined && (num(a.target_temp_low) !== undefined || num(a.target_temp_high) !== undefined);
-      const target = num(a.temperature);
+      // The value being set by ± (not heard back yet), else the thermostat's — the same queue as the large card (spPend).
+      const target = spPend(this, id, num(a.temperature));
       const cur = num(a.current_temperature);
       const step = Math.max(num(a.target_temp_step) || (wh ? 1 : 0.5), 0.5);
       // What it DOES (greater than the mode, owner 28.10): hvac_action when it fits the temperatures; the mode small.
@@ -7546,11 +7585,15 @@ ${RULE_CSS}`;
           if (!this.member(id)) return;
           const s = h().states[id];
           const a = s.attributes;
-          const base = num(a.temperature);
+          // The pending value is what the tap adds to; shown at once, sent once after the last tap (owner 09.11: a boiler's
+          // compact row moved the setpoint «with a big delay» while the large card moved at once — it alone had the queue).
+          const base = spPend(this, id, num(a.temperature));
           if (base === undefined) return;
           const v = Math.min(num(a.max_temp) ?? 95, Math.max(num(a.min_temp) ?? 5, base + Number(b.dataset.d)));
           haptic(this);
-          call(h(), id.split(".")[0], "set_temperature", { entity_id: id, temperature: v });
+          spSet(this, id, v, () => call(h(), id.split(".")[0], "set_temperature", { entity_id: id, temperature: v }));
+          this._sig = "";
+          this._update();
         }),
       );
       root.querySelectorAll("button[data-mode]").forEach((b) =>
@@ -7817,7 +7860,7 @@ ${locks.length || opens.length ? `<div class="lst">${locks
 <div class="big"><span class="sh"><ha-icon icon="${icon}"></ha-icon></span><div><div class="st" data-own>${esc(word)}</div><div class="sub" data-own>${esc(sub)}</div></div></div>
 ${ss.length ? `<div class="lst">${ss.map((x) => `<div class="it ${x.s.state === "on" ? "bad" : nd(x.s) ? "deaf" : ""}" data-info="${esc(x.id)}"><ha-icon icon="${x.s.state === "on" ? "mdi:water-alert" : "mdi:water-outline"}"></ha-icon><div style="min-width:0"><div class="nm">${esc(name(x))}</div>${roomLine(this._hass, x.id, name(x))}<div class="w" data-own>${nd(x.s) ? LL("нет связи", "no signal") : x.s.state === "on" ? LL("протечка", "leak") : LL("сухо", "dry")}</div></div></div>`).join("")}</div>` : ""}
 ${vs.map((x) => { const [w, k] = this.valveWord(x.s); return `<div class="vl2" data-info="${esc(x.id)}"><ha-icon icon="${k === "closed" ? "mdi:valve-closed" : "mdi:valve-open"}" style="color:var(--${k === "closed" ? "ice" : "mint"})"></ha-icon><div class="tx"><div class="nm">${esc(name(x))}</div>${roomLine(this._hass, x.id, name(x))}<div class="w" data-own><span class="ackx">${[...new Set([w, ...VALVE_WORDS()])].map((v) => `<span${v === w ? "" : ' class="gh" aria-hidden="true"'}>${esc(v)}</span>`).join("")}</span></div></div>${`<button data-valve="${esc(x.id)}" data-k="${k}"${k === "nd" || k === "mv" ? ' class="vh" disabled aria-hidden="true" tabindex="-1"' : ""} data-ask="${esc(`${LL("Точно?", "Sure?")}|${k === "closed" ? LL("Перекрыть воду", "Shut off the water") : LL("Открыть воду", "Open the water")}`)}"><span data-own>${k === "closed" ? LL("Открыть воду", "Open the water") : LL("Перекрыть воду", "Shut off the water")}</span></button>`}</div>`; }).join("")}
-${!vs.length && ss.length ? `<div class="hint" data-own>${LL("Кран не найден: укажите его в карточке (valves) или отнесите к этой комнате в Home Assistant.", "No valve found: name it in the card (valves) or put it into this area in Home Assistant.")}</div>` : ""}
+${!vs.length && ss.length ? `<div class="hint" data-own>${LL("Кран не найден. Сообщите сервису.", "No valve found. Please contact your service.")}</div>` : ""}
 </div></div>`;
     }
     bind() {
@@ -8318,7 +8361,7 @@ button.off{min-height:40px;padding:0 14px;border-radius:20px;font:500 13px Onest
     ["hauflo-security", Security, "Hauflo · Охрана", "Охрана, замки, двери и окна"],
     ["hauflo-camera", Camera, "Hauflo · Камера", "Картинка с камеры, тап — трансляция"],
     ["hauflo-acs", Acs, "Hauflo · Кондиционеры", "Все кондиционеры: какие работают, температура, выключить все"],
-    ["hauflo-area", Area, "Hauflo · Комната HA", "Всё, что Home Assistant отнёс к комнате, — в стиле Hauflo"],
+    ["hauflo-area", Area, "Hauflo · Комната из Home Assistant", "Всё, что Home Assistant отнёс к комнате, — в стиле Hauflo"],
     ["hauflo-leaks", Leaks, "Hauflo · Защита от протечек", "Датчики протечки и кран любой интеграции: всё в порядке или где протечка"],
     ["hauflo-devices", Devices, "Hauflo · Устройства", "Вентиляторы, клапаны, замки, пылесосы, бойлеры…"],
   ];
@@ -8441,7 +8484,7 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
         more: (n) => ` и ещё ${n}`,
         mine: "Ваши правила", empty: "Пока ни одного — возьмите готовое выше или добавьте своё.", add: "Добавить",
         sugg: "Предложения", addOne: "Добавить",
-        sys: "Правила системы", sysHint: "Их настроил интегратор. Разрешённые можно включать и выключать.", sysLess: "Меньше", sysMore: "Больше", sysFixed: "Меняет только интегратор", sysErr: "Не получилось сохранить", sysLim: (a, b) => `от ${a} до ${b}`,
+        sys: "Правила системы", sysHint: "Их настроил сервис. Разрешённые можно включать и выключать.", sysLess: "Меньше", sysMore: "Больше", sysFixed: "Меняет только сервис", sysErr: "Не получилось сохранить", sysLim: (a, b) => `от ${a} до ${b}`,
         hab: {
           title: "По вашим привычкам", sw: "Предлагать по привычкам", make: "Сделать правилом", no: "Не предлагать",
           sub: (when, cls, of) => `Вручную ${when} ${cls} · ${of}`, at: (t) => `около ${t}`, sun: { sunset: "на закате", sunrise: "на рассвете" },
@@ -8459,24 +8502,24 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
         phone: "Чей будильник", iphoneOpt: "iPhone (через «Команды»)",
         iphoneTitle: "Один раз на iPhone — 2 минуты",
         iphoneSteps: [
-          "Откройте на iPhone приложение «Команды».",
-          "Внизу нажмите «Автоматизация», затем «+».",
-          "Выберите «Будильник» → «Остановлен» (или «Отложен»), будильник — «Любой». Включите «Запускать сразу» и нажмите «Далее».",
-          "«Новая пустая автоматизация» → «Добавить действие» → найдите «Home Assistant» → «Fire Event» («Отправить событие»).",
-          "В поле «Event Type» («Тип события») вставьте этот код, «Event Data» оставьте пустым:",
-          "Нажмите «Готово». Утром выключите будильник — шторы и свет сработают сами. На iPhone нужно приложение Home Assistant, вошедшее в этот Home Assistant.",
+          "Откройте на iPhone приложение «Команды». Нужно и приложение Home Assistant, вошедшее в этот Home Assistant (iOS 16.4 или новее).",
+          "Внизу откройте вкладку «Автоматизация» и нажмите «+» вверху справа (автоматизаций ещё нет — «Новая автоматизация»).",
+          "В списке выберите «Будильник» → «Остановлен» (или «Отложен»), будильник — «Любой». Отметьте «Запускать сразу» и нажмите «Далее».",
+          "Нажмите «Новая пустая автоматизация» → «Добавить действие». В поиске наберите «Home Assistant» и выберите «Запустить автоматизацию» (в приложении действие может называться по-английски — «Trigger automation»).",
+          "Нажмите на поле «Автоматизация» и выберите это правило:",
+          "Нажмите «Готово». Утром остановите будильник — шторы и свет сработают сами (в выбранные дни).",
         ],
         share: "Отправить инструкцию", shareTitle: "Будильник iPhone → Home Assistant", shared: "Инструкция скопирована — вставьте её в сообщение.",
-        iphoneLater: "Сохраните правило — здесь появится код для «Команд».",
+        iphoneLater: "Сохраните правило — здесь появится, что выбрать в «Командах».",
         androidSteps: ["Приложение Home Assistant → Настройки → Приложение → Управление датчиками → «Следующий будильник» → включить.", "Поставьте будильник на телефоне (приложение «Часы»).", "Нажмите «Проверить» — Hauflo покажет, какой будильник он видит."],
         chk: "Проверить", chkTitle: "Что видит Hauflo",
         chkAndroidOk: (t) => `Hauflo видит ближайший будильник: ${t}. Всё работает.`,
         chkAndroidNone: "Датчик есть, но будильника не видно — сделайте шаг 2: поставьте будильник на телефоне и откройте приложение Home Assistant. Потом нажмите «Проверить» ещё раз.",
         chkAndroidOff: "Датчик «недоступен»: либо на телефоне не стоит ни одного будильника (так приложение показывает пустое), либо телефон выключен или приложение давно не открывали. Поставьте будильник в «Часах», откройте приложение Home Assistant и нажмите «Проверить» ещё раз.",
         chkAndroidMissing: "Датчика будильника ещё нет — сделайте шаг 1: включите «Следующий будильник» в приложении Home Assistant.",
-        chkIphoneSave: "Правило ещё не сохранено — сохраните его, и появится код для «Команд» (шаг 5).",
+        chkIphoneSave: "Правило ещё не сохранено — сохраните его, и появится, что выбрать в «Командах» (шаг 5).",
         chkIphoneOk: (t) => `Команда с iPhone приходила: ${t}. Всё работает.`,
-        chkIphoneNo: "Пока ни разу не приходила команда с iPhone — сделайте шаги 1–6, потом остановите будильник и нажмите «Проверить» ещё раз. Быстрая проверка: в «Командах» откройте эту автоматизацию и нажмите «Запустить».",
+        chkIphoneNo: "С iPhone правило ещё ни разу не запускалось — сделайте шаги 1–6, поставьте будильник на ближайшую минуту, остановите его и нажмите «Проверить» ещё раз.",
         chkIphoneOff: "Правило выключено в Home Assistant — включите его в списке правил.",
         copy: "Скопировать", copied: "Скопировано",
         willRun: (x) => `Сработает: ${x}`, willNot: "Сработает: по будильнику iPhone",
@@ -8484,7 +8527,7 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
         run: "Проверить сейчас", runAsk: (x) => `Сейчас выполнится: ${x}. Продолжить?`, runYes: "Выполнить", ran: "Выполнено — смотрите на шторы и свет.",
         rampNote: "Плавный свет займёт заданные минуты.",
         needLoc: "Местоположение не задано — время рассвета и заката будет приблизительным.", needLocAdmin: "Укажите местоположение в блоке «Местоположение» на этой странице.", needLocUser: "Попросите администратора указать местоположение в Home Assistant.", approx: "время приблизительное", needAction: "Добавьте хотя бы одно действие.", needDay: "Выберите хотя бы один день.",
-        err: "Не получилось: ", errNet: "Нет связи с Home Assistant — попробуйте ещё раз.", noAgent: "Нужен агент Hauflo новее — обновите его в HA (Настройки → Обновления).", agentGone: "Агент Hauflo не установлен — без него правила и «Нет дома» не работают.", locWarn: "Сохранено, но местоположение не задано — время рассвета и заката приблизительное.",
+        err: "Не получилось: ", errNet: "Нет связи — попробуйте ещё раз.", noAgent: "Систему нужно обновить — сообщите сервису.", agentGone: "Система не подключена — правила и режим «Нет дома» недоступны.", locWarn: "Сохранено, но местоположение не задано — время рассвета и заката приблизительное.",
         last: (t) => `Последний раз: ${t}`, never: "ещё не срабатывало", missing: "нет в Home Assistant — сохраните заново",
         changedTag: "изменено в Home Assistant",
         changedNote: "Это правило поменяли в редакторе Home Assistant — Hauflo его не изменяет: включать, выключать и проверять можно, править — там. Или верните как было в Hauflo (правка из Home Assistant пропадёт).",
@@ -8500,10 +8543,10 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
         detect: "Определить", detecting: "Ищем…", detected: (c) => `Похоже, это здесь${c ? `: ${c}` : ""}.`, confirm: "Да, здесь",
         byPhone: "По телефону", manual: "Ввести вручную", lat: "Широта", lon: "Долгота", saveLoc: "Сохранить место",
         locNow: (a, b) => `Место: ${a}, ${b}`, change: "Изменить", locSaved: "Место сохранено.",
-        geoNo: "Телефон не дал координаты (нужен https и разрешение) — введите вручную.", yamlLoc: "Место задано в configuration.yaml — его меняет интегратор.",
+        geoNo: "Телефон не дал координаты (нужен https и разрешение) — введите вручную.", yamlLoc: "Место задано сервисом.",
         detectFail: "По интернету не определилось — попробуйте по телефону или вручную.", mapNote: "Карта загружается с OpenStreetMap · © OpenStreetMap",
         adminLoc: "Местоположение задаёт администратор Home Assistant.",
-        notPlain: "Hauflo не меняет automations.yaml: в нём комментарии, !include или ручное оформление. Правило добавит интегратор.",
+        notPlain: "Это правило нельзя изменить отсюда. Его настроит сервис.",
         on: "Включено", offShort: "Выключено",
         p: {
           title: "Нет дома — имитация присутствия",
@@ -8604,7 +8647,7 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
         more: (n) => ` and ${n} more`,
         mine: "Your rules", empty: "None yet — take a ready one above or add your own.", add: "Add",
         sugg: "Suggestions", addOne: "Add",
-        sys: "System rules", sysHint: "Set up by your integrator. The allowed ones can be switched on and off.", sysLess: "Less", sysMore: "More", sysFixed: "Only your integrator can change this", sysErr: "Could not save", sysLim: (a, b) => `${a} to ${b}`,
+        sys: "System rules", sysHint: "Set up by your service. The allowed ones can be switched on and off.", sysLess: "Less", sysMore: "More", sysFixed: "Only your service can change this", sysErr: "Could not save", sysLim: (a, b) => `${a} to ${b}`,
         hab: {
           title: "From your habits", sw: "Suggest from habits", make: "Make it a rule", no: "Don't suggest",
           sub: (when, cls, of) => `By hand ${when} ${cls} · ${of}`, at: (t) => `about ${t}`, sun: { sunset: "at sunset", sunrise: "at sunrise" },
@@ -8622,24 +8665,24 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
         phone: "Whose alarm", iphoneOpt: "iPhone (via Shortcuts)",
         iphoneTitle: "Once on the iPhone — 2 minutes",
         iphoneSteps: [
-          "Open the Shortcuts app on the iPhone.",
-          "Tap “Automation” at the bottom, then “+”.",
-          "Choose “Alarm” → “Is Stopped” (or “Is Snoozed”), alarm — “Any”. Turn on “Run Immediately” and tap “Next”.",
-          "“New Blank Automation” → “Add Action” → find “Home Assistant” → “Fire Event”.",
-          "Paste this code into “Event Type” and leave “Event Data” empty:",
-          "Tap “Done”. In the morning stop the alarm — the blinds and lights follow. The iPhone needs the Home Assistant app signed in to this Home Assistant.",
+          "Open the Shortcuts app on the iPhone. The Home Assistant app signed in to this Home Assistant is needed too (iOS 16.4 or later).",
+          "Open the “Automation” tab at the bottom and tap “+” at the top right (no automations yet — “New Automation”).",
+          "Choose “Alarm” → “Is Stopped” (or “Is Snoozed”), alarm — “Any”. Pick “Run Immediately” and tap “Next”.",
+          "Tap “New Blank Automation” → “Add Action”. Search for “Home Assistant” and choose “Trigger automation”.",
+          "Tap the “Automation” field and choose this rule:",
+          "Tap “Done”. In the morning stop the alarm — the blinds and lights follow (on the chosen days).",
         ],
         share: "Send the steps", shareTitle: "iPhone alarm → Home Assistant", shared: "Steps copied — paste them into a message.",
-        iphoneLater: "Save the rule — the code for Shortcuts shows up here.",
+        iphoneLater: "Save the rule — what to choose in Shortcuts shows up here.",
         androidSteps: ["Home Assistant app → Settings → Companion app → Manage sensors → “Next alarm” → turn it on.", "Set an alarm on the phone (the Clock app).", "Tap “Check” — Hauflo shows which alarm it sees."],
         chk: "Check", chkTitle: "What Hauflo sees",
         chkAndroidOk: (t) => `Hauflo sees the next alarm: ${t}. All works.`,
         chkAndroidNone: "The sensor is there but no alarm is visible — do step 2: set an alarm on the phone and open the Home Assistant app. Then tap “Check” again.",
         chkAndroidOff: "The sensor is “unavailable”: either the phone has no alarm set (that is how the app shows “none”), or the phone is off / the app wasn't opened for a long time. Set an alarm in the Clock app, open the Home Assistant app and tap “Check” again.",
         chkAndroidMissing: "There is no alarm sensor yet — do step 1: turn on “Next alarm” in the Home Assistant app.",
-        chkIphoneSave: "The rule isn't saved yet — save it and the code for Shortcuts appears (step 5).",
+        chkIphoneSave: "The rule isn't saved yet — save it and what to choose in Shortcuts appears (step 5).",
         chkIphoneOk: (t) => `The iPhone's command came: ${t}. All works.`,
-        chkIphoneNo: "No command from the iPhone has come yet — do steps 1–6, then stop the alarm and tap “Check” again. Quick test: open this automation in Shortcuts and tap “Run”.",
+        chkIphoneNo: "The iPhone hasn't run the rule yet — do steps 1–6, set an alarm for the next minute, stop it and tap “Check” again.",
         chkIphoneOff: "The rule is switched off in Home Assistant — switch it on in the rules list.",
         copy: "Copy", copied: "Copied",
         willRun: (x) => `Runs: ${x}`, willNot: "Runs: with the iPhone alarm",
@@ -8647,7 +8690,7 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
         run: "Test now", runAsk: (x) => `This runs now: ${x}. Go on?`, runYes: "Run", ran: "Done — look at the blinds and lights.",
         rampNote: "The slow light takes the minutes set.",
         needLoc: "The location isn't set — sunrise and sunset times will be approximate.", needLocAdmin: "Set the location in the “Location” block on this page.", needLocUser: "Ask the administrator to set the location in Home Assistant.", approx: "time is approximate", needAction: "Add at least one action.", needDay: "Pick at least one day.",
-        err: "Didn't work: ", errNet: "No link to Home Assistant — try again.", noAgent: "This needs a newer Hauflo agent — update it in HA (Settings → Updates).", agentGone: "The Hauflo agent isn't installed — rules and “Away” don't work without it.", locWarn: "Saved, but the location isn't set — sunrise and sunset times are approximate.",
+        err: "Didn't work: ", errNet: "No connection — try again.", noAgent: "The system needs an update — please contact your service.", agentGone: "The system isn't connected — rules and “Away” mode are unavailable.", locWarn: "Saved, but the location isn't set — sunrise and sunset times are approximate.",
         last: (t) => `Last run: ${t}`, never: "hasn't run yet", missing: "not in Home Assistant — save it again",
         changedTag: "changed in Home Assistant",
         changedNote: "This rule was changed in Home Assistant's editor — Hauflo leaves it alone: switch it on / off and test it here, edit it there. Or put it back as it was in Hauflo (the Home Assistant edit is lost).",
@@ -8663,10 +8706,10 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
         detect: "Find", detecting: "Looking…", detected: (c) => `Looks like it's here${c ? `: ${c}` : ""}.`, confirm: "Yes, it's here",
         byPhone: "By the phone", manual: "Type it in", lat: "Latitude", lon: "Longitude", saveLoc: "Save the place",
         locNow: (a, b) => `Location: ${a}, ${b}`, change: "Change", locSaved: "Place saved.",
-        geoNo: "The phone gave no coordinates (needs https and permission) — type them in.", yamlLoc: "The place is set in configuration.yaml — the integrator changes it.",
+        geoNo: "The phone gave no coordinates (needs https and permission) — type them in.", yamlLoc: "The place is set by your service.",
         detectFail: "Not found by the internet address — try the phone or type it in.", mapNote: "Map loaded from OpenStreetMap · © OpenStreetMap",
         adminLoc: "The location is set by the Home Assistant administrator.",
-        notPlain: "Hauflo doesn't change automations.yaml: it has comments, !include or hand formatting. The integrator adds the rule.",
+        notPlain: "This rule can't be changed here. Your service will set it up.",
         on: "On", offShort: "Off",
         p: {
           title: "Away — presence simulation",
@@ -8748,7 +8791,8 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
     const STATE_ON = ["on", "playing"];
     const VALUE_HOLD = [0, 5, 10, 15, 30, 60, 120, 240];
     const STATE_HOLD = [0, 1, 2, 3, 5, 10, 15, 20, 30, 45, 60, 120, 240];
-    // Little drawings of the iPhone steps (family review 28.10: «Команды → Автоматизация, Fire Event» lost a person).
+    // Little drawings of the iPhone steps (family review 28.10: «Команды → Автоматизация, Fire Event» lost a person; 09.11
+    // п.23: the HA app's «Запустить автоматизацию» — Fire Event is deprecated there).
     const svg = (d) => `<svg viewBox="0 0 32 32" width="32" height="32" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
     const STEP_ART = [
       svg('<rect x="5" y="9" width="15" height="15" rx="4"/><rect x="12" y="5" width="15" height="15" rx="4" fill="currentColor" fill-opacity=".18"/>'),
@@ -8758,7 +8802,13 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
       svg('<rect x="7" y="6" width="18" height="22" rx="3"/><path d="M12 6V4h8v2M11 14h10M11 19h7"/>'),
       svg('<circle cx="16" cy="16" r="11"/><path d="m11 16 4 4 7-8"/>'),
     ];
-    const el_code = (card) => card.draft?.when?.code || "";
+    // What the HA app's «Запустить автоматизацию» lists (09.11 п.23 — «Fire Event» is gone): the rule's automation by
+    // its HA name; before HA has it — the name the agent gives it.
+    const el_auto = (card) => {
+      const rule = (card.data?.rules || []).find((x) => x.id === card.draft?.id);
+      const st = rule && card._hass?.states?.[rule.entity_id];
+      return st?.attributes?.friendly_name || `Hauflo · ${card.draft?.name || ""}`.trim();
+    };
     const VIEWER_TZ = (() => {
       try {
         return Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -9644,7 +9694,7 @@ ${this.locMsg ? `<p class="msg ${this.locBad ? "bad" : ""}" role="status">${esc(
           if (r.when.event === "alarm_android") whenBody += offRow("alarm") + this.checkHtml();
           else {
             const code = r.when.code;
-            whenBody += `<div class="fld"><div class="caps">${esc(w.iphoneTitle)}</div>${code ? `<ol class="steps">${w.iphoneSteps.map((s, i) => `<li><span class="sti" aria-hidden="true">${STEP_ART[i]}</span><span class="stt"><b>${i + 1}.</b> ${esc(s)}${i === 4 ? `<span class="row"><code>${esc(code)}</code><button class="btn sm" data-copy="${esc(code)}">${esc(w.copy)}</button></span>` : ""}</span></li>`).join("")}</ol><button class="btn sm" data-share="${esc(code)}">${esc(w.share)}</button>` : `<p class="hint">${esc(w.iphoneLater)}</p>`}</div>` + this.checkHtml();
+            whenBody += `<div class="fld"><div class="caps">${esc(w.iphoneTitle)}</div>${code ? `<ol class="steps">${w.iphoneSteps.map((s, i) => `<li><span class="sti" aria-hidden="true">${STEP_ART[i]}</span><span class="stt"><b>${i + 1}.</b> ${esc(s)}${i === 4 ? `<span class="row"><code>${esc(el_auto(this))}</code></span>` : ""}</span></li>`).join("")}</ol><button class="btn sm" data-share="${esc(code)}">${esc(w.share)}</button>` : `<p class="hint">${esc(w.iphoneLater)}</p>`}</div>` + this.checkHtml();
           }
         }
         const days = r.days || DAYS;
@@ -10300,7 +10350,7 @@ ${seg("sto", ["on", "off"].map((x) => [x, w.stTo[kind][x]]), v.to)}${kind === "m
         });
         on("[data-share]", async () => {
           const w = this.w;
-          const text = `${w.shareTitle}\n\n${w.iphoneSteps.map((x, i) => `${i + 1}. ${x}${i === 4 ? ` ${el_code(this)}` : ""}`).join("\n")}`;
+          const text = `${w.shareTitle}\n\n${w.iphoneSteps.map((x, i) => `${i + 1}. ${x}${i === 4 ? ` ${el_auto(this)}` : ""}`).join("\n")}`;
           try {
             if (navigator.share) await navigator.share({ title: w.shareTitle, text });
             else {
@@ -10682,11 +10732,11 @@ ${seg("sto", ["on", "off"].map((x) => [x, w.stTo[kind][x]]), v.to)}${kind === "m
         view: "Вид", scenes: "Сцены", scenesLight: "Сцены света", scenesCover: "Сцены штор", inBlocks: "В своих блоках", onTop: "Сверху комнаты", climate: "Кондиционеры и термостаты", floor: "Тёплые полы", area: "Устройства других интеграций",
         textSize: "Размер текста", tsPhone: "Как в телефоне", tsNormal: "Обычный", tsBig: "Крупнее", tsSmall: "Мельче",
         tsHint: "Только на этом устройстве. «Обычный» — не зависит от крупного шрифта в телефоне; «Как в телефоне» — как приложение Home Assistant показывает сейчас.",
-        large: "Крупно", compact: "Компактно", reset: "Как настроил интегратор",
-        viewHint: (d) => `Только для вас, на этом и других ваших устройствах. Интегратор настроил: ${d}.`,
-        saved: "Сохранено", viewError: "Не сохранилось — проверьте связь с Home Assistant.",
-        names: "Названия блоков", namesHint: "Сохраняются сразу и видны всем. Пусто — как у интегратора. Названия остаются при следующих применениях.",
-        namesError: "Не сохранилось — нет связи с Home Assistant или агент Hauflo устарел (нужен 0.14.7+).",
+        large: "Крупно", compact: "Компактно", reset: "Как задал сервис",
+        viewHint: (d) => `Только для вас, на этом и других ваших устройствах. Сервис задал: ${d}.`,
+        saved: "Сохранено", viewError: "Не удалось сохранить — проверьте связь.",
+        names: "Названия блоков", namesHint: "Сохраняются сразу и видны всем. Пусто — как задал сервис.",
+        namesError: "Не удалось сохранить. Проверьте связь или сообщите сервису.",
         ro: "Детский профиль: настройки меняют взрослые. Свет, шторы и температура — ваши.",
         tsHuge: "Ещё крупнее", pro: "Для специалиста", guest: "Гостевой доступ", guestSub: "Ссылка или QR для гостя на время",
         fav: "Избранное", unfav: "Убрать", favHint: "Долго нажмите на свет, штору или сцену → «В избранное». Избранное — сверху «Главной», только у вас.",
@@ -10696,13 +10746,13 @@ ${seg("sto", ["on", "off"].map((x) => [x, w.stTo[kind][x]]), v.to)}${kind === "m
         editors: "Кто может менять настройки", editorsHint: "Как в Google Home: все взрослые равны. Включите «Ограничить» у ребёнка — «Ограниченный (детский) профиль»: он управляет светом, шторами и температурой и принимает аварии, но не меняет автоматизации, сцены, сезон, «Нет дома», гостевые ссылки, названия и порядок блоков.",
         restricted: "Ограниченный (детский) профиль", canChange: "Меняет настройки", limit: "Ограничить",
         editorsLead: (n) => (n ? `Ограничено: ${n}. Остальные взрослые меняют настройки.` : "Сейчас никто не ограничен: все меняют настройки. Включите «Ограничить» у ребёнка."),
-        stock: "Стандартные карточки HA", stockGo: "Заменить на Hauflo", stockPicked: (n) => (n ? `Отмечено: ${n}` : "Отметьте карточки выше"),
+        stock: "Стандартные карточки Home Assistant", stockGo: "Заменить на Hauflo", stockPicked: (n) => (n ? `Отмечено: ${n}` : "Отметьте карточки выше"),
         stockNone: "Стандартных карточек на этой панели нет — заменять нечего.", stockGuard: "замок, ворота или охрана — только по отдельной отметке",
         stockDevice: "устройство целиком", stockBack: "Вернуть стандартную", stockBackHint: "Заменённые — можно вернуть как было, на своё место:",
         stockHint: "Без отметки ничего не меняем. Панель обновится сама.", stockDone: (n) => `Заменено: ${n}`, stockUndone: "Вернули стандартную",
-        stockErr: "Не получилось — агент Hauflo устарел или нет связи с Home Assistant.", stockYaml: "Эта панель в YAML — меняйте её файл.",
-        editorsMe: (ok) => (ok ? "Вы можете менять настройки." : "У вас детский профиль: свет, шторы и температура — ваши, настройки меняют взрослые."), admin: "администратор", editorsError: "Не сохранилось — проверьте связь с Home Assistant.",
-        service: "Ваш интегратор", noService: "Контакт сервиса пока не указан — интегратор добавит его при следующем применении.", serviceHint: "Неисправность, авария, любой вопрос — звоните сюда.",
+        stockErr: "Не получилось. Проверьте связь или сообщите сервису.", stockYaml: "Эту панель меняет сервис.",
+        editorsMe: (ok) => (ok ? "Вы можете менять настройки." : "У вас детский профиль: свет, шторы и температура — ваши, настройки меняют взрослые."), admin: "администратор", editorsError: "Не удалось сохранить — проверьте связь.",
+        service: "Ваш сервис", noService: "Контакт сервиса ещё не указан.", serviceHint: "Неисправность, авария, любой вопрос — звоните сюда.",
       },
       en: {
         title: "Settings", close: "Close", theme: "Theme", light: "Light", dark: "Dark", auto: "As the phone",
@@ -10733,13 +10783,13 @@ ${seg("sto", ["on", "off"].map((x) => [x, w.stTo[kind][x]]), v.to)}${kind === "m
         view: "View", scenes: "Scenes", scenesLight: "Light scenes", scenesCover: "Blind scenes", inBlocks: "In their blocks", onTop: "On top of the room", climate: "ACs and thermostats", floor: "Floor heating", area: "Other integrations' devices",
         textSize: "Text size", tsPhone: "As the phone", tsNormal: "Normal", tsBig: "Larger", tsSmall: "Smaller",
         tsHint: "On this device only. “Normal” ignores the large font of the phone; “As the phone” is how the Home Assistant app shows it now.",
-        large: "Large", compact: "Compact", reset: "As the integrator set it",
-        viewHint: (d) => `Just for you, on this and your other devices. The integrator set: ${d}.`,
+        large: "Large", compact: "Compact", reset: "As your service set it",
+        viewHint: (d) => `Just for you, on this and your other devices. Your service set: ${d}.`,
         saved: "Saved", viewError: "Not saved — check the link to Home Assistant.",
-        names: "Block titles", namesHint: "Saved at once and visible to everyone. Empty — as the integrator set it. The titles stay over the next deploys.",
-        namesError: "Not saved — no link to Home Assistant, or the Hauflo agent is out of date (0.14.7+ needed).",
+        names: "Block titles", namesHint: "Saved at once and visible to everyone. Empty — as your service set it.",
+        namesError: "Couldn't save. Check the connection or please contact your service.",
         ro: "Child profile: settings are changed by the adults. Lights, blinds and temperature are yours.",
-        tsHuge: "Largest", pro: "For the installer", guest: "Guest access", guestSub: "A link or QR for a guest, for a while",
+        tsHuge: "Largest", pro: "For the specialist", guest: "Guest access", guestSub: "A link or QR for a guest, for a while",
         fav: "Favourites", unfav: "Remove", favHint: "Long-press a light, blind or scene → “Add to favourites”. Favourites are on top of “Home”, just for you.",
         myRoom: "My room", myRoomHint: "Your room — first among the favourites on “Home”.",
         seasonAsk: (m, n) => `Sure? ${n === 1 ? "The AC switches" : n === 2 ? "Both ACs switch" : `All ${n} ACs switch`} to ${m === "heat" ? "heating" : "cooling"}.`,
@@ -10747,13 +10797,13 @@ ${seg("sto", ["on", "off"].map((x) => [x, w.stTo[kind][x]]), v.to)}${kind === "m
         editors: "Who may change the settings", editorsHint: "As in Google Home: all adults are equal. Turn on “Restrict” for a child — “Restricted (child) profile”: they control lights, blinds and temperature and accept alarms, but don't change automations, scenes, the season, “Away”, guest links, block titles or order.",
         restricted: "Restricted (child) profile", canChange: "Can change settings", limit: "Restrict",
         editorsLead: (n) => (n ? `Restricted: ${n}. The other adults change the settings.` : "Nobody is restricted now: everyone can change the settings. Turn on “Restrict” for a child."),
-        stock: "Stock HA cards", stockGo: "Replace with Hauflo", stockPicked: (n) => (n ? `Ticked: ${n}` : "Tick the cards above"),
+        stock: "Stock Home Assistant cards", stockGo: "Replace with Hauflo", stockPicked: (n) => (n ? `Ticked: ${n}` : "Tick the cards above"),
         stockNone: "No stock cards on this dashboard — nothing to replace.", stockGuard: "lock, gate or alarm — only when ticked on its own",
         stockDevice: "whole device", stockBack: "Back to stock", stockBackHint: "Replaced — can be put back as they were, in their place:",
         stockHint: "Nothing changes unless ticked. The dashboard refreshes by itself.", stockDone: (n) => `Replaced: ${n}`, stockUndone: "Put back",
-        stockErr: "Didn't work — the Hauflo agent is outdated or Home Assistant is unreachable.", stockYaml: "This dashboard is YAML — change its file.",
+        stockErr: "Didn't work. Check the connection or please contact your service.", stockYaml: "Your service changes this dashboard.",
         editorsMe: (ok) => (ok ? "You may change the settings." : "You have a child profile: lights, blinds and temperature are yours, the adults change the settings."), admin: "administrator", editorsError: "Not saved — check the link to Home Assistant.",
-        service: "Your integrator", noService: "No service contact yet — the integrator adds it with the next deploy.", serviceHint: "A fault, an alarm, any question — call here.",
+        service: "Your service", noService: "The service contact isn't set yet.", serviceHint: "A fault, an alarm, any question — call here.",
       },
     };
     const root = () => document.querySelector("home-assistant");
@@ -11626,8 +11676,30 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
   // This card is never written by the cloud (the agent's tunnel refuses it): the family picked the entity, it is theirs.
   const B_ = (svc, icon, label, data, on) => `<button class="cb${on ? " on" : ""}" data-svc="${svc}"${data ? ` data-x="${esc(JSON.stringify(data))}"` : ""} aria-label="${esc(label)}" title="${esc(label)}">${icon.startsWith("mdi:") || icon.startsWith("hauflo:") ? `<ha-icon icon="${icon}"></ha-icon>` : `<span>${esc(icon)}</span>`}</button>`;
   const SL_ = (svc, field, min, max, step, v, label, kind = "", unit) => `<div class="sl ${kind}" data-svc="${svc}" data-f="${field}" data-min="${min}" data-max="${max}" data-step="${step}" data-v="${v ?? min}"${unit === undefined ? "" : ` data-u="${esc(unit)}"`} role="slider" aria-label="${esc(label)}" aria-valuenow="${v ?? ""}"><i style="width:${v === undefined ? 0 : Math.round(((v - min) / (max - min || 1)) * 100)}%"></i><span class="sv">${esc(label)}</span></div>`;
-  const PM_ = (svc, field, v, step, min, max, unit, digits = 0) =>
-    `<div class="pmr">${B_(svc, "−", "−", { [field]: v === undefined ? undefined : Math.max(min ?? -Infinity, +(v - step).toFixed(4)) })}<span class="pmv thin">${v === undefined ? "—" : `${fmt(v, digits)}<small>${esc(unit)}</small>`}</span>${B_(svc, "+", "+", { [field]: v === undefined ? undefined : Math.min(max ?? Infinity, +(v + step).toFixed(4)) })}</div>`;
+  /** A ± step of a value (setpoint, humidity, a number): the button carries the step and the bounds; the sheet's handler
+   * adds the step to the PENDING value and sends once after the last tap (spSet) — `v` is that pending value already. */
+  const PMB_ = (svc, field, v, d, min, max) => `<button class="cb" data-svc="${svc}" data-f="${esc(field)}" data-d="${d}" data-v="${v ?? ""}" data-min="${min ?? ""}" data-max="${max ?? ""}" aria-label="${d < 0 ? "−" : "+"}" title="${d < 0 ? "−" : "+"}"${v === undefined ? " disabled" : ""}><span>${d < 0 ? "−" : "+"}</span></button>`;
+  const PM_ = (svc, field, v, step, min, max, unit, digits = 0) => `<div class="pmr">${PMB_(svc, field, v, -step, min, max)}<span class="pmv thin">${v === undefined ? "—" : `${fmt(v, digits)}<small>${esc(unit)}</small>`}</span>${PMB_(svc, field, v, step, min, max)}</div>`;
+  /** The value a ± shows and adds to: the one being set (not heard back yet, ≤ SP_MS.pend), else the entity's own. One queue
+   * for every ± in the cards — the thermostat card, a room's climate row, the device sheet (owner 09.11: only the large card
+   * had it; the boiler's compact row sent each tap from HA's stale value and showed the change seconds later). */
+  const SP_MS = { send: 600, pend: 10000 };
+  function spPend(card, key, fallback) {
+    const q = card._spq?.[key];
+    return q && Date.now() - q.at < SP_MS.pend ? q.v : fallback;
+  }
+  /** Shown at once; `send` runs once ~0.6 s after the last tap (tester 28.10: 5 quick taps were 5 bus commands, all from the
+   * same stale value). */
+  function spSet(card, key, v, send) {
+    card._spq = card._spq || {};
+    card._spT = card._spT || {};
+    card._spq[key] = { v, at: Date.now() };
+    clearTimeout(card._spT[key]);
+    card._spT[key] = setTimeout(() => {
+      delete card._spT[key];
+      Promise.resolve(send()).catch(() => {});
+    }, SP_MS.send);
+  }
   /** A scale's control: up to 5 places as chips (HA's FAN_SPEED_COUNT_MAX_FOR_BUTTONS), more as a slider over the places —
    * each sends its own value (data-vals), shown in its own word (data-words). */
   const STAGES = (sc) => {
@@ -11661,13 +11733,13 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
       const tilt = `${f & 16 ? B_("cover.open_cover_tilt", "mdi:arrow-top-right", "Открыть ламели") : ""}${f & 32 ? B_("cover.close_cover_tilt", "mdi:arrow-bottom-left", "Закрыть ламели") : ""}`;
       return `${f & 4 ? `<div class="row">${SL_("cover.set_cover_position", "position", 0, 100, 1, pos, pos === undefined ? "—" : `${pos}\u00a0%`, "pos")}</div>` : ""}${btns || tilt ? `<div class="row btns hfrow">${btns}${tilt}</div>` : ""}`;
     },
-    climate: (s) => {
+    climate: (s, card) => {
       const a = s.attributes;
       const step = Math.max(num(a.target_temp_step) || 0.5, 0.1);
       const dg = step < 1 ? 1 : 0;
       const lo = num(a.target_temp_low);
       const hi = num(a.target_temp_high);
-      const t = num(a.temperature);
+      const t = spPend(card, `${s.entity_id}|temperature`, num(a.temperature));
       const set =
         t !== undefined
           ? PM_("climate.set_temperature", "temperature", t, step, num(a.min_temp), num(a.max_temp), "°", dg)
@@ -11679,15 +11751,15 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
       const presets = (a.preset_modes || []).length > 1 ? `<div class="row chips hfrow">${a.preset_modes.slice(0, 6).map((m) => `<button class="chip${m === a.preset_mode ? " on" : ""}" data-svc="climate.set_preset_mode" data-x="${esc(JSON.stringify({ preset_mode: m }))}">${esc(PRESET[m] || m)}</button>`).join("")}</div>` : "";
       return `${set ? `<div class="row">${set}</div>` : ""}${chips}${presets}`;
     },
-    water_heater: (s) => {
+    water_heater: (s, card) => {
       const a = s.attributes;
-      const t = num(a.temperature);
+      const t = spPend(card, `${s.entity_id}|temperature`, num(a.temperature));
       const ops = a.operation_list || [];
       return `${t !== undefined ? `<div class="row">${PM_("water_heater.set_temperature", "temperature", t, Math.max(num(a.target_temp_step) || 1, 0.5), num(a.min_temp), num(a.max_temp), "°")}</div>` : ""}${ops.length > 1 ? `<div class="row chips hfrow">${ops.slice(0, 6).map((m) => `<button class="chip${m === a.operation_mode ? " on" : ""}" data-svc="water_heater.set_operation_mode" data-x="${esc(JSON.stringify({ operation_mode: m }))}">${esc(WH_MODE[m] || m)}</button>`).join("")}</div>` : ""}`;
     },
-    humidifier: (s) => {
+    humidifier: (s, card) => {
       const a = s.attributes;
-      const h = num(a.humidity);
+      const h = spPend(card, `${s.entity_id}|humidity`, num(a.humidity));
       return h === undefined ? "" : `<div class="row">${PM_("humidifier.set_humidity", "humidity", h, 1, num(a.min_humidity), num(a.max_humidity), "%")}</div>`;
     },
     fan: (s, card, noSpeed = false) => {
@@ -11729,11 +11801,11 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
       return `<div class="row chips hfrow">${f & 1 ? `<button class="chip${s.state === "armed_home" ? " on" : ""}" data-svc="alarm_control_panel.alarm_arm_home">Дома</button>` : ""}${f & 2 ? `<button class="chip${s.state === "armed_away" ? " on" : ""}" data-svc="alarm_control_panel.alarm_arm_away">Уйти</button>` : ""}${f & 4 ? `<button class="chip${s.state === "armed_night" ? " on" : ""}" data-svc="alarm_control_panel.alarm_arm_night">Ночь</button>` : ""}<button class="chip${s.state === "disarmed" ? " on" : ""}" data-svc="alarm_control_panel.alarm_disarm">Снять</button></div>`;
     },
     // HA's own rule (number entity `mode`): «slider» → a slider, «box» → ±, «auto» → a slider while the range has ≤ 256 steps.
-    number: (s) => {
+    number: (s, card) => {
       const a = s.attributes;
       const step = num(a.step) || 1;
       const dg = String(step).includes(".") ? String(step).split(".")[1].length : 0;
-      const [mn, mx, v] = [num(a.min), num(a.max), num(s.state)];
+      const [mn, mx, v] = [num(a.min), num(a.max), spPend(card, `${s.entity_id}|value`, num(s.state))];
       const unit = unitOf(s) || (mn === 0 && mx === 100 ? "%" : "");
       const slide = mn !== undefined && mx !== undefined && mx > mn && (a.mode === "slider" || (a.mode !== "box" && (mx - mn) / step <= 256));
       if (slide) return `<div class="row">${SL_(`${domainOf(s.entity_id)}.set_value`, "value", mn, mx, step, v, v === undefined ? "—" : `${fmt(v, dg)} ${unit}`.trim(), "pos", unit)}</div>`;
@@ -11869,9 +11941,27 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
           this._update();
         }),
       );
+      // A ± step (PM_): the tap adds to the pending value, shown at once, sent once after the last tap (spSet).
+      ctl.querySelectorAll("button[data-svc][data-d]").forEach((b) =>
+        b.addEventListener("click", () => {
+          const f = b.dataset.f;
+          const key = `${id}|${f}`;
+          const base = spPend(this, key, num(b.dataset.v));
+          if (base === undefined) return;
+          const mn = num(b.dataset.min);
+          const mx = num(b.dataset.max);
+          const v = +Math.min(mx ?? Infinity, Math.max(mn ?? -Infinity, base + Number(b.dataset.d))).toFixed(4);
+          const [d, s] = b.dataset.svc.split(".");
+          haptic(this);
+          spSet(this, key, v, () => call(this._hass, d, s, { entity_id: id, [f]: v }));
+          this._sig = "";
+          this._update();
+        }),
+      );
       ctl.querySelectorAll("button[data-svc]").forEach((b) =>
         b.addEventListener("click", () => {
           const svc = b.dataset.svc;
+          if (b.dataset.d !== undefined) return;
           if (svc === "more-info") return moreInfo(this, id);
           const x = b.dataset.x ? JSON.parse(b.dataset.x) : {};
           if (Object.values(x).some((v) => v === undefined || v === null)) return;
@@ -12010,7 +12100,7 @@ ${alarms.length ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;co
     "hauflo-security": [["Hauflo · Охрана", "Любая охранная панель, замки, двери и окна"], ["Hauflo · Security", "Any alarm panel, locks, doors and windows"]],
     "hauflo-camera": [["Hauflo · Камера", "Любая камера: кадр, тап — трансляция"], ["Hauflo · Camera", "Any camera: snapshot, tap for live view"]],
     "hauflo-acs": [["Hauflo · Кондиционеры", "Все кондиционеры: какие работают, температура, выключить все"], ["Hauflo · Air conditioners", "All ACs: which run, temperature, all off"]],
-    "hauflo-area": [["Hauflo · Комната HA", "Всё, что Home Assistant отнёс к комнате, или устройство целиком (любые интеграции), — в стиле Hauflo"], ["Hauflo · HA area", "Everything Home Assistant puts in an area, or a whole device (any integration), in the Hauflo style"]],
+    "hauflo-area": [["Hauflo · Комната из Home Assistant", "Всё, что Home Assistant отнёс к комнате, или устройство целиком (любые интеграции), — в стиле Hauflo"], ["Hauflo · Home Assistant area", "Everything Home Assistant puts in an area, or a whole device (any integration), in the Hauflo style"]],
     "hauflo-leaks": [["Hauflo · Защита от протечек", "Датчики протечки и кран любой интеграции: всё в порядке или где протечка; кран — только кнопкой"], ["Hauflo · Leak protection", "Leak sensors and a valve of any integration: all is well, or where the leak is; the valve only by a button"]],
     "hauflo-devices": [["Hauflo · Устройства", "Вентиляторы, клапаны, замки, пылесосы, бойлеры, розетки…"], ["Hauflo · Devices", "Fans, valves, locks, vacuums, boilers, plugs…"]],
   };

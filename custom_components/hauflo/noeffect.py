@@ -52,6 +52,8 @@ ACTIVE = set(_N["active_states"])
 EXCLUDE = re.compile(_N["exclude_words"], re.I)
 KINDS = {k: TUNING[f"noeffect_{k}"] for k in _N["kinds"]}
 KIND = "no_effect"
+# What a thermostat may regulate («воздух / пол» on «Проверка», backend effectKinds.json types.climate), of the kinds on.
+EFFECT_KINDS = {"air", "floor"} & set(KINDS)
 _TAIL = re.compile(r"(\d+)(?!.*\d)")
 
 
@@ -85,6 +87,9 @@ class PairEffect(Detector):
     def __init__(self, ctx: Insights) -> None:
         super().__init__(ctx)
         self.manual: dict[str, dict[str, str]] = {}  # effect → {"kind", "exec"} ("exec" "" — not a pair, the integrator said)
+        # climate → "air" / "floor": what a thermostat regulates, the integrator's word on «Проверка» (backend effectKinds.ts,
+        # sent by the deploy). Over the words; the pairs are derived from it (a floor one is its room's loops' target).
+        self.kinds: dict[str, str] = {}
         self.saved: dict[str, dict[str, Any]] = {}  # effect → what an open finding carries over a restart
         self.pairs: dict[str, dict[str, Any]] = {}  # effect → {"kind", "exec", "target"}
         self.unpaired: list[dict[str, str]] = []  # effects with executors the mapping could not tell apart: for the integrator
@@ -106,10 +111,11 @@ class PairEffect(Detector):
         for eff, said in (data.get("said") or {}).items():
             if num(said) is not None:
                 self.runs.setdefault(str(eff), self._new())["said_at"] = float(said)
+        self.kinds = {str(e): k for e, k in (data.get("kinds") or {}).items() if k in EFFECT_KINDS}
 
     def dump(self) -> dict[str, Any]:
         opened = {e: {"kind": self.pairs[e]["kind"], "exec": self.pairs[e]["exec"], "since": r["since"], "said_at": r["said_at"]} for e, r in self.runs.items() if r["alerted"] and e in self.pairs}
-        return {"manual": self.manual, "open": {**self.saved, **opened}, "said": {e: r["said_at"] for e, r in self.runs.items() if r["said_at"] is not None}}
+        return {"manual": self.manual, "open": {**self.saved, **opened}, "said": {e: r["said_at"] for e, r in self.runs.items() if r["said_at"] is not None}, "kinds": self.kinds}
 
     @staticmethod
     def _new() -> dict[str, Any]:
@@ -123,6 +129,19 @@ class PairEffect(Detector):
             self.manual[effect] = {"kind": kind, "exec": executor}
             self._paired_at = -PAIRS_EVERY
             self.ctx.dirty()
+
+    def set_kinds(self, kinds: dict[str, str]) -> None:
+        """The deploy's map of thermostats' «воздух / пол» (the whole of it: one not in it is read by its words again)."""
+        kinds = {e: k for e, k in kinds.items() if k in EFFECT_KINDS}
+        if kinds != self.kinds:
+            self.kinds = kinds
+            self._paired_at = -PAIRS_EVERY
+            self.ctx.dirty()
+
+    def _floor(self, st: State, floor_re: re.Pattern[str] | None) -> bool:
+        """Is this thermostat a floor's: the integrator's word, else its words."""
+        k = self.kinds.get(st.entity_id)
+        return k == "floor" if k else bool(floor_re and floor_re.search(_text(st)))
 
     def clear_pair(self, effect: str) -> None:
         if self.manual.pop(effect, None) is not None:
@@ -158,7 +177,7 @@ class PairEffect(Detector):
         for s in self.ctx.hass.states.async_all("climate"):
             if s.entity_id in taken or not self.ctx.visible(s.entity_id) or self.ctx.owns(s.entity_id):
                 continue
-            kind = "floor" if floor_re and floor_re.search(_text(s)) else "air"
+            kind = "floor" if self._floor(s, floor_re) else "air"
             if kind in KINDS:
                 out.append({"effect": s.entity_id, "kind": kind, "name": who(s.entity_id)["name"], "area": who(s.entity_id)["area"], **integration(self.ctx.hass, s.entity_id)})
         return sorted(out, key=lambda o: (o["area"], o["name"]))
@@ -235,7 +254,7 @@ class PairEffect(Detector):
             self._targets = {}
             for s in effects:
                 area = self.ctx._area_id(s.entity_id)
-                cl = [c for c in self._states(["climate"]) if tgt_re and area and tgt_re.search(_text(c)) and self.ctx._area_id(c.entity_id) == area]
+                cl = [c for c in self._states(["climate"]) if area and self._floor(c, tgt_re) and self.ctx._area_id(c.entity_id) == area]
                 if len(cl) == 1:
                     self._targets[s.entity_id] = cl[0].entity_id
         return found, left
@@ -260,7 +279,7 @@ class PairEffect(Detector):
         for eff in [e for e, p in pairs.items() if p["kind"] == "air"]:
             if eff in floor_thermostats:
                 del pairs[eff]  # the floor's thermostat is the loops' setpoint (judged per loop), not a room's air
-            elif floor_re and (st := self.ctx.hass.states.get(eff)) is not None and floor_re.search(_text(st)):
+            elif (st := self.ctx.hass.states.get(eff)) is not None and self._floor(st, floor_re):
                 # A floor thermostat with no loops of its own measures the floor, not the air: judged as a floor (its
                 # slower bar), shown under «Пол» (integrator review 07.11 С-7: «Тёплый пол» under «Воздух»).
                 pairs[eff]["kind"] = "floor"
@@ -445,7 +464,8 @@ NOEFFECT: tuple[type[Detector], ...] = (PairEffect,)
 class PairsView(HomeAssistantView):
     """The integrator's refinement of the pairs (п.68). GET → pairs_view(); POST (admin only):
       {"set": {"effect": entity_id, "kind": "floor|air|co2|humidity", "exec": entity_id | ""}} — this executor is this effect's;
-      {"clear": entity_id} — back to what the mapping finds."""
+      {"clear": entity_id} — back to what the mapping finds;
+      {"kinds": {climate entity_id: "air|floor"}} — the deploy's «воздух / пол» of thermostats, the whole map (п.19)."""
 
     url = "/api/hauflo/pairs"
     name = "api:hauflo:pairs"
@@ -490,6 +510,11 @@ class PairsView(HomeAssistantView):
             det.set_pair(b["effect"], b["kind"], b["exec"])
         elif isinstance(body, dict) and set(body) == {"clear"} and ok_id(body["clear"]):
             det.clear_pair(body["clear"])
+        elif isinstance(body, dict) and set(body) == {"kinds"} and isinstance(body["kinds"], dict):
+            k = body["kinds"]
+            if len(k) > 5000 or not all(ok_id(e) and e.startswith("climate.") and v in EFFECT_KINDS for e, v in k.items()):
+                return self.json_message("kinds: {climate entity_id: air | floor} expected", 400)
+            det.set_kinds(k)
         else:
-            return self.json_message("set / clear expected", 400)
+            return self.json_message("set / clear / kinds expected", 400)
         return self.json(self._fresh().pairs_view())

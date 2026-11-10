@@ -26,6 +26,7 @@ Numbers: tuning.json «insight».
 from __future__ import annotations
 
 import logging
+import re
 import statistics
 import time
 from datetime import timedelta
@@ -73,6 +74,11 @@ STUCK_H = _T["stuck_h"]
 STUCK_DAYS = _T["stuck_days"]
 LEARN_DAYS = _T["learn_days"]
 STUCK_NORM = _T["stuck_norm_changes"]
+# An air handler's climate (owner 09.11, Горького 3 «Вентмашина Климат»): the supply air heats tens of °C an hour and its
+# rate follows the airflow and the outdoor air — no zone's norm to slow down from, its own controller has the alarms.
+# Known by its words (name, entity, area) or by a learned rate no room reaches.
+AIR_HANDLER_WORDS = re.compile(_T["air_handler_words"], re.IGNORECASE)
+AIR_HANDLER_RATE = _T["air_handler_rate_c_h"]
 
 HEAT, COOL = "heat", "cool"
 KIND = {HEAT: "no_heat", COOL: "no_cool"}
@@ -284,6 +290,7 @@ class ClimateEffect(Detector):
 
     def items(self, now: float) -> list[dict[str, Any]]:
         out = []
+        outdoor_now = self.ctx.outdoor_c()
         for eid, ep in self.eps.items():
             if ep["alerted"] is None:
                 continue
@@ -302,6 +309,8 @@ class ClimateEffect(Detector):
                     **({"expectedH": _round(ep["gap"] / rate)} if rate else {}),
                     **({"change": _round(change)} if change is not None else {}),
                     "flatH": FLAT_H,
+                    # The street now: heating without effect in a frost is critical (the cloud's alertSeverity.json frost).
+                    **({"outdoor": _round(outdoor_now)} if outdoor_now is not None else {}),
                 }
             )
         return out
@@ -521,6 +530,17 @@ class Insights:
             return entry.area_id
         device = dr.async_get(self.hass).async_get(entry.device_id) if entry.device_id else None
         return device.area_id if device else None
+
+    def air_handler(self, eid: str) -> bool:
+        """A climate of an air handler (AIR_HANDLER_WORDS / AIR_HANDLER_RATE): no «slower», no short cycling for it."""
+        if not eid.startswith("climate."):
+            return False
+        w = self.who(eid)
+        if AIR_HANDLER_WORDS.search(f"{eid} {w['name']} {w['area']}"):
+            return True
+        ce = next((det for det in self.detectors if isinstance(det, ClimateEffect)), None)
+        rates = [r for r in (ce.norm(eid, d) if ce else None for d in (HEAT, COOL)) if r is not None]
+        return any(r >= AIR_HANDLER_RATE for r in rates)
 
     def who(self, eid: str) -> dict[str, str]:
         st = self.hass.states.get(eid)

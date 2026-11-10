@@ -256,6 +256,35 @@ async def test_time_alarm_and_room(hass: HomeAssistant, hass_client, entry, bus)
     await hass.async_block_till_done()
     assert [m[0] for m in bus] == ["cover.open_cover"]
 
+    # 09.11 п.23: the iPhone runs it by the HA app's «Trigger automation» (automation.trigger, conditions skipped) — the
+    # days are the actions' first step, so a day not chosen does nothing either way; «Проверить сейчас» still runs.
+    from homeassistant.util import dt as dt_util
+    today = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")[dt_util.now().weekday()]
+    other = [d for d in ("mon", "tue", "wed", "thu", "fri", "sat", "sun") if d != today]
+    r3 = await (await client.post(URL, json={"op": "save", "rule": {**iphone, "id": r["id"], "days": other}})).json()
+    mine = [a for a in _file(hass) if a.get("id") == r["id"]][0]
+    assert mine["conditions"] == [] and mine["actions"][0]["condition"] == "or"
+    await hass.async_block_till_done()
+    eid = er.async_get(hass).async_get_entity_id("automation", "automation", r["id"])
+    for how in ({"entity_id": eid}, None):
+        bus.clear()
+        if how:
+            await hass.services.async_call("automation", "trigger", how, blocking=True)
+        else:
+            hass.bus.async_fire(r3["when"]["code"], {})
+        await hass.async_block_till_done()
+        assert bus == []
+    res = await client.post(URL, json={"op": "run", "id": r["id"]})
+    assert res.status == 200
+    await hass.async_block_till_done()
+    assert [m[0] for m in bus] == ["cover.open_cover"]
+    r4 = await (await client.post(URL, json={"op": "save", "rule": {**iphone, "id": r["id"]}})).json()
+    await hass.async_block_till_done()
+    bus.clear()
+    await hass.services.async_call("automation", "trigger", {"entity_id": eid}, blocking=True)
+    await hass.async_block_till_done()
+    assert [m[0] for m in bus] == ["cover.open_cover"] and r4["when"]["code"] == code
+
 
 async def test_room_with_the_integrators_light_is_listed(hass: HomeAssistant, hass_client, entry, bus) -> None:
     er.async_get(hass).async_update_entity(HAND, area_id=entry.area)

@@ -79,3 +79,14 @@ async def test_unknown_entity_is_rejected(hass: HomeAssistant, hass_client, entr
         assert "unknown_entity" in await res.text()
     got = await (await client.get("/api/hauflo/pairs")).json()
     assert not any(p.get("manual") for p in got["pairs"])
+
+
+
+async def test_kinds_from_the_deploy(hass: HomeAssistant, hass_client, entry) -> None:
+    """Batch «Внедрения» п.19: the deploy sends the thermostats' «воздух / пол» (the whole map); a bad one is refused."""
+    client = await hass_client()
+    res = await client.post("/api/hauflo/pairs", json={"kinds": {"climate.ward": "floor"}})
+    assert res.status == 200
+    for body in ({"kinds": {"climate.ward": "pump"}}, {"kinds": {"sensor.x": "air"}}, {"kinds": ["climate.ward"]}, {"kinds": {}, "clear": F[0]}):
+        assert (await client.post("/api/hauflo/pairs", json=body)).status == 400, str(body)
+    assert (await client.post("/api/hauflo/pairs", json={"kinds": {}})).status == 200

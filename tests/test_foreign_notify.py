@@ -95,6 +95,8 @@ async def test_a_doorbell_press_is_said_once_not_a_problem(hass: HomeAssistant, 
     mon = {m["entityId"]: m for m in entry.runtime_data.status()["monitored"]}
     ring = mon["event.door_ring"]
     assert ring["problem"] is False and ring["eventClass"] == "doorbell" and dt_util.parse_datetime(ring["ring"]) == now
+    # What it is goes along (the cloud's importance by class, owner 09.11): a doorbell, a motion event.
+    assert ring["deviceClass"] == "doorbell" and mon["event.door_motion"]["deviceClass"] == "motion"
     # An old press: nothing to say.
     assert mon["event.door_motion"]["problem"] is False and "ring" not in mon["event.door_motion"]
     # Never fired / lost: no press; lost is a no-data problem as any signal's.

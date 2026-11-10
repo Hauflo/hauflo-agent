@@ -9,7 +9,7 @@ from homeassistant.util.hass_dict import HassKey
 from . import servers as _servers
 
 DOMAIN = "hauflo"
-VERSION = "0.29.0"
+VERSION = "0.31.0"
 
 
 def _www_hash() -> str:
@@ -71,11 +71,13 @@ CONF_CARDS_VIEW_OLD = "cards_view"
 CONF_ACCEPT_PENDING = "accept_pending"
 # «Сделать дом независимым» (independent.py): a tick in the options that leads to its own confirm step.
 CONF_INDEPENDENT = "independent"
-# Alarm rules as Home Assistant's own objects (wave 5B, owner 06.11): per rule an automation in automations.yaml and a
-# «Принято» helper — they push, repeat and take «Принято» without the agent or the internet (independent.py).
+# Alarm rules as Home Assistant's own objects (wave 5B, owner 06.11): per rule an automation in automations.yaml and two
+# helpers («Принято», «авария открыта») — they push, repeat and take «Принято» without the agent or the internet (independent.py).
 ALARM_PREFIX = "hauflo_alarm_"  # the automation's id (not an entity id: HA names the entity from the alias)
 ACK_PREFIX = "hauflo_ack_"  # the input_boolean's id → input_boolean.hauflo_ack_<rule>
-CHATTER_PREFIX = "hauflo_chatter_"  # the input_text's id → input_text.hauflo_chatter_<rule>: its sensors' recent alarms
+OPEN_PREFIX = "hauflo_open_"  # the input_boolean's id → input_boolean.hauflo_open_<rule>: on = the rule's alarm is open (told, not back)
+# Before 0.31: the input_text hauflo_chatter_<rule> (a chattering sensor's memory) — only removed now (independent.async_sync).
+CHATTER_PREFIX = "hauflo_chatter_"
 ACK_ACTION = "HAUFLO_ACK_"  # the push's «Принято» button (mobile_app_notification_action)
 RUN_ACTION = "HAUFLO_RUN_"  # the push's rule button («Перекрыть воду»)
 NATIVE_STORE = f"{DOMAIN}.notify_native"

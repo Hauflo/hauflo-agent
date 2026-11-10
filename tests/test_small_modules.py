@@ -63,28 +63,31 @@ async def test_alarm_automation_shape(hass: HomeAssistant) -> None:
     ru, en = await independent.texts(hass, False), await independent.texts(hass, True)
     the = independent.ids("r1")
     rl = rule(title="Вода {50%}", priority="critical", repeat_min=10, action={"title": "Закрыть", "service": "valve.close_valve", "entity_id": "valve.main"})
-    cfg = independent.automation_for(rl, [{"service": "mobile_app_ivan", "os": "ios"}], ru, "input_boolean.x", names={"valve.main": "Кран #1"})
-    assert cfg["id"] == the["automation"] and cfg["alias"] == "Авария: Вода {50%}" and cfg["mode"] == "queued"
-    ids = [t["id"] for t in cfg["triggers"]]
-    assert ids == ["alarm", "back", "ack", "accepted", "entered", "returned", "lost", "repeat", "run", "nodata", "data", "nodata_tick", "start", "calm", "calm"]
+    cfg = independent.automation_for(rl, [{"service": "mobile_app_ivan", "os": "ios"}], ru, "input_boolean.x", "input_boolean.o", names={"valve.main": "Кран #1"})
+    assert cfg["id"] == the["automation"] and cfg["alias"] == "Авария: Вода {50%}" and cfg["mode"] == "restart"
+    # As an integrator writes it (0.31): three triggers, two actions, no top-level conditions — HA's visual editor reads it.
+    assert [t["id"] for t in cfg["triggers"]] == ["alarm", "back", "ack"] and [list(a) for a in cfg["actions"]] == [["choose"], ["repeat"]] and "conditions" not in cfg
     assert cfg["triggers"][0]["for"] == {"seconds": independent.HOLD}
-    # Told unless its source chatters (R3-1): the push inside, the memory written last and never stopping the run.
-    alarm = cfg["actions"][2]["choose"][0]["sequence"][1]["then"]
-    assert cfg["actions"][2]["choose"][0]["sequence"][-1]["continue_on_error"] is True
-    assert cfg["trigger_variables"]["chatter"] == "input_text." + the["chatter"]
-    push = alarm[-1]["parallel"][0]
+    assert cfg["trigger_variables"] == {"sources": ["binary_sensor.l"], "alarm_states": ["on"], "ack": "input_boolean.x"}
+    push = cfg["actions"][0]["choose"][0]["sequence"][-1]["parallel"][0]
     # A person's text with template characters is said as it is (a JSON literal, never a template of theirs).
     assert push["data"]["title"].startswith('🚨 {{ "') and "{50%}" not in push["data"]["title"]
     assert push["continue_on_error"] is True and push["data"]["data"]["push"]["interruption-level"] == "critical"
     assert push["data"]["data"]["actions"][0]["action"] == the["run"] and "Кран" in push["data"]["data"]["actions"][0]["title"]
-    # English; a link sensor: no «no data» of its own, no repeat, no button; nobody to tell — said in the description.
-    link = independent.automation_for(rule(kind="link", title="Связь"), [], en, "input_boolean.y")
-    assert link["alias"] == "Alarm: Связь" and [t["id"] for t in link["triggers"]] == ["alarm", "back", "ack", "accepted", "entered", "returned", "lost", "start", "calm", "calm"]
-    assert en["nobody"] in link["description"]
-    assert all("parallel" not in step for b in link["actions"][2]["choose"] for step in b["sequence"])
+    # The repeat: every 10 min, the button kept after «Принято» (the loop runs while the alarm is open).
+    loop = cfg["actions"][1]["repeat"]
+    assert loop["while"] == [{"condition": "state", "entity_id": "input_boolean.o", "state": "on"}]
+    assert loop["sequence"][0]["timeout"]["seconds"].startswith("{% set e = (now() - states.input_boolean.o.last_changed)") and f"* {independent.REPEAT_SLOW * 60})" in loop["sequence"][0]["timeout"]["seconds"] and [w["id"] for w in loop["sequence"][0]["wait_for_trigger"]] == ["run", "ack"]
+    # English; a link sensor: no repeat, no button; nobody to tell — said in the description.
+    link = independent.automation_for(rule(kind="link", title="Связь"), [], en, "input_boolean.y", "input_boolean.p")
+    assert link["alias"] == "Alarm: Связь" and [t["id"] for t in link["triggers"]] == ["alarm", "back", "ack"] and link["triggers"][0]["not_from"] == ["unavailable", "unknown"]
+    assert en["nobody"] in link["description"] and "input_boolean.p" in link["description"]
+    assert all("parallel" not in step for b in link["actions"][0]["choose"] for step in b["sequence"])
+    no_repeat = link["actions"][1]["repeat"]
+    assert "timeout" not in no_repeat["sequence"][0] and len(no_repeat["while"]) == 2  # without a button: until «Принято»
     # A button HA's own service can't run (not in RUN_SERVICES): no button at all.
-    odd = independent.automation_for(rule(action={"title": "x", "service": "script.turn_on", "entity_id": "script.s"}), [], ru, "input_boolean.z")
-    assert "run" not in [t["id"] for t in odd["triggers"]]
+    odd = independent.automation_for(rule(action={"title": "x", "service": "script.turn_on", "entity_id": "script.s"}), [], ru, "input_boolean.z", "input_boolean.q")
+    assert "script.s" not in str(odd) and the["run"] not in str(odd)
     assert independent._lit("plain") == "plain" and independent._lit('a"{#}') == '{{ "a\\"\\u007b\\u0023\\u007d" }}'
 
 

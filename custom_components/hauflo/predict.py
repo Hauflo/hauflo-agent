@@ -343,7 +343,13 @@ class HaHost(Series):
         if last is None:
             # No backup has ever been made (sensor unknown for backup_never_days): a finding without a date.
             st = self.ctx.hass.states.get(eid)
-            if kind == "backup" and st is not None and st.state == STATE_UNKNOWN and now - rec["since"] >= _P["backup_never_days"] * DAY_S:
+            if kind != "backup":
+                return None
+            if st is None or st.state != STATE_UNKNOWN and st.state in NOT_A_STATE:
+                # HA starting, the sensor away a minute: no word either way — an open finding stays open (owner 09.11:
+                # Горького 3's «нет копии вообще» ended and came back twice a day, a message each time).
+                return rec.get("found") if rec["open"] is not None else None
+            if st.state == STATE_UNKNOWN and now - (rec["since"] or now) >= _P["backup_never_days"] * DAY_S:
                 return {"limit": _P["backup_max_days"]}
             return None
         if kind == "backup":
@@ -396,7 +402,7 @@ class HeatSlowing(Detector):
         return
 
     def on_learned(self, eid: str, direction: str, rate: float, now: float) -> None:
-        if direction not in self.KIND or rate <= 0:
+        if direction not in self.KIND or rate <= 0 or self.ctx.air_handler(eid):
             return
         r = self.recs.setdefault(eid, {}).setdefault(direction, {"hist": [], "open": None, "cond": None})
         r["hist"] = [*r["hist"], [now, rate, self.ctx.outdoor_c()]][-_P["slow_keep"] :]
@@ -456,6 +462,8 @@ class HeatSlowing(Detector):
     def items(self, now: float) -> list[dict[str, Any]]:
         out = []
         for eid, by in self.recs.items():
+            if self.ctx.air_handler(eid):
+                continue  # remembered before the rule (Горького 3): never said
             for d, r in by.items():
                 got = self.compare(r["hist"]) if r["open"] is not None else None
                 if got is None:
@@ -513,7 +521,7 @@ class ShortCycling(Detector):
         if not self.ctx.visible(st.entity_id):
             return False
         if st.domain == "climate":
-            return "hvac_action" in st.attributes
+            return "hvac_action" in st.attributes and not self.ctx.air_handler(st.entity_id)
         entry = self.ctx.entry(st.entity_id)
         return bool(entry and entry.device_id and entry.device_id in self._climate_devices)
 
@@ -567,7 +575,7 @@ class ShortCycling(Detector):
         devices = set()
         for st in self.ctx.hass.states.async_all("climate"):
             entry = self.ctx.entry(st.entity_id)
-            if entry and entry.device_id:
+            if entry and entry.device_id and not self.ctx.air_handler(st.entity_id):
                 devices.add(entry.device_id)
         self._climate_devices = devices
         for eid in list(self.recs):
@@ -586,7 +594,7 @@ class ShortCycling(Detector):
         out = []
         for eid, rec in self.recs.items():
             norm = self.norm(rec) if rec["open"] is not None else None
-            if norm is None:
+            if norm is None or self.ctx.air_handler(eid):
                 continue
             out.append({"key": f"{self.KIND}|{eid}", "kind": self.KIND, "entityId": eid, **self.ctx.who(eid), "since": _iso(rec["open"]), "perHour": _round(self.per_hour(rec, now)), "normPerHour": _round(norm)})
         return out

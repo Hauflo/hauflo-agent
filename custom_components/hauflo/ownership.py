@@ -26,7 +26,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later
 from homeassistant.util import dt as dt_util
 
-from .const import ACK_PREFIX, ALARM_PREFIX, CHATTER_PREFIX, DOMAIN, MONITOR_LABEL, MONITOR_LABEL_EN, MONITOR_LABELS
+from .const import ACK_PREFIX, ALARM_PREFIX, CHATTER_PREFIX, DOMAIN, MONITOR_LABEL, MONITOR_LABEL_EN, MONITOR_LABELS, OPEN_PREFIX
 from .storage import HaufloStore
 from .tuning import TUNING
 
@@ -65,10 +65,10 @@ def kind_of(entry: er.RegistryEntry, owned: set[str], owned_entries: set[str]) -
         if str(entry.unique_id).startswith(ALARM_PREFIX):
             return "alarm"  # an alarm rule HA runs itself (independent.py) — not reachable through the tunnel
         return "automation" if str(entry.unique_id).startswith(_AUTOMATION_PREFIX) else None
-    if entry.platform == "input_boolean" and str(entry.unique_id).startswith(ACK_PREFIX):
-        return "alarm"  # its «Принято» helper
+    if entry.platform == "input_boolean" and str(entry.unique_id).startswith((ACK_PREFIX, OPEN_PREFIX)):
+        return "alarm"  # its «Принято» / «авария открыта» helper
     if entry.platform == "input_text" and str(entry.unique_id).startswith(CHATTER_PREFIX):
-        return "alarm"  # its chatter memory
+        return "alarm"  # a chatter memory from before 0.31 (removed by the next sync)
     if entry.platform == DOMAIN:
         return "agent"
     return None

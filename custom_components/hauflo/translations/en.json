@@ -760,13 +760,16 @@
       "message": "Alarm: {title}"
     },
     "alarm_native_description": {
-      "message": "Made by Hauflo from the alarm rule “{title}”. Phones: {phones}. “Accepted” is the helper {helper}, a chattering sensor's memory — {chatter}. Runs without Hauflo and without the agent. Hauflo updates it when a project is applied and never writes over one edited by hand; to remove one — Settings → Automations & scenes; all of them while Hauflo is installed — “Remove Hauflo alarms” (hauflo.remove_alarms)."
+      "message": "Made by Hauflo from the alarm rule “{title}”. Phones: {phones}. “Accepted” is the helper {helper}, “alarm open” — {open}. Runs without Hauflo and without the agent; a faulty (chattering) sensor and “no data” are told by the Hauflo agent. Hauflo updates it when a project is applied and never writes over one edited by hand; to remove one — Settings → Automations & scenes; all of them while Hauflo is installed — “Remove Hauflo alarms” (hauflo.remove_alarms)."
     },
     "alarm_native_nobody": {
       "message": "nobody — only a notification in HA"
     },
     "alarm_native_helper": {
       "message": "Hauflo · accepted: {title}"
+    },
+    "alarm_native_open_helper": {
+      "message": "Hauflo · alarm open: {title}"
     },
     "alarm_native_accept": {
       "message": "Accept"
@@ -801,12 +804,6 @@
     "alarm_native_done": {
       "message": "{button}: done."
     },
-    "alarm_native_nodata_title": {
-      "message": "📵 {title}: no data"
-    },
-    "alarm_native_nodata": {
-      "message": "No data for {minutes} min: {name}. Until it is back, no alarm can come from it."
-    },
     "alarm_native_no_automation": {
       "message": "configuration.yaml has no “automation: !include automations.yaml” — the alarms stay with the Hauflo agent."
     },
@@ -814,7 +811,7 @@
       "message": "Hauflo: the alarms stay in Home Assistant"
     },
     "alarm_native_kept": {
-      "message": "Hauflo is removed, its alarms keep working: the automations “Alarm: …” and the helpers “Hauflo · accepted: …” and “Hauflo · chatter: …”. To remove them, delete them like any automation and helper (Settings → Automations / Helpers)."
+      "message": "Hauflo is removed, its alarms keep working: the automations “Alarm: …” and the helpers “Hauflo · accepted: …” and “Hauflo · alarm open: …”. To remove them, delete them like any automation and helper (Settings → Automations / Helpers)."
     },
     "alarm_native_write_failed": {
       "message": "automations.yaml couldn't be written — the reason is in Home Assistant's log."
@@ -822,8 +819,17 @@
     "alarm_native_not_plain": {
       "message": "automations.yaml isn't in Home Assistant's own format — nothing removed."
     },
-    "alarm_native_chatter_helper": {
-      "message": "Hauflo · chatter: {title}"
+    "alarm_native_nodata_title": {
+      "message": "📵 {title}: no data"
+    },
+    "alarm_native_nodata": {
+      "message": "No data for {minutes} min: {names}. Until it is back, no alarm can come from it."
+    },
+    "alarm_native_nodata_back_title": {
+      "message": "✅ {title}: data back"
+    },
+    "alarm_native_nodata_back": {
+      "message": "Back online: {names}."
     },
     "alarm_native_chatter_title": {
       "message": "📳 {title}"
@@ -831,8 +837,17 @@
     "alarm_native_chatter": {
       "message": "{name}: keeps going off and back ({count} times in {minutes} min) — looks like a faulty sensor. The rule's notifications are muted until its sensors stay calm for {minutes} min; the screen still shows them."
     },
-    "alarm_native_calm": {
-      "message": "Calm for {minutes} min, all back to normal — notifications as usual again."
+    "alarm_native_chatter_ha": {
+      "message": "{name}: keeps going off and back ({count} times in {minutes} min) — looks like a faulty sensor. Check it: the rule's alarms keep coming."
+    },
+    "alarm_native_ring_title": {
+      "message": "🔔 {name}"
+    },
+    "alarm_native_ring": {
+      "message": "{name}: the doorbell rang"
+    },
+    "alarm_native_fired": {
+      "message": "{name}: the event fired"
     }
   },
   "selector": {},

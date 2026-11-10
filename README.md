@@ -4,7 +4,7 @@
 
 **English** · [Русский](https://github.com/Hauflo/hauflo-agent/blob/main/README.ru.md)
 
-**ETS project or an existing Home Assistant in, finished site out: rooms, devices, family dashboard and alarms. KNX first, and no KNX needed to start.**
+**ETS project or an existing Home Assistant in, finished site out: rooms, devices, a dashboard for your client, and alarms. KNX first, and no KNX needed to start.**
 
 Free during the beta; needs a Hauflo account ([request access](https://app.hauflo.com/request-access)).
 
@@ -20,7 +20,7 @@ Free during the beta; needs a Hauflo account ([request access](https://app.haufl
 
 The agent connects a site's Home Assistant to [Hauflo](https://hauflo.com), where the KNX integrator plans the site from the ETS project.
 
-<img src="https://raw.githubusercontent.com/Hauflo/hauflo-agent/main/docs/images/from-ets.webp" width="840" alt="On the left, the living room's lights as group addresses in a demo ETS project. On the right, the same lights as the family's room card in Home Assistant.">
+<img src="https://raw.githubusercontent.com/Hauflo/hauflo-agent/main/docs/images/from-ets.webp" width="840" alt="On the left, the living room's lights as group addresses in a demo ETS project. On the right, the same lights as the client's room card in Home Assistant.">
 
 1. **Upload** a `.knxproj` or the ETS group address CSV.
 2. **Review the plan.** Rooms, devices and scenes. Where an address can be read two ways, you decide.
@@ -38,9 +38,9 @@ No ETS file, or Home Assistant already runs at the site? Create a project with *
 - **Deploy without KNX:** the Atelier dashboard is built by Home Assistant's rooms; devices of other integrations sit on the room pages.
 - **What the agent reads for this:** the registries (entities, devices, areas, floors, integrations), the list of dashboards and Home Assistant's and the agent's versions. **What it does not read:** the contents of other automations, scripts and dashboards — it only counts them.
 
-## For the family
+## For your client
 
-<img src="https://raw.githubusercontent.com/Hauflo/hauflo-agent/main/docs/images/family.webp" width="840" alt="Three phone screens of the demo home: a room with lights, scenes and blinds; air conditioning with a 24-hour chart in the dark theme; the family's own automations.">
+<img src="https://raw.githubusercontent.com/Hauflo/hauflo-agent/main/docs/images/family.webp" width="840" alt="Three phone screens of the demo home: a room with lights, scenes and blinds; air conditioning with a 24-hour chart in the dark theme; the client's own automations.">
 
 - **Everything at a glance.** “All quiet”, or what needs attention.
 - **Rooms that glow** when something is on. One tap opens a room.
@@ -49,11 +49,11 @@ No ETS file, or Home Assistant already runs at the site? Create a project with *
 - **Their own look.** Scenes in their blocks or on top, rooms and climate large or compact (compact — rows, as the best panels do). One tap back to the integrator’s choice.
 - **Settings.** Light or dark theme for each person. Winter or summer (or Heating / Cooling, as the integrator names it) for the thermostats the integrator chose, at once; a suggestion when the outdoor temperature says it's time.
 - **Alarms** that ring even on silent, with an action button and **Accept**.
-- **Phone and wall tablet**, with kiosk mode and a night screen. English and Russian.
+- **Phone and wall tablet**, with kiosk mode and a dimmed idle screen. English and Russian.
 
-## Automations the family sets
+## Automations your client sets
 
-In the dashboard: **Settings → Automations**. The family sets blinds and lights to sunrise, sunset, a time or the phone’s alarm clock (read directly on Android; on iPhone through a Shortcuts command). A rule can run up to two hours earlier or later, on the days they choose. There’s a wake-up light that brightens slowly, a timeline of what happens next, and 20 ready recipes for this home (sun, wake-up, night, leaving and arriving, air by CO₂ and humidity). The agent offers only those the home’s devices fit, with safe default values the family edits before saving.
+In the dashboard: **Settings → Automations**. Your client sets blinds and lights to sunrise, sunset, a time or the phone’s alarm clock (read directly on Android; on iPhone through a Shortcuts automation that runs the rule, steps on the rule’s screen). A rule can run up to two hours earlier or later, on the days they choose. There’s a wake-up light that brightens slowly, a timeline of what happens next, and 20 ready recipes for this home (sun, wake-up, night, leaving and arriving, air by CO₂ and humidity). The agent offers only those the home’s devices fit, with safe default values the client edits before saving.
 
 Rules only use Hauflo’s own lights, blinds and scenes. They never touch locks, the alarm, valves, garage doors or gates. Each rule is a plain Home Assistant automation, so it runs without Hauflo and without the internet.
 
@@ -111,8 +111,8 @@ All of them belong to one service device, **Hauflo**.
 | --- | --- | --- |
 | `binary_sensor.hauflo_link` (**Connection**, diagnostic) | On while the agent is connected to Hauflo. Attribute `server`: which Hauflo server. | Always |
 | `sensor.hauflo_made_in_this_home` (**Made at this site**, diagnostic) | How many entities Hauflo made or took over here. Attributes: `by_kind`, `hand_edited` (renamed or disabled in Home Assistant, or kept as a hand edit by the last plan), `next_deploy` (what the next deploy would create, update, offer to remove, and when Hauflo said it). Read only. | Always |
-| `binary_sensor.hauflo_daylight` (**Daylight outside**) | On while it is light outside: by an outdoor lux sensor an administrator chose, otherwise by the sun’s elevation; a change holds 10 minutes. While it is on, a Hauflo scene leaves off the lights the family marked **Leave off in scenes by day** (a niche, a shelf). Attributes: `source`, `value`, `threshold`, `since`. | Always |
-| **Recommended season** / **Current season** (sensors), **Switch automatically** (switch) | Winter / Summer (or Heating / Cooling): the mode in force, what the outdoor temperature suggests, and whether the mode is switched once a day by itself. The switch can be changed only by staff, not by the family. | After Winter / Summer is set up in Hauflo |
+| `binary_sensor.hauflo_daylight` (**Daylight outside**) | On while it is light outside: by an outdoor lux sensor an administrator chose, otherwise by the sun’s elevation; a change holds 10 minutes. While it is on, a Hauflo scene leaves off the lights the client marked **Leave off in scenes by day** (a niche, a shelf). Attributes: `source`, `value`, `threshold`, `since`. | Always |
+| **Recommended season** / **Current season** (sensors), **Switch automatically** (switch) | Winter / Summer (or Heating / Cooling): the mode in force, what the outdoor temperature suggests, and whether the mode is switched once a day by itself. The switch can be changed only by staff, not by the client. | After Winter / Summer is set up in Hauflo |
 | **Rule · name** (switch), **Rule active · name** (binary sensor) | One on / off switch and one “has fired” sensor for each value rule (for example ventilation by CO₂). | After a deploy with value rules |
 
 **The label “Hauflo”.** Every entity Hauflo made or took over carries the label **Hauflo** (**Settings → Areas, labels & zones → Labels**, or the label filter on the entities page). The agent puts it on and takes it off itself, only on Hauflo’s own; a label set by hand on anything else is taken off. Entity ids never change. While **Allow Hauflo to change this site's setup** is off, the label isn’t touched. **Hauflo monitoring** is a different label: you put it on devices Hauflo didn’t make, to watch them.
@@ -134,7 +134,7 @@ Hauflo can ask only for what is on the agent's fixed list, and the agent edits s
 - **Scrubbed:** people, device trackers, zones, cameras, images, media players, calendars, to-do lists, weather, the sun, locks, alarm panels, notify / TTS / STT / conversation, and motion, occupancy, presence, door, window and garage door sensors (unless Hauflo made them or you gave them the **Hauflo monitoring** label). Of these only the name, device class, icon and supported features leave. The state reads `hidden`, the times are removed.
 - **The entity registry list** (entity ids, names, integrations, unique ids, rooms, labels; without the phones' entities) and **the device registry list** (names, models, makers, rooms; for phones the name, model and maker are removed).
 - **For the alarm settings** (who gets alarms): the people of this Home Assistant and the phones with the Home Assistant app — their names, OS and owner — so you can pick recipients in Hauflo.
-- Rooms, floors and labels. The titles of all dashboards and the content of Hauflo's own dashboards (never the family's other dashboards). Which entities are exposed to voice assistants.
+- Rooms, floors and labels. The titles of all dashboards and the content of Hauflo's own dashboards (never the client's other dashboards). Which entities are exposed to voice assistants.
 - Home Assistant's version, time zone, language, unit system, currency, the list of loaded integrations and the external URL without a login. Whether Home Assistant Cloud is on, with Alexa and Google, without the account. Not the home's coordinates or name.
 - KNX: the ETS project loaded in Home Assistant's KNX integration, the settings of KNX entities, and which group addresses sent telegrams (addresses and times, never values).
 - The HomeKit bridge Hauflo set up: its pairing code and QR, shown to you in Hauflo to add the bridge to Apple Home (not stored). Alice: its label settings.
@@ -164,7 +164,7 @@ Hauflo can ask only for what is on the agent's fixed list, and the agent edits s
 - create and update its own dashboards and scenes, set its dashboard and theme as the default;
 - write its own rules (`hauflo_auto_*`) into `automations.yaml`, never touching other automations and never rewriting a hand-formatted file;
 - set the home's location and time zone in Home Assistant: only an administrator, from the dashboard's **Settings → Automations** page;
-- hide Home Assistant's extra sidebar panels (Map, Energy, Logbook…) for the family (everyone but Home Assistant administrators — they keep the full menu unless **Administrators too** is on), with the **Clean up the menu** option;
+- hide Home Assistant's extra sidebar panels (Map, Energy, Logbook…) for everyday users (everyone but Home Assistant administrators — they keep the full menu unless **Administrators too** is on), with the **Clean up the menu** option;
 - copy its card files to `/config/www/hauflo`;
 - set up the KNX connection to an interface in the house, light groups, voice exposure and the Apple Home bridge;
 - set the room, the name and the dashboard block (a `hauflo_role_*` label) of another integration’s devices and entities, only as the integrator chose in **Set up** and only in a deploy plan. What opens the house (locks, alarm panels, valves, gates, garage doors), the KNX bus and phones are never moved to a room or given a block. Every first value is kept, and **Revert** restores it (what you changed yourself afterwards stays);
@@ -189,9 +189,10 @@ Hauflo can ask only for what is on the agent's fixed list, and the agent edits s
 
 Set up in Hauflo → **Alarms**. A rule is: what happened → which sensors → who gets it → how.
 
-- **Push to the family’s phones** through the Home Assistant app. Critical alarms ring even in silent mode (iOS Critical Alerts, the Android alarm stream). They repeat until someone taps **Accept**; “back to normal” clears the notification. An action button does the obvious thing, such as “Shut off water”.
+- **Push to the client’s phones** through the Home Assistant app. Critical alarms ring even in silent mode (iOS Critical Alerts, the Android alarm stream). They repeat until someone taps **Accept** (the first 12 times at the rule’s pace, then hourly, so a night of repeats never uses up the phone’s daily push limit); “back to normal” clears the notification. An action button does the obvious thing, such as “Shut off water”.
 - **Telegram** through [@hauflo_bot](https://t.me/hauflo_bot), for you, the engineer on duty or the client. Each person gets only the alarms of their own sites.
 - Every rule is an automation in this Home Assistant with an **Accept** switch, named “Alarm: <rule>” (its id in `automations.yaml` is `hauflo_alarm_…`; the entity id Home Assistant gives it comes from the name, e.g. `automation.avariia_…`, and is never renamed). It runs without Hauflo and without the agent, also when the internet is down, and stays after the integration is removed. A rule Home Assistant can't hold (a hand-formatted `automations.yaml`, changes closed by the owner) stays with the agent, and you're told so. An automation you edited by hand is never overwritten.
+- The automation is small enough to read in the visual editor: three triggers (in alarm for the rule’s hold, every sensor back in normal, **Accept** from the push) and two actions (the push / “back to normal” / “Accepted”, then the repeat while the alarm is open: the first 12 times at the rule’s pace, then hourly). A second helper “Hauflo · alarm open: …” (`input_boolean.hauflo_open_…`) remembers the open alarm. A chattering sensor and “no data” are told by the agent: Home Assistant tells every alarm that held after the sensor was back in normal longer than the rule’s window; the repeat and the button wait in the automation’s run, so a restart of Home Assistant ends them (the next alarm starts them again).
 - Alarms go by push and Telegram only; email is not an alarm channel.
 
 To watch any other entity (a boiler fault, ventilation, a battery), give it the label **Hauflo monitoring** in Home Assistant.
@@ -209,11 +210,11 @@ To watch any other entity (a boiler fault, ventilation, a battery), give it the 
 <details>
 <summary><b>Does the agent send commands to the KNX bus by itself?</b></summary>
 
-No. A command goes to the bus when a person acts: a tap on the dashboard, a scene, voice, an alarm’s action button, the Winter/Summer switch, or a rule the family set in **Automations**.
+No. A command goes to the bus when a person acts: a tap on the dashboard, a scene, voice, an alarm’s action button, the Winter/Summer switch, or a rule the client set in **Automations**.
 
-Two exceptions. The first: the **Winter/Summer resend**. A KNX thermostat can lose its mode after a bus power loss or a reset, so the agent sends the mode the family chose again — every hour by default (the integrator can change it or turn it off), after Home Assistant starts and when the KNX connection is back. It never turns a thermostat on; a shared heat/cool address goes once. The outdoor-temperature suggestion only asks the family, it never switches by itself.
+Two exceptions. The first: the **Winter/Summer resend**. A KNX thermostat can lose its mode after a bus power loss or a reset, so the agent sends the mode the client chose again — every hour by default (the integrator can change it or turn it off), after Home Assistant starts and when the KNX connection is back. It never turns a thermostat on; a shared heat/cool address goes once. The outdoor-temperature suggestion only asks the client, it never switches by itself.
 
-The second, when the family switches it on: **Away — presence simulation**. Lights only in the evening dark, blinds at the usual times; only Hauflo’s own lights and blinds. Switched off, it turns off the lights it turned on.
+The second, when the client switches it on: **Away — presence simulation**. Lights only in the evening dark, blinds at the usual times; only Hauflo’s own lights and blinds. Switched off, it turns off the lights it turned on.
 
 </details>
 
@@ -293,7 +294,7 @@ Winter or summer is chosen in the dashboard (**Settings**) or in Hauflo, not by 
 - **One agent per Home Assistant.** One Home Assistant serves one Hauflo project.
 - **The project file import is KNX only** (`.knxproj` or ETS CSV). In a house without KNX the rooms come from Home Assistant's areas (**Import from Home Assistant**). Devices of other integrations are not imported from a file: they are placed on the dashboard, and **Set up** assigns their rooms, names and blocks.
 - **Home Assistant 2026.9 or newer.** The agent reads parts of Home Assistant’s KNX integration that are not a public API. If a new Home Assistant changes them, the agent switches off only those features and says which in **Repairs**.
-- **Hand-formatted `automations.yaml` / `scenes.yaml`** (comments, `!include`, `!secret`) are never rewritten, so the family’s own automations and scenes can’t be saved there until the file is plain.
+- **Hand-formatted `automations.yaml` / `scenes.yaml`** (comments, `!include`, `!secret`) are never rewritten, so the client’s own automations and scenes can’t be saved there until the file is plain.
 - **Dashboard resources in YAML mode** can’t be added by the agent. On removal (or **Make the site independent**) the cards are copied to `/config/www/hauflo` and Home Assistant shows a notification with the two lines to add to `configuration.yaml`.
 - **Voice sentences for floor heating are Russian only** for now.
 - **The Hauflo Atelier theme** lives in memory and goes with the agent; the dashboards keep their cards and fall back to Home Assistant’s look.
@@ -306,21 +307,21 @@ Winter or summer is chosen in the dashboard (**Settings**) or in Hauflo, not by 
 
 **Removal takes with it:** the agent’s system user, its voice sentences (`custom_sentences/ru/hauflo.yaml`), the alarm rules and the Winter/Summer settings, the guest links and the guest log, who services the home and its access history (`.storage/hauflo.service`), the last plan shown on **Made in this home**, and the hidden sidebar panels come back for everyone. The lights “Away” turned on are switched off. The alarm automations `hauflo_alarm_…` a deploy wrote (agent 0.26+) stay and keep ringing without the agent; the service `hauflo.remove_alarms` (Home Assistant administrator) removes them, see below. An older agent’s alarms stop with it unless you run **Make the site independent** first.
 
-**The family’s dashboard keeps working** (checked on a clean Home Assistant: removed, the integration’s files deleted, restarted). At removal the cards, icons and font are copied to `/config/www/hauflo` and added as dashboard resources `/local/hauflo/hauflo-icons.js` and `/local/hauflo/hauflo-cards.js`. Only the Hauflo Atelier theme goes: the cards fall back to Home Assistant’s look. In YAML resource mode Home Assistant shows what to add.
+**The client’s dashboard keeps working** (checked on a clean Home Assistant: removed, the integration’s files deleted, restarted). At removal the cards, icons and font are copied to `/config/www/hauflo` and added as dashboard resources `/local/hauflo/hauflo-icons.js` and `/local/hauflo/hauflo-cards.js`. Only the Hauflo Atelier theme goes: the cards fall back to Home Assistant’s look. In YAML resource mode Home Assistant shows what to add.
 
 **Removal leaves behind, on purpose.** The client’s dashboard must keep working, and a re-added agent must find what it made instead of making duplicates. Remove by hand only what you no longer want:
 
 | What stays | Why | To remove by hand |
 | --- | --- | --- |
-| Dashboards `hauflo-…` | The family’s dashboard | **Settings → Dashboards** → the dashboard → **Delete** |
-| Hauflo’s dashboard as the default | So the family opens their home | **Settings → Dashboards**: make another dashboard the default |
+| Dashboards `hauflo-…` | The client’s dashboard | **Settings → Dashboards** → the dashboard → **Delete** |
+| Hauflo’s dashboard as the default | So the client’s dashboard opens first | **Settings → Dashboards**: make another dashboard the default |
 | `/config/www/hauflo` and the Lovelace resources `/local/hauflo/hauflo-icons.js`, `/local/hauflo/hauflo-cards.js` | The cards of that dashboard | After deleting the dashboards: **Settings → Dashboards → ⋮ → Resources** (advanced mode) → delete both, then delete the folder |
-| Automations `hauflo_auto_…` | The family’s own rules, plain HA automations | **Settings → Automations & scenes** → delete them |
+| Automations `hauflo_auto_…` | The client’s own rules, plain HA automations | **Settings → Automations & scenes** → delete them |
 | Scenes `hauflo_…` and `hauflo_fam_…` | Plain HA scenes | **Settings → Automations & scenes → Scenes** → delete them |
 | `automations.yaml.hauflo-bak-*`, `scenes.yaml.hauflo-bak-*` (last 3 each) | Copies before each write | Delete the files in `/config` |
 | The labels **Hauflo** and **Hauflo monitoring** (and the category and `hauflo_role_*` labels a deploy made) | Labels on your entities: **Hauflo** still tells what Hauflo made | **Settings → Areas, labels & zones → Labels** |
 | Automations `hauflo_independent_…` (if you made the house independent) | Your alarms, now plain HA automations | **Settings → Automations & scenes** |
-| Automations `hauflo_alarm_…` and helpers `input_boolean.hauflo_ack_…` (“Hauflo · accepted: …”) | The alarms keep reaching the phones without Hauflo; Home Assistant shows a notification saying so | Before removing: **Developer tools → Actions → `hauflo.remove_alarms`** (admin). After: **Settings → Automations & scenes** and **Settings → Devices & services → Helpers** |
+| Automations `hauflo_alarm_…` and helpers `input_boolean.hauflo_ack_…` (“Hauflo · accepted: …”), `input_boolean.hauflo_open_…` (“Hauflo · alarm open: …”) | The alarms keep reaching the phones without Hauflo; Home Assistant shows a notification saying so | Before removing: **Developer tools → Actions → `hauflo.remove_alarms`** (admin). After: **Settings → Automations & scenes** and **Settings → Devices & services → Helpers** |
 | `/config/.storage/hauflo.*` (what Hauflo made, titles, order, scenes, automations, presence, season, open alarms) | A re-added agent picks up where it left | Stop Home Assistant, delete `/config/.storage/hauflo.*`, start it |
 | Rooms, floors, KNX entities, light groups, the HomeKit bridge, voice exposure | The home itself | As any Home Assistant item, in **Settings** |
 | Backups Hauflo made | Your safety net | **Settings → System → Backups** |
@@ -333,7 +334,7 @@ Winter or summer is chosen in the dashboard (**Settings**) or in Hauflo, not by 
 - brings every enabled alarm rule up to date as a plain automation `hauflo_alarm_…` in `automations.yaml` (the same sensors and alarm states, a push to the same Home Assistant app phones, critical where the rule is, the **Accept** switch and the rule’s button such as “Shut off water”). A copy of `automations.yaml` is made first. A hand-formatted file is left alone and you’re told so;
 - deletes nothing.
 
-**What stops once Hauflo is removed:** cloud monitoring (“agent offline”, “KNX bus silent”, the monitoring page), Telegram alarms, the alarm history in Hauflo, deploys and updates from the project, guest links, the “Away” presence simulation, the Winter/Summer resend and suggestion, voice sentences, and editing the family’s automations and scenes on the dashboard (the ones already made keep running). The phones in the automations are the ones the app had then: a new phone needs to be added to them by hand.
+**What stops once Hauflo is removed:** cloud monitoring (“agent offline”, “KNX bus silent”, the monitoring page), Telegram alarms, the alarm history in Hauflo, deploys and updates from the project, guest links, the “Away” presence simulation, the Winter/Summer resend and suggestion, voice sentences, and editing the client’s automations and scenes on the dashboard (the ones already made keep running). The phones in the automations are the ones the app had then: a new phone needs to be added to them by hand.
 
 ## Support
 

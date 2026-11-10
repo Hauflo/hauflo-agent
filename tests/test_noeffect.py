@@ -360,3 +360,28 @@ async def test_a_floor_thermostat_without_loops_is_a_floor_and_a_gone_entity_is_
     hass.states.async_remove(CL)
     await hass.async_block_till_done()
     assert CL not in {p["effect"] for p in d.pairs_view()["pairs"]}
+
+
+
+async def test_the_integrators_air_or_floor_beats_the_words_and_survives_a_restart(hass, ins):
+    """Batch «Внедрения» п.19: «воздух / пол» chosen on «Проверка» (backend effectKinds.ts) — a thermostat named «Воздух»
+    said to be the floor's is its room's loops' target (judged per loop, not as air); one named «Тёплый пол» said to be the
+    air's is judged as air. Kept across a restart; the whole map replaced (one left out — read by its words again)."""
+    setup(hass)
+    hass.states.async_set(AIR, "heat", {"friendly_name": "Воздух", "temperature": 22.0, "current_temperature": 21.0, "hvac_action": "heating"})
+    await run(hass, ins, STEP)
+    d = det(ins)
+    assert d.pairs[F.format(1)]["target"] == CL and CL not in d.pairs and d.pairs[AIR]["kind"] == "air"
+    d.set_kinds({CL: "air", AIR: "floor", "climate.bogus": "pump"})
+    assert d.kinds == {CL: "air", AIR: "floor"}
+    await run(hass, ins, STEP)
+    assert d.pairs[F.format(1)]["target"] == AIR and AIR not in d.pairs  # the floor's thermostat now: its loops judge
+    assert d.pairs[CL]["kind"] == "air"  # «Тёплый пол» by name, the air's by the integrator's word
+    again = PairEffect(ins)
+    again.load(d.dump())
+    assert again.kinds == {CL: "air", AIR: "floor"}
+    again.load({"kinds": {CL: "bogus"}})
+    assert again.kinds == {}
+    d.set_kinds({})
+    await run(hass, ins, STEP)
+    assert d.pairs[F.format(1)]["target"] == CL and d.pairs[AIR]["kind"] == "air"

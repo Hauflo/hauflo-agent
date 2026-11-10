@@ -189,6 +189,31 @@ async def test_slowing_colder_week_is_not_a_fault(hass, ins, monkeypatch):
     assert f"heat_slowing|{FLOOR}" in kinds(ins)
 
 
+async def test_slowing_never_for_an_air_handler(hass, ins, monkeypatch):
+    """Owner 09.11 (Горького 3 «Вентмашина Климат», 8 «замедлился» in 48 h): an air handler's supply air heats tens of °C
+    an hour and its rate follows the airflow — no «slower» for it, known by its words or by a rate no room reaches."""
+    ahu = "climate.gtc_syberia_5_klimat"
+    hass.states.async_set(ahu, "heat", {"friendly_name": "Вентмашина Климат"})
+    fast = "climate.unnamed_unit"  # no words: its learned rate tells
+    hass.states.async_set(fast, "heat", {"friendly_name": "Климат 5"})
+    monkeypatch.setattr(ins, "outdoor_c", lambda: 0.0)
+    clim = det(ins, "climate")
+    clim.norms[fast] = {"heat": [40.0] * 6}
+    t = local(0)
+    for rate in [2.0] * 8 + [1.0] * _P["trend_recent"]:
+        t += D
+        ins.clock.t = t
+        ins.learned(ahu, "heat", rate, t)
+        ins.learned(fast, "heat", rate * 20, t)
+    assert not kinds(ins)
+    assert ahu not in det(ins, "slowing").recs and fast not in det(ins, "slowing").recs
+    # One remembered from before the rule (the store of 0.30): never listed.
+    det(ins, "slowing").recs[ahu] = {"heat": {"hist": [[t - i * D, 2.0 if i > 3 else 1.0, 0.0] for i in range(12)][::-1], "open": t, "cond": None}}
+    assert not kinds(ins)
+    # A room's floor next to it is still judged.
+    assert not ins.air_handler(FLOOR) and not ins.air_handler("sensor.ahu_temp")
+
+
 async def test_slowing_needs_history(hass, ins):
     hass.states.async_set(FLOOR, "heat", {})
     t = local(0)
@@ -230,6 +255,15 @@ async def test_short_cycling_against_own_norm(hass, ins):
     assert item["normPerHour"] == 1.0 and item["perHour"] >= _P["cycle_min_per_h"]
     # Calm again: ends.
     await step(hass, ins, local(4, 8) + _P["cycle_window_h"] * H + 3600)
+    assert not kinds(ins)
+
+
+async def test_short_cycling_not_for_an_air_handler(hass, ins):
+    """A modulating air-handler heater starts many times an hour by design: not «short cycling» (sweep of 09.11)."""
+    eid = reg_entity(hass, "climate", "ahu_1")
+    for d in range(4):
+        await cycle(hass, ins, eid, local(d, 8), 8, H, {"friendly_name": "Приточная установка"})
+    await cycle(hass, ins, eid, local(4, 8), 16, 300, {"friendly_name": "Приточная установка"})
     assert not kinds(ins)
 
 
@@ -383,6 +417,23 @@ async def test_disk_free_in_mib_and_unknown_backup(hass, ins):
     assert "days" not in got[f"backup_old|{backup}"] and "date" not in got[f"backup_old|{backup}"]
     # The first backup closes it.
     await step(hass, ins, local(10, 4), backup, dt_util.utc_from_timestamp(local(10, 3)).isoformat(), {"device_class": "timestamp"})
+    assert f"backup_old|{backup}" not in kinds(ins)
+
+
+async def test_never_backup_does_not_end_on_a_blink(hass, ins):
+    """Owner 09.11 (Горького 3): «нет копии вообще» ended and came back twice a day — HA starting, the sensor away a
+    minute. An open finding stays open through it; only a real backup ends it."""
+    backup = reg_entity(hass, "sensor", "backup_last", platform="backup", translation_key="last_successful_automatic_backup")
+    hass.states.async_set(backup, "unknown", {})
+    await step(hass, ins, local(0, 12))
+    await step(hass, ins, local(0, 12) + _P["backup_never_days"] * D + 60)
+    since = kinds(ins)[f"backup_old|{backup}"]["since"]
+    await step(hass, ins, local(0, 13) + _P["backup_never_days"] * D, backup, "unavailable", {})
+    assert kinds(ins)[f"backup_old|{backup}"]["since"] == since
+    hass.states.async_set(backup, "unknown", {})
+    await step(hass, ins, local(0, 15) + _P["backup_never_days"] * D)
+    assert kinds(ins)[f"backup_old|{backup}"]["since"] == since  # the same finding, never a new start
+    await step(hass, ins, local(0, 16) + _P["backup_never_days"] * D, backup, dt_util.utc_from_timestamp(local(0, 15) + _P["backup_never_days"] * D).isoformat(), {"device_class": "timestamp"})
     assert f"backup_old|{backup}" not in kinds(ins)
 
 

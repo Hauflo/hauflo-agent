@@ -1,19 +1,22 @@
-"""Alarm rules as Home Assistant's own objects (0.26, owner's decision 5B) and «Сделать дом независимым» (29.10).
+"""Alarm rules as Home Assistant's own objects (0.26, owner's decision 5B; 0.31 — as an integrator writes them by hand).
 
 Every enabled alarm rule Hauflo sends becomes, in the house's HA:
 - a helper ``input_boolean.hauflo_ack_<rule>`` — «Принято»: on = someone accepted the open alarm;
-- a helper ``input_text.hauflo_chatter_<rule>`` — its sensors' recent alarms (a chattering sensor, see CHAT_W);
+- a helper ``input_boolean.hauflo_open_<rule>`` — «авария открыта»: on = the alarm was told and is not back yet;
 - an automation ``hauflo_alarm_<rule>`` in automations.yaml (the same plain-file check, backup copy and lock as the
-  dashboard automations): the alarm held for a few seconds → a push to the rule's phones (critical per OS, each phone on
-  its own — one that fails doesn't stop the others) and a note in HA; a repeat while nobody accepted; «Принято» and the
-  rule's button from the push; back to normal for the chatter window replaces the push (same tag) and resets «Принято»
-  (in alarm again sooner: the alarm stays open, nothing said); no data for a while →
-  a non-critical «нет связи».
-It runs without Hauflo and without the agent; the agent's engine then only keeps the list for the cards and monitoring
-(notify.py, ``engine.native``). A rule whose automation can't be written (automations.yaml not plain, no automation
-integration, changes closed by the owner, a helper HA didn't make) stays with the engine, said in the result.
-An automation edited by hand in HA is never written over or removed; removing the integration leaves them all
-(``hauflo.remove_alarms`` takes them away). All texts are the agent's translations (exceptions.alarm_native_*).
+  dashboard automations), small enough to read in HA's visual editor — three triggers (in alarm for the rule's hold /
+  every source back in normal / «Принято» from a push) and two actions: a ``choose`` (alarm → a push to the rule's
+  phones, critical per OS, each phone on its own, and a note in HA; back → «снова в норме» in place of the push, same
+  tag; «Принято» → said quietly) and a ``repeat`` while the alarm is open (the push again every `repeat_min` while
+  nobody accepted it, the rule's button from the push, «Принято» toggled in HA itself).
+It runs without Hauflo and without the agent. A chattering sensor, «нет связи» and the summary stay with the agent's
+engine (notify.py, ``engine.native``) and the cloud: no memory in YAML. Losses, accepted by the owner (10.11): the
+repeat and the button wait in a run that a restart of HA ends (the next alarm starts them again); chatter is damped by
+the engine only — HA tells every alarm that held after the source was in normal for the rule's back window.
+A rule whose automation can't be written (automations.yaml not plain, no automation integration, changes closed by the
+owner, a helper HA didn't make) stays with the engine, said in the result. An automation edited by hand in HA is never
+written over or removed — its helpers neither; removing the integration leaves them all (``hauflo.remove_alarms`` takes
+them away). All texts are the agent's translations (exceptions.alarm_native_*).
 """
 
 from __future__ import annotations
@@ -32,66 +35,37 @@ from homeassistant.setup import async_setup_component
 from homeassistant.util import slugify
 
 from . import automations, keep, yamlfile
-from .const import ACK_ACTION, ACK_PREFIX, ALARM_PREFIX, ASSET_TAG, CHATTER_PREFIX, DOMAIN, NATIVE_STORE, RUN_ACTION
+from .const import ACK_ACTION, ACK_PREFIX, ALARM_PREFIX, ASSET_TAG, CHATTER_PREFIX, DOMAIN, NATIVE_STORE, OPEN_PREFIX, RUN_ACTION
 from .storage import HaufloStore
-from .notify import ACTION_EVENT, CHATTER_COUNT, CHATTER_WINDOW, LINK_KINDS, OUTPUTS, chatter_window, LIST_MAX, NODATA_AFTER, RUN_SERVICES, NotifyEngine, push_data
-from .tuning import TUNING
+from .notify import ACTION_EVENT, LINK_KINDS, NATIVE_HOLD, OUTPUTS, default_hold, hold_value, LIST_MAX, REPEAT_FAST, REPEAT_SLOW, RUN_SERVICES, NotifyEngine, native_back, push_data
 
 _LOGGER = logging.getLogger(__name__)
 # The export before 0.26 (one push, no repeats): while one is still there an alarm comes twice — said in the result.
 PREFIX = "hauflo_independent_"
-HOLD = TUNING["notify"]["native_hold_s"]  # an alarm (or its end) held this long — a flicker says nothing
-RUNS = TUNING["notify"]["native_max_runs"]
-# A chattering sensor (ISA-18.2; the engine's own window; F-3 07.11, hysteresis on the return as Nagios flap detection,
-# Zabbix recovery, HA's own `for:`): the alarm is told at once (HOLD); «back» only once every source has stayed in normal
-# this long. Back in alarm sooner: the alarm is still open — nothing said, the window starts again. No helper keeps that
-# «open»: the automation's own `last_triggered` does — moved only by runs that act (the top conditions skip the rest).
-# While an alarm is open each of the source's changes is a silent run (a chain: in alarm again within the window right
-# after its own marked return, back to normal after something done in this alarm phase), so «the rule's last act is this
-# source's own mark» means «still open»; after «back» (or with nothing told) the chain is broken and the next alarm is told.
-# The window is the rule's (notify.chatter_window): short for life safety — leak, smoke, gas, CO (HA review N-3 07.11) —
-# so a real second alarm a minute after the first is told; REARM / BACK_AFTER are the common window's.
-# No data (unavailable / unknown) is not a change of the sensor (security N-1, HA M-5 07.11): it neither starts an alarm
-# nor ends one, nor resets a window. An open alarm's source going to / coming from no data is marked like its other
-# changes, so «on → no data → on» is the same alarm (a radio blip says nothing, however often) and «on → no data →
-# normal» ends it with «back» after the window. Only a source whose no-data phase isn't part of an open alarm (the
-# first alarm after it, a real restart — no state before) is told — and only while nobody accepted it.
-REARM = CHATTER_WINDOW
-BACK_AFTER = max(HOLD, REARM)
-# A chattering sensor over the long window (R3-1, ISA-18.2): the short life-safety window lets a slow flap («on 6 s →
-# off 70 s») through as a new alarm every time. The rule's input_text keeps, per source (its index in `sources`, «!» —
-# chattering), the times of its alarms within CHAT_W: up to CHATTER_COUNT told as before, the CHATTER_COUNT-th also said
-# once as «дребезжит»; then neither alarm nor «back» until no alarm of the rule for CHAT_W («calm»: «back», or the alarm
-# told again when one is on). Times older than CHAT_W never count — a real alarm after a quiet window is told, a restart
-# or a reload (the input_text restores, a `for:` doesn't) ages out on its own. No memory (helper gone): told as before.
-CHAT_W = CHATTER_WINDOW
-CHAT_MAX = TUNING["notify"]["chatter_memory_max"]  # input_text's longest value (HA's state limit, 255): the oldest sources go first
-_CHAT_READ = (
-    "{%- set T = now() | as_timestamp | int -%}{%- set ns = namespace(e=[]) -%}"
-    "{%- for item in states(chatter).split(' ') if ':' in item -%}{%- set k = item.split(':')[0] -%}"
-    "{%- set ts = item.split(':')[1].split(',') | select('match', '^[0-9]+$') | map('int') | select('gt', T - " + str(CHAT_W) + ") | list -%}"
-    "{%- if ts -%}{%- set ns.e = ns.e + [[k | replace('!', ''), '!' in k, ts]] -%}{%- endif -%}{%- endfor -%}"
-)
-# This alarm's place: mode «tell» / «chatter» (told + «дребезжит») / «quiet», and the memory to write.
-_CHAT_NEXT = (
-    _CHAT_READ + "{%- set me = namespace(i='-', t=[], flag=false, rest=[]) -%}"
-    "{%- for s in sources -%}{%- if s == trigger.entity_id -%}{%- set me.i = loop.index0 | string -%}{%- endif -%}{%- endfor -%}"
-    "{%- for x in ns.e -%}{%- if x[0] == me.i -%}{%- set me.t = x[2] -%}{%- set me.flag = x[1] -%}{%- else -%}{%- set me.rest = me.rest + [x] -%}{%- endif -%}{%- endfor -%}"
-    "{%- set t = (me.t + [T])[-" + str(CHATTER_COUNT) + ":] -%}"
-    "{%- set mode = 'quiet' if me.flag else 'chatter' if t | count >= " + str(CHATTER_COUNT) + " else 'tell' -%}"
-    "{%- set out = namespace(v='') -%}{%- for x in (me.rest + [[me.i, me.flag or mode == 'chatter', t]]) | reverse -%}"
-    "{%- set v = x[0] ~ ('!' if x[1] else '') ~ ':' ~ (x[2] | join(',')) ~ ((' ' ~ out.v) if out.v else '') -%}"
-    "{%- if v | length <= " + str(CHAT_MAX) + " -%}{%- set out.v = v -%}{%- endif -%}{%- endfor -%}"
-    "{{ {'mode': mode, 'value': out.v} | tojson }}"
-)
-_CHATTERING = _CHAT_READ + "{%- set c = namespace(on=false) -%}{%- for x in ns.e if x[1] -%}{%- set c.on = true -%}{%- endfor -%}{{ c.on }}"
+HOLD = NATIVE_HOLD  # an alarm (or its end) held this long — a flicker says nothing
+
+
+def alarm_hold(rule: dict[str, Any]) -> int:
+    """Seconds a source stays in alarm before the rule's «alarm» (its `for:`): the rule's hold (notify.hold_value /
+    default_hold — 0 for life safety, a minute for doors / motion / classless signals, two for levels), never under
+    HOLD (a flicker of a few seconds says nothing even for a leak). A rule from before holds — the canon's."""
+    hold = rule.get("hold")
+    if not isinstance(hold, int) or isinstance(hold, bool):
+        own = hold_value(rule.get("hold_s"))
+        hold = own if own is not None else default_hold(None, str(rule.get("kind") or ""), list(rule.get("sources") or []), rule.get("thresholds") or {})
+    return max(HOLD, hold)
 
 
 def back_after(rule: dict[str, Any]) -> int:
-    """Seconds every source stays in normal before the rule's «back» (its chatter window, at least HOLD)."""
-    return max(HOLD, chatter_window(rule))
+    """Seconds a source stays in normal before the rule's «back» (its chatter window, at least HOLD — ISA-18.2 / Nagios
+    flap hysteresis on the return; HA's own `for:`). In alarm again sooner (or after a radio blip of no data as short):
+    the same open alarm — nothing said."""
+    return native_back(rule)
+
+
 NO_DATA = ["unavailable", "unknown"]
 ICON = "mdi:bell-check"
+OPEN_ICON = "mdi:bell-ring"
 _TEXT = "alarm_native_"
 # One alarm's names in the push: «Протечка кухня · Кухня, …» — up to LIST_MAX, then «+N» (rendered by HA when it runs).
 _NAMES = (
@@ -99,22 +73,28 @@ _NAMES = (
     "{%- set ns.o = ns.o + [(state_attr(e, 'friendly_name') or e) ~ (' · ' ~ a if a else '')] -%}{%- endfor -%}"
     "{{ ns.o | join(', ') }}{% if alarmed | count > " + str(LIST_MAX) + " %} +{{ alarmed | count - " + str(LIST_MAX) + " }}{% endif %}"
 )
+# A level's names say its value too: «Батарея датчика · Кухня (18 %)».
+_LEVEL_NAMES = (
+    "{%- set ns = namespace(o=[]) -%}{%- for e in alarmed[:" + str(LIST_MAX) + "] -%}{%- set a = area_name(e) -%}{%- set u = state_attr(e, 'unit_of_measurement') -%}"
+    "{%- set ns.o = ns.o + [(state_attr(e, 'friendly_name') or e) ~ (' · ' ~ a if a else '')"
+    " ~ ((' (' ~ states(e) ~ ((' ' ~ u) if u else '') ~ ')') if e in levels else '')] -%}{%- endfor -%}"
+    "{{ ns.o | join(', ') }}{% if alarmed | count > " + str(LIST_MAX) + " %} +{{ alarmed | count - " + str(LIST_MAX) + " }}{% endif %}"
+)
 _ONE = "{{ (state_attr(trigger.entity_id, 'friendly_name') or trigger.entity_id) ~ ((' · ' ~ area_name(trigger.entity_id)) if area_name(trigger.entity_id) else '') }}"
-# The source lost first (HA M-4): the one «нет связи» names it, whichever trigger (a state change or the minute's template) tells.
-_FIRST_LOST_STATE = "(expand(sources) | selectattr('state', 'in', " + repr(NO_DATA) + ") | sort(attribute='last_changed') | first)"
-_FIRST_LOST = _FIRST_LOST_STATE + ".entity_id"
-_ONE_LOST = ("{%- set e = " + _FIRST_LOST + " -%}{{ (state_attr(e, 'friendly_name') or e) ~ ((' · ' ~ area_name(e)) if area_name(e) else '') }}")
 _ALARMED = "{{ expand(sources) | selectattr('state', 'in', alarm_states) | map(attribute='entity_id') | list }}"
-# Who pressed «Принято»: the HA person of the user (a phone's push action carries its user, a toggle in HA too).
-_WHO = "{%- set uid = (trigger.event.context.user_id if trigger.event is defined else trigger.to_state.context.user_id) -%}{{ (states.person | selectattr('attributes.user_id', 'eq', uid) | map(attribute='name') | list | first) if uid else '' }}"
-_ALARM_ON = "{{ expand(sources) | selectattr('state', 'in', alarm_states) | list | count > 0 }}"
-# HA M-4: the sources lost for NODATA_AFTER+1..+2 minutes (the minute template sees it once; the state trigger at NODATA_AFTER has run before).
-_LOST_LONG = ("expand(sources) | selectattr('state', 'in', " + repr(NO_DATA) + ") | selectattr('last_changed', 'le', now() - timedelta(seconds=" + str(NODATA_AFTER + 60)
-              + ")) | selectattr('last_changed', 'gt', now() - timedelta(seconds=" + str(NODATA_AFTER + 120) + ")) | list | count > 0")
-_ANY_LOST = "expand(sources) | selectattr('state', 'in', " + repr(NO_DATA) + ") | list | count > 0"
-_NONE_ON = "{{ expand(sources) | selectattr('state', 'in', alarm_states) | list | count == 0 }}"
-# When the rule last acted (None — never): the automation's own state at the trigger.
-_LAST = "{%- set last = this.attributes.last_triggered if this is defined and this and this.attributes is defined else none -%}"
+# A level rule's sources in alarm, the open alarm's way (notify.in_alarm, open_now): a level until it is back past its
+# threshold by the step (battery < 20 → alarm, > 25 → back: 18 → 22 → 19 is one alarm), a signal in its states.
+_LEVELS_ON = (
+    "{%- set ns = namespace(o=[]) -%}{%- for e in sources -%}{%- set th = levels.get(e) -%}{%- set s = states(e) -%}"
+    "{%- if th -%}{%- if s | is_number and ((s | float <= th.below + th.step) if th.below is defined else (s | float >= th.above - th.step)) -%}"
+    "{%- set ns.o = ns.o + [e] -%}{%- endif -%}{%- elif s in alarm_states -%}{%- set ns.o = ns.o + [e] -%}{%- endif -%}{%- endfor -%}"
+)
+_LEVELS_ALARMED = _LEVELS_ON + "{{ ns.o }}"
+
+
+def _who(uid: str) -> str:
+    """Who pressed «Принято»: the HA person of the user (a phone's push action carries its user, a toggle in HA too)."""
+    return "{%- set uid = " + uid + " -%}{{ (states.person | selectattr('attributes.user_id', 'eq', uid) | map(attribute='name') | list | first) if uid else '' }}"
 
 
 def slug_of(rule_id: str) -> str:
@@ -122,14 +102,16 @@ def slug_of(rule_id: str) -> str:
 
 
 def ids(rule_id: str) -> dict[str, str]:
-    """The rule's automation id, its helper's object id and its push buttons (const.py prefixes)."""
+    """The rule's automation id, its helpers' object ids and its push buttons (const.py prefixes). «chatter» — the
+    helper of the rule before 0.31, only removed."""
     slug = slug_of(rule_id)
-    return {"automation": ALARM_PREFIX + slug, "helper": ACK_PREFIX + slug, "chatter": CHATTER_PREFIX + slug, "ack": ACK_ACTION + slug.upper(), "run": RUN_ACTION + slug.upper()}
+    return {"automation": ALARM_PREFIX + slug, "helper": ACK_PREFIX + slug, "open": OPEN_PREFIX + slug, "chatter": CHATTER_PREFIX + slug,
+            "ack": ACK_ACTION + slug.upper(), "run": RUN_ACTION + slug.upper()}
 
 
-def chatter_of(automation: str) -> str:
-    """The chatter memory's object id of a rule's automation (records before 0.27 don't keep it)."""
-    return CHATTER_PREFIX + automation.removeprefix(ALARM_PREFIX)
+def _of(automation: str, prefix: str) -> str:
+    """A helper's object id of a rule's automation (records before 0.31 don't keep the «open» one)."""
+    return prefix + automation.removeprefix(ALARM_PREFIX)
 
 
 def automation_id(rule_id: str) -> str:
@@ -178,8 +160,12 @@ def _push(phones: list[dict[str, Any]], title: str | None, message: str, **data:
     ]
 
 
-def _helper(ack: str, on: bool) -> dict[str, Any]:
-    return {"action": f"input_boolean.turn_{'on' if on else 'off'}", "target": {"entity_id": ack}}
+def _helper(entity_id: str, on: bool) -> dict[str, Any]:
+    return {"action": f"input_boolean.turn_{'on' if on else 'off'}", "target": {"entity_id": entity_id}}
+
+
+def _is(entity_id: str, state: str) -> dict[str, Any]:
+    return {"condition": "state", "entity_id": entity_id, "state": state}
 
 
 def _outputs(rule: dict[str, Any], when: str) -> list[dict[str, Any]]:
@@ -194,486 +180,162 @@ def _outputs(rule: dict[str, Any], when: str) -> list[dict[str, Any]]:
     return [{"action": f"{d}.{OUTPUTS[d][when]}", "continue_on_error": True, "target": {"entity_id": eids}} for d, eids in by.items()]
 
 
-def automation_for(rule: dict[str, Any], phones: list[dict[str, Any]], t: dict[str, str], ack: str, *, names: dict[str, str] | None = None, chatter: str | None = None) -> dict[str, Any]:
-    """One rule as a plain HA automation (HA's own editor format). ``t`` — the texts (``texts``), ``ack`` — the
-    rule's «Принято» helper, ``names`` — entity → its name for the button («Закрыть: Кран»), ``chatter`` — its chatter
-    memory (input_text). A rule with levels (399-20) — ``level_automation_for``."""
+def _gap(seconds: int) -> str:
+    """The source was out of alarm (in normal or without data) at least this long before this alarm."""
+    return "(trigger.to_state.last_changed - trigger.from_state.last_changed).total_seconds() >= " + str(seconds)
+
+
+def automation_for(rule: dict[str, Any], phones: list[dict[str, Any]], t: dict[str, str], ack: str, opn: str, *, names: dict[str, str] | None = None) -> dict[str, Any]:
+    """One rule as a plain HA automation (HA's own editor format). ``t`` — the texts (``texts``), ``ack`` — the rule's
+    «Принято» helper, ``opn`` — its «авария открыта» helper, ``names`` — entity → its name for the button («Закрыть:
+    Кран»). A rule with levels (399-20) — ``level_automation_for``."""
     if rule.get("thresholds"):
-        return level_automation_for(rule, phones, t, ack, names=names, chatter=chatter)
+        return level_automation_for(rule, phones, t, ack, opn, names=names)
+    sources, states = list(rule["sources"]), list(rule["alarm_states"])
+    link = rule.get("kind") in LINK_KINDS
+    back_s = back_after(rule)
+    # A link sensor's «off» means something only after it was seen «on» (never from no data, nor at HA's start).
+    alarm = {"trigger": "state", "entity_id": sources, "to": states, **({"not_from": NO_DATA} if link else {}), "for": {"seconds": alarm_hold(rule)}, "id": "alarm"}
+    # Normal from alarm or from no data (HA M-5: alarm → unavailable → normal ends it too), held the back window.
+    back = {"trigger": "state", "entity_id": sources, "from": states + NO_DATA, "not_to": states + NO_DATA, "for": {"seconds": back_s}, "id": "back"}
+    # Told: a new alarm (none open), or — while one is open (another source of the rule, or a «back» HA's restart lost) —
+    # a source that was out of alarm for the whole back window; after HA's restart, while nobody accepted it. A shorter
+    # normal / no-data phase is the same open alarm (a chattering sensor, a radio blip) — nothing said.
+    fresh = ("{{ trigger.from_state is not none and " + _gap(back_s) + " }}" if link
+             else "{{ (trigger.from_state is none and is_state(ack, 'off')) or (trigger.from_state is not none and " + _gap(back_s) + ") }}")
+    told = [*([{"condition": "template", "value_template": "{{ trigger.from_state is not none }}"}] if link else []),
+            {"condition": "or", "conditions": [_is(opn, "off"), {"condition": "template", "value_template": fresh}]}]
+    still = {"condition": "state", "entity_id": sources, "state": states, "match": "any"}
+    return _automation(rule, phones, t, ack, opn, names, triggers=[alarm, back], told=told, still=still, alarmed=_ALARMED, names_tpl=_NAMES,
+                       variables={"sources": sources, "alarm_states": states, "ack": ack})
+
+
+def level_automation_for(rule: dict[str, Any], phones: list[dict[str, Any]], t: dict[str, str], ack: str, opn: str, *, names: dict[str, str] | None = None) -> dict[str, Any]:
+    """A rule with levels (399-20) as a plain HA automation: HA's own ``numeric_state`` — in alarm below / above the
+    threshold for the rule's hold, back past it by the step for HOLD (a level has its own hysteresis: battery < 20 →
+    alarm, > 25 → back). One threshold for all its sources (no signals): ``below`` / ``above`` as an integrator writes
+    them; different ones (or signals beside them): each source's margin to its own threshold (``value_template``, a
+    signal −1 in alarm / 1 in normal). «Принято», the repeat, the button and the siren as in ``automation_for``."""
+    sources, states = list(rule["sources"]), list(rule["alarm_states"])
+    levels: dict[str, dict[str, float]] = rule["thresholds"]
+    signals = [e for e in sources if e not in levels]
+    shapes = {(("below" if "below" in th else "above"), th.get("below", th.get("above")), th["step"]) for th in levels.values()}
+    held, hold = {"seconds": alarm_hold(rule)}, {"seconds": HOLD}
+    if len(shapes) == 1 and not signals:
+        way, value, step = next(iter(shapes))
+        other = "above" if way == "below" else "below"
+        alarm = {"trigger": "numeric_state", "entity_id": sources, way: value, "for": held, "id": "alarm"}
+        back = {"trigger": "numeric_state", "entity_id": sources, other: value + step if way == "below" else value - step, "for": hold, "id": "back"}
+    else:
+        def margin(step: str) -> str:
+            return ("{%- set th = levels.get(state.entity_id) -%}{%- set v = state.state | float(none) -%}"
+                    "{%- if th -%}{%- if v is none -%}unknown{%- elif th.below is defined -%}{{ v - th.below" + step + " }}{%- else -%}{{ th.above - v" + step + " }}{%- endif -%}"
+                    "{%- elif state.state in ['unavailable', 'unknown'] -%}unknown{%- else -%}{{ -1 if state.state in alarm_states else 1 }}{%- endif -%}")
+
+        alarm = {"trigger": "numeric_state", "entity_id": sources, "value_template": margin(""), "below": 0, "for": held, "id": "alarm"}
+        back = {"trigger": "numeric_state", "entity_id": sources, "value_template": margin(" - th.step"), "above": 0, "for": hold, "id": "back"}
+    back_s = back_after(rule)
+    # Told: a new alarm (none open), or — while one is open — a level that was back past its step (a value inside the
+    # step is the same alarm), a source that was out of alarm / without data for the back window; after HA's restart,
+    # while nobody accepted it.
+    fresh = ("{%- set f = trigger.from_state -%}{%- set th = levels.get(trigger.entity_id) -%}"
+             "{%- if f is none -%}{{ is_state(ack, 'off') }}"
+             "{%- elif th and f.state | is_number -%}{{ (f.state | float > th.below + th.step) if th.below is defined else (f.state | float < th.above - th.step) }}"
+             "{%- elif th or f.state in " + repr(NO_DATA) + " or f.state not in alarm_states -%}{{ " + _gap(back_s) + " }}{%- else -%}{{ false }}{%- endif -%}")
+    told = [{"condition": "or", "conditions": [_is(opn, "off"), {"condition": "template", "value_template": fresh}]}]
+    still = {"condition": "template", "value_template": _LEVELS_ON + "{{ ns.o | count > 0 }}"}
+    return _automation(rule, phones, t, ack, opn, names, triggers=[alarm, back], told=told, still=still, alarmed=_LEVELS_ALARMED, names_tpl=_LEVEL_NAMES,
+                       variables={"sources": sources, "alarm_states": states, "ack": ack, "levels": levels})
+
+
+def _automation(rule: dict[str, Any], phones: list[dict[str, Any]], t: dict[str, str], ack: str, opn: str, names: dict[str, str] | None, *,
+                triggers: list[dict[str, Any]], told: list[dict[str, Any]], still: dict[str, Any], alarmed: str, names_tpl: str, variables: dict[str, Any]) -> dict[str, Any]:
+    """The automation around a rule's own alarm / back triggers: «Принято» from a push the third trigger; actions — a
+    ``choose`` (alarm / back / «Принято») and a ``repeat`` while the alarm is open (the push again, the rule's button,
+    «Принято» in HA). ``told`` — when an alarm is told, ``still`` — a source in alarm now, ``alarmed`` / ``names_tpl`` —
+    the sources in alarm and their names in the push."""
     the = ids(rule["id"])
-    chatter = chatter or f"input_text.{the['chatter']}"
     aid = the["automation"]
     title = _lit(rule["title"])
-    critical = rule.get("priority") == "critical"
-    link = rule.get("kind") in LINK_KINDS
     act = rule.get("action") if (rule.get("action") or {}).get("service") in RUN_SERVICES else None
     button = None
     if act:
         # Cut as the person reads it, then made a literal (a cut literal would break the template).
         button = _lit(_say(t, "close" if act["service"] == "valve.close_valve" else "off", name=(names or {}).get(act["entity_id"]) or act["entity_id"])[:60])
-    actions = ([{"action": the["run"], "title": button, "destructive": True, "authenticationRequired": True}] if act else []) + [{"action": the["ack"], "title": t["accept"]}]
+    buttons = ([{"action": the["run"], "title": button, "destructive": True, "authenticationRequired": True}] if act else []) + [{"action": the["ack"], "title": t["accept"]}]
     alarm_title = _say(t, "title", title=title)
     who_said = "{% if who %}" + _say(t, "accepted_by", who="{{ who }}") + "{% else %}" + t["accepted"] + "{% endif %}"
     phone_names = ", ".join(str(p.get("name") or p["service"]) for p in phones) or t["nobody"]
     repeat = int(rule.get("repeat_min") or 0)
-    rearm = chatter_window(rule)
-    back_after_s = back_after(rule)
-    fresh = "trigger.from_state is not none and trigger.from_state.state not in ['unavailable', 'unknown']"
-    # The chain of an open alarm (see REARM): «short» — this source was in normal less than the window; «own» — the rule's
-    # last act is this source's marked return (its run comes at once; 2·HOLD is the queue's slack); «during» — the rule
-    # did something since this alarm phase began (its marked start, the alarm told, a repeat, «Принято»).
-    short = "(trigger.to_state.last_changed - trigger.from_state.last_changed).total_seconds() < " + str(rearm)
-    own = "last is not none and 0 <= (last - trigger.from_state.last_changed).total_seconds() <= " + str(2 * HOLD)
-    during = "last is not none and last >= trigger.to_state.last_changed"
-    calm = "(not " + short + " or not (" + own + " or " + during + "))"
-    # From no data: the alarm goes on when that no-data phase is a marked part of it, or the rule acted since.
-    chain = "(trigger.from_state is not none and (" + own + " or " + during + "))"
-    nodata_from = "trigger.from_state.state in " + repr(NO_DATA)
-    triggers: list[dict[str, Any]] = [
-        {"trigger": "state", "entity_id": list(rule["sources"]), "to": list(rule["alarm_states"]), "for": {"seconds": HOLD}, "id": "alarm"},
-        # Normal from alarm or from no data (HA M-5: alarm → unavailable → normal ends it too), held the whole window.
-        {"trigger": "state", "entity_id": list(rule["sources"]), "from": list(rule["alarm_states"]) + NO_DATA, "not_to": NO_DATA + list(rule["alarm_states"]),
-         "for": {"seconds": back_after_s}, "id": "back"},
-        {"trigger": "event", "event_type": ACTION_EVENT, "event_data": {"action": the["ack"]}, "id": "ack"},
-        {"trigger": "state", "entity_id": ack, "from": "off", "to": "on", "id": "accepted"},
-    ]
-    chat_title = _say(t, "chatter_title", title=title)
-    chat_say = _say(t, "chatter", name=_ONE, count=str(CHATTER_COUNT), minutes=str(max(1, CHAT_W // 60)))
-    if rearm > 0:
-        triggers += [
-            {"trigger": "state", "entity_id": list(rule["sources"]), "to": list(rule["alarm_states"]), "id": "entered"},
-            {"trigger": "state", "entity_id": list(rule["sources"]), "from": list(rule["alarm_states"]) + NO_DATA, "not_to": NO_DATA, "id": "returned"},
-            {"trigger": "state", "entity_id": list(rule["sources"]), "to": NO_DATA, "id": "lost"},
-        ]
-    if repeat:
-        # Every `repeat` minutes since the alarm (re)started, while nobody accepted it: true for one minute, then false —
-        # a template re-rendered each minute, so a quiet house leaves no traces (a time pattern would run every time).
-        triggers.append(
-            {
-                "trigger": "template",
-                "value_template": "{%- set on = expand(sources) | selectattr('state', 'in', alarm_states) | list -%}"
-                "{%- if on and is_state(ack, 'off') -%}{%- set m = ((now() - (on | map(attribute='last_changed') | max)).total_seconds() // 60) | int -%}"
-                "{{ m >= " + str(repeat) + " and m % " + str(repeat) + " == 0 }}{%- else -%}{{ false }}{%- endif -%}",
-                "id": "repeat",
-            }
-        )
-    if act:
-        triggers.append({"trigger": "event", "event_type": ACTION_EVENT, "event_data": {"action": the["run"]}, "id": "run"})
-    if not link:
-        triggers += [
-            {"trigger": "state", "entity_id": list(rule["sources"]), "to": NO_DATA, "for": {"seconds": NODATA_AFTER}, "id": "nodata"},
-            {"trigger": "state", "entity_id": list(rule["sources"]), "from": NO_DATA, "not_to": NO_DATA, "id": "data"},
-            # HA M-4: a source already lost when HA started has no state change to wait for — a minute's template finds it
-            # NODATA_AFTER after the start (the rule has not run since the loss: the trigger above did not tell it).
-            {"trigger": "template", "value_template": "{{ " + _LOST_LONG + " }}", "id": "nodata_tick"},
-        ]
-    triggers.append({"trigger": "homeassistant", "event": "start", "id": "start"})  # HA N-2: see the branch of the same id
-    # Calm: no alarm of the rule for CHAT_W — at once by the memory's own `for:`, else (an automation reloaded meanwhile)
-    # by the minute's template; the second of two finds the memory cleared.
-    triggers += [
-        {"trigger": "state", "entity_id": chatter, "not_to": ["", *NO_DATA], "for": {"seconds": CHAT_W}, "id": "calm"},
-        {"trigger": "template", "value_template": "{%- set c = expand(chatter) | first | default(none) -%}{{ c is not none and '!' in c.state and (now() - c.last_changed).total_seconds() >= "
-         + str(CHAT_W) + " }}", "id": "calm"},
-    ]
-    alarm_push = {"tag": aid, "critical": critical, "actions": actions}
+    alarm_push = {"tag": aid, "critical": rule.get("priority") == "critical", "actions": buttons}
     siren_on, siren_off = _outputs(rule, "on_start"), _outputs(rule, "on_end")
-    branches: list[dict[str, Any]] = [
+    named = [{"variables": {"alarmed": alarmed}}, {"variables": {"names": names_tpl}}]
+    says = _say(t, "alarm", names="{{ names }}")
+    choose = [
         {
-            # A new alarm (from a real state): «Принято» resets; after a restart / lost data only when nobody accepted it.
-            # A link sensor's «off» means something only after it was seen «on».
-            # A chattering source (in alarm again within the window, nothing done since its return) is quiet: the alarm
-            # is still open — its notification stays, the repeat goes on until «Принято».
-            "conditions": [{"condition": "trigger", "id": "alarm"},
-                           {"condition": "template", "value_template": _LAST + "{{ (" + fresh + " and " + calm + ")" + (" }}" if link else " or (not (" + fresh + ") and is_state(ack, 'off') and not " + chain + ") }}")}],
-            # A chattering source (CHAT_W): told up to CHATTER_COUNT times, the last one with «дребезжит»; then quiet. The
-            # memory is written last and may fail: the alarm is told first.
-            "sequence": [
-                {"variables": {"chat": _CHAT_NEXT}},
-                {
-                    "if": [{"condition": "template", "value_template": "{{ chat.mode != 'quiet' }}"}],
-                    "then": [
-                        {"if": [{"condition": "template", "value_template": "{{ " + fresh + " }}"}], "then": [_helper(ack, False)]},
-                        {"action": "persistent_notification.create", "data": {"notification_id": aid, "title": alarm_title, "message": _say(t, "alarm", names="{{ names }}")}},
-                        *_push(phones, alarm_title, _say(t, "alarm", names="{{ names }}"), **alarm_push),
-                        *siren_on,
-                    ],
-                },
-                {
-                    "if": [{"condition": "template", "value_template": "{{ chat.mode == 'chatter' }}"}],
-                    "then": [
-                        {"action": "persistent_notification.create", "data": {"notification_id": f"{aid}_chatter", "title": chat_title, "message": chat_say}},
-                        *_push(phones, chat_title, chat_say, tag=f"{aid}_chatter"),
-                    ],
-                },
-                {"action": "input_text.set_value", "continue_on_error": True, "target": {"entity_id": chatter}, "data": {"value": "{{ chat.value }}"}},
-            ],
+            "conditions": [{"condition": "trigger", "id": "alarm"}, *told],
+            "sequence": [*named, _helper(opn, True), _helper(ack, False),
+                         {"action": "persistent_notification.create", "data": {"notification_id": aid, "title": alarm_title, "message": says}},
+                         *_push(phones, alarm_title, says, **alarm_push), *siren_on],
         },
         {
-            # Every source in normal for the whole window (BACK_AFTER): the alarm is over — «Принято» resets, HA's bell
-            # clears. Run once, by the last source to change (one with no data has no «back» and doesn't count). «back»
-            # said for an open alarm only: the rule did something in this source's last alarm phase or since, or its
-            # last act is the marked change of a source still as it was (the chain above); a flicker after «back», or
-            # one nobody was told about, ends quietly.
-            "conditions": [{"condition": "trigger", "id": "back"}, {"condition": "template", "value_template": _NONE_ON},
-                           {"condition": "template", "value_template": "{{ expand(sources) | rejectattr('state', 'in', " + repr(NO_DATA) + ") | selectattr('last_changed', 'gt', trigger.to_state.last_changed) | list | count == 0 }}"}],
-            "sequence": [
-                # From no data: only a short gap counts (a longer one had «нет связи» / data runs, not this alarm's).
-                {"variables": {"told": _LAST + "{%- set ns = namespace(m=false) -%}{%- if last is not none -%}{%- for x in expand(sources) -%}"
-                               "{%- if 0 <= (last - x.last_changed).total_seconds() <= " + str(2 * HOLD) + " -%}{%- set ns.m = true -%}{%- endif -%}{%- endfor -%}{%- endif -%}"
-                               "{%- set f = trigger.from_state -%}"
-                               "{{ is_state(ack, 'on') or last is not none and (f.state in alarm_states or (trigger.to_state.last_changed - f.last_changed).total_seconds() < "
-                               + str(NODATA_AFTER) + ") and (last >= f.last_changed or ns.m) }}"}},
-                # A chattering source: no «back» until calm (CHAT_W) — that says it.
-                {"variables": {"chattering": _CHATTERING}},
-                _helper(ack, False),
-                {"action": "persistent_notification.dismiss", "data": {"notification_id": aid}},
-                *siren_off,
-                {
-                    "if": [{"condition": "template", "value_template": "{{ told and not chattering }}"}],
-                    "then": _push(phones, _say(t, "back_title", title=title), _say(t, "back", name=_ONE), tag=aid),
-                },
-            ],
+            # Every source out of alarm (the last one back says it; one without data doesn't hold it): «Принято» resets.
+            "conditions": [{"condition": "trigger", "id": "back"}, _is(opn, "on"), {"condition": "not", "conditions": [still]}],
+            "sequence": [_helper(opn, False), _helper(ack, False), {"action": "persistent_notification.dismiss", "data": {"notification_id": aid}},
+                         *siren_off, *_push(phones, _say(t, "back_title", title=title), _say(t, "back", name=_ONE), tag=aid)],
         },
         {
-            "conditions": [{"condition": "trigger", "id": "ack"}, {"condition": "state", "entity_id": ack, "state": "off"}, {"condition": "template", "value_template": _ALARM_ON}],
-            "sequence": [_helper(ack, True), *siren_off, {"variables": {"who": _WHO}}, *_push(phones, alarm_title, who_said, tag=aid, quiet=True)],
-        },
-        {
-            # Accepted in HA itself (the helper's toggle, a dashboard card): said to the phones; the agent's and this
-            # automation's own switching carry a parent context and say nothing here.
-            "conditions": [{"condition": "trigger", "id": "accepted"}, {"condition": "template", "value_template": "{{ trigger.to_state.context.parent_id is none }}"},
-                           {"condition": "template", "value_template": _ALARM_ON}],
-            "sequence": [*siren_off, {"variables": {"who": _WHO}}, *_push(phones, alarm_title, who_said, tag=aid, quiet=True)],
+            "conditions": [{"condition": "trigger", "id": "ack"}, _is(opn, "on"), _is(ack, "off")],
+            "sequence": [_helper(ack, True), *siren_off, {"variables": {"who": _who("trigger.event.context.user_id")}}, *_push(phones, alarm_title, who_said, tag=aid, quiet=True)],
         },
     ]
-    if rearm > 0:
-        mark = [{"variables": {"marked": "{{ trigger.entity_id }}"}}]
-        alarm_from = "trigger.from_state.state in alarm_states and last is not none and last >= trigger.from_state.last_changed"
-        branches += [
-            {
-                # The chain (see REARM): silent runs marking an open alarm's source — in alarm again soon after its own
-                # marked return (or from its marked no data, however long); back to normal / to no data after the rule
-                # acted in this alarm phase, or from a marked phase. A closed alarm marks nothing.
-                "conditions": [{"condition": "trigger", "id": "entered"},
-                               {"condition": "template", "value_template": _LAST + "{{ trigger.from_state is not none and " + own + " and (" + nodata_from + " or " + short + ") }}"}],
-                "sequence": mark,
-            },
-            {
-                "conditions": [{"condition": "trigger", "id": "returned"},
-                               {"condition": "template", "value_template": _LAST + "{{ trigger.from_state is not none and (" + alarm_from + " or " + nodata_from
-                                + " and trigger.to_state.state not in alarm_states and " + own + ") }}"}],
-                "sequence": mark,
-            },
-            {
-                "conditions": [{"condition": "trigger", "id": "lost"},
-                               {"condition": "template", "value_template": _LAST + "{{ trigger.from_state is not none and (" + alarm_from + " or trigger.from_state.state not in alarm_states and "
-                                "(" + nodata_from + " or " + short + ") and " + own + ") }}"}],
-                "sequence": mark,
-            },
-        ]
+    # While the alarm is open: the push again every `repeat` minutes nobody accepted it, the rule's button (kept after
+    # «Принято» — closing the valve is still worth it), «Принято» toggled in HA itself (a card, the helper). The run
+    # waits for them; any trigger of the rule starts it again (mode: restart).
+    waits = ([{"trigger": "event", "event_type": ACTION_EVENT, "event_data": {"action": the["run"]}, "id": "run"}] if act else []) + [
+        {"trigger": "state", "entity_id": ack, "from": "off", "to": "on", "id": "ack"}]
+    loop: list[dict[str, Any]] = []
     if repeat:
-        branches.append(
-            {
-                "conditions": [{"condition": "trigger", "id": "repeat"}, {"condition": "state", "entity_id": ack, "state": "off"}, {"condition": "template", "value_template": _ALARM_ON}],
-                "sequence": _push(phones, alarm_title, _say(t, "repeat", names="{{ names }}"), **alarm_push),
-            }
-        )
+        loop.append({"conditions": [{"condition": "template", "value_template": "{{ wait.trigger is none }}"}, _is(ack, "off"), still],
+                     "sequence": [*named, *_push(phones, alarm_title, _say(t, "repeat", names="{{ names }}"), **alarm_push)]})
     if act:
-        branches.append(
-            {
-                # The service first, no «continue»: when it fails the alarm stays unaccepted and keeps repeating.
-                "conditions": [{"condition": "trigger", "id": "run"}, {"condition": "template", "value_template": _ALARM_ON}],
-                "sequence": [
-                    {"action": act["service"], "target": {"entity_id": act["entity_id"]}},
-                    _helper(ack, True),
-                    *siren_off,
-                    *_push(phones, alarm_title, _say(t, "done", button=button or ""), tag=aid, quiet=True),
-                ],
-            }
-        )
-    # HA N-2: the 10-minute «back» timer does not survive a restart. At the start, with every source in normal, no alarm is
-    # open: «Принято» resets, the bell and the phones' message go quietly (a clear for a message that is not there is a no-op).
-    branches.append(
-        {
-            "conditions": [{"condition": "trigger", "id": "start"}, {"condition": "template", "value_template": _NONE_ON},
-                           {"condition": "template", "value_template": "{{ not (" + _ANY_LOST + ") }}"}],
-            "sequence": [_helper(ack, False), {"action": "persistent_notification.dismiss", "data": {"notification_id": aid}}, *siren_off, *_push(phones, None, "clear_notification", tag=aid)],
-        }
-    )
-    if not link:
-        nodata_title = _say(t, "nodata_title", title=title)
-        branches += [
-            {
-                # One «нет связи» per rule (HA M-4): the source lost first tells; the others, lost meanwhile, are in that message.
-                "conditions": [{"condition": "trigger", "id": "nodata"}, {"condition": "template", "value_template": "{{ trigger.from_state is not none and trigger.from_state.state not in ['unavailable', 'unknown'] }}"},
-                               {"condition": "template", "value_template": "{{ " + _FIRST_LOST + " == trigger.entity_id }}"}],
-                "sequence": [
-                    {"action": "persistent_notification.create", "data": {"notification_id": f"{aid}_nd", "title": nodata_title, "message": _say(t, "nodata", name=_ONE_LOST, minutes=str(NODATA_AFTER // 60))}},
-                    *_push(phones, nodata_title, _say(t, "nodata", name=_ONE_LOST, minutes=str(NODATA_AFTER // 60)), tag=f"{aid}_nd"),
-                ],
-            },
-            {
-                # After a restart: a source found lost, nobody told yet (the bell is gone with the restart).
-                "conditions": [{"condition": "trigger", "id": "nodata_tick"},
-                               {"condition": "template", "value_template": _LAST + "{{ last is none or last < " + _FIRST_LOST_STATE + ".last_changed }}"}],
-                "sequence": [
-                    {"action": "persistent_notification.create", "data": {"notification_id": f"{aid}_nd", "title": nodata_title, "message": _say(t, "nodata", name=_ONE_LOST, minutes=str(NODATA_AFTER // 60))}},
-                    *_push(phones, nodata_title, _say(t, "nodata", name=_ONE_LOST, minutes=str(NODATA_AFTER // 60)), tag=f"{aid}_nd"),
-                ],
-            },
-            {
-                # Data again after a «нет связи»: that message leaves the phones and HA's bell.
-                # The last source back clears it (HA M-4): while another is still lost, the message stands.
-                "conditions": [{"condition": "trigger", "id": "data"},
-                               {"condition": "template", "value_template": "{{ not (" + _ANY_LOST + ") and (trigger.to_state.last_changed - trigger.from_state.last_changed).total_seconds() >= " + str(NODATA_AFTER) + " }}"}],
-                "sequence": [{"action": "persistent_notification.dismiss", "data": {"notification_id": f"{aid}_nd"}}, *_push(phones, None, "clear_notification", tag=f"{aid}_nd")],
-            },
-        ]
-    branches.append(
-        {
-            # A chattering source calm (CHAT_W): the memory cleared; an alarm on now (never told while quiet, or the last
-            # one told) is told again — the repeat's way, while nobody accepted; all in normal — «back» with the calm.
-            "conditions": [{"condition": "trigger", "id": "calm"}, {"condition": "template", "value_template": "{{ '!' in states(chatter) }}"}],
-            "sequence": [
-                {"action": "input_text.set_value", "continue_on_error": True, "target": {"entity_id": chatter}, "data": {"value": ""}},
-                {"action": "persistent_notification.dismiss", "data": {"notification_id": f"{aid}_chatter"}},
-                {
-                    "if": [{"condition": "template", "value_template": _ALARM_ON}],
-                    "then": [
-                        {
-                            "if": [{"condition": "state", "entity_id": ack, "state": "off"}],
-                            "then": [
-                                {"action": "persistent_notification.create", "data": {"notification_id": aid, "title": alarm_title, "message": _say(t, "alarm", names="{{ names }}")}},
-                                *_push(phones, alarm_title, _say(t, "alarm", names="{{ names }}"), **alarm_push),
-                            ],
-                        }
-                    ],
-                    "else": [
-                        {"action": "persistent_notification.dismiss", "data": {"notification_id": aid}},
-                        *siren_off,
-                        *_push(phones, _say(t, "back_title", title=title), _say(t, "calm", minutes=str(max(1, CHAT_W // 60))), tag=aid),
-                    ],
-                },
-            ],
-        }
-    )
+        # The service first, no «continue»: when it fails the alarm stays unaccepted and keeps repeating.
+        loop.append({"conditions": [{"condition": "template", "value_template": "{{ wait.trigger is not none and wait.trigger.id == 'run' }}"}],
+                     "sequence": [{"action": act["service"], "target": {"entity_id": act["entity_id"]}}, _helper(ack, True), *siren_off,
+                                  *_push(phones, alarm_title, _say(t, "done", button=button or ""), tag=aid, quiet=True)]})
+    # Accepted in HA (not by this automation: its own switching has a parent context; the agent's — the card's «Принято»
+    # — too, the agent says it): the siren off, the phones told.
+    loop.append({"conditions": [{"condition": "template", "value_template": "{{ wait.trigger is not none and wait.trigger.id == 'ack' }}"}],
+                 "sequence": [*siren_off, {"if": [{"condition": "template", "value_template": "{{ wait.trigger.to_state.context.parent_id is none }}"}],
+                                           "then": [{"variables": {"who": _who("wait.trigger.to_state.context.user_id")}}, *_push(phones, alarm_title, who_said, tag=aid, quiet=True)]}]})
+    wait: dict[str, Any] = {"wait_for_trigger": waits}
+    if repeat:
+        # As the engine (owner 27.10): REPEAT_FAST repeats at the rule's pace, then hourly until «Принято» — every 5
+        # minutes all night would use up HA's daily push limit before the next alarm. Counted from the alarm's opening
+        # («авария открыта» on), not from the run: a second source flickering restarts the run (mode: restart) and
+        # would put the repeat off for good (acceptance 10.11). A second of slack: a timer firing early never repeats twice.
+        step, slow = repeat * 60, max(repeat, REPEAT_SLOW) * 60
+        fast = step * REPEAT_FAST if repeat < REPEAT_SLOW else 0
+        pace = (f"{{% set e = (now() - states.{opn}.last_changed).total_seconds() %}}{{% set a = e + 1 %}}"
+                f"{{{{ ((a // {step} + 1) * {step} if a < {fast} else {fast} + ((a - {fast}) // {slow} + 1) * {slow}) - e }}}}")
+        wait |= {"timeout": {"seconds": pace}, "continue_on_timeout": True}
     return {
         "id": aid,
         "alias": _say(t, "alias", title=rule["title"]),
-        "description": _say(t, "description", title=rule["title"], phones=phone_names, helper=ack, chatter=chatter),
-        "mode": "queued",
-        "max": RUNS,
-        "trigger_variables": {"sources": list(rule["sources"]), "alarm_states": list(rule["alarm_states"]), "ack": ack, "chatter": chatter},
-        "triggers": triggers,
-        # Only a run that acts runs: the quiet ones leave `last_triggered` as it was (the chatter window above).
-        "conditions": [{"condition": "or", "conditions": [{"condition": "and", "conditions": b["conditions"]} for b in branches]}],
+        "description": _say(t, "description", title=rule["title"], phones=phone_names, helper=ack, open=opn),
+        "mode": "restart",
+        "trigger_variables": variables,
+        "triggers": [*triggers, {"trigger": "event", "event_type": ACTION_EVENT, "event_data": {"action": the["ack"]}, "id": "ack"}],
         "actions": [
-            {"variables": {"alarmed": _ALARMED}},
-            {"variables": {"names": _NAMES}},
-            {"choose": branches},
+            {"choose": choose},
+            {"repeat": {"while": [_is(opn, "on"), *([] if act else [_is(ack, "off")])], "sequence": [wait, {"choose": loop}]}},
         ],
     }
 
 
-# A level rule's open alarms (399-20): its input_text keeps the indexes (in `sources`) of the sources told and not back —
-# «0 3». A level has its own hysteresis (the threshold's step), so no chatter window: in alarm — past the threshold for
-# HOLD; back — past the threshold by its step for HOLD (battery: < 20 → alarm, ≥ 25 → back; 18 → 22 → 19 is one alarm).
-_OPEN = "{%- set open = states(chatter).split(' ') | select('match', '^[0-9]+$') | list -%}"
-_INDEX = "{%- set me = namespace(i='') -%}{%- for s in sources -%}{%- if s == trigger.entity_id -%}{%- set me.i = loop.index0 | string -%}{%- endif -%}{%- endfor -%}"
-# A source in alarm now, the open one's way (`open_now` of notify.in_alarm): a level within its step, a signal in its states.
-_STILL = ("{%- set th = levels.get(e) -%}{%- set v = states(e) | float(none) -%}"
-          "{%- set on = (v is not none and ((v < th.below + th.step) if th.below is defined else (v > th.above - th.step))) if th else states(e) in alarm_states -%}")
-_LEVEL_NAMES = (
-    "{%- set ns = namespace(o=[]) -%}{%- for i in open_after[:" + str(LIST_MAX) + "] if i | int < sources | count -%}{%- set e = sources[i | int] -%}{%- set a = area_name(e) -%}"
-    "{%- set u = state_attr(e, 'unit_of_measurement') -%}{%- set ns.o = ns.o + [(state_attr(e, 'friendly_name') or e) ~ (' · ' ~ a if a else '')"
-    " ~ ((' (' ~ states(e) ~ ((' ' ~ u) if u else '') ~ ')') if e in levels else '')] -%}{%- endfor -%}"
-    "{{ ns.o | join(', ') }}{% if open_after | count > " + str(LIST_MAX) + " %} +{{ open_after | count - " + str(LIST_MAX) + " }}{% endif %}"
-)
-
-
-def level_automation_for(rule: dict[str, Any], phones: list[dict[str, Any]], t: dict[str, str], ack: str, *, names: dict[str, str] | None = None, chatter: str | None = None) -> dict[str, Any]:
-    """A rule with levels (399-20) as a plain HA automation: HA's own ``numeric_state`` for «below / above the
-    threshold», back past it by the step (a template — «≥», as the agent's engine), the rule's signals (if any) by their
-    states; the open alarms in the rule's input_text. «Принято», the repeat, the button, «нет связи» and the siren as in
-    ``automation_for``."""
-    the = ids(rule["id"])
-    chatter = chatter or f"input_text.{the['chatter']}"
-    aid = the["automation"]
-    title = _lit(rule["title"])
-    act = rule.get("action") if (rule.get("action") or {}).get("service") in RUN_SERVICES else None
-    button = None
-    if act:
-        button = _lit(_say(t, "close" if act["service"] == "valve.close_valve" else "off", name=(names or {}).get(act["entity_id"]) or act["entity_id"])[:60])
-    actions = ([{"action": the["run"], "title": button, "destructive": True, "authenticationRequired": True}] if act else []) + [{"action": the["ack"], "title": t["accept"]}]
-    alarm_title = _say(t, "title", title=title)
-    who_said = "{% if who %}" + _say(t, "accepted_by", who="{{ who }}") + "{% else %}" + t["accepted"] + "{% endif %}"
-    phone_names = ", ".join(str(p.get("name") or p["service"]) for p in phones) or t["nobody"]
-    repeat = int(rule.get("repeat_min") or 0)
-    levels: dict[str, dict[str, float]] = rule["thresholds"]
-    signals = [e for e in rule["sources"] if e not in levels]
-    hold = {"seconds": HOLD}
-    triggers: list[dict[str, Any]] = []
-    for eid, th in levels.items():
-        way = "below" if "below" in th else "above"
-        back = th[way] + th["step"] if way == "below" else th[way] - th["step"]
-        triggers += [
-            {"trigger": "numeric_state", "entity_id": [eid], way: th[way], "for": hold, "id": "alarm"},
-            {"trigger": "template", "value_template": "{%- set v = states('" + eid + "') | float(none) -%}{{ v is not none and v " + (">=" if way == "below" else "<=") + f" {back:g} }}}}",
-             "for": hold, "id": "back"},
-        ]
-    if signals:
-        triggers += [
-            {"trigger": "state", "entity_id": signals, "to": list(rule["alarm_states"]), "for": hold, "id": "alarm"},
-            {"trigger": "state", "entity_id": signals, "from": list(rule["alarm_states"]), "not_to": NO_DATA + list(rule["alarm_states"]), "for": hold, "id": "back"},
-        ]
-    triggers += [
-        {"trigger": "event", "event_type": ACTION_EVENT, "event_data": {"action": the["ack"]}, "id": "ack"},
-        {"trigger": "state", "entity_id": ack, "from": "off", "to": "on", "id": "accepted"},
-    ]
-    if repeat:
-        # Every `repeat` minutes since the open alarms last changed, while nobody accepted them (one true minute — a
-        # template re-rendered each minute).
-        triggers.append(
-            {
-                "trigger": "template",
-                "value_template": "{%- set c = expand(chatter) | first | default(none) -%}{%- if c is not none and c.state | regex_search('[0-9]') and is_state(ack, 'off') -%}"
-                "{%- set m = ((now() - c.last_changed).total_seconds() // 60) | int -%}{{ m >= " + str(repeat) + " and m % " + str(repeat) + " == 0 }}{%- else -%}{{ false }}{%- endif -%}",
-                "id": "repeat",
-            }
-        )
-    if act:
-        triggers.append({"trigger": "event", "event_type": ACTION_EVENT, "event_data": {"action": the["run"]}, "id": "run"})
-    triggers += [
-        {"trigger": "state", "entity_id": list(rule["sources"]), "to": NO_DATA, "for": {"seconds": NODATA_AFTER}, "id": "nodata"},
-        {"trigger": "state", "entity_id": list(rule["sources"]), "from": NO_DATA, "not_to": NO_DATA, "id": "data"},
-        {"trigger": "template", "value_template": "{{ " + _LOST_LONG + " }}", "id": "nodata_tick"},
-        # After a restart or a reload (the rule's sources may have changed): the open ones not in alarm any more go.
-        {"trigger": "homeassistant", "event": "start", "id": "start"},
-        {"trigger": "event", "event_type": "automation_reloaded", "id": "start"},
-    ]
-    alarm_push = {"tag": aid, "critical": rule.get("priority") == "critical", "actions": actions}
-    siren_on, siren_off = _outputs(rule, "on_start"), _outputs(rule, "on_end")
-    # Self-contained (the top conditions see only the trigger and trigger_variables, not the actions' variables).
-    is_open = _OPEN + "{{ open | count > 0 }}"
-    nodata_title = _say(t, "nodata_title", title=title)
-    nodata_say = _say(t, "nodata", name=_ONE_LOST, minutes=str(NODATA_AFTER // 60))
-    branches: list[dict[str, Any]] = [
-        {
-            # Past the threshold, not open yet: open, told (with its value), the siren.
-            "conditions": [{"condition": "trigger", "id": "alarm"}, {"condition": "template", "value_template": _OPEN + _INDEX + "{{ me.i != '' and me.i not in open }}"}],
-            "sequence": [
-                {"variables": {"open_after": "{{ open + [me.i] }}"}},
-                {"variables": {"names": _LEVEL_NAMES}},
-                {"action": "input_text.set_value", "continue_on_error": True, "target": {"entity_id": chatter}, "data": {"value": "{{ open_after | join(' ') }}"}},
-                _helper(ack, False),
-                {"action": "persistent_notification.create", "data": {"notification_id": aid, "title": alarm_title, "message": _say(t, "alarm", names="{{ names }}")}},
-                *_push(phones, alarm_title, _say(t, "alarm", names="{{ names }}"), **alarm_push),
-                *siren_on,
-            ],
-        },
-        {
-            # Back past the threshold by its step: no longer open; the last one back — «back», HA's bell, the siren off.
-            "conditions": [{"condition": "trigger", "id": "back"}, {"condition": "template", "value_template": _OPEN + _INDEX + "{{ me.i != '' and me.i in open }}"}],
-            "sequence": [
-                {"variables": {"open_after": "{{ open | reject('eq', me.i) | list }}"}},
-                {"action": "input_text.set_value", "continue_on_error": True, "target": {"entity_id": chatter}, "data": {"value": "{{ open_after | join(' ') }}"}},
-                {
-                    "if": [{"condition": "template", "value_template": "{{ open_after | count == 0 }}"}],
-                    "then": [
-                        _helper(ack, False),
-                        {"action": "persistent_notification.dismiss", "data": {"notification_id": aid}},
-                        *siren_off,
-                        *_push(phones, _say(t, "back_title", title=title), _say(t, "back", name=_ONE), tag=aid),
-                    ],
-                },
-            ],
-        },
-        {
-            "conditions": [{"condition": "trigger", "id": "ack"}, {"condition": "state", "entity_id": ack, "state": "off"}, {"condition": "template", "value_template": is_open}],
-            "sequence": [_helper(ack, True), *siren_off, {"variables": {"who": _WHO}}, *_push(phones, alarm_title, who_said, tag=aid, quiet=True)],
-        },
-        {
-            "conditions": [{"condition": "trigger", "id": "accepted"}, {"condition": "template", "value_template": "{{ trigger.to_state.context.parent_id is none }}"},
-                           {"condition": "template", "value_template": is_open}],
-            "sequence": [*siren_off, {"variables": {"who": _WHO}}, *_push(phones, alarm_title, who_said, tag=aid, quiet=True)],
-        },
-        {
-            # The open ones still in alarm stay; none left — no alarm: «Принято» resets, the bell and the phones' message go.
-            # Nothing open: nothing to do (no run, nothing sent).
-            "conditions": [{"condition": "trigger", "id": "start"}, {"condition": "template", "value_template": is_open}],
-            "sequence": [
-                {"variables": {"open_after": "{%- set ns = namespace(o=[]) -%}{%- for i in open if i | int < sources | count -%}{%- set e = sources[i | int] -%}" + _STILL
-                               + "{%- if on -%}{%- set ns.o = ns.o + [i] -%}{%- endif -%}{%- endfor -%}{{ ns.o }}"}},
-                {"if": [{"condition": "template", "value_template": "{{ open_after != open }}"}],
-                 "then": [{"action": "input_text.set_value", "continue_on_error": True, "target": {"entity_id": chatter}, "data": {"value": "{{ open_after | join(' ') }}"}}]},
-                {
-                    "if": [{"condition": "template", "value_template": "{{ open_after | count == 0 }}"}],
-                    "then": [_helper(ack, False), {"action": "persistent_notification.dismiss", "data": {"notification_id": aid}}, *siren_off, *_push(phones, None, "clear_notification", tag=aid)],
-                },
-            ],
-        },
-        {
-            "conditions": [{"condition": "trigger", "id": "nodata"}, {"condition": "template", "value_template": "{{ trigger.from_state is not none and trigger.from_state.state not in ['unavailable', 'unknown'] }}"},
-                           {"condition": "template", "value_template": "{{ " + _FIRST_LOST + " == trigger.entity_id }}"}],
-            "sequence": [
-                {"action": "persistent_notification.create", "data": {"notification_id": f"{aid}_nd", "title": nodata_title, "message": nodata_say}},
-                *_push(phones, nodata_title, nodata_say, tag=f"{aid}_nd"),
-            ],
-        },
-        {
-            "conditions": [{"condition": "trigger", "id": "nodata_tick"},
-                           {"condition": "template", "value_template": _LAST + "{{ last is none or last < " + _FIRST_LOST_STATE + ".last_changed }}"}],
-            "sequence": [
-                {"action": "persistent_notification.create", "data": {"notification_id": f"{aid}_nd", "title": nodata_title, "message": nodata_say}},
-                *_push(phones, nodata_title, nodata_say, tag=f"{aid}_nd"),
-            ],
-        },
-        {
-            "conditions": [{"condition": "trigger", "id": "data"},
-                           {"condition": "template", "value_template": "{{ not (" + _ANY_LOST + ") and (trigger.to_state.last_changed - trigger.from_state.last_changed).total_seconds() >= " + str(NODATA_AFTER) + " }}"}],
-            "sequence": [{"action": "persistent_notification.dismiss", "data": {"notification_id": f"{aid}_nd"}}, *_push(phones, None, "clear_notification", tag=f"{aid}_nd")],
-        },
-    ]
-    if repeat:
-        branches.append(
-            {
-                "conditions": [{"condition": "trigger", "id": "repeat"}, {"condition": "state", "entity_id": ack, "state": "off"}, {"condition": "template", "value_template": is_open}],
-                "sequence": [{"variables": {"open_after": "{{ open }}"}}, {"variables": {"names": _LEVEL_NAMES}}, *_push(phones, alarm_title, _say(t, "repeat", names="{{ names }}"), **alarm_push)],
-            }
-        )
-    if act:
-        branches.append(
-            {
-                "conditions": [{"condition": "trigger", "id": "run"}, {"condition": "template", "value_template": is_open}],
-                "sequence": [
-                    {"action": act["service"], "target": {"entity_id": act["entity_id"]}},
-                    _helper(ack, True),
-                    *siren_off,
-                    *_push(phones, alarm_title, _say(t, "done", button=button or ""), tag=aid, quiet=True),
-                ],
-            }
-        )
-    return {
-        "id": aid,
-        "alias": _say(t, "alias", title=rule["title"]),
-        "description": _say(t, "description", title=rule["title"], phones=phone_names, helper=ack, chatter=chatter),
-        "mode": "queued",
-        "max": RUNS,
-        "trigger_variables": {"sources": list(rule["sources"]), "alarm_states": list(rule["alarm_states"]), "ack": ack, "chatter": chatter, "levels": levels},
-        "triggers": triggers,
-        # Only a run that acts runs (each branch's own conditions, read again by its `choose`).
-        "conditions": [{"condition": "or", "conditions": [{"condition": "and", "conditions": b["conditions"]} for b in branches]}],
-        "actions": [
-            {"variables": {"open": _OPEN + "{{ open }}"}},
-            {"variables": {"me": _INDEX + "{{ {'i': me.i} }}"}},
-            {"choose": branches},
-        ],
-    }
-
-
-# The rule's helpers: domain → object id prefix, how HA's helper editor would make it.
-CHAT_ICON = "mdi:vibrate"
-_KIND = {"input_boolean": ACK_PREFIX, "input_text": CHATTER_PREFIX}
+# The rule's helpers: (domain, object id prefix) — how HA's helper editor would make them; the input_text is the chatter
+# memory of the rules before 0.31 (only removed).
+_KIND = (("input_boolean", ACK_PREFIX), ("input_boolean", OPEN_PREFIX), ("input_text", CHATTER_PREFIX))
 
 
 def _collection(hass: HomeAssistant, domain: str = "input_boolean") -> Any:
@@ -686,30 +348,29 @@ def _collection(hass: HomeAssistant, domain: str = "input_boolean") -> Any:
     return getattr(getattr(fn, "__self__", None), "storage_collection", None)
 
 
-async def _helpers(hass: HomeAssistant, domain: str = "input_boolean") -> Any:
-    if domain not in hass.config.components:
-        await async_setup_component(hass, domain, {})
-    if (coll := _collection(hass, domain)) is None:
-        raise RuntimeError(f"{domain} helpers not reachable")
+async def _helpers(hass: HomeAssistant) -> Any:
+    if "input_boolean" not in hass.config.components:
+        await async_setup_component(hass, "input_boolean", {})
+    if (coll := _collection(hass)) is None:
+        raise RuntimeError("input_boolean helpers not reachable")
     return coll
 
 
-def _ack_entity(hass: HomeAssistant, object_id: str, domain: str = "input_boolean") -> str:
-    return er.async_get(hass).async_get_entity_id(domain, domain, object_id) or f"{domain}.{object_id}"
+def _ack_entity(hass: HomeAssistant, object_id: str) -> str:
+    return er.async_get(hass).async_get_entity_id("input_boolean", "input_boolean", object_id) or f"input_boolean.{object_id}"
 
 
-async def _ensure_helper(hass: HomeAssistant, coll: Any, object_id: str, name: str, domain: str = "input_boolean") -> str:
-    """The rule's helper («Принято», its chatter memory) — made like HA's helper editor makes it (the id from its first
-    name), then named."""
-    want = {"icon": ICON} if domain == "input_boolean" else {"icon": CHAT_ICON, "max": CHAT_MAX, "mode": "text"}
+async def _ensure_helper(hass: HomeAssistant, coll: Any, object_id: str, name: str, icon: str) -> str:
+    """One of the rule's helpers («Принято», «авария открыта») — made like HA's helper editor makes it (the id from its
+    first name), then named."""
     if object_id not in coll.data:
-        await coll.async_create_item({"name": object_id, **want})
+        await coll.async_create_item({"name": object_id, "icon": icon})
     if object_id not in coll.data:
         raise RuntimeError(f"helper {object_id} not made")
     item = coll.data[object_id]
-    if item.get("name") != name or any(item.get(k) != v for k, v in want.items()):
-        await coll.async_update_item(object_id, {"name": name, **want})
-    return _ack_entity(hass, object_id, domain)
+    if item.get("name") != name or item.get("icon") != icon:
+        await coll.async_update_item(object_id, {"name": name, "icon": icon})
+    return _ack_entity(hass, object_id)
 
 
 async def _drop_helper(hass: HomeAssistant, coll: Any, object_id: str) -> None:
@@ -719,7 +380,7 @@ async def _drop_helper(hass: HomeAssistant, coll: Any, object_id: str) -> None:
 
 async def _drop_ours(hass: HomeAssistant, colls: dict[str, Any], object_id: str) -> None:
     """One of the rules' helpers, by its prefix (anything else is never touched)."""
-    for domain, prefix in _KIND.items():
+    for domain, prefix in _KIND:
         if object_id.startswith(prefix):
             await _drop_helper(hass, colls.get(domain), object_id)
 
@@ -734,7 +395,8 @@ async def async_sync(hass: HomeAssistant, engine: NotifyEngine, *, dry_run: bool
     """The engine's rules as automations + helpers in HA (one write of automations.yaml, then one reload); the engine is
     told which rules HA now runs (``async_set_native`` — open alarms move over). ``dry_run`` — only what would change
     (Hauflo's deploy plan, ``config`` — the rules it would send). Rules are said by their titles; ``engine`` — those left
-    to the agent, with the reason."""
+    to the agent, with the reason. A rule's automation from before 0.31 is written in the new form and its chatter
+    memory (input_text) removed — unless it was edited by hand: then both stay as they are."""
     from homeassistant.components.automation.config import async_validate_config_item  # noqa: PLC0415
 
     english = engine._english(config)
@@ -758,10 +420,11 @@ async def async_sync(hass: HomeAssistant, engine: NotifyEngine, *, dry_run: bool
         return out
     locked = bool(engine.locked is not None and engine.locked())
     coll = None if dry_run else await _helpers(hass)
-    tcoll = None if dry_run else await _helpers(hass, "input_text")
-    colls = {"input_boolean": coll, "input_text": tcoll}
+    # The chatter memories of before 0.31: removed where input_text runs (no input_text — none of them either).
+    colls = {"input_boolean": coll, "input_text": None if dry_run or "input_text" not in hass.config.components else _collection(hass, "input_text")}
     names = {r["action"]["entity_id"]: engine._name(r["action"]["entity_id"]) for r in rules if r.get("action")}
     file = automations.Automations(hass, lambda _eid: False)
+    digest_of = automations._digest  # noqa: SLF001
     async with automations._FILE_LOCK:  # noqa: SLF001 — the one lock every writer of automations.yaml takes
         try:
             data, before = await file._read_file()  # noqa: SLF001
@@ -785,12 +448,22 @@ async def async_sync(hass: HomeAssistant, engine: NotifyEngine, *, dry_run: bool
                 to_engine(r, "locked")
                 continue
             rule_of[aid] = r
-            if coll is not None and tcoll is not None:
-                made[r["id"]] = [o for o, c in ((the["helper"], coll), (the["chatter"], tcoll)) if o not in c.data]
+            targets = engine._targets(r, config)
+            if cur is not None and not (rec and digest_of(cur) == rec.get("digest")):
+                # Not Hauflo's last write: changed in HA's own editor (or no record of it) — never written over, its
+                # helpers (a chatter memory of before 0.31 too) stay as they are. The same as Hauflo would write: its own.
+                if digest_of(cur) != digest_of(automation_for(r, targets, t, _ack_entity(hass, the["helper"]), _ack_entity(hass, the["open"]), names=names)):
+                    out["kept_edited"].append(r["title"])
+                    native[r["id"]] = dict(rec) if rec else {"automation": aid, "helper": _ack_entity(hass, the["helper"]), "digest": "", "ack": the["ack"], "run": the["run"], "lang": lang}
+                    continue
+            if coll is not None:
+                made[r["id"]] = [o for o in (the["helper"], the["open"]) if o not in coll.data]
             try:
-                ack = await _ensure_helper(hass, coll, the["helper"], _say(t, "helper", title=r["title"])) if coll is not None else _ack_entity(hass, the["helper"])
-                chat = (await _ensure_helper(hass, tcoll, the["chatter"], _say(t, "chatter_helper", title=r["title"]), "input_text") if tcoll is not None
-                        else _ack_entity(hass, the["chatter"], "input_text"))
+                if coll is not None:
+                    ack = await _ensure_helper(hass, coll, the["helper"], _say(t, "helper", title=r["title"]), ICON)
+                    opn = await _ensure_helper(hass, coll, the["open"], _say(t, "open_helper", title=r["title"]), OPEN_ICON)
+                else:
+                    ack, opn = _ack_entity(hass, the["helper"]), _ack_entity(hass, the["open"])
             except Exception:  # noqa: BLE001 — that rule stays with the agent, the others go on
                 _LOGGER.exception("Hauflo: helpers for %s not made", r["id"])
                 if cur is not None and rec:
@@ -800,15 +473,10 @@ async def async_sync(hass: HomeAssistant, engine: NotifyEngine, *, dry_run: bool
                     to_engine(r, "helper")
                     drop.extend(made.pop(r["id"], []))
                 continue
-            cfg = automation_for(r, engine._targets(r, config), t, ack, names=names, chatter=chat)
-            digest = automations._digest(cfg)  # noqa: SLF001
-            if cur is not None and automations._digest(cur) == digest:  # noqa: SLF001
+            cfg = automation_for(r, targets, t, ack, opn, names=names)
+            digest = digest_of(cfg)
+            if cur is not None and digest_of(cur) == digest:
                 state = "unchanged"
-            elif cur is not None and not (rec and automations._digest(cur) == rec.get("digest")):  # noqa: SLF001
-                # Changed in HA's own editor (or not Hauflo's record of it): never written over.
-                out["kept_edited"].append(r["title"])
-                native[r["id"]] = {"automation": aid, "helper": ack, "chatter": chat, "digest": rec.get("digest", "") if rec else "", "ack": the["ack"], "run": the["run"], "lang": (rec or {}).get("lang") or lang}
-                continue
             else:
                 try:
                     await async_validate_config_item(hass, aid, cfg)
@@ -824,24 +492,32 @@ async def async_sync(hass: HomeAssistant, engine: NotifyEngine, *, dry_run: bool
                 state = "updated" if cur is not None else "restored" if rec else "added"
                 writes[aid] = cfg
             out[state].append(r["title"])
-            native[r["id"]] = {"automation": aid, "helper": ack, "chatter": chat, "digest": digest, "ack": the["ack"], "run": the["run"], "lang": lang}
+            native[r["id"]] = {"automation": aid, "helper": ack, "open": opn, "digest": digest, "ack": the["ack"], "run": the["run"], "lang": lang}
+            drop.append(the["chatter"])  # its memory of before 0.31 (only once the new form is written)
         wanted = {ids(r["id"])["automation"] for r in rules}
         by_aid = {rec.get("automation"): rec for rec in stored.values()}
+
+        def helpers_of(aid: str) -> list[str]:
+            return [str((by_aid.get(aid) or {}).get("helper") or "").partition(".")[2] or _of(aid, ACK_PREFIX), _of(aid, OPEN_PREFIX), _of(aid, CHATTER_PREFIX)]
+
         for aid, cur in current.items():
             if not isinstance(aid, str) or not aid.startswith(ALARM_PREFIX) or aid in wanted:
                 continue
             rec = by_aid.get(aid)
-            if rec is None or automations._digest(cur) != rec.get("digest"):  # noqa: SLF001
+            if rec is None or digest_of(cur) != rec.get("digest"):
                 out["warnings"].append({"code": "edited_left", "title": str(cur.get("alias") or aid)})
                 continue
             writes[aid] = None
             out["removed"].append(str(cur.get("alias") or aid))
-            drop += [str(rec.get("helper") or "").partition(".")[2], chatter_of(aid)]
+            drop += helpers_of(aid)
+        # A chatter memory of before 0.31 whose automation is gone (deleted in HA by hand): nothing reads it any more.
+        if (memories := colls["input_text"]) is not None:
+            drop += [o for o in memories.data if str(o).startswith(CHATTER_PREFIX) and ALARM_PREFIX + str(o).removeprefix(CHATTER_PREFIX) not in current and o not in drop]
         if writes and not dry_run:
             kept = [writes[a.get("id")] if isinstance(a, dict) and a.get("id") in writes else a for a in data]
             new = [a for a in kept if a is not None] + [c for a, c in writes.items() if c is not None and a not in current]
             theirs: list[str] = []  # changed in HA's editor while this pass ran (M-2): left as they are now
-            same = lambda a, b: automations._digest(a) == automations._digest(b)  # noqa: E731, SLF001
+            same = lambda a, b: digest_of(a) == digest_of(b)  # noqa: E731
             try:
                 await file._write_file(new, before, yamlfile.rebase(writes, current, same, theirs))  # noqa: SLF001
             except Exception as err:  # noqa: BLE001 — nothing half-written (one atomic write): the agent keeps the new ones
@@ -857,12 +533,13 @@ async def async_sync(hass: HomeAssistant, engine: NotifyEngine, *, dry_run: bool
                 return out
             for aid in theirs:
                 writes.pop(aid, None)
-                if (r := rule_of.get(aid)) is None:  # a removal: the automation and its helper stay
-                    gone = {str((by_aid.get(aid) or {}).get("helper") or "").partition(".")[2], chatter_of(aid)}
+                if (r := rule_of.get(aid)) is None:  # a removal: the automation and its helpers stay
+                    gone = set(helpers_of(aid))
                     drop = [o for o in drop if o not in gone]
                     out["removed"] = [x for x in out["removed"] if x != str((current.get(aid) or {}).get("alias") or aid)]
                     out["warnings"].append({"code": "edited_left", "title": str((current.get(aid) or {}).get("alias") or aid)})
                     continue
+                drop = [o for o in drop if o != ids(r["id"])["chatter"]]  # its automation as it is now: its memory too
                 for key in ("added", "updated", "restored"):
                     if r["title"] in out[key]:
                         out[key].remove(r["title"])
@@ -889,8 +566,8 @@ async def async_sync(hass: HomeAssistant, engine: NotifyEngine, *, dry_run: bool
 
 
 async def async_remove_all(hass: HomeAssistant, engine: NotifyEngine | None) -> list[str]:
-    """«Убрать аварии Hauflo» (hauflo.remove_alarms, HA's admin): every hauflo_alarm_* automation, hauflo_ack_* and hauflo_chatter_* helper
-    goes — edited ones too (the admin asked for exactly that); the agent's engine takes the rules back. Returns the
+    """«Убрать аварии Hauflo» (hauflo.remove_alarms, HA's admin): every hauflo_alarm_* automation, hauflo_ack_* / hauflo_open_* helper (and a
+    hauflo_chatter_* of before 0.31) goes — edited ones too (the admin asked for exactly that); the agent's engine takes the rules back. Returns the
     aliases removed. NotPlain when automations.yaml isn't plain (nothing removed)."""
     file = automations.Automations(hass, lambda _eid: False)
     async with automations._FILE_LOCK:  # noqa: SLF001
@@ -908,7 +585,7 @@ async def async_remove_all(hass: HomeAssistant, engine: NotifyEngine | None) -> 
         for a in ours:
             if eid := reg.async_get_entity_id("automation", "automation", str(a["id"])):
                 reg.async_remove(eid)
-    for domain, prefix in _KIND.items():
+    for domain, prefix in _KIND:
         coll = _collection(hass, domain)
         for object_id in [k for k in (coll.data if coll is not None else {}) if str(k).startswith(prefix)]:
             await _drop_helper(hass, coll, object_id)

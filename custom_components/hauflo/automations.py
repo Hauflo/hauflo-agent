@@ -1,6 +1,7 @@
 """«Автоматизации» — the client's own simple rules from the dashboard (owner 28.10: «дал доступ к гео, подтвердил,
 указал закат/рассвет, какие сдвиги по времени, указал, что должно когда произойти»): sunrise / sunset ± minutes, a time
-of day, a phone's alarm clock (Android: the HA app's next-alarm sensor; iPhone: a Shortcuts automation fires an event).
+of day, a phone's alarm clock (Android: the HA app's next-alarm sensor; iPhone: a Shortcuts automation runs the rule by the
+HA app's «Trigger automation»; an older shortcut's «Fire Event» of the rule's event still works).
 Plan and limits: docs/automations.md.
 
 Every rule is a real HA automation in automations.yaml (it runs without Hauflo or the internet), id `hauflo_auto_…`,
@@ -61,6 +62,8 @@ _LOGGER = logging.getLogger(__name__)
 STORE_KEY = "hauflo.automations"
 PREFIX = "hauflo_auto_"
 ALARM_EVENT = "hauflo_alarm_"
+# Set by «Проверить сейчас»: an iPhone rule's days / «только если» (its actions' first step) let it through.
+RUN_VAR = "hauflo_check"
 AUTOMATIONS = "automations.yaml"
 EVENTS = ("sunrise", "sunset", "time", "alarm_android", "alarm_iphone", "value", "presence", "state")
 # «По показаниям» (owner 03.11: «не смог сделать по средней температуре»): a reading of one sensor, or the mean / min / max
@@ -767,14 +770,25 @@ class Automations:
                 trigger["offset"] = _offset_text(when["offset"])
         ru = str(self.hass.config.language or "").startswith("ru")
         name = rule.get("name") or ("Автоматизация" if ru else "Automation")
+        conditions = also + ([{"condition": "time", "weekday": list(rule["days"])}] if len(rule["days"]) < 7 else []) + [self._condition(c) for c in rule.get("only_if", [])]
+        actions = self._service_calls(rule)
+        if when["event"] == "alarm_iphone":
+            # The iPhone runs it by the HA app's «Запустить автоматизацию» (09.11 п.23: «Fire Event» is gone from the app —
+            # deprecated, no replacement): that is automation.trigger, which skips the conditions — so the days and
+            # «только если» are the actions' first step here, checked either way (an old shortcut's event too) — but for
+            # «Проверить сейчас» (run: RUN_VAR set), which never waits for the right day.
+            if conditions:
+                skip = {"condition": "template", "value_template": "{{ %s | default(false) }}" % RUN_VAR}
+                actions = [{"condition": "or", "conditions": [skip, {"condition": "and", "conditions": conditions}]}, *actions]
+            conditions = []
         cfg: dict[str, Any] = {
             "id": rule_id,
             "alias": f"Hauflo · {name}",
             # Neutral: it keeps working after Hauflo is removed (HA expert 28.10), the page it named may be gone.
             "description": "Создано в Hauflo." if ru else "Made in Hauflo.",
             "triggers": [trigger],
-            "conditions": also + ([{"condition": "time", "weekday": list(rule["days"])}] if len(rule["days"]) < 7 else []) + [self._condition(c) for c in rule.get("only_if", [])],
-            "actions": self._service_calls(rule),
+            "conditions": conditions,
+            "actions": actions,
             "mode": "single",
             # No initial_state: HA keeps the on / off a person set (in HA or here) over restarts (HA expert 28.10).
         }
@@ -1021,7 +1035,7 @@ class Automations:
         if eid is None or self.hass.states.get(eid) is None:
             raise LookupError("the automation isn't in HA — save the rule again")
         # Not awaited to the end: a wake-up light takes minutes.
-        await self.hass.services.async_call("automation", "trigger", {"entity_id": eid, "skip_condition": True}, blocking=False)
+        await self.hass.services.async_call("automation", "trigger", {"entity_id": eid, "skip_condition": True, "variables": {RUN_VAR: True}}, blocking=False)
         return {"id": rule_id, "entity_id": eid}
 
     # --- the house's place -------------------------------------------------------------------------------------------

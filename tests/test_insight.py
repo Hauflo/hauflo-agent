@@ -97,7 +97,12 @@ async def test_heating_without_effect_is_said_then_ends(hass: HomeAssistant, ins
     assert item["area"] == "Гостиная" and item["name"] == "Тёплый пол"
     assert item["expectedH"] == pytest.approx(1.0) and item["hours"] == pytest.approx(MIN_H + 0.5)
     assert item["change"] == pytest.approx(0.1) and item["flatH"] == FLAT_H
+    assert "outdoor" not in item  # no street temperature known: none said
     assert calls  # the status went at once
+    # The street known: said with it (the cloud makes «no heat in a frost» critical — alertSeverity.json frost).
+    ins.outdoor_c = lambda: -7.04
+    [item] = ins.items()
+    assert item["outdoor"] == pytest.approx(-7.04)
     # Reached: gone (the cloud says «снова в норме»), and the failed episode isn't learned.
     rates = list(det(ins).norms[FLOOR]["heat"])
     await at(hass, ins, t + 6, 21.9)

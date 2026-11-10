@@ -1,7 +1,8 @@
-"""Alarm rules as Home Assistant's own objects (0.26, owner's decision 5B): every enabled rule → a «Принято» helper and
-an automation in automations.yaml that pushes, repeats, takes «Принято» and the rule's button, says «back to normal»
-and «no data» — without Hauflo; the agent's engine keeps only the list. Broken on purpose: a flicker, a restart, a
-hand-edited automation, a hand-formatted file, a closed house, the integration removed."""
+"""Alarm rules as Home Assistant's own objects (0.26, owner's decision 5B; 0.31 — small, as written by hand): every
+enabled rule → «Принято» and «авария открыта» helpers and an automation in automations.yaml (3 triggers, 2 actions)
+that pushes, repeats, takes «Принято» and the rule's button and says «back to normal» — without Hauflo; «no data» and a
+chattering sensor are the agent's engine's. Broken on purpose: a flicker, a restart, a hand-edited automation, a
+hand-formatted file, a closed house, the integration removed, an upgrade from 0.30."""
 
 from datetime import timedelta
 from pathlib import Path
@@ -227,9 +228,45 @@ async def test_repeat_until_accepted(hass: HomeAssistant, house) -> None:
     for _ in range(11):
         await _later(hass, freezer, 60)
     assert pushes == []
-    # A quiet house leaves no traces: the automation ran only for the real events.
+    # Accepted, still in alarm: the run waits only for the rule's button (closing the valve is still worth it).
     eid = er.async_get(hass).async_get_entity_id("automation", "automation", AID)
-    assert hass.states.get(eid).attributes["current"] == 0
+    assert hass.states.get(eid).attributes["current"] == 1
+
+
+async def test_repeats_slow_down_after_repeat_fast(hass: HomeAssistant, house, monkeypatch) -> None:
+    """As the engine (owner 27.10): REPEAT_FAST repeats at the rule's pace, then hourly until «Принято» — never every
+    5 minutes all night (HA's daily push limit). Still 3 triggers / 2 actions; the pace is the wait's own timeout."""
+    entry, engine, config, pushes, _, freezer = house
+    monkeypatch.setattr(independent, "REPEAT_FAST", 2)
+    engine.config = notify._clean_rules({"lang": "ru", "rules": [{**LEAK_RULE, "repeat_min": 5}]}, hass, engine.owns)
+    await independent.async_sync(hass, engine)
+    await hass.async_block_till_done()
+    auto = next(a for a in _ours(config) if a["id"] == AID)
+    assert _size(auto) == (3, 2)
+    hass.states.async_set(LEAK, "on")
+    await _later(hass, freezer, 6)
+    pushes.clear()
+    for _ in range(10):  # 2 × 5 min: two repeats, each to both phones
+        await _later(hass, freezer, 60)
+    assert len(pushes) == 4 and all("никто не подтвердил" in c.data["message"] for c in pushes)
+    pushes.clear()
+    for _ in range(59):  # no third at the rule's pace — the next one an hour after the second
+        await _later(hass, freezer, 60)
+    assert pushes == []
+    await _later(hass, freezer, 60)
+    assert len(pushes) == 2 and "никто не подтвердил" in pushes[0].data["message"]
+    assert "repeat.index" not in str(auto) and "last_changed" in auto["actions"][1]["repeat"]["sequence"][0]["timeout"]["seconds"]
+    # A rule repeating hourly or rarer keeps its own pace (nothing to slow down).
+    engine.config = notify._clean_rules({"lang": "ru", "rules": [{**LEAK_RULE, "repeat_min": notify.REPEAT_SLOW}]}, hass, engine.owns)
+    await independent.async_sync(hass, engine)
+    await hass.async_block_till_done()
+    auto = next(a for a in _ours(config) if a["id"] == AID)
+    assert "if a < 0 " in auto["actions"][1]["repeat"]["sequence"][0]["timeout"]["seconds"] and _size(auto) == (3, 2)
+
+
+def _shakes(pushes: list[ServiceCall]) -> list[ServiceCall]:
+    """The engine's «дребезжит» (📳) — a chattering source of a rule HA runs is the engine's to tell (0.31)."""
+    return [c for c in pushes if str(c.data.get("title", "")).startswith("📳")]
 
 
 async def _flap(hass: HomeAssistant, freezer, entity: str, times: int) -> None:
@@ -247,16 +284,19 @@ async def test_chattering_sensor_is_bounded(hass: HomeAssistant, house) -> None:
     await independent.async_sync(hass, engine)
     await hass.async_block_till_done()
     await _flap(hass, freezer, LEAK, 20)  # 20 alarms within 4 minutes
-    assert [c.data["title"] for c in pushes if c.service == "mobile_app_anna"] == ["🚨 Протечка"]  # told at once, once
-    assert set(_notes(hass)) == {AID} and hass.states.get(ACK).state == "off"
+    # Told at once, once (HA's automation); the engine says the sensor chatters (0.31: chatter is the engine's), once.
+    assert [c.data["title"] for c in pushes if c.service == "mobile_app_anna"] == ["🚨 Протечка", "📳 Протечка"]
+    assert all("critical" not in str(c.data["data"]) for c in _shakes(pushes)) and len(_shakes(pushes)) == 2
+    shake = engine._tag(f"leak|{LEAK}") + "_chatter"
+    assert set(_notes(hass)) == {AID, shake} and hass.states.get(ACK).state == "off"
     pushes.clear()
     # In alarm again just before the window ends: still nothing, and the window starts again.
     await _later(hass, freezer, BACK - 30)
     await _flap(hass, freezer, LEAK, 1)
     await _later(hass, freezer, BACK - 30)
-    assert pushes == [] and set(_notes(hass)) == {AID}
+    assert pushes == [] and AID in _notes(hass)
     await _later(hass, freezer, 30)
-    assert [c.data["title"] for c in pushes] == ["✅ Протечка"] * 2 and set(_notes(hass)) == set()
+    assert [c.data["title"] for c in pushes] == ["✅ Протечка"] * 2 and AID not in _notes(hass)
     pushes.clear()
     await _later(hass, freezer, 60)
     assert pushes == []  # «back» once
@@ -305,7 +345,8 @@ async def test_chatter_while_another_is_in_alarm(hass: HomeAssistant, house) -> 
     pushes.clear()
     await _later(hass, freezer, 1)  # not the very instant of the other's alarm (frozen time: «the rule acted in this phase»)
     await _flap(hass, freezer, LEAK, 15)
-    assert len(pushes) == 2 and LEAK in pushes[0].data["message"] and LEAK2 in pushes[0].data["message"]
+    assert len(pushes) == 4 and LEAK in pushes[0].data["message"] and LEAK2 in pushes[0].data["message"]
+    assert [c.data["title"] for c in pushes if c.service == "mobile_app_anna"] == ["🚨 Протечка", "📳 Протечка"]  # and «дребезжит», the engine's
     pushes.clear()
     await _later(hass, freezer, BACK)
     assert pushes == []  # the other one still on
@@ -321,15 +362,17 @@ async def test_chatter_then_repeat_until_accepted(hass: HomeAssistant, house) ->
     await independent.async_sync(hass, engine)
     await hass.async_block_till_done()
     await _flap(hass, freezer, LEAK, 5)
-    assert len(pushes) == 2 and pushes[0].data["title"] == "🚨 Протечка"  # the first alarm only, no «back» yet
+    # The first alarm only (and the engine's «дребезжит»), no «back» yet.
+    assert [c.data["title"] for c in pushes if c.service == "mobile_app_anna"] == ["🚨 Протечка", "📳 Протечка"]
     pushes.clear()
     hass.states.async_set(LEAK, "on")
     for _ in range(4):
         await _later(hass, freezer, 60)
     assert pushes == []
-    for _ in range(6):
+    for _ in range(7):
         await _later(hass, freezer, 60)
-    assert len(pushes) == 4 and all("никто не подтвердил" in c.data["message"] for c in pushes)  # at 5 and 10 min
+    # At 5 and 10 min after it held (HA's run: the repeat waits from the last trigger, the chatter's last alarm).
+    assert len(pushes) == 4 and all("никто не подтвердил" in c.data["message"] for c in pushes)
     pushes.clear()
     hass.bus.async_fire(notify.ACTION_EVENT, {"action": IDS["ack"]}, context=Context(user_id=_admin(hass).id))
     await hass.async_block_till_done()
@@ -345,36 +388,6 @@ async def test_chatter_then_repeat_until_accepted(hass: HomeAssistant, house) ->
     assert pushes == [] and hass.states.get(ACK).state == "on"
     await _later(hass, freezer, BACK)
     assert len(pushes) == 2 and pushes[0].data["title"] == "✅ Протечка" and hass.states.get(ACK).state == "off"
-
-
-async def test_quiet_runs_dont_run(hass: HomeAssistant) -> None:
-    """The top condition is every branch's own, so a run that would say nothing never starts (keeps last_triggered)."""
-    t = await independent.texts(hass, False)
-    a = independent.automation_for({**LEAK_RULE, "repeat_min": 5}, PHONES, t, ACK)
-    top = a["conditions"]
-    assert len(top) == 1 and top[0]["condition"] == "or"
-    assert [c["conditions"] for c in top[0]["conditions"]] == [b["conditions"] for b in a["actions"][2]["choose"]]
-    by_id = {x["id"]: x for x in a["triggers"]}
-    assert "held" not in by_id and by_id["back"]["for"] == {"seconds": notify.CHATTER_WINDOW_LIFE} and "for" not in by_id["returned"] and "for" not in by_id["entered"]
-    # The window by the rule's kind (tuning life_safety_kinds): a fault keeps the common one.
-    fault = independent.automation_for({**OFF_RULE, "enabled": True, "priority": "normal", "repeat_min": 0}, PHONES, t, ACK)
-    assert next(x for x in fault["triggers"] if x["id"] == "back")["for"] == {"seconds": notify.CHATTER_WINDOW}
-    assert any(x["id"] == "alarm" and x["for"] == {"seconds": independent.HOLD} for x in a["triggers"])  # the 5 s kept
-
-
-async def test_no_data_and_back(hass: HomeAssistant, house) -> None:
-    entry, engine, config, pushes, _, freezer = house
-    await independent.async_sync(hass, engine)
-    await hass.async_block_till_done()
-    hass.states.async_set(LEAK, "unavailable", {"friendly_name": "Протечка на кухне"})
-    await _later(hass, freezer, notify.NODATA_AFTER + 1)
-    nd = [c for c in pushes if c.data["data"]["tag"] == AID + "_nd"]
-    assert len(nd) == 2 and "Протечка на кухне" in nd[0].data["message"]
-    assert "push" not in nd[0].data["data"] or nd[0].data["data"]["push"].get("interruption-level") != "critical"
-    pushes.clear()
-    hass.states.async_set(LEAK, "off")
-    await hass.async_block_till_done()
-    assert {c.data["message"] for c in pushes} == {"clear_notification"}
 
 
 async def test_a_hand_edited_automation_is_kept(hass: HomeAssistant, house) -> None:
@@ -748,13 +761,15 @@ async def test_automation_off_with_an_open_alarm_the_engine_repeats(hass: HomeAs
     await _later(hass, freezer, 6)
     assert len(pushes) == 2 and all(c.data["data"]["tag"] == AID for c in pushes)  # HA's automation
     assert all(inc.get("repeat") is None for inc in engine.active.values())
+    # The engine has it too (held as HA holds it, then its group window): off sooner, the engine tells it once more.
+    await _later(hass, freezer, notify.GROUP_WINDOW)
     pushes.clear()
     await hass.services.async_call("automation", "turn_off", {"entity_id": _eid(hass)}, blocking=True)  # stops its repeat loop
     await hass.async_block_till_done()
     assert any(inc.get("repeat") for inc in engine.active.values()) or engine.groups.get("leak", {}).get("repeat")
     for _ in range(6):
         await _later(hass, freezer, 60)
-    assert len(pushes) == 2 and "никто не подтвердил" in pushes[0].data["message"]
+    print("DBG", [(c.service, c.data.get("title"), c.data["message"][:60]) for c in pushes]); assert len(pushes) == 2 and "никто не подтвердил" in pushes[0].data["message"]
 
 
 async def test_automation_deleted_or_unavailable_is_said_and_restored_as_a_change(hass: HomeAssistant, house) -> None:
@@ -884,7 +899,9 @@ async def test_flapping_through_unavailable_is_one_alarm(hass: HomeAssistant, ho
     await _later(hass, freezer, 2)
     hass.states.async_set(LEAK2, "on")
     await _later(hass, freezer, 6)
-    assert len(pushes) == 2 and LEAK2 in pushes[0].data["message"]
+    await _later(hass, freezer, notify.GROUP_WINDOW)
+    # HA's automation keeps no memory of the sources it told: the engine tells this one, with its tag.
+    assert len(pushes) == 2 and LEAK2 in pushes[0].data["message"] and pushes[0].data["data"]["tag"] == AID
     for _ in range(20):
         hass.states.async_set(LEAK2, "unavailable")
         await _later(hass, freezer, 2)
@@ -906,9 +923,9 @@ async def test_alarm_unavailable_normal_flapping_is_bounded(hass: HomeAssistant,
         await _later(hass, freezer, 2)
         hass.states.async_set(LEAK, "off")
         await _later(hass, freezer, 4)
-    assert len(pushes) == 2 and _titles(pushes) == ["🚨 Протечка"]
+    assert len(pushes) == 4 and _titles(pushes) == ["🚨 Протечка", "📳 Протечка"]  # one alarm; the engine: «дребезжит»
     await _later(hass, freezer, BACK + 5)
-    assert _titles(pushes) == ["🚨 Протечка", "✅ Протечка"] and len(pushes) == 4 and set(_notes(hass)) == set()
+    assert _titles(pushes) == ["🚨 Протечка", "📳 Протечка", "✅ Протечка"] and len(pushes) == 6 and AID not in _notes(hass)
 
 
 async def test_alarm_unavailable_then_normal_says_back(hass: HomeAssistant, house) -> None:
@@ -993,8 +1010,8 @@ async def test_rule_words_are_plain(hass: HomeAssistant, house) -> None:
 
 
 async def test_alarm_then_a_long_outage_then_normal(hass: HomeAssistant, house) -> None:
-    """Known limit (CHANGELOG 0.27.0): an unaccepted alarm, no data longer than NODATA_AFTER («нет связи» said), then
-    normal — HA's bell clears after the window, no «✅» (the chain is the rule's last act, «нет связи» moved it)."""
+    """0.27.0's known limit gone (0.31): an unaccepted alarm, no data longer than NODATA_AFTER («нет связи» from the
+    engine), then normal for the window — «✅» and HA's bell cleared (the open alarm is the helper's, not a chain)."""
     entry, engine, config, pushes, _, freezer = house
     await independent.async_sync(hass, engine)
     await hass.async_block_till_done()
@@ -1005,11 +1022,191 @@ async def test_alarm_then_a_long_outage_then_normal(hass: HomeAssistant, house) 
     await _later(hass, freezer, notify.NODATA_AFTER + 5)
     hass.states.async_set(LEAK, "off")
     await _later(hass, freezer, BACK + 5)
-    assert "✅ Протечка" not in _titles(pushes) and AID not in set(_notes(hass))
+    assert "✅ Протечка" in _titles(pushes) and AID not in set(_notes(hass)) and hass.states.get(OPEN).state == "off"
 
 
-# --- a chattering sensor over the long window (R3-1, ISA-18.2) -----------------------------------------------------------
+# --- 0.31: as an integrator writes it by hand (owner 10.11) — small; chatter and «нет связи» are the engine's ----------
+OPEN = "input_boolean." + IDS["open"]
 CHAT = "input_text." + IDS["chatter"]
+BAT_A, BAT_B, GW = "sensor.bat_hall", "sensor.bat_bath", "binary_sensor.gateway"
+
+
+def _size(a: dict) -> tuple[int, int]:
+    return len(a["triggers"]), len(a["actions"])
+
+
+async def test_every_kind_is_small_and_ha_checks_it(hass: HomeAssistant, house) -> None:
+    """≤ 3 triggers / ≤ 3 actions for a signal, a link, levels with one threshold and with different ones beside a
+    signal; HA's own validation (the write) and its check_config take the file."""
+    from homeassistant.helpers.check_config import async_check_ha_config_file
+
+    entry, engine, config, *_ = house
+    for e in (BAT_A, BAT_B):
+        hass.states.async_set(e, "80", {"device_class": "battery", "unit_of_measurement": "%"})
+    hass.states.async_set(GW, "on", {"device_class": "connectivity"})
+    rec = {"recipients": {"all": True}, "repeat_min": 5}
+    rules = [
+        {**LEAK_RULE, **rec},
+        {**rec, "id": "gw", "kind": "connectivity", "title": "Шлюз", "sources": [GW], "picked": [GW], "alarm_states": ["off"]},
+        {**rec, "id": "bat", "kind": "battery", "title": "Батарея", "sources": [BAT_A, BAT_B], "picked": [BAT_A, BAT_B], "alarm_states": ["on"],
+         "thresholds": {BAT_A: {"below": 20}, BAT_B: {"below": 20}}},
+        {**rec, "id": "mix", "kind": "battery", "title": "Смешанные", "sources": [BAT_A, BAT_B, LEAK], "picked": [BAT_A, BAT_B, LEAK], "alarm_states": ["on"],
+         "thresholds": {BAT_A: {"below": 20}, BAT_B: {"below": 30}}},
+    ]
+    engine.config = notify._clean_rules({"lang": "ru", "rules": rules}, hass, engine.owns)
+    assert len(engine.config["rules"]) == 4, engine.config.get("rejected")
+    res = await independent.async_sync(hass, engine)
+    await hass.async_block_till_done()
+    assert sorted(res["added"]) == sorted(r["title"] for r in rules) and not res["engine"], res
+    ours = {a["id"]: a for a in _ours(config)}
+    assert {k: _size(a) for k, a in ours.items()} == dict.fromkeys(ours, (3, 2))
+    assert all(a["mode"] == "restart" and "conditions" not in a for a in ours.values())
+    gw, bat, mix = (ours[independent.automation_id(x)] for x in ("gw", "bat", "mix"))
+    assert gw["triggers"][0]["not_from"] == independent.NO_DATA
+    # One threshold: HA's below / above as written by hand (the back past the step); different ones: the margin.
+    assert {k: bat["triggers"][0][k] for k in ("trigger", "below")} == {"trigger": "numeric_state", "below": 20.0} and "value_template" not in bat["triggers"][0]
+    assert bat["triggers"][1]["above"] == 25.0 and bat["triggers"][1]["for"] == {"seconds": independent.HOLD}
+    assert "value_template" in mix["triggers"][0] and mix["triggers"][0]["below"] == 0
+    check = await async_check_ha_config_file(hass)
+    assert not check.errors, [e.message for e in check.errors]
+
+
+async def test_the_push_names_the_place(hass: HomeAssistant, house) -> None:
+    """«Протечка на кухне · Кухня: авария.» — the sensor's name and its area (HA's area_name)."""
+    from homeassistant.helpers import area_registry as ar
+
+    entry, engine, config, pushes, _, freezer = house
+    reg = er.async_get(hass)
+    hass.states.async_remove(LEAK)
+    ent = reg.async_get_or_create("binary_sensor", "test", "leak_k", suggested_object_id="leak_kitchen")
+    assert ent.entity_id == LEAK
+    hass.states.async_set(LEAK, "off", {"friendly_name": "Протечка на кухне"})
+    reg.async_update_entity(LEAK, area_id=ar.async_get(hass).async_create("Кухня").id)
+    await independent.async_sync(hass, engine)
+    await hass.async_block_till_done()
+    hass.states.async_set(LEAK, "on", {"friendly_name": "Протечка на кухне"})
+    await _later(hass, freezer, 6)
+    assert _by(pushes)["mobile_app_anna"]["message"] == "Протечка на кухне · Кухня: авария."
+    pushes.clear()
+    hass.states.async_set(LEAK, "off", {"friendly_name": "Протечка на кухне"})
+    await _later(hass, freezer, BACK + 1)
+    assert _by(pushes)["mobile_app_anna"]["message"] == "Протечка на кухне · Кухня: снова в норме." and _by(pushes)["mobile_app_anna"]["data"]["tag"] == AID
+
+
+async def test_open_helper_follows_the_alarm(hass: HomeAssistant, house) -> None:
+    """«авария открыта»: on with the alarm told, off with «снова в норме»; HA's own, removed with the rule."""
+    entry, engine, config, pushes, _, freezer = house
+    await independent.async_sync(hass, engine)
+    await hass.async_block_till_done()
+    assert hass.states.get(OPEN).state == "off" and engine.native["leak"]["open"] == OPEN and "chatter" not in engine.native["leak"]
+    assert ownership.kind_of(er.async_get(hass).async_get(OPEN), set(), set()) == "alarm"
+    hass.states.async_set(LEAK, "on")
+    await _later(hass, freezer, 6)
+    assert hass.states.get(OPEN).state == "on"
+    hass.states.async_set(LEAK, "off")
+    await _later(hass, freezer, BACK + 1)
+    assert hass.states.get(OPEN).state == "off"
+    await independent.async_remove_all(hass, engine)
+    await hass.async_block_till_done()
+    assert hass.states.get(OPEN) is None and hass.states.get(ACK) is None
+
+
+async def test_accept_from_the_phone_stops_the_repeat(hass: HomeAssistant, house) -> None:
+    entry, engine, config, pushes, closed, freezer = house
+    engine.config = notify._clean_rules({"lang": "ru", "rules": [{**LEAK_RULE, "repeat_min": 5}]}, hass, engine.owns)
+    await independent.async_sync(hass, engine)
+    await hass.async_block_till_done()
+    hass.states.async_set(LEAK, "on")
+    await _later(hass, freezer, 6)
+    for _ in range(5):
+        await _later(hass, freezer, 60)
+    assert len(pushes) == 4 and "никто не подтвердил" in pushes[-1].data["message"]
+    hass.bus.async_fire(notify.ACTION_EVENT, {"action": IDS["ack"]})
+    await hass.async_block_till_done()
+    pushes.clear()
+    for _ in range(16):
+        await _later(hass, freezer, 60)
+    assert pushes == []
+    # The button still works after «Принято» (closing the valve is still worth it): the run waits for it.
+    hass.bus.async_fire(notify.ACTION_EVENT, {"action": IDS["run"]})
+    await hass.async_block_till_done()
+    assert [c.data["entity_id"] for c in closed] == [[VALVE]]
+
+
+async def _old_0_30(hass: HomeAssistant, engine, config: Path, digest_ok: bool) -> dict:
+    """The rule as 0.30 left it: its big automation, «Принято» and the chatter memory (input_text), a record with it."""
+    from custom_components.hauflo import automations
+
+    assert await async_setup_component(hass, "input_text", {})
+    await hass.async_block_till_done()
+    coll = await independent._helpers(hass)
+    ack = await independent._ensure_helper(hass, coll, IDS["helper"], "Hauflo · Принято: Протечка", independent.ICON)
+    texts = independent._collection(hass, "input_text")
+    await texts.async_create_item({"name": IDS["chatter"], "max": 255})
+    old = {"id": AID, "alias": "Авария: Протечка", "mode": "queued", "max": 10,
+           "triggers": [{"trigger": "state", "entity_id": [LEAK, LEAK2], "to": ["on"], "id": f"t{i}"} for i in range(15)],
+           "conditions": [{"condition": "template", "value_template": "{{ true }}"}],
+           "actions": [{"choose": [{"conditions": [{"condition": "trigger", "id": "t0"}], "sequence": [{"action": "input_text.set_value", "target": {"entity_id": CHAT}, "data": {"value": ""}}]}]}]}
+    (config / "automations.yaml").write_text(dump([THEIRS, old]))
+    await hass.services.async_call("automation", "reload", {}, blocking=True)
+    rec = {"automation": AID, "helper": ack, "chatter": CHAT, "digest": automations._digest(old) if digest_ok else "edited", "ack": IDS["ack"], "run": IDS["run"], "lang": "ru"}
+    await engine.async_set_native({"leak": rec})
+    await hass.async_block_till_done()
+    assert hass.states.get(CHAT) is not None and not engine._engine_says("leak")  # 0.30's automation says chatter itself
+    return old
+
+
+async def test_upgrade_from_0_30_rewrites_and_takes_the_chatter_memory(hass: HomeAssistant, house) -> None:
+    entry, engine, config, pushes, _, freezer = house
+    await _old_0_30(hass, engine, config, digest_ok=True)
+    hass.states.async_set(LEAK, "on")  # an alarm open across the upgrade
+    await _later(hass, freezer, 6)
+    plan = await independent.async_sync(hass, engine, dry_run=True)
+    assert plan["updated"] == ["Протечка"] and hass.states.get(CHAT) is not None
+    res = await independent.async_sync(hass, engine)
+    await hass.async_block_till_done()
+    assert res["updated"] == ["Протечка"] and not res["kept_edited"]
+    new = _ours(config)[0]
+    assert _size(new) == (3, 2) and new["mode"] == "restart" and "input_text" not in str(new)
+    assert hass.states.get(CHAT) is None and er.async_get(hass).async_get(CHAT) is None
+    assert "chatter" not in engine.native["leak"] and engine.native["leak"]["open"] == OPEN and engine._engine_says("leak")
+    assert hass.states.get(OPEN).state == "on"  # the open alarm moved over: its «back» is HA's to say
+    pushes.clear()
+    hass.states.async_set(LEAK, "off")
+    await _later(hass, freezer, BACK + 1)
+    assert _titles(pushes) == ["✅ Протечка"] and hass.states.get(OPEN).state == "off"
+
+
+async def test_upgrade_leaves_a_hand_edited_rule_with_its_memory(hass: HomeAssistant, house) -> None:
+    entry, engine, config, *_ = house
+    old = await _old_0_30(hass, engine, config, digest_ok=False)
+    res = await independent.async_sync(hass, engine)
+    await hass.async_block_till_done()
+    assert res["kept_edited"] == ["Протечка"] and not res["updated"]
+    assert _ours(config) == [old] and hass.states.get(CHAT) is not None and hass.states.get(OPEN) is None
+    assert engine.native["leak"]["chatter"] == CHAT and not engine._engine_says("leak")
+    # «Убрать аварии Hauflo»: every helper kind goes, the memory too.
+    await independent.async_remove_all(hass, engine)
+    await hass.async_block_till_done()
+    assert hass.states.get(CHAT) is None and hass.states.get(ACK) is None and _ours(config) == []
+
+
+async def test_upgrade_drops_a_chatter_memory_whose_automation_is_gone(hass: HomeAssistant, house) -> None:
+    """Acceptance 10.11 (taste): 0.30's automation deleted in HA by hand, its memory left — nothing reads it: it goes on
+    the next sync (whether the rule is still there or not); someone else's input_text is never touched."""
+    entry, engine, config, *_ = house
+    await _old_0_30(hass, engine, config, digest_ok=True)
+    texts = independent._collection(hass, "input_text")
+    await texts.async_create_item({"name": "hauflo_chatter_gone_000000", "max": 255})
+    await texts.async_create_item({"name": "kitchen_note", "max": 255})
+    (config / "automations.yaml").write_text(dump([THEIRS]))
+    await hass.services.async_call("automation", "reload", {}, blocking=True)
+    plan = await independent.async_sync(hass, engine, dry_run=True)
+    assert hass.states.get("input_text.hauflo_chatter_gone_000000") is not None and not plan["removed"]
+    res = await independent.async_sync(hass, engine)
+    await hass.async_block_till_done()
+    assert res["restored"] == ["Протечка"] and hass.states.get(CHAT) is None
+    assert hass.states.get("input_text.hauflo_chatter_gone_000000") is None and hass.states.get("input_text.kitchen_note") is not None
 
 
 async def _slow(hass: HomeAssistant, freezer, entity: str, times: int, on: int = 6, off: int = 70) -> None:
@@ -1020,102 +1217,22 @@ async def _slow(hass: HomeAssistant, freezer, entity: str, times: int, on: int =
         await _later(hass, freezer, off)
 
 
-async def test_slow_chatter_is_said_once_then_quiet_until_calm(hass: HomeAssistant, house) -> None:
-    """R3-1: a leak sensor «on 6 s → off 70 s» × 15 (19 min) sent 60 critical pushes (🚨 + ✅ every cycle, the short
-    life-safety window). Now: the first CHATTER_COUNT told, the last with one «дребезжит», then quiet until calm."""
-    entry, engine, config, pushes, _, freezer = house
-    await independent.async_sync(hass, engine)
-    await hass.async_block_till_done()
-    assert hass.states.get(CHAT) is not None
-    await _later(hass, freezer, 60)
-    await _slow(hass, freezer, LEAK, 15)
-    assert _titles(pushes) == ["🚨 Протечка", "✅ Протечка", "🚨 Протечка", "✅ Протечка", "🚨 Протечка", "📳 Протечка"]
-    assert len(pushes) == 12  # ≤ 6 per phone (was 30 each)
-    chat = [c for c in pushes if c.data["title"].startswith("📳")]
-    assert len(chat) == 2 and {c.service for c in chat} == {"mobile_app_anna", "mobile_app_ivan"}
-    msg = chat[0].data["message"]
-    assert LEAK in msg and f"{notify.CHATTER_COUNT}-й раз за {notify.CHATTER_WINDOW // 60} мин" in msg
-    assert chat[0].data["data"]["tag"] == AID + "_chatter" and "interruption-level" not in str(chat[0].data["data"])  # not critical
-    assert AID + "_chatter" in _notes(hass) and "!" in hass.states.get(CHAT).state
-    pushes.clear()
-    # Calm for the window: one «back» with the calm, the notes and the memory cleared.
-    await _later(hass, freezer, notify.CHATTER_WINDOW)
-    assert _titles(pushes) == ["✅ Протечка"] and len(pushes) == 2 and pushes[0].data["data"]["tag"] == AID
-    assert str(notify.CHATTER_WINDOW // 60) in pushes[0].data["message"] and "Спокойно" in pushes[0].data["message"]
-    assert not {AID, AID + "_chatter"} & set(_notes(hass)) and hass.states.get(CHAT).state == ""
-    pushes.clear()
-    await _later(hass, freezer, notify.CHATTER_WINDOW + 60)
-    assert pushes == []  # said once
-
-
-async def test_a_real_alarm_after_a_calm_window_is_told(hass: HomeAssistant, house) -> None:
-    """After the quiet window the next alarm is a real one: told at once, its «back» as usual — nothing from the chatter
-    counts (the times aged out). A memory left over (an automation reloaded, the calm never ran) changes nothing."""
+async def test_slow_chatter_the_engine_says_the_sensor_is_faulty(hass: HomeAssistant, house) -> None:
+    """Accepted loss (owner 10.11, no memory in YAML): HA tells each alarm held after the back window — the engine adds
+    one «дребезжит» per sensor, quiet (not critical), in the rule's words: «HA keeps telling»."""
     entry, engine, config, pushes, _, freezer = house
     await independent.async_sync(hass, engine)
     await hass.async_block_till_done()
     await _later(hass, freezer, 60)
     await _slow(hass, freezer, LEAK, 5)
-    assert _titles(pushes).count("📳 Протечка") == 1
-    await _later(hass, freezer, notify.CHATTER_WINDOW)
-    pushes.clear()
-    hass.states.async_set(LEAK, "on")
-    await _later(hass, freezer, 6)
-    assert len(pushes) == 2 and _titles(pushes) == ["🚨 Протечка"] and _by(pushes)["mobile_app_ivan"]["data"]["push"]["interruption-level"] == "critical"
-    hass.states.async_set(LEAK, "off")
-    await _later(hass, freezer, BACK + 5)
-    assert _titles(pushes) == ["🚨 Протечка", "✅ Протечка"]
-    # A stale memory: «!» with old times (the calm missed) — the alarm is told all the same.
-    await _later(hass, freezer, notify.CHATTER_WINDOW + 60)
-    old = int(dt_util.utcnow().timestamp()) - notify.CHATTER_WINDOW - 5
-    await hass.services.async_call("input_text", "set_value", {"entity_id": CHAT, "value": f"0!:{old - 2},{old - 1},{old}"}, blocking=True)
-    pushes.clear()
-    hass.states.async_set(LEAK, "on")
-    await _later(hass, freezer, 6)
-    assert _titles(pushes) == ["🚨 Протечка"]
-    hass.states.async_set(LEAK, "off")
-    await _later(hass, freezer, BACK + 5)
-
-
-async def test_chatter_settling_in_alarm_is_told_again_at_calm(hass: HomeAssistant, house) -> None:
-    """Chattering, then it stays in alarm: quiet while it chatters, told again once calm (never only «дребезжит»); a
-    second sensor's alarm meanwhile is told — the count is per source."""
-    entry, engine, config, pushes, _, freezer = house
-    await independent.async_sync(hass, engine)
-    await hass.async_block_till_done()
-    await _later(hass, freezer, 60)
-    await _slow(hass, freezer, LEAK, 4)
-    pushes.clear()
-    hass.states.async_set(LEAK2, "on")  # another sensor: its first alarm
-    await _later(hass, freezer, 6)
-    assert _titles(pushes) == ["🚨 Протечка"] and LEAK2 in pushes[0].data["message"]
-    hass.states.async_set(LEAK2, "off")
-    hass.states.async_set(LEAK, "on")  # the chattering one stays wet
-    await _later(hass, freezer, BACK + 5)
-    assert _titles(pushes) == ["🚨 Протечка"]  # quiet: no «back» while one chatters, no alarm for the chattering one
-    await _later(hass, freezer, notify.CHATTER_WINDOW)
-    assert _titles(pushes) == ["🚨 Протечка", "🚨 Протечка"] and _by(pushes)["mobile_app_ivan"]["data"]["push"]["interruption-level"] == "critical"
-    assert AID in _notes(hass) and AID + "_chatter" not in _notes(hass)
-    pushes.clear()
-    hass.states.async_set(LEAK, "off")
-    await _later(hass, freezer, BACK + 5)
-    assert _titles(pushes) == ["✅ Протечка"]
-
-
-async def test_fast_chatter_within_the_short_window_is_as_before(hass: HomeAssistant, house) -> None:
-    """Faster than the life-safety window (on 6 / off 6 × 20): one alarm, one «back» — the chain, no «дребезжит»."""
-    entry, engine, config, pushes, _, freezer = house
-    await independent.async_sync(hass, engine)
-    await hass.async_block_till_done()
-    await _later(hass, freezer, 60)
-    await _flap(hass, freezer, LEAK, 20)
-    await _later(hass, freezer, BACK + 5)
-    assert _titles(pushes) == ["🚨 Протечка", "✅ Протечка"] and len(pushes) == 4
-    assert "!" not in hass.states.get(CHAT).state
+    chat = [c for c in pushes if c.data["title"].startswith("📳")]
+    assert len(chat) == len(PHONES) and "неисправный датчик" in chat[0].data["message"] and "приглуш" not in chat[0].data["message"]
+    assert "interruption-level" not in str(chat[0].data["data"])
+    assert _titles(pushes).count("🚨 Протечка") == 5  # HA's own: each one held after the window
 
 
 async def test_chatter_words_in_english(hass: HomeAssistant, house) -> None:
-    """R3-7: «дребезжит» in the rule's language — the automation's and the engine's (strings, not a Russian literal)."""
+    """R3-7: «дребезжит» in the rule's language — HA's rule and the engine's own."""
     entry, engine, config, pushes, _, freezer = house
     engine.config = notify._clean_rules({"lang": "en", "rules": [LEAK_RULE]}, hass, engine.owns)
     engine._apply()
@@ -1124,131 +1241,122 @@ async def test_chatter_words_in_english(hass: HomeAssistant, house) -> None:
     await _later(hass, freezer, 60)
     await _slow(hass, freezer, LEAK, 3)
     chat = [c for c in pushes if c.data["title"].startswith("📳")]
-    assert len(chat) == 2 and "3 times in 10 min" in chat[0].data["message"] and "раз" not in chat[0].data["message"]
-    # The engine's own (a rule HA doesn't run): the same words, in English.
+    assert len(chat) == 2 and "looks like a faulty sensor" in chat[0].data["message"] and "раз" not in chat[0].data["message"]
     sent: list[tuple[str, str]] = []
 
     async def fake_send(rule, title, message, **kw):
         sent.append((title, message))
         return []
 
+    engine.native = {}
     with patch.object(engine, "_send", fake_send):
         await engine._say_chatter(engine.config["rules"][0], hass.states.get(LEAK))
     assert sent and sent[0][0].startswith("📳 ") and "looks like a faulty sensor" in sent[0][1] and "10 min" in sent[0][1]
 
 
-async def test_rule_removed_takes_its_chatter_memory(hass: HomeAssistant, house) -> None:
-    """The memory is the rule's helper like «Принято»: Hauflo's own (ownership), removed with the rule and by
-    remove_alarms; a sync that can't make it leaves no half-made helper."""
-    entry, engine, config, pushes, _, freezer = house
-    await independent.async_sync(hass, engine)
-    await hass.async_block_till_done()
-    reg = er.async_get(hass)
-    assert ownership.kind_of(reg.async_get(CHAT), set(), set()) == "alarm" and engine.native["leak"]["chatter"] == CHAT
-    assert hass.states.get(CHAT).attributes.get("max") == independent.CHAT_MAX
-    engine.config = notify._clean_rules({"lang": "ru", "rules": []}, hass, engine.owns)
-    res = await independent.async_sync(hass, engine)
-    await hass.async_block_till_done()
-    assert res["removed"] == ["Авария: Протечка"] and hass.states.get(CHAT) is None and hass.states.get(ACK) is None
-    assert reg.async_get(CHAT) is None
-    # Back again, then «Убрать аварии Hauflo»: both helpers go.
-    engine.config = notify._clean_rules({"lang": "ru", "rules": [LEAK_RULE]}, hass, engine.owns)
-    await independent.async_sync(hass, engine)
-    await hass.async_block_till_done()
-    assert hass.states.get(CHAT) is not None
-    await independent.async_remove_all(hass, engine)
-    await hass.async_block_till_done()
-    assert hass.states.get(CHAT) is None and hass.states.get(ACK) is None
-    # The memory can't be made: the rule stays with the engine, its «Принято» made in this pass is dropped too.
-    real = independent._ensure_helper
-
-    async def no_text(hass_, coll, object_id, name, domain="input_boolean"):
-        if domain == "input_text":
-            raise RuntimeError("no input_text")
-        return await real(hass_, coll, object_id, name, domain)
-
-    with patch.object(independent, "_ensure_helper", no_text):
-        res = await independent.async_sync(hass, engine)
-    await hass.async_block_till_done()
-    assert [e["reason"] for e in res["engine"]] == ["helper"] and hass.states.get(ACK) is None and _ours(config) == []
+def _nd(pushes: list[ServiceCall]) -> list[ServiceCall]:
+    return [c for c in pushes if str(c.data["data"].get("tag", "")).endswith("_nd")]
 
 
-async def _start(hass: HomeAssistant) -> None:
-    """The automation's `homeassistant: start` trigger (HA fires it only while the automation loads at startup)."""
-    eid = er.async_get(hass).async_get_entity_id("automation", "automation", AID)
-    ent = hass.data["automation"].get_entity(eid)
-    await ent.async_trigger({"trigger": {"platform": "homeassistant", "event": "start", "id": "start"}}, skip_condition=False)
-    await hass.async_block_till_done()
-
-
-async def test_two_sources_lost_is_one_no_data_message(hass: HomeAssistant, house) -> None:
-    """HA M-4: a gateway down takes every source of the rule — one «нет связи» (to each phone), cleared by the last one back."""
+async def test_no_data_is_the_engines_for_a_rule_ha_runs(hass: HomeAssistant, house) -> None:
+    """HA M-4 in 0.31: «нет связи» — one per rule (a gateway down takes every source), from the agent's engine though
+    HA runs the rule; cleared by the last one back. English for an English project."""
     entry, engine, config, pushes, _, freezer = house
     await independent.async_sync(hass, engine)
     await hass.async_block_till_done()
     hass.states.async_set(LEAK, "unavailable")
     hass.states.async_set(LEAK2, "unavailable")
     await _later(hass, freezer, notify.NODATA_AFTER + 1)
-    nd = [c for c in pushes if c.data["data"]["tag"] == AID + "_nd"]
-    assert len(nd) == len(PHONES)
+    await _later(hass, freezer, notify.GROUP_WINDOW + 1)
+    nd = _nd(pushes)
+    assert len(nd) == len(PHONES) and "нет связи" in nd[0].data["title"] and "interruption-level" not in str(nd[0].data["data"])
+    assert any(k.endswith("_nd") for k in _notes(hass))
     pushes.clear()
     hass.states.async_set(LEAK, "off")
-    await hass.async_block_till_done()
-    assert pushes == []  # the other one is still lost: the message stands
+    await _later(hass, freezer, 1)
     hass.states.async_set(LEAK2, "off")
-    await hass.async_block_till_done()
-    assert {c.data["message"] for c in pushes} == {"clear_notification"} and len(pushes) == len(PHONES)
-
-
-async def test_restart_with_a_source_lost_tells_no_data_once(hass: HomeAssistant, house) -> None:
-    """HA M-4: a source already lost when HA starts has no state change — the minute's template tells it NODATA_AFTER later."""
-    entry, engine, config, pushes, _, freezer = house
-    hass.states.async_set(LEAK, "unavailable")
-    await independent.async_sync(hass, engine)
-    await hass.async_block_till_done()
-    for _ in range(notify.NODATA_AFTER // 60 + 3):  # the template is rendered each minute
-        await _later(hass, freezer, 60)
-    nd = [c for c in pushes if c.data["data"]["tag"] == AID + "_nd"]
-    assert len(nd) == len(PHONES)
-
-
-async def test_restart_closes_an_alarm_that_ended_meanwhile(hass: HomeAssistant, house) -> None:
-    """HA N-2: the «back» timer is gone with a restart — at the start, all in normal: «Принято» resets, the phones' message is cleared."""
-    entry, engine, config, pushes, _, freezer = house
-    await independent.async_sync(hass, engine)
-    await hass.async_block_till_done()
-    await hass.services.async_call("input_boolean", "turn_on", {"entity_id": ACK}, blocking=True)
-    await hass.async_block_till_done()
+    await _later(hass, freezer, notify.GROUP_WINDOW + 1)
+    assert _nd(pushes) and not any(k.endswith("_nd") for k in _notes(hass))
+    assert not [c for c in pushes if c.data.get("title", "").startswith("✅ Протечка") and "норм" in c.data["message"]]  # no data is not an alarm
+    # English.
     pushes.clear()
-    await _start(hass)
-    assert hass.states.get(ACK).state == "off"
-    assert {c.data["message"] for c in pushes} == {"clear_notification"}
-    # Still in alarm at the start: nothing is closed.
+    engine.config = notify._clean_rules({"lang": "en", "rules": [LEAK_RULE]}, hass, engine.owns)
+    engine._apply()
+    hass.states.async_set(LEAK, "unavailable")
+    await _later(hass, freezer, notify.NODATA_AFTER + 1)
+    await _later(hass, freezer, notify.GROUP_WINDOW + 1)
+    nd = _nd(pushes)
+    assert nd and nd[0].data["title"].endswith(": no data") and nd[0].data["message"].startswith(f"No data for {notify.NODATA_AFTER // 60} min: ")
+    assert "Нет" not in nd[0].data["message"] and "связ" not in nd[0].data["message"]
+
+
+
+async def _restart(hass: HomeAssistant, engine, freezer, first: str, delay: float = 0) -> None:
+    """HA stops (the run dies with the automation, the engine saves) and starts: the sensor's first state is ``first``
+    (none before it — HA's state triggers see no change from «on»), ``delay`` s after the engine is up."""
+    await hass.services.async_call("automation", "turn_off", {"entity_id": "all"}, blocking=True)
+    engine.async_stop()
+    await hass.async_block_till_done()
+    hass.states.async_remove(LEAK)
+    await engine.async_start()
+    await hass.services.async_call("automation", "turn_on", {"entity_id": "all"}, blocking=True)
+    await hass.async_block_till_done()
+    if delay:
+        await _later(hass, freezer, delay)
+    hass.states.async_set(LEAK, first, {"device_class": "moisture", "friendly_name": "Протечка на кухне"})
+    await hass.async_block_till_done()
+
+
+async def test_back_to_normal_while_ha_restarted_is_said_once(hass: HomeAssistant, house) -> None:
+    """Acceptance 10.11 (medium): the alarm open, HA restarts, the sensor is dry again before the automation is back —
+    its «back» waits for a change from «on» it never sees; «авария открыта» stayed on for good, nobody told. The engine
+    says «снова в норме» once (the automation's tag) and closes it; HA's own «back» is never doubled."""
+    entry, engine, config, pushes, _, freezer = house
+    await engine.store.async_save(engine.config)
+    await independent.async_sync(hass, engine)
+    await hass.async_block_till_done()
     hass.states.async_set(LEAK, "on")
     await _later(hass, freezer, 6)
-    await hass.services.async_call("input_boolean", "turn_on", {"entity_id": ACK}, blocking=True)
-    await hass.async_block_till_done()
+    assert len(pushes) == 2 and hass.states.get(OPEN).state == "on"
     pushes.clear()
-    await _start(hass)
-    assert hass.states.get(ACK).state == "on" and pushes == []
+    # Dry 2 s after the start: looked at once it has held the automation's window.
+    await _restart(hass, engine, freezer, "off", delay=2)
+    assert hass.states.get(OPEN).state == "on"  # not switched off quietly
+    await _later(hass, freezer, BACK + notify.GROUP_WINDOW - 1)
+    assert pushes == []
+    await _later(hass, freezer, 3)
+    assert hass.states.get(OPEN).state == "off" and hass.states.get(ACK).state == "off" and not engine.active
+    assert len(pushes) == 2 and _titles(pushes) == ["✅ Протечка"] and {c.data["data"]["tag"] for c in pushes} == {AID}
+    assert _by(pushes)["mobile_app_anna"]["message"] == "Протечка на кухне: снова в норме." and AID not in set(_notes(hass))
+    await _later(hass, freezer, 3600)
+    assert len(pushes) == 2  # once
+    # Open again, HA restarts, the sensor first «unavailable» (not read yet): nothing said, still open …
+    hass.states.async_set(LEAK, "on")
+    await _later(hass, freezer, 6)
+    pushes.clear()
+    await _restart(hass, engine, freezer, "unavailable")
+    await _later(hass, freezer, BACK + notify.GROUP_WINDOW + 1)
+    assert pushes == [] and hass.states.get(OPEN).state == "on"
+    # … then dry: HA's automation sees it (from «unavailable») and says it — the engine not again.
+    hass.states.async_set(LEAK, "off")
+    await _later(hass, freezer, 3 * (BACK + notify.GROUP_WINDOW))
+    assert len(pushes) == 2 and _titles(pushes) == ["✅ Протечка"] and hass.states.get(OPEN).state == "off"
 
 
-async def test_nodata_tick_condition_renders_with_a_last_triggered(hass: HomeAssistant) -> None:
-    """HA M-4 (merge 07.11): the restart branch compares `last_triggered` with the first lost source's `last_changed` — a
-    datetime of the state, not an attribute of its entity_id string (that raised, and the branch never ran after a restart)."""
-    from datetime import timedelta
-    from homeassistant.helpers import template as tpl
-    from homeassistant.util import dt as dt_util
-
-    t = await independent.texts(hass, False)
-    a = independent.automation_for(LEAK_RULE, PHONES, t, ACK)
-    branch = next(b for b in a["actions"][2]["choose"] if b["conditions"][0] == {"condition": "trigger", "id": "nodata_tick"})
-    cond = branch["conditions"][1]["value_template"]
-    hass.states.async_set(LEAK, "unavailable")
-    hass.states.async_set(LEAK2, "off")
+async def test_a_flickering_second_source_never_puts_the_repeat_off(hass: HomeAssistant, house) -> None:
+    """Acceptance 10.11 (medium): the alarm open, a second sensor flickers faster than the repeat — every «back» of it
+    restarts the run (mode: restart); the repeat is counted from the alarm's opening, so it still comes on time."""
+    entry, engine, config, pushes, _, freezer = house
+    engine.config = notify._clean_rules({"lang": "ru", "rules": [{**LEAK_RULE, "repeat_min": 5}]}, hass, engine.owns)
+    await independent.async_sync(hass, engine)
     await hass.async_block_till_done()
-    # Any object with `attributes`: last_triggered an hour before the loss.
-    this = type("S", (), {"attributes": {"last_triggered": dt_util.utcnow() - timedelta(hours=1)}})()
-    assert tpl.Template(cond, hass).async_render({"sources": [LEAK, LEAK2], "this": this}) is True
-    this.attributes["last_triggered"] = dt_util.utcnow() + timedelta(hours=1)
-    assert tpl.Template(cond, hass).async_render({"sources": [LEAK, LEAK2], "this": this}) is False
+    hass.states.async_set(LEAK, "on")
+    await _later(hass, freezer, 6)
+    pushes.clear()
+    for _ in range(10):  # 10 min; the bathroom sensor wet for 10 s, dry for 50 s, every minute
+        hass.states.async_set(LEAK2, "on")
+        await _later(hass, freezer, 10)
+        hass.states.async_set(LEAK2, "off")
+        await _later(hass, freezer, 50)
+    repeats = [c for c in pushes if "никто не подтвердил" in c.data["message"]]
+    assert len(repeats) == 4  # at 5 and 10 minutes, both phones

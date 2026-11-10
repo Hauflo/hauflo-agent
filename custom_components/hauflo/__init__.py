@@ -162,6 +162,10 @@ _ROUTES = [(r["id"], r["path"].split("/"), set(r["methods"])) for r in _TH["rout
 _HAUFLO_VIEWS = {(r["path"], m) for r in _TH["routes"] if r["id"] == "hauflo" for m in r["methods"]}
 _MAX_CHANNELS = 8
 # What this agent can do beyond its version (hello and status «features»): the backend gates a step on it.
+# When this HA run loaded the agent (≈ HA's start; an update of the agent needs a restart anyway): Hauflo's «События» tell
+# HA's own availability from the agent's — a link that dropped while HA kept running is no HA outage (owner 09.11).
+HA_UP = dt_util.utcnow().isoformat()
+
 FEATURES = [foreign.FEATURE, foreign.PLAN_FEATURE, foreign.WRITE_PLAN_FEATURE, foreign.MEMBERS_FEATURE]
 
 
@@ -2724,6 +2728,10 @@ class Agent:
                 with contextlib.suppress(ValueError):
                     problem = problem or float(s.state) < notify.LEVELS["battery"]["below"]  # the canon threshold (399-20)
             item = {"entityId": eid, "name": s.name, "state": s.state, "problem": problem}
+            if dc:
+                # Its importance by what it is (owner 09.11, ISA-18.2): a leak / smoke / gas sensor is critical, a link a
+                # diagnostic (the cloud's alertSeverity.json).
+                item["deviceClass"] = str(dc)
             if s.domain == "event" and (ring := _recent_event(s.state, EVENT_RECENT)):
                 # Not a problem (the site isn't in alarm for a ring): one line in Telegram per press, never a back-to-normal line.
                 item["ring"] = ring
@@ -2731,6 +2739,7 @@ class Agent:
             monitored.append(item)
         return {
             "haVersion": HA_VERSION,
+            "haStarted": HA_UP,
             "agentVersion": VERSION,
             "features": FEATURES,
             "knx": self._knx(),
@@ -2738,8 +2747,9 @@ class Agent:
             "monitored": monitored,
             # Alarms the agent's push engine has open now (notify.py) — monitoring shows them too.
             "alarms": engine.active_list() if (engine := self.engine) else [],
-            # No rules yet (a re-added agent before Hauflo sends them): its open alarms aren't known yet.
-            "alarmsReady": bool(engine and engine.config["rules"]),
+            # Rules not known yet (a re-added agent before Hauflo sends them): its open alarms aren't known yet. A site
+            # without rules is ready (notify.NotifyEngine.ready) — the cloud closes its «нет данных» like any other.
+            "alarmsReady": bool(engine and engine.ready),
             # «Диагностика по своей норме» (insight.py): a zone / sensor clearly off its own learned norm — for the
             # integrator's staff (the cloud never tells the family), never an action.
             "insights": ins.items() if (ins := self.insights) else [],

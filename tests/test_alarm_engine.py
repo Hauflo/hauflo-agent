@@ -276,8 +276,27 @@ async def test_restart_in_the_middle_of_an_alarm(hass, rig) -> None:
     eng3.store.async_load = AsyncMock(return_value=None)
     await eng3.async_start()
     assert len(eng3._restored) == 3 and eng3.active_list() == []
+    assert eng3.ready is False and eng2.ready is True  # the status says «alarmsReady» only once the rules are known
     eng3.async_stop()
     await rig.tick(10)
+
+
+async def test_a_site_without_rules_is_ready_and_rules_received_make_ready(hass) -> None:
+    """A stored config with no rules at all (ГВГ, 10.11: 33 «нет данных» never closed in the cloud — the agent kept
+    saying «not ready») is ready; a fresh agent is ready once Hauflo sends its rules, even an empty list."""
+    eng = notify.NotifyEngine(hass)
+    eng.store.async_load = AsyncMock(return_value={"rules": [], "groups": []})
+    await eng.async_start()
+    assert eng.ready is True
+    eng.async_stop()
+    fresh = notify.NotifyEngine(hass)
+    fresh.store.async_load = AsyncMock(return_value=None)
+    fresh.store.async_save = AsyncMock()
+    await fresh.async_start()
+    assert fresh.ready is False
+    await fresh.async_set({"rules": []})
+    assert fresh.ready is True
+    fresh.async_stop()
 
 
 async def test_a_restored_single_alarm_is_taken_back_and_ended_when_over(hass, rig) -> None:
@@ -356,7 +375,7 @@ async def test_no_data_chatter_and_link_rules(hass, rig) -> None:
 
 async def test_link_rule_off_means_alarm_only_after_it_was_seen_on(hass, rig) -> None:
     hass.states.async_set("binary_sensor.panel", "off", {"friendly_name": "Panel link", "device_class": "connectivity"})
-    await rig.rules({"sources": ["binary_sensor.panel"], "kind": "connection", "alarm_states": ["off"], "title": "Связь со щитом"})
+    await rig.rules({"sources": ["binary_sensor.panel"], "kind": "connection", "alarm_states": ["off"], "title": "Связь со щитом", "hold_s": 0})
     assert rig.eng.active == {}  # never seen healthy: commissioning, not a lost link
     hass.states.async_set("binary_sensor.panel", "on", {"device_class": "connectivity"})
     await rig.tick(1)

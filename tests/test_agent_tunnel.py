@@ -466,7 +466,7 @@ async def test_status_reports_knx_monitoring_and_alarms(hass: HomeAssistant, ent
         hass.states.async_set(eid, state, attrs)
     reg.async_get_or_create("sensor", "test", "nostate", suggested_object_id="nostate")
     reg.async_update_entity("sensor.nostate", labels={label.label_id})
-    agent.engine = NS(active_list=lambda: [{"id": 1}], config={"rules": [1]})
+    agent.engine = NS(active_list=lambda: [{"id": 1}], config={"rules": [1]}, ready=True)
     hass.config.external_url = "https://home.example"
     agent._admins = ["Ivan"]
     st = agent.status()

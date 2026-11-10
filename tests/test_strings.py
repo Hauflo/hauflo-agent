@@ -26,3 +26,15 @@ def test_every_field_has_a_description_in_both_languages() -> None:
     assert _load("strings.json") == _load("translations/en.json")
     for name in ("strings.json", "translations/en.json", "translations/ru.json"):
         assert not _missing(_load(name)), name
+
+
+def test_every_step_that_asks_for_the_code_labels_it_in_both_languages() -> None:
+    """Tester 10.11 saw the code field without a label: each step built from _schema() (code + server) needs both texts."""
+    for name in ("strings.json", "translations/en.json", "translations/ru.json"):
+        steps = _load(name)["config"]["step"]
+        for step_id in ("user", "reauth_confirm", "reconfigure"):
+            step = steps[step_id]
+            assert (step.get("data") or {}).get("code"), (name, step_id, "label")
+            assert (step.get("data_description") or {}).get("code"), (name, step_id, "description")
+            adv = (step.get("sections") or {}).get("advanced") or {}
+            assert adv.get("name") and (adv.get("data") or {}).get("server"), (name, step_id, "advanced section")

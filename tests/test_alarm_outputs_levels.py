@@ -154,17 +154,17 @@ def _bat(hass: HomeAssistant, v: str) -> None:
 
 async def test_battery_level_with_hysteresis(hass, rig) -> None:
     _bat(hass, "60")
-    await rig.rules({"kind": "battery", "title": "Батарея", "sources": [BAT], "alarm_states": ["on"], "thresholds": {BAT: {"below": 20}}})
+    await rig.rules({"kind": "battery", "title": "Батарея", "sources": [BAT], "alarm_states": ["on"], "thresholds": {BAT: {"below": 20}}, "hold_s": 0})
     assert rig.eng.config["rules"][0]["thresholds"] == {BAT: {"below": 20.0, "step": 5.0}}  # the canon step of a battery
     _bat(hass, "18")
     await rig.tick(4)
     assert rig.titles() == ["🚨 Батарея"] and "Замок (18 % < 20 %)" in rig.messages()[0]
     rig.clear()
-    for v in ("22", "19", "24.9"):  # wobbling at the line: the same alarm, nothing said
+    for v in ("22", "19", "24.9", "25"):  # wobbling at the line: the same alarm, nothing said (25 — not past the step yet)
         _bat(hass, v)
         await rig.tick(4)
     assert rig.pushes == [] and f"r1|{BAT}" in rig.eng.active
-    _bat(hass, "25")  # back past the threshold by its step
+    _bat(hass, "25.1")  # back strictly past the threshold by its step (as HA's numeric_state `above: 25`)
     await rig.tick(4)
     assert rig.titles() == ["✅ Батарея"] and f"r1|{BAT}" not in rig.eng.active
     rig.clear()
@@ -175,7 +175,7 @@ async def test_battery_level_with_hysteresis(hass, rig) -> None:
 
 async def test_above_level_and_not_a_number(hass, rig) -> None:
     hass.states.async_set(CO2, "800", {"device_class": "carbon_dioxide", "unit_of_measurement": "ppm"})
-    await rig.rules({"kind": "air", "title": "CO2", "sources": [CO2], "alarm_states": ["on"], "thresholds": {CO2: {"above": 1500}}})
+    await rig.rules({"kind": "air", "title": "CO2", "sources": [CO2], "alarm_states": ["on"], "thresholds": {CO2: {"above": 1500}}, "hold_s": 0})
     for v in ("on", "abc", "nan", "inf", "unknown"):
         hass.states.async_set(CO2, v, {"device_class": "carbon_dioxide", "unit_of_measurement": "ppm"})
         await rig.tick(4)
@@ -188,6 +188,9 @@ async def test_above_level_and_not_a_number(hass, rig) -> None:
     await rig.tick(4)
     assert rig.pushes == []
     hass.states.async_set(CO2, "1400", {"device_class": "carbon_dioxide", "unit_of_measurement": "ppm"})
+    await rig.tick(4)
+    assert rig.pushes == []  # at the step's line: still the alarm
+    hass.states.async_set(CO2, "1399", {"device_class": "carbon_dioxide", "unit_of_measurement": "ppm"})
     await rig.tick(4)
     assert rig.titles() == ["✅ CO2"]
 
@@ -260,11 +263,21 @@ def test_rules_without_outputs_keep_their_automation(hass) -> None:
     raw = json.loads((Path(independent.__file__).parent / "translations" / "ru.json").read_text())["exceptions"]
     t = {k.removeprefix("alarm_native_"): v["message"] for k, v in raw.items() if k.startswith("alarm_native_")}
     rule = {**RULE, "kind": "leak", "sources": ["binary_sensor.kitchen"], "picked": ["binary_sensor.kitchen"]}
-    plain = independent.automation_for(rule, [], t, "input_boolean.a")
+    plain = independent.automation_for(rule, [], t, "input_boolean.a", "input_boolean.o")
     assert "siren" not in str(plain) and "numeric_state" not in str(plain)
-    loud = independent.automation_for({**rule, "outputs": [{"entity_id": SIREN, "on_start": True, "on_end": True}]}, [], t, "input_boolean.a")
+    loud = independent.automation_for({**rule, "outputs": [{"entity_id": SIREN, "on_start": True, "on_end": True}]}, [], t, "input_boolean.a", "input_boolean.o")
     text = str(loud)
-    assert text.count("'siren.turn_on'") == 1 and text.count("'siren.turn_off'") >= 5 and "'continue_on_error': True, 'target': {'entity_id': ['siren.hall']}" in text
+    # On: the alarm told; off: back, «Принято» from the push, «Принято» in HA.
+    assert text.count("'siren.turn_on'") == 1 and text.count("'siren.turn_off'") == 3 and "'continue_on_error': True, 'target': {'entity_id': ['siren.hall']}" in text
+    # Only at the start (a light that stays on to be seen) / only at the end (a «normal» indicator): the other never.
+    start = str(independent.automation_for({**rule, "outputs": [{"entity_id": SIREN, "on_start": True, "on_end": False}]}, [], t, "input_boolean.a", "input_boolean.o"))
+    end = str(independent.automation_for({**rule, "outputs": [{"entity_id": SIREN, "on_start": False, "on_end": True}]}, [], t, "input_boolean.a", "input_boolean.o"))
+    assert start.count("'siren.turn_on'") == 1 and "'siren.turn_off'" not in start
+    assert "'siren.turn_on'" not in end and end.count("'siren.turn_off'") == 3
+    # Both, with the rule's button: its run turns the siren off too.
+    act = str(independent.automation_for({**rule, "action": {"service": "valve.close_valve", "entity_id": "valve.main"}, "outputs": [{"entity_id": SIREN, "on_start": True, "on_end": True}]},
+                                         [], t, "input_boolean.a", "input_boolean.o"))
+    assert act.count("'siren.turn_on'") == 1 and act.count("'siren.turn_off'") == 4
 
 
 async def test_level_rule_runs_in_ha_with_numeric_state_and_siren(hass: HomeAssistant, house) -> None:
@@ -276,7 +289,14 @@ async def test_level_rule_runs_in_ha_with_numeric_state_and_siren(hass: HomeAssi
     await hass.async_block_till_done()
     assert res["added"] == ["Батарея"] and not res["engine"], res
     auto = next(a for a in load_yaml(str(config / "automations.yaml")) if a["id"] == independent.automation_id("bat"))
-    assert {"trigger": "numeric_state", "entity_id": [BAT], "below": 20.0, "for": {"seconds": independent.HOLD}, "id": "alarm"} in auto["triggers"]
+    # A level beside a signal: one numeric_state over both — each source's margin to its own line (a signal −1 / 1).
+    alarm = auto["triggers"][0]
+    assert len(auto["triggers"]) == 3 and len(auto["actions"]) == 2
+    assert {k: alarm[k] for k in ("trigger", "entity_id", "below", "for", "id")} == {"trigger": "numeric_state", "entity_id": [BAT, "binary_sensor.kitchen"], "below": 0,
+                                                                                    "for": {"seconds": independent.HOLD}, "id": "alarm"}
+    assert auto["triggers"][1]["above"] == 0 and "th.step" in auto["triggers"][1]["value_template"]
+    # The leak in normal for longer than the back window (as in a house): its alarm later is a new one, not a chatter.
+    await _later(hass, freezer, independent.back_after(engine.config["rules"][0]))
     _bat(hass, "18")
     await _later(hass, freezer, independent.HOLD + 1)
     assert len(pushes) == 1 and "Замок" in pushes[0].data["message"] and "18 %" in pushes[0].data["message"], [p.data for p in pushes]

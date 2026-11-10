@@ -698,7 +698,8 @@ async def test_an_alarm_sensor_without_data_is_said_and_its_return(hass: HomeAss
     with patch.object(eng, "_send", fake_send):
         hass.states.async_set("binary_sensor.leak", "off", {"friendly_name": "Протечка в котельной", "device_class": "moisture"})
         await eng.async_start()
-        await eng.async_set({"rules": [{"id": "r", "kind": "leak", "title": "Протечка", "sources": ["binary_sensor.leak"], "priority": "critical"}], "groups": []})
+        # A Russian project (its words come from the translations in the project's language — HA's is English here).
+        await eng.async_set({"lang": "ru", "rules": [{"id": "r", "kind": "leak", "title": "Протечка", "sources": ["binary_sensor.leak"], "priority": "critical"}], "groups": []})
         await hass.async_block_till_done()
         hass.states.async_set("binary_sensor.leak", "unavailable", {"friendly_name": "Протечка в котельной", "device_class": "moisture"})
         await hass.async_block_till_done()
@@ -755,7 +756,7 @@ async def test_accept_all_from_the_dashboard(hass: HomeAssistant, hass_client, h
     with patch.object(eng, "_send", fake_send):
         for i in ids:
             hass.states.async_set(i, "off", {"friendly_name": i, "device_class": "problem"})
-        await eng.async_set({"rules": [{"id": "f", "kind": "fault", "title": "Неисправность", "sources": ids, "priority": "normal"}], "groups": []})
+        await eng.async_set({"rules": [{"id": "f", "kind": "fault", "title": "Неисправность", "sources": ids, "priority": "normal", "hold_s": 0}], "groups": []})
         for i in ids:
             hass.states.async_set(i, "on", {"friendly_name": i, "device_class": "problem"})
         await hass.async_block_till_done()
@@ -782,7 +783,7 @@ async def test_accept_the_faults_never_the_leak(hass: HomeAssistant, hass_client
             hass.states.async_set(i, "off", {"friendly_name": i, "device_class": "problem"})
         hass.states.async_set("binary_sensor.leak", "off", {"friendly_name": "Протечка", "device_class": "moisture"})
         await eng.async_set({"rules": [
-            {"id": "f", "kind": "fault", "title": "Неисправность", "sources": ids, "priority": "normal"},
+            {"id": "f", "kind": "fault", "title": "Неисправность", "sources": ids, "priority": "normal", "hold_s": 0},
             {"id": "l", "kind": "leak", "title": "Протечка", "sources": ["binary_sensor.leak"], "priority": "critical"},
         ], "groups": []})
         for i in [*ids, "binary_sensor.leak"]:

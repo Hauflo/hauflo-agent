@@ -202,6 +202,15 @@ async def test_status_says_the_houses_time_zone(hass: HomeAssistant, entry) -> N
     assert entry.runtime_data.status()["timeZone"] == "Europe/Moscow"
 
 
+async def test_status_says_when_ha_started(hass: HomeAssistant, entry) -> None:
+    """Owner 09.11 «присутствие ha»: one start time per HA run (not per status / reconnect), ISO with offset, in the past."""
+    from homeassistant.util import dt as dt_util
+
+    a, b = entry.runtime_data.status()["haStarted"], entry.runtime_data.status()["haStarted"]
+    assert a == b
+    assert dt_util.parse_datetime(a) <= dt_util.utcnow()
+
+
 def test_every_issue_has_its_texts_in_both_languages() -> None:
     import pathlib
 
