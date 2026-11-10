@@ -24,14 +24,21 @@ def _check(section: str, key: str, value: Any) -> None:
     if isinstance(value, str):
         re.compile(value)  # a word list is a regex: a bad one fails here, not in the middle of an alarm
     elif isinstance(value, dict):
-        # A small table (a device class → its levels, a domain → its services): one level of keys, the same values.
+        # A small table (a device class → its levels, a domain → its services, a reference object): its values checked
+        # the same way.
         if not value:
             raise ValueError(f"{where}: a non-empty object")
         for k, v in value.items():
             _check(section, f"{key}.{k}", v)
     elif isinstance(value, list):
+        # A reference table (analytics.series / norms / loops / correlations): a list of small objects, each checked
+        # like a table — a new kind of series or device is one more object here, never code (0.32 п.8).
+        if value and all(isinstance(x, dict) for x in value):
+            for i, x in enumerate(value):
+                _check(section, f"{key}[{i}]", x)
+            return
         if not value or not (all(isinstance(x, str) for x in value) or all(_num(x) for x in value)):
-            raise ValueError(f"{where}: a non-empty list of strings or of non-negative numbers")
+            raise ValueError(f"{where}: a non-empty list of strings, of non-negative numbers or of objects")
     elif not _num(value):
         raise ValueError(f"{where}: a non-negative number, a list, a table or a word-list string")
 

@@ -13,6 +13,24 @@
    "params": {}
   },
   {
+   "file": "agent/insightRoutes.ts",
+   "kind": "rest",
+   "call": "GET /api/hauflo/insights",
+   "params": {}
+  },
+  {
+   "file": "agent/signalSync.ts",
+   "kind": "rest",
+   "call": "GET /api/hauflo/signals",
+   "params": {}
+  },
+  {
+   "file": "agent/signalSync.ts",
+   "kind": "rest",
+   "call": "POST /api/hauflo/signals",
+   "params": {}
+  },
+  {
    "file": "ha/alarmRulesDeploy.ts",
    "kind": "rest",
    "call": "GET /api/hauflo/notify",

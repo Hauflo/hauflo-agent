@@ -107,6 +107,28 @@ def _own(node: dict[str, Any], level: int) -> dict[str, Any]:
     return {k: v for k, v in node.items() if k != key}
 
 
+# The integrator's keys of a Hauflo card (0.32 п.6: the block's own rows — renamed, hidden, reordered, added in the card's
+# editor): his, field by field. The cloud never sends or reads them; a re-apply keeps them, an edit of them alone is no
+# conflict and doesn't freeze the card — Hauflo's new version of its own keys (area, block, others…) still applies.
+USER_KEYS = ("items", "auto", "order")
+_CARD_PREFIX = "custom:hauflo-"
+
+
+def _user_keyed(node: dict[str, Any], level: int) -> bool:
+    kind = node.get("type")
+    return level == 3 and isinstance(kind, str) and kind.startswith(_CARD_PREFIX) and kind != LAYOUT
+
+
+def _cloud(own: dict[str, Any], level: int) -> dict[str, Any]:
+    """A node's own keys that are Hauflo's (its card without the integrator's rows)."""
+    return {k: v for k, v in own.items() if k not in USER_KEYS} if _user_keyed(own, level) else own
+
+
+def _user(own: dict[str, Any], level: int) -> dict[str, Any]:
+    """The integrator's rows of a Hauflo card, as HA holds them."""
+    return {k: copy.deepcopy(own[k]) for k in USER_KEYS if k in own} if _user_keyed(own, level) else {}
+
+
 def _hid(node: Any) -> str | None:
     v = node.get(ID) if isinstance(node, dict) else None
     return v if isinstance(v, str) and v else None
@@ -319,8 +341,14 @@ class Merge:
         return h if h is not None and h in self.B.node and id(node) in self.C.first else None
 
     def _edited(self, h: str) -> bool:
+        """Touched by the integrator at all (his rows included): Hauflo dropping it keeps it as his."""
         lvl = self.B.level[h]
         return _own(self.C.node[h], lvl) != _own(self.B.node[h], lvl)
+
+    def _cloud_edited(self, h: str) -> bool:
+        """Hauflo's own keys edited by the integrator (his rows aside): Hauflo's new version of them is a conflict."""
+        lvl = self.B.level[h]
+        return _cloud(_own(self.C.node[h], lvl), lvl) != _cloud(_own(self.B.node[h], lvl), lvl)
 
     def _moved(self, h: str) -> bool:
         return h in self.C.node and self.C.parent.get(h) != self.B.parent.get(h)
@@ -421,16 +449,19 @@ class Merge:
     def _build(self, h: str) -> dict[str, Any]:
         """Hauflo's item as it goes to HA: its new version (or the integrator's, in a conflict he keeps) with merged children."""
         n, lvl = self.N.node[h], self.N.level[h]
-        own = _own(n, lvl)
-        if self._in_current(h) and self._edited(h):
+        own = _cloud(_own(n, lvl), lvl)
+        if self._in_current(h):
             cur_own = _own(self.C.node[h], self.B.level[h])
-            if cur_own != own:
+            if self._cloud_edited(h) and _cloud(cur_own, lvl) != own:
                 taken = self.take_all or h in self.take
-                self.conflicts.append(self._label(self.B, h, kept="hauflo" if taken else "yours", updated=own != _own(self.B.node[h], lvl)))
+                self.conflicts.append(self._label(self.B, h, kept="hauflo" if taken else "yours", updated=own != _cloud(_own(self.B.node[h], lvl), lvl)))
                 if not taken:
-                    own = cur_own
+                    own = _cloud(cur_own, lvl)
                 else:
                     self.taken.append(h)
+            # His rows stay his whichever version of Hauflo's keys goes (taken or not).
+            if _user_keyed(own, lvl):
+                own = {**own, **_user(cur_own, lvl)}
         out = copy.deepcopy(own)
         out[ID] = h
         key = _kids_key(n, lvl)
@@ -729,7 +760,7 @@ class Merge:
             elif not self._in_current(h):
                 if h in restored or any(self._is_under(h, r) for r in restored):
                     bump(self.N, h, "added")
-            elif nn[h] != nb[h] and (not self._edited(h) or h in taken):
+            elif nn[h] != nb[h] and (not self._cloud_edited(h) or h in taken):
                 bump(self.N, h, "changed")
         for h in nb:
             if h not in nn and h not in self.skip and self._in_current(h) and not self._edited(h):
@@ -778,7 +809,7 @@ class Merge:
                 if count[h] > 1:
                     bad.append(h)
                     continue
-                if h in taken or (not self._edited(h) and _own(self.N.node[h], lvl) != _own(self.B.node[h], lvl)):
+                if h in taken or (not self._cloud_edited(h) and _cloud(_own(self.N.node[h], lvl), lvl) != _cloud(_own(self.B.node[h], lvl), lvl)):
                     continue  # Hauflo's new version: in the plan
                 r = R.node.get(h)
                 if r is None or _own(r, lvl) != cur:
@@ -874,6 +905,45 @@ def _tiles_to(cfg: dict[str, Any], path: str) -> int:
 
     walk(cfg, 0)
     return n
+
+
+def _opened(cfg: dict[str, Any], path: str) -> bool:
+    """Some card of the dashboard — Hauflo's or the integrator's, in a stack too — opens this page by its path."""
+    found = False
+
+    def card(c: dict[str, Any]) -> None:
+        nonlocal found
+        found = found or _leads_to(c, path)
+        for x in _stack(c) or []:
+            if isinstance(x, dict):
+                card(x)
+
+    def walk(node: dict[str, Any], level: int) -> None:
+        for c in _kids(node, level):
+            if isinstance(c, dict):
+                cl = _child_level(level, _kids_key(node, level))
+                card(c) if cl == 3 else walk(c, cl)
+
+    walk(cfg, 0)
+    return found
+
+
+def unique_paths(cfg: Any) -> None:
+    """A page of Hauflo's on the path of a page of the integrator's (his own «diagnostics», acceptance 10.11 L8): HA opens
+    the first of two pages with one path for both — Hauflo's gets the next free `<path>_2`… Only a page nothing on the
+    dashboard opens by its path (the «Диагностика» tab): a room's page its tiles open keeps it (they'd lead to his)."""
+    views = [v for v in (cfg.get("views") if isinstance(cfg, dict) else None) or [] if isinstance(v, dict)]
+    his = {v["path"] for v in views if _hid(v) is None and isinstance(v.get("path"), str)}
+    taken = {v.get("path") for v in views}
+    for v in views:
+        p = v.get("path")
+        if _hid(v) is None or not isinstance(p, str) or p not in his or _opened(cfg, p):
+            continue
+        n = 2
+        while f"{p}_{n}" in taken:
+            n += 1
+        v["path"] = f"{p}_{n}"
+        taken.add(v["path"])
 
 
 def twins(current: Any, new: Any) -> list[dict[str, Any]]:
@@ -1246,6 +1316,7 @@ def plan_and_merge(new: dict[str, Any], current: Any, base: dict[str, Any] | Non
     m = Merge(new, c2, b2, take, restore, skip=info["copies"] if info else ())
     # His items against HA's config as it is (not only as `upgrade` read it): an exact repeat of his card in another
     # copy of a section is the only thing allowed to go.
+    unique_paths(m.result)
     lost = sum((_local_prints(seen, base) - m._prints(m.result, False) - (info["allow"] if info else Counter())).values())
     report = {**m.summary(), "base": True, "edited": seen != base, "changes": m.result != current, "lost": max(m.lost(), lost), "untouched": len(m.untouched())}
     if info:
@@ -1285,13 +1356,18 @@ def expand_admins(cfg: Any, ids: list[str]) -> Any:
     return _walk_admins(cfg, fix)
 
 
-def collapse_admins(cfg: Any) -> Any:
-    """A read for the cloud: Hauflo's own lists of users (as saved) say the marker again — no user ids leave the house."""
+def collapse_admins(cfg: Any, ids: list[str]) -> Any:
+    """A read for the cloud: exactly the marker's expansion (a list of users equal to HA's administrators now, `ids`)
+    says the marker again. Any other list (the integrator's own choice of people, or admins since changed) stays as it
+    is — a read never turns someone's chosen people into «администраторы» (п.9: the cloud then pushed that back)."""
+    admins = set(ids)
 
     def fix(key: str, v: list[Any]) -> list[Any]:
-        if key == "visible" and v and all(isinstance(x, dict) and set(x) == {"user"} for x in v):
+        if not admins:
+            return v
+        if key == "visible" and all(isinstance(x, dict) and set(x) == {"user"} for x in v) and {x["user"] for x in v} == admins and len(v) == len(admins):
             return [{"user": ADMINS}]
-        if key == "users" and v:
+        if key == "users" and set(v) == admins and len(v) == len(admins):
             return [ADMINS]
         return v
 
@@ -1319,7 +1395,10 @@ def redact(current: Any, base: dict[str, Any], key: bytes) -> Any:
             return {"type": LOCAL, "hash": sign(c)}
         key_ = _kids_key(c, level)
         own = _own(c, level)
-        out = copy.deepcopy(own) if own == _own(B.node[h], level) else {ID: h, "type": LOCAL, "edited": sign(own)}
+        # The integrator's rows of a Hauflo card (foreign entity ids) never leave the house: his edit of Hauflo's keys
+        # reads as a placeholder, his rows alone read as Hauflo's card.
+        mine = _cloud(own, level)
+        out = copy.deepcopy(mine) if mine == _cloud(_own(B.node[h], level), level) else {ID: h, "type": LOCAL, "edited": sign(own)}
         if key_ is not None:
             out[key_] = kids_out(c, level)
         return out
@@ -1394,7 +1473,7 @@ class DashboardMerge:
             raise MergeError("not_found", "no such storage dashboard")
         if current is None:
             raise MergeError("config_not_found", "no config yet")
-        return collapse_admins(redact(current, self.bases[url_path], self.key))
+        return collapse_admins(redact(current, self.bases[url_path], self.key), await self._admin_ids())
 
     async def _admin_ids(self) -> list[str]:
         """HA's administrators (active people, not HA's own system users), read here — never sent to the cloud."""

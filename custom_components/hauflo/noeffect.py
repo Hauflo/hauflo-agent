@@ -83,6 +83,8 @@ def _tail(st: State) -> int | None:
 class PairEffect(Detector):
     name = "noeffect"
     domains = None  # every domain: on_state only notes a change of a paired entity, the tick decides
+    KINDS = (KIND,)
+    DEV = ("limit", "change")
 
     def __init__(self, ctx: Insights) -> None:
         super().__init__(ctx)
@@ -142,6 +144,18 @@ class PairEffect(Detector):
         """Is this thermostat a floor's: the integrator's word, else its words."""
         k = self.kinds.get(st.entity_id)
         return k == "floor" if k else bool(floor_re and floor_re.search(_text(st)))
+
+    def climate_kind(self, eid: str) -> str | None:
+        """«floor» / «air» of a thermostat: the integrator's word, a floor pair's target, else its words (analytics.py loops)."""
+        if eid in self.kinds:
+            return self.kinds[eid]
+        if any(p.get("kind") == "floor" and p.get("target") == eid for p in self.pairs.values()):
+            return "floor"
+        st = self.ctx.hass.states.get(eid)
+        if st is None or st.domain != "climate":
+            return None
+        floor_re = _words(KINDS["floor"]["target_words"]) if "floor" in KINDS else None
+        return "floor" if self._floor(st, floor_re) else "air"
 
     def clear_pair(self, effect: str) -> None:
         if self.manual.pop(effect, None) is not None:
@@ -386,9 +400,9 @@ class PairEffect(Detector):
             return
         season = self.ctx.season_now()
         wrong_season = not cfg["falls"] and season not in (None, "heat")
-        if eff.startswith("climate.") and (wrong_season or self._learned(eff)):
-            run["bad_since"] = None  # off-season / the zone's own norm judges (ClimateEffect) — any thermostat, a floor's too
-            return
+        if self._ahu(eff, p) or (eff.startswith("climate.") and (wrong_season or self._learned(eff))):
+            run["bad_since"] = None  # off-season / the zone's own norm judges (ClimateEffect) — any thermostat, a floor's too;
+            return  # an air handler's zone: its air is not the room's (0.32, owner 10.11)
         if cfg["windows"] and self.ctx.opening_open(eff):
             run["samples"], run["bad_since"] = [s[-1]], None  # a window open: nothing is expected; a fresh window after it closes
             return
@@ -421,19 +435,47 @@ class PairEffect(Detector):
         elif run["calm_since"] is None:
             run["calm_since"] = now
 
+    def _ahu(self, eff: str, p: dict[str, Any] | None) -> bool:
+        """The effect or its executor is an air handler's climate: never judged «no effect»."""
+        return self.ctx.air_handler(eff) or bool(p and self.ctx.air_handler(p["exec"]))
+
     def _learned(self, eff: str) -> bool:
         from .insight import ClimateEffect
 
         return any(isinstance(d, ClimateEffect) and d.norm(eff, "heat") is not None for d in self.ctx.detectors)
 
+    def keys(self) -> list[tuple[str, str]]:
+        return [(KIND, eff) for eff in dict.fromkeys([*self.pairs, *self.saved])]
+
+    def excluded(self, kind: str, eid: str) -> str | None:
+        p = self.pairs.get(eid)
+        if self._ahu(eid, p):
+            return "air_handler"
+        cfg = KINDS.get((p or self.saved.get(eid) or {}).get("kind", ""))
+        if cfg and not cfg["falls"] and self.ctx.season_now() not in (None, "heat"):
+            return "season"
+        return super().excluded(kind, eid)
+
+    def progress(self, kind: str, eid: str, now: float) -> dict[str, Any]:
+        # A fixed bar (min_change over window_h), nothing to learn.
+        cfg = KINDS.get((self.pairs.get(eid) or self.saved.get(eid) or {}).get("kind", ""))
+        return {"ready": {"norm": cfg["min_change"] if cfg else None, "unit": cfg["unit"] if cfg else "", "n": len((self.runs.get(eid) or {}).get("samples") or [])}}
+
+    def reset(self, eid: str, kind: str) -> None:
+        self.saved.pop(eid, None)
+        if eid in self.runs:
+            self.runs[eid] = self._new()
+
     def items(self, now: float) -> list[dict[str, Any]]:
         out = []
         for eff, sv in self.saved.items():  # right after a start, before the pairs are found again: the finding stays listed
+            if self._ahu(eff, sv):
+                continue
             xs = self.ctx.hass.states.get(sv["exec"])
             out.append({"key": f"{KIND}|{eff}", "kind": KIND, "role": sv["kind"], "entityId": eff, **self.ctx.who(eff), "exec": (xs.attributes.get("friendly_name") if xs else None) or sv["exec"], "since": _iso(sv["since"]), "hours": _round((now - sv["since"]) / SECONDS_PER_HOUR), "flatH": KINDS[sv["kind"]]["window_h"], "limit": KINDS[sv["kind"]]["min_change"]})
         for eff, run in self.runs.items():
             p = self.pairs.get(eff)
-            if not run["alerted"] or p is None or run["since"] is None:
+            if not run["alerted"] or p is None or run["since"] is None or self._ahu(eff, p):
                 continue
             cfg = KINDS[p["kind"]]
             xs = self.ctx.hass.states.get(p["exec"])
@@ -462,10 +504,12 @@ NOEFFECT: tuple[type[Detector], ...] = (PairEffect,)
 
 
 class PairsView(HomeAssistantView):
-    """The integrator's refinement of the pairs (п.68). GET → pairs_view(); POST (admin only):
+    """The integrator's refinement of the pairs (п.68). GET → pairs_view() + `supply` (loops that want a supply sensor,
+    analytics.py п.8); POST (admin only):
       {"set": {"effect": entity_id, "kind": "floor|air|co2|humidity", "exec": entity_id | ""}} — this executor is this effect's;
       {"clear": entity_id} — back to what the mapping finds;
-      {"kinds": {climate entity_id: "air|floor"}} — the deploy's «воздух / пол» of thermostats, the whole map (п.19)."""
+      {"kinds": {climate entity_id: "air|floor"}} — the deploy's «воздух / пол» of thermostats, the whole map (п.19);
+      {"supply": {"loop": climate entity_id, "sensor": entity_id | ""}} — «кто греет пол, где датчик подачи» (п.8)."""
 
     url = "/api/hauflo/pairs"
     name = "api:hauflo:pairs"
@@ -486,7 +530,16 @@ class PairsView(HomeAssistantView):
         det = self._fresh()
         if det is None:
             return self.json_message("not ready", 409)
-        return self.json(det.pairs_view())
+        return self.json(self._view(det))
+
+    @staticmethod
+    def _loops(det: PairEffect):
+        lt = det.ctx.owner.get("loop_slow")
+        return lt if lt is not None and hasattr(lt, "supply_view") else None
+
+    def _view(self, det: PairEffect) -> dict[str, Any]:
+        lt = self._loops(det)
+        return {**det.pairs_view(), "supply": lt.supply_view() if lt is not None else []}
 
     async def post(self, request):
         if not request["hass_user"].is_admin:
@@ -515,6 +568,16 @@ class PairsView(HomeAssistantView):
             if len(k) > 5000 or not all(ok_id(e) and e.startswith("climate.") and v in EFFECT_KINDS for e, v in k.items()):
                 return self.json_message("kinds: {climate entity_id: air | floor} expected", 400)
             det.set_kinds(k)
+        elif isinstance(body, dict) and set(body) == {"supply"} and isinstance(body["supply"], dict):
+            b = body["supply"]
+            lt = self._loops(det)
+            if set(b) != {"loop", "sensor"} or not ok_id(b["loop"]) or not (b["sensor"] == "" or ok_id(b["sensor"])) or lt is None:
+                return self.json_message("supply: {loop, sensor} expected", 400)
+            if b["loop"] not in {x["loop"] for x in lt.supply_view()}:
+                return self.json_message(f"not_a_loop: {b['loop']}", 400)
+            if b["sensor"] and det.ctx.hass.states.get(b["sensor"]) is None:
+                return self.json_message(f"unknown_entity: {b['sensor']}", 400)
+            lt.set_supply(b["loop"], b["sensor"])
         else:
-            return self.json_message("set / clear / kinds expected", 400)
-        return self.json(self._fresh().pairs_view())
+            return self.json_message("set / clear / kinds / supply expected", 400)
+        return self.json(self._view(self._fresh()))

@@ -34,7 +34,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
 from homeassistant.util import dt as dt_util
 
-from . import automations, backup, dashmerge, daylight, foreign, guest, house, independent, insight, issues, keep, noeffect, notify, ownership, presence, protect, ranges, retired, rules, scenes, season, servers, service, sidebar, stock, theme, timers, titles, voice
+from . import automations, backup, dashmerge, daylight, foreign, guest, house, independent, insight, issues, keep, noeffect, notify, ownership, presence, protect, ranges, retired, rules, scenes, season, servers, service, sidebar, signals, stock, theme, timers, titles, voice
 from . import derived as dv
 from . import order as block_order
 from . import habits as habits_mod
@@ -52,7 +52,6 @@ KNX_ROUND_MIN_READS = TUNING["link"]["knx_round_min_reads"]
 # A monitored event (a doorbell press, a button, a motion event — HA's event entity, its state = the last time it fired)
 # said once: the status carries the time while it is this recent (the status runs 2 s after a change and every minute).
 EVENT_RECENT = TUNING["link"]["event_recent_s"]
-PROBLEM_ON = {"problem", "safety", "smoke", "gas", "moisture", "battery", "heat", "cold", "carbon_monoxide", "tamper", "vibration"}
 
 
 async def _local_token(hass: HomeAssistant, entry: ConfigEntry):
@@ -166,7 +165,7 @@ _MAX_CHANNELS = 8
 # HA's own availability from the agent's — a link that dropped while HA kept running is no HA outage (owner 09.11).
 HA_UP = dt_util.utcnow().isoformat()
 
-FEATURES = [foreign.FEATURE, foreign.PLAN_FEATURE, foreign.WRITE_PLAN_FEATURE, foreign.MEMBERS_FEATURE]
+FEATURES = [foreign.FEATURE, foreign.PLAN_FEATURE, foreign.WRITE_PLAN_FEATURE, foreign.MEMBERS_FEATURE, signals.FEATURE, insight.FEATURE]
 
 
 # What a registry edit may touch: Hauflo's own — KNX entities/devices, its light/cover groups and scenes
@@ -1414,6 +1413,8 @@ _LOVELACE_TYPES = {
     "custom:hauflo-layout",
     # Hauflo's page section (0.24.0, п.70): HA's grid section, its blocks its own cards — no entity, no action of its own.
     "custom:hauflo-section",
+    # The «Диагностика» tab (0.32, п.9): no entity, no action — the card asks the agent (GET/POST /api/hauflo/insights).
+    "custom:hauflo-insights",
 }
 # What a card may only show: anyone's (weather on the floor, an alarm source of a monitoring rule).
 _READ_ONLY_DOMAINS = {"sensor", "binary_sensor", "weather", "sun", "person", "zone", "device_tracker", "calendar", "image", "camera", "event"}
@@ -1589,6 +1590,39 @@ def _named_as(hass: HomeAssistant, eid: str, name: Any) -> bool:
     return bool(words & known) and all(w in rooms or len(w) <= 3 or any(w.startswith(r[:-1]) for r in rooms if len(r) > 3) for w in rest)
 
 
+# A Hauflo card's own rows (0.32 п.6, the card editor's «Состав блока»): the integrator's, kept by the merge field by field
+# (dashmerge.USER_KEYS). Whoever writes them, only this form: a list of rows with these keys, a bool, a list of names.
+_ROW_KEYS = {"entity", "name", "secondary", "icon", "icon_type", "hidden", "block", "tap_action", "hold_action", "double_tap_action"}
+_ROW_BLOCKS = {"control", "readings", "diagnostics"}
+_ROW_TEXT_MAX = 120
+_ROWS_MAX = 300
+_ORDER_RE = re.compile(r"^(?:[a-z_]+\.[a-z0-9_]+|[a-z][a-z0-9_]{0,39})$")
+
+
+def _rows_ok(card: dict[str, Any]) -> bool:
+    """`items`, `auto` and `order` of a Hauflo card in their form (their entity ids are checked by the walk, like any)."""
+    if "auto" in card and not isinstance(card["auto"], bool):
+        return False
+    order = card.get("order")
+    if "order" in card and not (isinstance(order, list) and len(order) <= _ROWS_MAX and all(isinstance(x, str) and _ORDER_RE.fullmatch(x) for x in order)):
+        return False
+    items = card.get("items")
+    if "items" not in card:
+        return True
+    if not isinstance(items, list) or len(items) > _ROWS_MAX:
+        return False
+    for row in items:
+        if not isinstance(row, dict) or set(row) - _ROW_KEYS or not (isinstance(row.get("entity"), str) and _ENTITY_RE.fullmatch(row["entity"])):
+            return False
+        if any(k in row and not (isinstance(row[k], str) and len(row[k]) <= _ROW_TEXT_MAX) for k in ("name", "secondary", "icon", "icon_type")):
+            return False
+        if "hidden" in row and not isinstance(row["hidden"], bool):
+            return False
+        if "block" in row and row["block"] not in _ROW_BLOCKS:
+            return False
+    return True
+
+
 def _lovelace_ok(hass: HomeAssistant | None, config: Any, owned: set[str] | None, owned_entries: set[str] | None) -> bool:
     if not isinstance(config, dict):
         return False
@@ -1666,6 +1700,8 @@ def _lovelace_ok(hass: HomeAssistant | None, config: Any, owned: set[str] | None
                     return False
             kind = v.get("type")
             if kind is not None and (not isinstance(kind, str) or kind not in _LOVELACE_TYPES):
+                return False
+            if (set(v) & {"items", "auto", "order"}) and str(kind).startswith("custom:hauflo-") and not _rows_ok(v):
                 return False
             if "hauflo_id" in v and not (isinstance(v["hauflo_id"], str) and _HAUFLO_ID_RE.match(v["hauflo_id"])):
                 return False
@@ -2218,7 +2254,7 @@ class Agent:
                     async with asyncio.timeout(CONNECT_TIMEOUT):
                         ws = await stack.enter_async_context(self.session.ws_connect(servers.ws_url(host), heartbeat=30, max_msg_size=16 * 1024 * 1024))
                     self.ws = ws
-                    await self.send({"t": "hello", "token": self.secret, "version": VERSION, "haVersion": HA_VERSION, "instance": await self._instance(), "features": FEATURES})
+                    await self.send({"t": "hello", "token": self.secret, "version": VERSION, "haVersion": HA_VERSION, "instance": await self._instance(), "features": FEATURES, "signalsHash": signals.current_hash(self.hass)})
                     async for msg in ws:
                         if msg.type != aiohttp.WSMsgType.TEXT:
                             continue
@@ -2671,13 +2707,49 @@ class Agent:
             reg.async_create(MONITOR_LABEL if ru else MONITOR_LABEL_EN, icon="mdi:bell-alert", color="red", description=ownership.MONITOR_TEXT["ru" if ru else "en"])
 
     def _monitored_ids(self) -> list[str]:
-        # The «Hauflo мониторинг» label, and the integrator's «Уведомлять» switch in Hauflo's list over it (п.63.6).
+        """What is watched (0.32): the «Hauflo мониторинг» label ∪ the canon's watch list by class (a leak / smoke / gas /
+        link sensor of any integration, signals.py) ∪ the integrator's «Уведомлять» switch (п.63.6) and the site's policy
+        `watch: true` − its «off» / `watch: false` (an entity's own or its scope's). Disabled / hidden entities only by
+        the label or a choice."""
         label = next((l for l in lr.async_get(self.hass).async_list_labels() if l.name.casefold() in MONITOR_LABELS), None)
         reg = er.async_get(self.hass)
         ids = [e.entity_id for e in er.async_entries_for_label(reg, label.label_id)] if label is not None else []
-        off = foreign.notify_off(self.hass)
-        on = sorted(i for i in foreign.notify_on(self.hass) if i not in ids and reg.async_get(i) is not None)
-        return [i for i in ids if i not in off] + on
+        by_class = sorted(
+            e.entity_id
+            for e in reg.entities.values()
+            if not e.disabled_by and not e.hidden_by and signals.watch_by_class(e.entity_id, e.device_class or e.original_device_class, e.platform)
+        )
+        sig = signals.store(self.hass)
+        chosen = sorted(i for i in (foreign.notify_on(self.hass) | (sig.watch_on() if sig else set())) if reg.async_get(i) is not None)
+        off = foreign.notify_off(self.hass) | (sig.watch_off() if sig else set())
+        pol = signals.policy(self.hass)
+        out: list[str] = []
+        for i in dict.fromkeys([*ids, *by_class, *chosen]):
+            if i in off:
+                continue
+            if pol and pol["scopes"] and (ent := reg.async_get(i)) is not None:
+                st = self.hass.states.get(i)
+                if not signals.resolve(i, platform=ent.platform, device_class=st.attributes.get("device_class") if st else ent.device_class or ent.original_device_class, name=st.name if st else None, policy=pol)["watch"]:
+                    continue
+            out.append(i)
+        return out
+
+    def house(self) -> dict[str, Any]:
+        """«Всё хорошо» by the one calculator (signals.py, 0.32) over the watched signals: `_house` alarm (a problem whose
+        policy says «авария») > fault («неисправность») > offline (only lost links among them) > ok; `_faults` — those
+        problems; `_shelved` — the «не решено» problems (listed, never moving it)."""
+        faults: list[dict[str, Any]] = []
+        shelved: list[str] = []
+        for m in self.monitored():
+            if not m["problem"]:
+                continue
+            if m["undetermined"]:
+                shelved.append(m["entityId"])
+            elif m["house"] != "none":
+                faults.append({"entity": m["entityId"], "name": m["name"], "house": m["house"], "severity": m["severity"], "offline": m["state"] == "unavailable"})
+        live = [f for f in faults if not f["offline"]]
+        level = "alarm" if any(f["house"] == "alarm" for f in live) else "fault" if live else "offline" if faults else "ok"
+        return {"_house": level, "_faults": faults, "_shelved": shelved}
 
     def _knx(self) -> dict[str, Any]:
         entries = self.hass.config_entries.async_entries("knx")
@@ -2712,36 +2784,50 @@ class Agent:
             users = await self.hass.auth.async_get_users()
             self._admins = sorted({str(u.name)[:80] for u in users if u.is_admin and u.is_active and not u.system_generated and u.name})[:20]
 
-    def status(self) -> dict[str, Any]:
-        issues.sync_degraded(self.hass)  # a feature HA's internals took away since the last minute: in Repairs
+    def monitored(self) -> list[dict[str, Any]]:
+        """The watched signals now, each by the one calculator (signals.py): problem, its «Всё хорошо» (house), importance,
+        «не решено», where its policy came from — the same as the cloud's applySignals (and its own 0.31 status)."""
         reg = er.async_get(self.hass)
-        knx_ids = [e.entity_id for e in reg.entities.values() if e.platform == "knx" and not e.disabled_by]
-        unavailable = [i for i in knx_ids if (s := self.hass.states.get(i)) is not None and s.state == "unavailable"]
-        monitored = []
+        pol = signals.policy(self.hass)
+        out = []
         for eid in self._monitored_ids():
             s = self.hass.states.get(eid)
             if s is None:
                 continue
             dc = s.attributes.get("device_class")
-            problem = s.state == "unavailable" or (s.domain == "binary_sensor" and s.state == "on" and (dc in PROBLEM_ON or dc is None))
-            if s.domain == "sensor" and dc == "battery":
-                with contextlib.suppress(ValueError):
-                    problem = problem or float(s.state) < notify.LEVELS["battery"]["below"]  # the canon threshold (399-20)
-            item = {"entityId": eid, "name": s.name, "state": s.state, "problem": problem}
+            ent = reg.async_get(eid)
+            platform = str(ent.platform) if ent is not None and ent.platform else None
+            ev = signals.evaluate(s, platform=platform, policy=pol)
+            item: dict[str, Any] = {"entityId": eid, "name": s.name, "state": s.state, "problem": ev["problem"]}
             if dc:
                 # Its importance by what it is (owner 09.11, ISA-18.2): a leak / smoke / gas sensor is critical, a link a
                 # diagnostic (the cloud's alertSeverity.json).
                 item["deviceClass"] = str(dc)
+            # Its integration: the cloud groups a lost one's sensors into one problem by it (0.32, alertRoot.ts).
+            item["platform"] = platform
+            # As the cloud's applySignals says it: the importance without its own choice, the house, «не решено».
+            item.update({"severity": ev["defaultSeverity"], "house": ev["house"], "undetermined": ev["undetermined"], "source": ev["source"], "lifeSafety": ev["lifeSafety"]})
+            item["policy"] = {"alarm": ev["alarm"], "holdS": ev["holdS"], "from": ev["from"]}
             if s.domain == "event" and (ring := _recent_event(s.state, EVENT_RECENT)):
                 # Not a problem (the site isn't in alarm for a ring): one line in Telegram per press, never a back-to-normal line.
                 item["ring"] = ring
                 item["eventClass"] = str(dc) if dc else ""
-            monitored.append(item)
+            out.append(item)
+        return out
+
+    def status(self) -> dict[str, Any]:
+        issues.sync_degraded(self.hass)  # a feature HA's internals took away since the last minute: in Repairs
+        reg = er.async_get(self.hass)
+        knx_ids = [e.entity_id for e in reg.entities.values() if e.platform == "knx" and not e.disabled_by]
+        unavailable = [i for i in knx_ids if (s := self.hass.states.get(i)) is not None and s.state == "unavailable"]
+        monitored = [{k: v for k, v in m.items() if v is not None and v is not False or k == "problem"} for m in self.monitored()]
         return {
             "haVersion": HA_VERSION,
             "haStarted": HA_UP,
             "agentVersion": VERSION,
             "features": FEATURES,
+            # The site's policy this agent holds (signals.py): Hauflo sends it again when its own differs.
+            "signalsHash": signals.current_hash(self.hass),
             "knx": self._knx(),
             "unavailable": {"count": len(unavailable), "sample": unavailable[:10]},
             "monitored": monitored,
@@ -2753,6 +2839,8 @@ class Agent:
             # «Диагностика по своей норме» (insight.py): a zone / sensor clearly off its own learned norm — for the
             # integrator's staff (the cloud never tells the family), never an action.
             "insights": ins.items() if (ins := self.insights) else [],
+            # п.9: «Это норма» / «Снова следить» pressed on the card in HA — Hauflo takes them into the site's findings.
+            "insightChoices": ins.choices() if (ins := self.insights) else {},
             # The owner closed the house for changes in HA: Hauflo stops a deploy before it starts.
             "locked": self.locked,
             # The alarms' times are ISO with their offset (UTC); this is the house's clock to say them in — mails
@@ -2853,6 +2941,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
     # before each change the cloud sends.
     await protect.async_setup(hass, lambda eid: _protect_marks_of(hass, eid), _ga_key, lambda: _protect_refresh(hass))
     await foreign.async_setup(hass)
+    sig = await signals.async_setup(hass)
     _protect_refresh(hass)
     entry.async_on_unload(hass.bus.async_listen(er.EVENT_ENTITY_REGISTRY_UPDATED, callback(lambda _e: _protect_refresh(hass))))
     owns = lambda eid: _own_entity(hass, eid, agent.owned_entries) and (_platform(hass, eid) != "knx" or _owned_knx(hass, eid, agent.owned))  # noqa: E731
@@ -2972,11 +3061,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
     agent.insights = insight.Insights(hass, owns, agent.season.current)
     agent.insights.on_change = agent.status_now
     agent.insights.watched = engine.watched
+    agent.insights.finding_of = sig.finding
     try:
         await agent.insights.async_start()
     except Exception as err:  # noqa: BLE001 — never stops the agent
         agent.insights = None
         degrade("insights", err)
+    entry.async_on_unload(sig.listen(lambda: _policy_changed(hass, agent)))
     # The stock-card table (www/stock.json) is read once and cached (stock.table): warmed here off the event loop — its
     # first use is inside a request (the deploy plan's guarded entities), and HA flags a file read in the loop
     # («Detected blocking call to open», ha-fresh 07.11).
@@ -2986,7 +3077,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
         hass.http.register_view(notify.NotifyView(lambda: _engine(hass)))
         hass.http.register_view(notify.NotifyTestView(lambda: _engine(hass)))
         hass.http.register_view(backup.BackupView())
-        hass.http.register_view(notify.AlarmsView(lambda: _engine(hass)))
+        hass.http.register_view(notify.AlarmsView(lambda: _engine(hass), lambda: _house(hass)))
+        hass.http.register_view(signals.SignalsView())
+        hass.http.register_view(insight.InsightsView(lambda: _insights(hass)))
         hass.http.register_view(OwnedView())
         hass.http.register_view(ownership.OwnershipView(_ownership))
         hass.http.register_view(RangesView())
@@ -3112,6 +3205,33 @@ def _ownership(hass: HomeAssistant) -> ownership.Ownership | None:
     for entry in hass.config_entries.async_loaded_entries(DOMAIN):
         return entry.runtime_data.ownership
     return None
+
+
+def _house(hass: HomeAssistant) -> dict[str, Any] | None:
+    """The loaded entry's «Всё хорошо» (Agent.house) — for the alarm card's view."""
+    for entry in hass.config_entries.async_loaded_entries(DOMAIN):
+        return entry.runtime_data.house()
+    return None
+
+
+def _insights(hass: HomeAssistant) -> insight.Insights | None:
+    for entry in hass.config_entries.async_loaded_entries(DOMAIN):
+        if entry.runtime_data.insights is not None:
+            return entry.runtime_data.insights
+    return None
+
+
+@callback
+def _policy_changed(hass: HomeAssistant, agent: Any) -> None:
+    """Hauflo sent the site's policy (signals.py): the rules' overlay, the findings' choices, what is watched and the
+    status — at once. A rule HA runs as its own automation whose condition now comes from the policy goes to the engine
+    (independent.async_sync writes the automations again)."""
+    if (engine := agent.engine) is not None and engine.policy_changed() and engine.native:
+        hass.async_create_task(independent.async_sync(hass, engine), "hauflo policy resync")
+    if (ins := agent.insights) is not None:
+        ins.findings_changed()
+    agent._watch_signals()  # noqa: SLF001
+    agent.status_now()
 
 
 def _engine(hass: HomeAssistant) -> notify.NotifyEngine | None:

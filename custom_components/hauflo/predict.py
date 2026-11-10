@@ -45,7 +45,7 @@ from homeassistant.core import State
 from homeassistant.util import dt as dt_util
 
 from .derived import NOT_A_STATE, SECONDS_PER_HOUR, num
-from .insight import Detector, _iso, _round
+from .insight import GAP_BAND, OBS_EPS, Detector, _iso, _round
 from .tuning import TUNING
 
 if TYPE_CHECKING:
@@ -220,6 +220,26 @@ class Series(Detector):
         return out
 
     kinds: dict[str, str] = {}
+    units: dict[str, str] = {}
+    DEV = ("limit", "value")
+
+    def need(self, rec: dict[str, Any]) -> int:  # pragma: no cover — every series has its own
+        raise NotImplementedError
+
+    def keys(self) -> list[tuple[str, str]]:
+        return [(self.kinds[r["kind"]], eid) for eid, r in self.recs.items() if r["kind"] in self.kinds]
+
+    def progress(self, kind: str, eid: str, now: float) -> dict[str, Any]:
+        rec = self.recs.get(eid)
+        if rec is None:
+            return self.learning(eid, 0, 0, now)
+        need = self.need(rec)
+        if len(rec["pts"]) < need:
+            return self.learning(eid, len(rec["pts"]), need, now)
+        return {"ready": {"norm": _round(rec["last"]) if rec["last"] is not None else None, "unit": self.units.get(rec["kind"], ""), "n": len(rec["pts"])}}
+
+    def reset(self, eid: str, kind: str) -> None:
+        self.recs.pop(eid, None)
 
 
 class BatteryForecast(Series):
@@ -227,8 +247,20 @@ class BatteryForecast(Series):
     domains = ("sensor",)
     agg = "max"
     kinds = {"battery": "battery_forecast"}
+    units = {"battery": "pct"}
+    KINDS = ("battery_forecast",)
     LOW = _P["battery_low_pct"]
     WARN = _P["battery_warn_days"]
+
+    def need(self, rec: dict[str, Any]) -> int:
+        return _P["battery_min_days"]
+
+    def excluded(self, kind: str, eid: str) -> str | None:
+        # A coarse sensor (100 / 50 / 0): never enough distinct days for a slope — said so, not «learning» forever.
+        rec = self.recs.get(eid)
+        if rec and len(rec["pts"]) >= _P["battery_min_days"] and len({v for _, v in rec["pts"]}) < _P["battery_min_distinct"]:
+            return "coarse_battery"
+        return super().excluded(kind, eid)
 
     def kind_of(self, st: State) -> str | None:
         a = st.attributes
@@ -266,6 +298,11 @@ class LinkQuality(Series):
     domains = ("sensor",)
     agg = "median"
     kinds = {"lqi": "link_quality", "dbm": "link_quality"}
+    units = {"lqi": "lqi", "dbm": "dbm"}
+    KINDS = ("link_quality",)
+
+    def need(self, rec: dict[str, Any]) -> int:
+        return _P["link_min_days"]
 
     def kind_of(self, st: State) -> str | None:
         a, eid = st.attributes, st.entity_id
@@ -294,6 +331,11 @@ class HaHost(Series):
     domains = ("sensor",)
     agg = "max"
     kinds = {"use": "disk_full", "free": "disk_full", "backup": "backup_old"}
+    units = {"use": "pct", "free": "gb", "backup": "days"}
+    KINDS = ("disk_full", "backup_old")
+
+    def need(self, rec: dict[str, Any]) -> int:
+        return 0 if rec["kind"] == "backup" else _P["disk_min_days"]
 
     def _key(self, st: State) -> tuple[str | None, str | None]:
         entry = self.ctx.entry(st.entity_id)
@@ -379,10 +421,14 @@ class HeatSlowing(Detector):
     name = "slowing"
     domains = ()
     KIND = {"heat": "heat_slowing", "cool": "cool_slowing"}
+    KINDS = tuple(KIND.values())
+    UNIT = "c_per_h"
+    DEV = ("wasRate", "nowRate")
 
     def __init__(self, ctx: Insights) -> None:
         super().__init__(ctx)
-        # entity → direction → {"hist": [[ts, rate, outdoor|None]], "open": ts|None, "cond": ts|None (plain «slower» since)}
+        # entity → direction → {"hist": [[ts, rate, outdoor|None, gap|None]], "open": ts|None, "cond": ts|None (plain
+        # «slower» since)}; the start gap (0.32): like is compared with like — the approach slows near the target
         self.recs: dict[str, dict[str, dict[str, Any]]] = {}
 
     def load(self, data: dict[str, Any]) -> None:
@@ -392,7 +438,7 @@ class HeatSlowing(Detector):
             for d, r in by.items():
                 if d not in self.KIND or not isinstance(r, dict):
                     continue
-                hist = [[float(h[0]), float(h[1]), num(h[2])] for h in r.get("hist") or [] if isinstance(h, list) and len(h) == 3 and num(h[0]) is not None and (num(h[1]) or 0) > 0]
+                hist = [[float(h[0]), float(h[1]), num(h[2]), num(h[3]) if len(h) == 4 else None] for h in r.get("hist") or [] if isinstance(h, list) and len(h) in (3, 4) and num(h[0]) is not None and (num(h[1]) or 0) > 0]
                 self.recs.setdefault(str(eid), {})[d] = {"hist": hist[-_P["slow_keep"] :], "open": num(r.get("open")), "cond": num(r.get("cond"))}
 
     def dump(self) -> dict[str, Any]:
@@ -401,32 +447,52 @@ class HeatSlowing(Detector):
     def on_state(self, new: State, now: float) -> None:
         return
 
-    def on_learned(self, eid: str, direction: str, rate: float, now: float) -> None:
+    def on_learned(self, eid: str, direction: str, rate: float, now: float, gap: float | None = None) -> None:
         if direction not in self.KIND or rate <= 0 or self.ctx.air_handler(eid):
             return
+        self.ctx.mark(self.name, eid, now)
         r = self.recs.setdefault(eid, {}).setdefault(direction, {"hist": [], "open": None, "cond": None})
-        r["hist"] = [*r["hist"], [now, rate, self.ctx.outdoor_c()]][-_P["slow_keep"] :]
-        self._assess(r, now)
+        r["hist"] = [*r["hist"], [now, rate, self.ctx.outdoor_c(), gap]][-_P["slow_keep"] :]
+        self._assess(r, now, eid, direction)
         self.ctx.dirty()
 
+    @staticmethod
+    def need() -> int:
+        return max(_P["trend_recent"] + _P["slow_min_old"], OBS_EPS)
+
+    def _ready(self, eid: str, hist: list[list[Any]]) -> bool:
+        """The observation gate (0.32): OBS_EPS episodes AND OBSERVE_H hours since first seen."""
+        return len(hist) >= self.need() and self.ctx.observed(self.name, eid)
+
+    @staticmethod
+    def _like_gap(old: list[list[Any]], gap: Any) -> list[list[Any]]:
+        """The older episodes from as far away as this one (±GAP_BAND); all of them when the gap isn't known."""
+        if gap is None:
+            return old
+        return [o for o in old if o[3] is None or abs(o[3] - gap) <= GAP_BAND]
+
     def compare(self, hist: list[list[Any]]) -> tuple[float, float, bool] | None:
-        """(was, now — °C/h, like-for-like by the outdoor temperature?) or None — too little history."""
+        """(was, now — °C/h, like-for-like by the outdoor temperature?) or None — too little history. Each recent episode
+        against the older ones that started as far from the target (a 3° gap is crossed faster than a 1° one)."""
         n = _P["trend_recent"]
         recent, old = hist[-n:], hist[:-n]
         if len(recent) < n or len(old) < _P["slow_min_old"]:
             return None
         if all(h[2] is not None for h in recent):
             pairs = []
-            for _t, rate, out in recent:
-                like = [o[1] for o in old if o[2] is not None and abs(o[2] - out) <= _P["slow_band_c"]]
+            for h in recent:
+                like = [o[1] for o in self._like_gap(old, h[3]) if o[2] is not None and abs(o[2] - h[2]) <= _P["slow_band_c"]]
                 if len(like) >= _P["slow_min_like"]:
-                    pairs.append((statistics.median(like), rate))
+                    pairs.append((statistics.median(like), h[1]))
             if len(pairs) == n:
                 return statistics.median(p[0] for p in pairs), statistics.median(p[1] for p in pairs), True
-        return statistics.median(h[1] for h in old), statistics.median(h[1] for h in recent), False
+        gaps = [h[3] for h in recent if h[3] is not None]
+        like_old = self._like_gap(old, statistics.median(gaps)) if gaps else old
+        base = like_old if len(like_old) >= _P["slow_min_old"] else old
+        return statistics.median(h[1] for h in base), statistics.median(h[1] for h in recent), False
 
-    def _assess(self, r: dict[str, Any], now: float) -> None:
-        got = self.compare(r["hist"])
+    def _assess(self, r: dict[str, Any], now: float, eid: str, d: str) -> None:
+        got = self.compare(r["hist"]) if self._ready(eid, r["hist"]) else None
         if got is None:
             r["open"] = r["cond"] = None
             return
@@ -436,7 +502,7 @@ class HeatSlowing(Detector):
             if drop < _P["slow_end_factor"]:
                 r["open"] = r["cond"] = None
             return
-        if drop < _P["slow_factor"]:
+        if drop < self.ctx.factor(f"{self.KIND[d]}|{eid}", _P["slow_factor"]):
             r["cond"] = None
             return
         if like:
@@ -453,9 +519,9 @@ class HeatSlowing(Detector):
                 del self.recs[eid]
                 self.ctx.dirty()
                 continue
-            for r in self.recs[eid].values():
+            for d, r in self.recs[eid].items():
                 was = r["open"]
-                self._assess(r, now)
+                self._assess(r, now, eid, d)
                 if was != r["open"]:
                     self.ctx.dirty()
 
@@ -472,6 +538,28 @@ class HeatSlowing(Detector):
                 out.append({"key": f"{kind}|{eid}", "kind": kind, "entityId": eid, **self.ctx.who(eid), "since": _iso(r["open"]), "wasRate": _round(got[0]), "nowRate": _round(got[1])})
         return out
 
+    def keys(self) -> list[tuple[str, str]]:
+        return [(self.KIND[d], eid) for eid, by in self.recs.items() for d in by]
+
+    def excluded(self, kind: str, eid: str) -> str | None:
+        return "air_handler" if self.ctx.air_handler(eid) else super().excluded(kind, eid)
+
+    def progress(self, kind: str, eid: str, now: float) -> dict[str, Any]:
+        d = next(d for d, k in self.KIND.items() if k == kind)
+        hist = (self.recs.get(eid) or {}).get(d, {}).get("hist") or []
+        if not self._ready(eid, hist):
+            return self.learning(eid, len(hist), self.need(), now)
+        return {"ready": {"norm": _round(statistics.median(h[1] for h in hist[: -_P["trend_recent"]])), "unit": self.UNIT, "n": len(hist)}}
+
+    def episodes(self, eid: str) -> list[dict[str, Any]]:
+        return []  # ClimateEffect's ring has them (the same episodes)
+
+    def reset(self, eid: str, kind: str) -> None:
+        d = next(d for d, k in self.KIND.items() if k == kind)
+        (self.recs.get(eid) or {}).pop(d, None)
+        if not self.recs.get(eid):
+            self.recs.pop(eid, None)
+
 
 # --- short cycling -----------------------------------------------------------------------------------------------------
 
@@ -483,6 +571,9 @@ class ShortCycling(Detector):
     name = "cycling"
     domains = ("climate", *_P["cycle_switch_domains"])
     KIND = "short_cycling"
+    KINDS = (KIND,)
+    UNIT = "per_hour"
+    DEV = ("normPerHour", "perHour")
 
     def __init__(self, ctx: Insights) -> None:
         super().__init__(ctx)
@@ -541,7 +632,7 @@ class ShortCycling(Detector):
         if rec["hour"] != hour:
             rec["hours"] += 1
             rec["hour"] = hour
-        self._assess(rec, now)
+        self._assess(rec, now, new.entity_id)
         self.ctx.dirty()
 
     def _roll(self, rec: dict[str, Any], now: float) -> None:
@@ -553,20 +644,23 @@ class ShortCycling(Detector):
             rec["pts"] = [*rec["pts"], round(rec["n"] / max(rec["hours"], 1), 3)][-_P["cycle_days"] :]
         rec.update(day=today, n=0, hours=0)
 
-    def norm(self, rec: dict[str, Any]) -> float | None:
-        return statistics.median(rec["pts"]) if len(rec["pts"]) >= _P["cycle_learn_days"] else None
+    def norm(self, rec: dict[str, Any], eid: str | None = None) -> float | None:
+        # Its days of work AND (0.32) OBSERVE_H hours since first seen — 3 «days» may be 49 hours.
+        if len(rec["pts"]) < _P["cycle_learn_days"] or (eid is not None and not self.ctx.observed(self.name, eid)):
+            return None
+        return statistics.median(rec["pts"])
 
     def per_hour(self, rec: dict[str, Any], now: float) -> float:
         window = _P["cycle_window_h"]
         return sum(1 for t in rec["ring"] if now - t <= window * SECONDS_PER_HOUR) / window
 
-    def _assess(self, rec: dict[str, Any], now: float) -> None:
-        norm = self.norm(rec)
+    def _assess(self, rec: dict[str, Any], now: float, eid: str) -> None:
+        norm = self.norm(rec, eid)
         rate = self.per_hour(rec, now)
         if norm is None:
             rec["open"] = None
         elif rec["open"] is None:
-            if rate >= max(_P["cycle_factor"] * norm, _P["cycle_min_per_h"]):
+            if rate >= max(self.ctx.factor(f"{self.KIND}|{eid}", _P["cycle_factor"]) * norm, _P["cycle_min_per_h"]):
                 rec["open"] = now
         elif rate < max(_P["cycle_end_factor"] * norm, _P["cycle_end_min_per_h"]):
             rec["open"] = None
@@ -586,18 +680,34 @@ class ShortCycling(Detector):
                 continue
             was = (rec["day"], rec["open"])
             self._roll(rec, now)
-            self._assess(rec, now)
+            self._assess(rec, now, eid)
             if was != (rec["day"], rec["open"]):
                 self.ctx.dirty()
 
     def items(self, now: float) -> list[dict[str, Any]]:
         out = []
         for eid, rec in self.recs.items():
-            norm = self.norm(rec) if rec["open"] is not None else None
+            norm = self.norm(rec, eid) if rec["open"] is not None else None
             if norm is None or self.ctx.air_handler(eid):
                 continue
             out.append({"key": f"{self.KIND}|{eid}", "kind": self.KIND, "entityId": eid, **self.ctx.who(eid), "since": _iso(rec["open"]), "perHour": _round(self.per_hour(rec, now)), "normPerHour": _round(norm)})
         return out
+
+    def keys(self) -> list[tuple[str, str]]:
+        return [(self.KIND, eid) for eid in self.recs]
+
+    def excluded(self, kind: str, eid: str) -> str | None:
+        return "air_handler" if self.ctx.air_handler(eid) else super().excluded(kind, eid)
+
+    def progress(self, kind: str, eid: str, now: float) -> dict[str, Any]:
+        rec = self.recs.get(eid)
+        norm = self.norm(rec, eid) if rec else None
+        if norm is None:
+            return self.learning(eid, len(rec["pts"]) if rec else 0, _P["cycle_learn_days"], now)
+        return {"ready": {"norm": _round(norm), "unit": self.UNIT, "n": len(rec["pts"])}}
+
+    def reset(self, eid: str, kind: str) -> None:
+        self.recs.pop(eid, None)
 
 
 # --- dropping off the network more and more often ----------------------------------------------------------------------
@@ -610,6 +720,9 @@ class Flapping(Detector):
     name = "flapping"
     domains = None
     KIND = "flapping"
+    KINDS = (KIND,)
+    UNIT = "per_day"
+    DEV = ("normPerDay", "perDay")
 
     def __init__(self, ctx: Insights) -> None:
         super().__init__(ctx)
@@ -694,7 +807,7 @@ class Flapping(Detector):
                 rec["open"] = None
             else:
                 recent, norm = got
-                if was is None and recent >= max(_P["flap_factor"] * norm, _P["flap_min_per_day"]):
+                if was is None and recent >= max(self.ctx.factor(f"{self.KIND}|{rec['eid']}", _P["flap_factor"]) * norm, _P["flap_min_per_day"]):
                     rec["open"] = now
                 elif was is not None and recent < max(_P["flap_end_factor"] * norm, _P["flap_end_per_day"]):
                     rec["open"] = None
@@ -711,6 +824,21 @@ class Flapping(Detector):
             out.append({"key": f"{self.KIND}|{eid}", "kind": self.KIND, "entityId": eid, **self.ctx.who(eid), "since": _iso(rec["open"]), "perDay": _round(got[0]), "normPerDay": _round(got[1])})
         return out
 
+    def keys(self) -> list[tuple[str, str]]:
+        return [(self.KIND, eid) for eid in dict.fromkeys(r["eid"] for r in self.recs.values())]
+
+    def progress(self, kind: str, eid: str, now: float) -> dict[str, Any]:
+        rec = next((r for r in self.recs.values() if r["eid"] == eid), None)
+        got = self.rates(rec) if rec else None
+        if got is None:
+            old = max(0, len(rec["days"]) - (_P["flap_recent_days"] - 1)) if rec else 0
+            return self.learning(eid, old, _P["flap_learn_days"], now)
+        return {"ready": {"norm": _round(got[1]), "unit": self.UNIT, "n": len(rec["days"])}}
+
+    def reset(self, eid: str, kind: str) -> None:
+        for unit in [u for u, r in self.recs.items() if r["eid"] == eid]:
+            del self.recs[unit]
+
 
 # --- water at night ----------------------------------------------------------------------------------------------------
 
@@ -721,6 +849,9 @@ class NightWater(Detector):
     name = "water"
     domains = ("sensor",)
     KIND = "night_water"
+    KINDS = (KIND,)
+    UNIT = "l"
+    DEV = ("normL", "nightL")
 
     def __init__(self, ctx: Insights) -> None:
         super().__init__(ctx)
@@ -801,7 +932,10 @@ class NightWater(Detector):
         if len(recent) < n or len(old) < _P["night_learn"]:
             return None
         norm = statistics.median(v for _d, v in old)
-        return statistics.median(v for _d, v in recent), max(norm * _P["night_factor"], norm + _P["night_min_l"])
+        return statistics.median(v for _d, v in recent), max(norm * self.ctx.factor(f"{self.KIND}|{self._eid_of(rec)}", _P["night_factor"]), norm + _P["night_min_l"])
+
+    def _eid_of(self, rec: dict[str, Any]) -> str:
+        return next((e for e, r in self.recs.items() if r is rec), "")
 
     def _assess(self, rec: dict[str, Any], now: float) -> None:
         got = self.check(rec)
@@ -838,6 +972,19 @@ class NightWater(Detector):
             old = rec["nights"][: -_P["night_days"]]
             out.append({"key": f"{self.KIND}|{eid}", "kind": self.KIND, "entityId": eid, **self.ctx.who(eid), "since": _iso(rec["open"]), "nightL": _round(got[0]), "normL": _round(statistics.median(v for _d, v in old)), "nights": _P["night_days"]})
         return out
+
+    def keys(self) -> list[tuple[str, str]]:
+        return [(self.KIND, eid) for eid in self.recs]
+
+    def progress(self, kind: str, eid: str, now: float) -> dict[str, Any]:
+        nights = (self.recs.get(eid) or {}).get("nights") or []
+        old = nights[: -_P["night_days"]]
+        if len(nights) < _P["night_days"] or len(old) < _P["night_learn"]:
+            return self.learning(eid, max(0, len(nights) - _P["night_days"]), _P["night_learn"], now)
+        return {"ready": {"norm": _round(statistics.median(v for _d, v in old)), "unit": self.UNIT, "n": len(nights)}}
+
+    def reset(self, eid: str, kind: str) -> None:
+        self.recs.pop(eid, None)
 
 
 TRENDS: tuple[type[Detector], ...] = (BatteryForecast, HeatSlowing, ShortCycling, LinkQuality, Flapping, HaHost, NightWater)

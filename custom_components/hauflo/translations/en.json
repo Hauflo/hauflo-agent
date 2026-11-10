@@ -850,7 +850,142 @@
       "message": "{name}: the event fired"
     }
   },
-  "selector": {},
+  "selector": {
+    "insight_stage": {
+      "options": {
+        "learning": "Learning",
+        "ready": "Norm known",
+        "deviation": "Deviation",
+        "normal": "Marked as normal",
+        "excluded": "Not watched"
+      }
+    },
+    "insight_reason": {
+      "options": {
+        "air_handler": "Air handler: its air is not the room's",
+        "hidden": "Hidden",
+        "no_outdoor": "No outdoor temperature",
+        "coarse_battery": "The battery reports its level in coarse steps",
+        "season": "Off-season",
+        "no_norm": "No norm of its own — a limit is needed"
+      }
+    },
+    "insight_unit": {
+      "options": {
+        "h_per_c": "h/°C",
+        "h_per_pct": "h/%",
+        "c_per_h": "°C/h",
+        "per_day": "per day",
+        "per_hour": "per hour",
+        "pct": "%",
+        "gb": "GB",
+        "days": "days",
+        "lqi": "LQI",
+        "dbm": "dBm",
+        "l": "L",
+        "c": "°C",
+        "ppm": "ppm",
+        "w": "W",
+        "kwh_per_h": "kWh/h",
+        "l_per_h": "L/h",
+        "m3_per_h": "m³/h",
+        "ugm3": "µg/m³",
+        "raw": "units",
+        "pct_per_h": "%/h",
+        "h": "h"
+      }
+    },
+    "insight_result": {
+      "options": {
+        "used": "Counted",
+        "resumed": "Skipped: began before a restart",
+        "said": "Skipped: it was a deviation",
+        "small_gap": "Skipped: too close to the target",
+        "gone": "Skipped: the entity is gone",
+        "no_temp": "Skipped: no temperature",
+        "target": "Skipped: the setpoint changed",
+        "mode": "Skipped: the mode changed",
+        "season": "Skipped: the season changed",
+        "window": "Skipped: a window was open",
+        "long": "Skipped: target not reached within a day"
+      }
+    },
+    "insight_section": {
+      "options": {
+        "climate": "Climate",
+        "energy": "Energy",
+        "water": "Water",
+        "air": "Air",
+        "link": "Link and power",
+        "system": "System",
+        "pairs": "Pairs",
+        "other": "Other"
+      }
+    },
+    "insight_tip": {
+      "options": {
+        "floor_rate": "Check the loop's balancing at the manifold (flow), the actuator's opening and the supply temperature.",
+        "floor_warmup": "Slow to reach the setpoint: check supply and pump, balancing; for a slow screed — PWM or weather-compensated supply.",
+        "floor_overshoot": "Overshoots the setpoint: a slow screed — lower the hysteresis or use PWM, lower the supply temperature.",
+        "floor_duty": "The loop runs almost non-stop: not enough supply or power — check balancing and the pump.",
+        "radiator_rate": "Check the radiator's balancing valve, the thermostatic head/actuator, air in it, the supply.",
+        "radiator_warmup": "Slow to reach the setpoint: check the valve actuator, the supply, air in the radiator.",
+        "radiator_overshoot": "Overshoots the setpoint: check the hysteresis and the sensor's place (not next to the radiator).",
+        "radiator_duty": "Runs almost non-stop: not enough power — check the supply and balancing.",
+        "ac_rate": "Slow to reach the mode: check filters, the coil, the refrigerant charge, the unit's capacity for the room.",
+        "ac_warmup": "Slow to reach the mode: filters, refrigerant charge, fan speed, the unit's capacity.",
+        "ac_overshoot": "Overcools/overheats past the setpoint: check the hysteresis and the sensor's place.",
+        "ac_cycles": "The compressor starts too often: the unit is oversized or the hysteresis too small — check the settings.",
+        "ahu_cycles": "Heating/cooling stages chatter: raise the hysteresis or the stage delay, check the supply air sensor.",
+        "ahu_duty": "Supply air heated/cooled almost non-stop: check the heating medium, the coil valve, the supply setpoint.",
+        "boiler_cycles": "Burner short cycles: check the minimum output and modulation, the hysteresis, the flow (pump, bypass).",
+        "boiler_warmup": "Slow to reach the temperature: check the output, modulation, the flow.",
+        "boiler_tank_rate": "The tank heats slowly: check the hot-water priority, the charging pump, scale on the coil.",
+        "boiler_tank_warmup": "The tank takes long to heat: hot-water priority, charging pump, medium temperature, scale.",
+        "humidifier_rate": "Slow to raise the humidity: check the water, the cartridge/nozzles, its capacity for the room.",
+        "humidifier_warmup": "Slow to reach the humidity setpoint: water, cartridge, capacity, dry supply air.",
+        "humidifier_overshoot": "Overshoots the humidity: check the hysteresis and the sensor's place.",
+        "humidifier_duty": "Runs almost non-stop: not enough capacity, or the sensor is off.",
+        "valve_cycles": "The valve switches too often: raise the hysteresis or the PWM period, check the sensor."
+      }
+    },
+    "insight_kind": {
+      "options": {
+        "no_heat": "Heating without effect",
+        "no_cool": "Cooling without effect",
+        "heat_slowing": "Heating slowing down",
+        "cool_slowing": "Cooling slowing down",
+        "short_cycling": "Short cycling",
+        "no_effect": "On, but no effect",
+        "stuck": "Sensor stuck",
+        "battery_forecast": "Battery running down",
+        "link_quality": "Signal weakening",
+        "flapping": "Drops off often",
+        "night_water": "Water use at night",
+        "disk_full": "HA disk filling up",
+        "backup_old": "No recent HA backup",
+        "norm_temperature": "Temperature off its usual",
+        "loop_slow": "Loop heats slower than its peers",
+        "loop_warmup": "Slow to reach the setpoint",
+        "loop_overshoot": "Overshoots the setpoint",
+        "loop_cycles": "Frequent starts",
+        "loop_duty": "Runs almost non-stop",
+        "norm_power": "Power off its usual",
+        "norm_energy": "Energy use off its usual",
+        "norm_gas": "Gas use off its usual",
+        "corr_load": "Switched on, no consumption",
+        "norm_water": "Water use off its usual",
+        "norm_carbon_dioxide": "CO₂ off its usual",
+        "norm_humidity": "Humidity off its usual",
+        "norm_particles": "PM2.5 dust off its usual",
+        "norm_voc": "VOC off its usual",
+        "corr_vent_carbon_dioxide": "Ventilation on, CO₂ not falling",
+        "corr_vent_humidity": "Extract fan on, humidity not falling",
+        "norm_motion": "Motion off its usual",
+        "norm_generic": "Readings off their usual"
+      }
+    }
+  },
   "services": {
     "off_in": {
       "name": "Switch off after a time",

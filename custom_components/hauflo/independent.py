@@ -409,6 +409,12 @@ async def async_sync(hass: HomeAssistant, engine: NotifyEngine, *, dry_run: bool
     def to_engine(rule: dict[str, Any], reason: str) -> None:
         out["engine"].append({"id": rule["id"], "title": rule["title"], "reason": reason})
 
+    # A source's alarm condition from the site's policy (signals.py: an enum in any language, a level by the policy) is
+    # weighed per source by the engine — HA's automation has one list of states per rule. Its automation (if any) goes.
+    for r in [r for r in rules if r.get("policy")]:
+        to_engine(r, "policy")
+    rules = [r for r in rules if not r.get("policy")]
+
     t = await texts(hass, english)
     if "automation" not in hass.config.components:
         for r in rules:

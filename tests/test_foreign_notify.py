@@ -107,3 +107,16 @@ async def test_a_doorbell_press_is_said_once_not_a_problem(hass: HomeAssistant, 
     # A time without a zone is not HA's: ignored.
     hass.states.async_set("event.door_ring", "2026-11-06T10:00:00", {"device_class": "doorbell"})
     assert "ring" not in {m["entityId"]: m for m in entry.runtime_data.status()["monitored"]}["event.door_ring"]
+
+
+async def test_each_monitored_signal_names_its_integration(hass: HomeAssistant, hass_client, entry) -> None:
+    """0.32: the cloud groups a lost integration's sensors into one problem by `platform` (alertRoot.ts) — the registry's
+    integration, never the entity_id's domain (a Zont thermostat and a Zont sensor are one integration)."""
+    reg = er.async_get(hass)
+    reg.async_get_or_create("climate", "zont_online", "climate.zont_kitchen", suggested_object_id="zont_kitchen")
+    hass.states.async_set("climate.zont_kitchen", "unavailable", {})
+    client = await hass_client()
+    assert (await client.post("/api/hauflo/foreign", json={"notify": {LEAK: True, "climate.zont_kitchen": True}})).status == 200
+    mon = {m["entityId"]: m for m in entry.runtime_data.status()["monitored"]}
+    assert mon[LEAK]["platform"] == "zha" and mon[FLOOR]["platform"] == "zha"
+    assert mon["climate.zont_kitchen"]["platform"] == "zont_online" and mon["climate.zont_kitchen"]["problem"] is True

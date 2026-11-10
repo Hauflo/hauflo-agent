@@ -33,7 +33,7 @@
     "heartbeat_words": "heartbeat|hearbeat|связь|связи|link|alive|online|пульс",
     "fault_name_words": "ошибк|авари|неисправ|угроз|fault|error|failure|alarm|warning|threat|oshibk|avari|neispr|ugroz",
     "quiet_name_words": "motion|presence|occupan|движен|присутств|(?<![a-z])(door|window|gate|contact|reed)|(?<![а-я])(окн|окон|двер|створк|ворот|калитк|геркон)|(?<![a-z])(okn|okon|dver|stvork|vorot|kalitk|gerkon)",
-    "loud_name_words": "leak|flood|water|smoke|fire|(?<![a-z])gas|протеч|залив|вод[аы]|дым|пожар|(?<![а-я])газ|protech|zaliv|dym",
+    "loud_name_words": "leak|flood|water|smoke|fire|(?<![a-z])gas|протеч|залив|вод[аы]|дым|пожар|(?<![а-я])газ|protech|zaliv|dym|(?<![a-z])co(?![a-z0-9])|угарн|ugarn",
     "outputs": {"siren": {"on_start": "turn_on", "on_end": "turn_off"}},
     "outputs_max": 4,
     "levels": {
@@ -44,6 +44,62 @@
     },
     "level_step_share": 0.05,
     "level_abs_max": 1000000
+  },
+  "signals": {
+    "classes": {
+      "binary_sensor.moisture": {"alarm": {"states": ["on"]}, "house": "alarm", "severity": "critical"},
+      "binary_sensor.smoke": {"alarm": {"states": ["on"]}, "house": "alarm", "severity": "critical"},
+      "binary_sensor.gas": {"alarm": {"states": ["on"]}, "house": "alarm", "severity": "critical"},
+      "binary_sensor.carbon_monoxide": {"alarm": {"states": ["on"]}, "house": "alarm", "severity": "critical"},
+      "binary_sensor.safety": {"alarm": {"states": ["on"]}, "house": "alarm", "severity": "critical"},
+      "binary_sensor.heat": {"alarm": {"states": ["on"]}, "house": "alarm", "severity": "important"},
+      "binary_sensor.cold": {"alarm": {"states": ["on"]}, "house": "alarm", "severity": "important"},
+      "binary_sensor.tamper": {"alarm": {"states": ["on"]}, "house": "alarm", "severity": "important"},
+      "binary_sensor.vibration": {"alarm": {"states": ["on"]}, "house": "alarm", "severity": "important"},
+      "binary_sensor.problem": {"alarm": {"states": ["on"]}, "house": "fault", "severity": "important"},
+      "binary_sensor.battery": {"alarm": {"states": ["on"]}, "house": "none", "severity": "info"},
+      "binary_sensor.connectivity": {"alarm": {"states": ["off"]}, "house": "none", "severity": "important"},
+      "sensor.battery": {"alarm": {"below": 20, "step": 5}, "house": "none", "severity": "info"},
+      "event.doorbell": {"house": "none", "severity": "important"}
+    },
+    "lifeSafety": ["binary_sensor.moisture", "binary_sensor.smoke", "binary_sensor.gas", "binary_sensor.carbon_monoxide", "classless.loud"],
+    "watch": ["binary_sensor.problem", "binary_sensor.safety", "binary_sensor.smoke", "binary_sensor.gas", "binary_sensor.moisture", "binary_sensor.carbon_monoxide",
+              "binary_sensor.tamper", "binary_sensor.heat", "binary_sensor.battery", "sensor.battery", "event.doorbell"],
+    "classless": {
+      "domains": ["binary_sensor"],
+      "alarm": {"states": ["on"]},
+      "loudWords": "leak|flood|water|smoke|fire|(?<![a-z])gas|протеч|залив|вод[аы]|дым|пожар|(?<![а-я])газ|protech|zaliv|dym|(?<![a-z])co(?![a-z0-9])|угарн|ugarn",
+      "withLoudWords": {"house": "alarm", "severity": "important"},
+      "faultWords": "ошибк|авари|неисправ|угроз|fault|error|failure|alarm|warning|threat|oshibk|avari|neispr|ugroz",
+      "withWords": {"house": "fault", "severity": "important"}
+    },
+    "undetermined": {"house": "none", "severity": "info"},
+    "unlisted": {"house": "none", "severity": "important"},
+    "houses": ["alarm", "fault", "none"],
+    "entitiesMax": 2000,
+    "scopesMax": 100,
+    "findingsMax": 200,
+    "statesMax": 8,
+    "stateLen": 64,
+    "diag": {
+      "visible": [
+        "all",
+        "admins"
+      ],
+      "default": "admins"
+    }
+  },
+  "signals_agent": {
+    "severities": ["critical", "important", "info", "off"],
+    "hash_format": "^[0-9a-f]{16}$",
+    "stamp_len": 120,
+    "watch_skip_platforms": ["hauflo", "mobile_app"],
+    "entity_id": "^[a-z_]+\\.[a-z0-9_]{1,200}$",
+    "platform": "^[a-z0-9_]{1,64}$",
+    "domain": "^[a-z_]{1,40}$",
+    "device_class": "^[a-z_]{0,30}$",
+    "finding_key": "^[a-z_]{1,30}\\|[a-z_]+\\.[a-z0-9_]+$",
+    "iso": "^\\d{4}-\\d{2}-\\d{2}T[0-9:.+\\-Z]{1,30}$"
   },
   "backup": {
     "wait_s": 20,
@@ -204,6 +260,48 @@
     "learn_min": 5,
     "min_h": 3,
     "factor": 3,
+    "sections": {
+      "no_heat": "climate",
+      "no_cool": "climate",
+      "heat_slowing": "climate",
+      "cool_slowing": "climate",
+      "short_cycling": "climate",
+      "no_effect": "pairs",
+      "stuck": "link",
+      "battery_forecast": "link",
+      "link_quality": "link",
+      "flapping": "link",
+      "night_water": "water",
+      "disk_full": "system",
+      "backup_old": "system",
+      "norm_temperature": "climate",
+      "loop_slow": "climate",
+      "loop_warmup": "climate",
+      "loop_overshoot": "climate",
+      "loop_cycles": "climate",
+      "loop_duty": "climate",
+      "norm_power": "energy",
+      "norm_energy": "energy",
+      "norm_gas": "energy",
+      "corr_load": "energy",
+      "norm_water": "water",
+      "norm_carbon_dioxide": "air",
+      "norm_humidity": "air",
+      "norm_particles": "air",
+      "norm_voc": "air",
+      "corr_vent_carbon_dioxide": "air",
+      "corr_vent_humidity": "air",
+      "norm_motion": "link",
+      "norm_generic": "other"
+    },
+    "section_order": ["climate", "energy", "water", "air", "link", "system", "pairs", "other"],
+    "factor_kinds": ["no_heat", "no_cool"],
+    "list_max_api": 500,
+    "scan_max": 2000,
+    "scan_pages_max": 100,
+    "scan_parallel": 3,
+    "cache_s": 30,
+    "q_max": 80,
     "flat_c": 0.3,
     "flat_h": 2,
     "heat_modes": ["heat", "heat_cool", "auto"],
@@ -217,7 +315,21 @@
     "learn_days": 3,
     "stuck_norm_changes": 6,
     "air_handler_words": "вентмашин|вентустановк|приточн|приточк|(?<![а-яё])пву(?![а-яё])|(?<![a-z])ahu(?![a-z])|air.?handl|supply.?air|ventilation.?unit|(?<![a-z])pvu(?![a-z])|ventmashin|pritoch",
-    "air_handler_rate_c_h": 10
+    "air_handler_rate_c_h": 10,
+    "observe_min_h": 72,
+    "observe_min_eps": 10,
+    "gap_band_c": 0.5,
+    "gap_like_min": 5,
+    "states_offset_max": 100000,
+    "states_limit_max": 500,
+    "scan_page": 500,
+    "choices_max": 200,
+    "local_max": 500,
+    "card": { "tick_min_s": 10, "tick_max_s": 3600, "timeout_s": 20, "denied_every_ticks": 5 },
+    "episodes_keep": 20,
+    "insight_max_per_day": 1,
+    "factor_min": 1.1,
+    "factor_max": 10
   },
   "predict": {
     "trend_days": 30,
@@ -311,6 +423,7 @@
     "kinds": ["floor", "air", "co2", "humidity"]
   },
   "noeffect_floor": {
+    "unit": "c",
     "falls": 0,
     "window_h": 6,
     "min_change": 0.5,
@@ -329,6 +442,7 @@
     "target_words": "пол|floor"
   },
   "noeffect_air": {
+    "unit": "c",
     "falls": 0,
     "window_h": 3,
     "min_change": 0.3,
@@ -347,6 +461,7 @@
     "target_words": ""
   },
   "noeffect_co2": {
+    "unit": "ppm",
     "falls": 1,
     "window_h": 1,
     "min_change": 50,
@@ -365,6 +480,7 @@
     "target_words": ""
   },
   "noeffect_humidity": {
+    "unit": "pct",
     "falls": 1,
     "window_h": 1,
     "min_change": 2,
@@ -381,6 +497,73 @@
     "effect_class": "humidity",
     "effect_words": "",
     "target_words": ""
+  },
+  "analytics": {
+    "tick_s": 60,
+    "period_s": 3600,
+    "discover_s": 3600,
+    "max_series": 300,
+    "tick_budget_ms": 200,
+    "keep": 10,
+    "z": 4,
+    "z_end": 2,
+    "mad_k": 1.4826,
+    "spread_floor": 0.05,
+    "cover": 0.5,
+    "max_catchup": 48,
+    "hold": 3,
+    "factor": 2,
+    "platform_min_sites": 5,
+    "note_prefixes": ["norm_", "corr_", "loop_"],
+    "seasons": ["heat", "cool", "mid"],
+    "buckets": {"days": [0, 0, 0, 0, 0, 1, 1], "hour_span": 1, "levels": ["bucket", "hour", "all"], "judge": {"bucket": 0, "hour": 2}},
+    "series": [
+      {"kind": "power", "match": {"domain": "^sensor$", "device_class": "^power$"}, "units": {"W": 1, "kW": 1000}, "unit": "w", "agg": "mean", "season": 1, "min_delta": 50},
+      {"kind": "energy", "match": {"domain": "^sensor$", "device_class": "^energy$", "state_class": "^total"}, "units": {"Wh": 0.001, "kWh": 1, "MWh": 1000}, "unit": "kwh_per_h", "agg": "rate", "season": 1, "min_delta": 0.3},
+      {"kind": "water", "match": {"domain": "^sensor$", "device_class": "^water$", "state_class": "^total"}, "units": {"L": 1, "m³": 1000, "gal": 3.785}, "unit": "l_per_h", "agg": "rate", "season": 0, "min_delta": 20},
+      {"kind": "gas", "match": {"domain": "^sensor$", "device_class": "^gas$", "state_class": "^total"}, "units": {"m³": 1, "ft³": 0.0283, "CCF": 2.832}, "unit": "m3_per_h", "agg": "rate", "season": 1, "min_delta": 0.2},
+      {"kind": "carbon_dioxide", "match": {"domain": "^sensor$", "device_class": "^carbon_dioxide$"}, "units": {"ppm": 1}, "unit": "ppm", "agg": "mean", "season": 0, "min_delta": 200},
+      {"kind": "humidity", "match": {"domain": "^sensor$", "device_class": "^humidity$"}, "units": {"%": 1}, "unit": "pct", "agg": "mean", "season": 1, "min_delta": 10},
+      {"kind": "temperature", "match": {"domain": "^sensor$", "device_class": "^temperature$"}, "units": {"°C": 1, "°F": 0.5556}, "minus": {"°F": 32}, "unit": "c", "agg": "mean", "season": 1, "min_delta": 3},
+      {"kind": "particles", "match": {"domain": "^sensor$", "device_class": "^pm25$"}, "units": {"µg/m³": 1}, "unit": "ugm3", "agg": "mean", "season": 0, "min_delta": 15},
+      {"kind": "voc", "match": {"domain": "^sensor$", "device_class": "^volatile_organic_compounds$"}, "units": {"µg/m³": 1}, "unit": "ugm3", "agg": "mean", "season": 0, "min_delta": 300},
+      {"kind": "motion", "match": {"domain": "^binary_sensor$", "device_class": "^(motion|occupancy|presence)$"}, "to": "^on$", "unit": "per_hour", "agg": "count", "season": 0, "min_delta": 5},
+      {"kind": "generic", "match": {"domain": "^sensor$", "state_class": "^measurement$"}, "unit": "raw", "agg": "mean", "season": 0, "min_delta": 0, "own": 0}
+    ],
+    "norms": [
+      {"match": {"kind": "^carbon_dioxide$"}, "max": 1200, "hold": 2, "src": "en16798"},
+      {"match": {"kind": "^particles$"}, "max": 15, "hold": 24, "src": "who2021"}
+    ],
+    "correlations": [
+      {"name": "load", "trigger": {"domain": "^(switch|light)$"}, "to": "^on$", "series": "power", "scope": "device", "window_min": 2, "expect": "rise", "min_delta": 5},
+      {"name": "vent_carbon_dioxide", "trigger": {"domain": "^fan$"}, "to": "^on$", "series": "carbon_dioxide", "scope": "area", "window_min": 30, "expect": "fall", "min_delta": 50, "level": 600},
+      {"name": "vent_humidity", "trigger": {"domain": "^fan$"}, "to": "^on$", "series": "humidity", "scope": "area", "window_min": 30, "expect": "fall", "min_delta": 3, "level": 50}
+    ],
+    "corr_keep": 20,
+    "readers": {
+      "climate": {"current": "current_temperature", "target": "temperature", "action": "hvac_action", "active": "^(heating|cooling|preheating|drying)$", "off": "^(off|unavailable|unknown)$"},
+      "water_heater": {"current": "current_temperature", "target": "temperature", "action": "", "active": "", "off": "^(off|unavailable|unknown)$"},
+      "humidifier": {"current": "current_humidity", "target": "humidity", "action": "action", "active": "^(humidifying|drying)$", "off": "^(off|unavailable|unknown)$"},
+      "valve": {"current": "", "target": "", "action": "", "active": "^(open|opening)$", "off": "^(unavailable|unknown)$"}
+    },
+    "loops": [
+      {"type": "ahu", "match": {"domain": "^climate$", "air_handler": 1}, "metrics": ["cycles", "duty"], "gap": 0.5, "reach": 0.2, "cycles_max": 24, "duty_max": 0.97},
+      {"type": "boiler", "match": {"domain": "^(climate|water_heater)$", "platform": "^(opentherm_gw|vicare|bsblan|incomfort|ebusd|ems_esp|ectocontrol)$"}, "metrics": ["cycles", "warmup"], "gap": 0.5, "reach": 0.2, "cycles_max": 72, "warmup_max_h_per": 1.5},
+      {"type": "floor", "match": {"domain": "^climate$", "pair": "^floor$"}, "metrics": ["rate", "warmup", "overshoot", "duty"], "gap": 0.5, "reach": 0.2, "rate_min": 0.2, "warmup_max_h_per": 5, "overshoot_max": 1.5, "duty_max": 0.95, "supply": 1},
+      {"type": "ac", "match": {"domain": "^climate$", "modes": "^(dry|fan_only)$"}, "metrics": ["rate", "warmup", "overshoot", "cycles"], "gap": 0.5, "reach": 0.2, "rate_min": 1, "warmup_max_h_per": 1, "overshoot_max": 1.5, "cycles_max": 48},
+      {"type": "radiator", "match": {"domain": "^climate$"}, "metrics": ["rate", "warmup", "overshoot", "duty"], "gap": 0.5, "reach": 0.2, "rate_min": 0.5, "warmup_max_h_per": 2, "overshoot_max": 1.5, "duty_max": 0.95},
+      {"type": "boiler_tank", "match": {"domain": "^water_heater$"}, "metrics": ["rate", "warmup"], "gap": 3, "reach": 1, "rate_min": 5, "warmup_max_h_per": 0.2},
+      {"type": "humidifier", "match": {"domain": "^humidifier$"}, "metrics": ["rate", "warmup", "overshoot", "duty"], "gap": 5, "reach": 2, "rate_min": 2, "warmup_max_h_per": 0.5, "overshoot_max": 8, "duty_max": 0.97},
+      {"type": "valve", "match": {"domain": "^valve$"}, "metrics": ["cycles"], "gap": 0, "reach": 0, "cycles_max": 96}
+    ],
+    "loop_units": {"climate": "c", "water_heater": "c", "humidifier": "pct", "valve": "raw"},
+    "loop_metrics": {"rate": "loop_slow", "warmup": "loop_warmup", "overshoot": "loop_overshoot", "cycles": "loop_cycles", "duty": "loop_duty"},
+    "loop_keep": 20,
+    "loop_days": 14,
+    "loop_min_days": 3,
+    "loop_max_h": 24,
+    "overshoot_h": 2,
+    "peers_min": 3
   },
   "theme": {
     "reload_note_s": 600

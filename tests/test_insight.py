@@ -3,19 +3,23 @@ stopped changing against its own daily norm — and none of the false alarms: le
 changed, the climate unavailable / off / the other season, an HA restart."""
 
 import json
+import math
 
 import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import area_registry as ar, entity_registry as er
 
 from custom_components.hauflo import insight
-from custom_components.hauflo.insight import FLAT_H, LEARN_DAYS, LEARN_MIN, MIN_H, STORE_KEY, STUCK_H, Insights
+from custom_components.hauflo.insight import FLAT_H, LEARN_DAYS, LEARN_MIN, MIN_H, OBS_EPS, OBSERVE_H, STORE_KEY, STUCK_H, Insights
 
 H = 3600
 FLOOR = "climate.floor"
 WINDOW = "binary_sensor.window"
 TEMP = "sensor.room_temp"
 T0 = 1_800_000_000.0  # a fixed clock start
+# The observation gate (0.32): OBS_EPS episodes AND OBSERVE_H hours — the clean episodes spread over that time.
+NEED = max(LEARN_MIN, OBS_EPS)
+STEP = max(2, math.ceil(OBSERVE_H / (NEED - 1)) + 1)
 
 
 class Clock:
@@ -59,13 +63,14 @@ async def at(hass: HomeAssistant, ins: Insights, hours: float, cur=None, **kw):
     ins._tick()
 
 
-async def learn(hass: HomeAssistant, ins: Insights, n=LEARN_MIN, start=0.0) -> float:
-    """n clean episodes: 2° below the target, reached in 1 h — the norm 2 °C/h. Returns the hour after them."""
+async def learn(hass: HomeAssistant, ins: Insights, n=NEED, start=0.0, step=STEP) -> float:
+    """n clean episodes: 2° below the target, reached in 1 h — the norm 2 °C/h, `step` h apart (over OBSERVE_H).
+    Returns the hour after them."""
     t = start
     for _ in range(n):
         await at(hass, ins, t, 20.0)
         await at(hass, ins, t + 1, 22.0)
-        t += 2
+        t += step
     return t
 
 
@@ -175,10 +180,10 @@ async def test_idle_thermostat_is_not_heating(hass: HomeAssistant, ins: Insights
 
 async def test_cooling_mirrors(hass: HomeAssistant, ins: Insights):
     t = 0.0
-    for _ in range(LEARN_MIN):
+    for _ in range(NEED):
         await at(hass, ins, t, 26.0, tgt=24.0, mode="cool")
         await at(hass, ins, t + 1, 24.0, tgt=24.0, mode="cool")
-        t += 2
+        t += STEP
     await at(hass, ins, t, 26.0, tgt=24.0, mode="cool")
     await at(hass, ins, t + MIN_H + 0.5, 26.0, tgt=24.0, mode="cool")
     [item] = ins.items()
@@ -205,6 +210,7 @@ async def test_restart_keeps_an_open_word_and_needs_fresh_observation(hass: Home
 
     # A carried-over episode that wasn't said: nothing right after the restart, even though it is long and flat.
     saved["climate"]["episodes"][FLOOR]["alerted"] = None
+    saved["_meta"]["opens"] = {}  # …and never opened (insight_max_per_day counts openings)
     hass_storage[STORE_KEY] = {"version": 1, "minor_version": 1, "key": STORE_KEY, "data": saved}
     third = Insights(hass, lambda eid: True, lambda: season["now"])
     third.clock = Clock()
@@ -234,7 +240,7 @@ async def test_bad_store_learns_anew(hass: HomeAssistant, hass_storage, season):
     hass_storage[STORE_KEY] = {"version": 1, "minor_version": 1, "key": STORE_KEY, "data": {"climate": {"norms": {FLOOR: {"heat": ["x", -1, 2]}}, "episodes": {FLOOR: {"dir": "up"}}}, "stuck": "bad"}}
     engine = Insights(hass, lambda eid: True, lambda: season["now"])
     await engine.async_start()
-    assert det(engine).norms == {FLOOR: {"heat": [2.0]}} and det(engine).eps == {}
+    assert det(engine).norms == {FLOOR: {"heat": [[2.0, None]]}} and det(engine).eps == {}  # a pre-0.32 rate: no gap
     engine.async_stop()
 
 
@@ -269,9 +275,12 @@ async def test_stuck_sensor_after_its_norm(hass: HomeAssistant, ins: Insights):
     hass.states.async_set(TEMP, "unavailable", attrs)
     await hass.async_block_till_done()
     assert ins.items() == []
-    # The same value back: still stuck; a new value: gone.
+    # The same value back: still stuck — but said once today already (insight_max_per_day): waits a day; a new value: gone.
     hass.states.async_set(TEMP, str(v), attrs)
     await hass.async_block_till_done()
+    assert ins.items() == []
+    ins.clock.t += 24 * H
+    ins._tick()
     assert len(ins.items()) == 1
     hass.states.async_set(TEMP, str(v + 0.1), attrs)
     await hass.async_block_till_done()

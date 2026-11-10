@@ -786,13 +786,85 @@ def test_admins_view_marker_expanded_in_the_house_and_said_again_on_a_read():
     assert dashmerge.expand_admins(copy.deepcopy(cfg), [])["views"][1]["visible"] == marker
     # Saved with ids; the read of that very config says the marker, never the ids.
     merged, _ = plan_and_merge(copy.deepcopy(out), None, None)
-    read = dashmerge.collapse_admins(dashmerge.redact(copy.deepcopy(merged), copy.deepcopy(merged), b"k" * 32))
+    read = dashmerge.collapse_admins(dashmerge.redact(copy.deepcopy(merged), copy.deepcopy(merged), b"k" * 32), ["b2", "a1"])
     assert read["views"][1]["visible"] == marker
     assert read["views"][0]["sections"][0]["cards"][0]["visibility"][1]["users"] == [dashmerge.ADMINS]
     assert "a1" not in json.dumps(read) and "b2" not in json.dumps(read)
     # The same deploy again: nothing changes (base and HA hold the ids, the cloud's marker expands to the same).
     again, report = plan_and_merge(dashmerge.expand_admins(copy.deepcopy(cfg), ["a1", "b2"]), merged, copy.deepcopy(out))
     assert again == merged and not report["changes"]
+
+
+def test_collapse_admins_only_the_admins_list_says_the_marker():
+    """п.9: a read says the marker only for a list equal to HA's administrators now — the integrator's own people,
+    a part of the admins or a list after the admins changed stay as they are (never turned into «администраторы»)."""
+    cfg = lambda v, u: {"views": [{"title": "A", "visible": v, "cards": [{"type": "tile", "entity": "light.a", "visibility": [{"condition": "user", "users": u}]}]}]}
+    got = dashmerge.collapse_admins(cfg([{"user": "b2"}, {"user": "a1"}], ["a1", "b2"]), ["a1", "b2"])
+    assert got["views"][0]["visible"] == [{"user": dashmerge.ADMINS}] and got["views"][0]["cards"][0]["visibility"][0]["users"] == [dashmerge.ADMINS]
+    for v, u in (([{"user": "mom"}], ["mom"]), ([{"user": "a1"}], ["a1"]), ([{"user": "a1"}, {"user": "b2"}, {"user": "c3"}], ["a1", "b2", "c3"]), ([{"user": "a1"}, {"user": "a1"}], ["a1", "a1"])):
+        got = dashmerge.collapse_admins(cfg(copy.deepcopy(v), list(u)), ["a1", "b2"])
+        assert got["views"][0]["visible"] == v and got["views"][0]["cards"][0]["visibility"][0]["users"] == u
+    # A list with something else than users, an empty list, no admins known: as is.
+    odd = [{"user": "a1"}, {"user": "b2", "x": 1}]
+    assert dashmerge.collapse_admins(cfg(copy.deepcopy(odd), []), ["a1", "b2"])["views"][0]["visible"] == odd
+    assert dashmerge.collapse_admins(cfg([{"user": "a1"}], ["a1"]), [])["views"][0]["visible"] == [{"user": "a1"}]
+    # Round trip: the marker expanded, read back — the marker again.
+    marker = cfg([{"user": dashmerge.ADMINS}], [dashmerge.ADMINS])
+    back = dashmerge.collapse_admins(dashmerge.expand_admins(copy.deepcopy(marker), ["a1", "b2"]), ["a1", "b2"])
+    assert back == marker
+
+
+def _diag_view(visible=True):
+    v = {"title": "Диагностика", "path": "diagnostics", ID: "v:diag", "icon": "mdi:stethoscope", "type": "sections", "max_columns": 1,
+         "sections": [{"type": "grid", ID: "s:diag", "cards": [{"type": "custom:hauflo-insights", ID: "c:diag"}]}]}
+    if visible:
+        v["visible"] = [{"user": dashmerge.ADMINS}]
+    return v
+
+
+def test_diagnostics_tab_survives_a_redeploy_and_follows_the_visibility_choice():
+    """п.9: Hauflo's «Диагностика» tab — his edits elsewhere stay, the tab itself is Hauflo's: the integrator's
+    «всем / администраторам» (its `visible`) applies on the next deploy; his own card on the tab stays too."""
+    new = lambda vis: dashmerge.expand_admins({"views": [*copy.deepcopy(hauflo())["views"], _diag_view(vis)]}, ["a1"])
+    base = new(True)
+    cur = copy.deepcopy(base)
+    mine = {"type": "markdown", "content": "моё"}
+    cards_of(cur, 0, 0).append(mine)
+    cur["views"][-1]["sections"][0]["cards"].append({"type": "markdown", "content": "заметка"})
+    # Admins → all: `visible` goes, his cards stay (on his tab and on the diagnostics tab).
+    merged, report = plan_and_merge(new(False), copy.deepcopy(cur), copy.deepcopy(base))
+    diag = merged["views"][-1]
+    assert report["lost"] == 0 and "visible" not in diag
+    assert mine in cards_of(merged, 0, 0) and {"type": "markdown", "content": "заметка"} in diag["sections"][0]["cards"]
+    assert [c["type"] for c in diag["sections"][0]["cards"]][0] == "custom:hauflo-insights"
+    # And back: all → admins.
+    again, report = plan_and_merge(new(True), copy.deepcopy(merged), new(False))
+    assert report["lost"] == 0 and again["views"][-1]["visible"] == [{"user": "a1"}]
+    # The same deploy once more: nothing to change.
+    same, report = plan_and_merge(new(True), copy.deepcopy(again), new(True))
+    assert same == again and not report["changes"]
+
+
+def test_diagnostics_tab_on_his_own_diagnostics_path_gets_its_own():
+    """Acceptance 10.11 L8: his own page on «diagnostics» + Hauflo's tab — two pages of one path (HA opens his for both).
+    Hauflo's tab takes «diagnostics_2», the next deploy keeps it, his page and its card stay; a page of Hauflo's a tile
+    opens (a room's) keeps its path."""
+    new = {"views": [*copy.deepcopy(hauflo())["views"], _diag_view(False)]}
+    his = {"title": "Мои графики", "path": "diagnostics", "type": "sections", "sections": [{"type": "grid", "cards": [{"type": "markdown", "content": "моё"}]}]}
+    cur = copy.deepcopy(new)
+    cur["views"].append(copy.deepcopy(his))
+    merged, report = plan_and_merge(new, copy.deepcopy(cur), copy.deepcopy(new))
+    paths = [v.get("path") for v in merged["views"]]
+    assert report["lost"] == 0 and his in merged["views"]
+    assert paths.count("diagnostics") == 1 and "diagnostics_2" in paths
+    assert next(v for v in merged["views"] if v.get("path") == "diagnostics_2")["sections"][0]["cards"][0]["type"] == "custom:hauflo-insights"
+    again, report = plan_and_merge(new, copy.deepcopy(merged), copy.deepcopy(new))
+    assert [v.get("path") for v in again["views"]] == paths and report["lost"] == 0
+    # A page a card opens keeps its path: nothing renamed.
+    tile = {"type": "button", "tap_action": {"action": "navigate", "navigation_path": "/x/diagnostics"}}
+    cfg = {"views": [{"title": "T", "path": "diagnostics", ID: "v:t", "cards": []}, {"title": "M", "path": "diagnostics", "cards": [tile]}]}
+    dashmerge.unique_paths(cfg)
+    assert [v["path"] for v in cfg["views"]] == ["diagnostics", "diagnostics"]
 
 
 def test_twins_his_empty_page_named_as_hauflos_offered_and_dropped_only_ticked_with_his_tiles():

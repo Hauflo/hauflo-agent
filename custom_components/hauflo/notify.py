@@ -36,7 +36,7 @@ from homeassistant.util import dt as dt_util, slugify
 from .natural import natural_key
 from .storage import HaufloStore
 from .const import ACK_ACTION, DOMAIN, LOCKED_CODE, MONITOR_LABELS, NATIVE_STORE, QUIET_PARENT, RUN_ACTION
-from . import foreign
+from . import foreign, signals
 from .tuning import TUNING
 
 _LOGGER = logging.getLogger(__name__)
@@ -324,14 +324,33 @@ def _value(state: State | None) -> float | None:
     return _number(state.state)
 
 
+def _threshold(rule: dict[str, Any], eid: str) -> dict[str, float] | None:
+    """The source's level condition: the rule's own, else the site's policy one (signals.py — set only where the rule has
+    no own condition for it)."""
+    th = (rule.get("thresholds") or {}).get(eid)
+    if th is not None:
+        return th
+    pol = (rule.get("policy") or {}).get(eid)
+    return pol if pol is not None and ("below" in pol or "above" in pol) else None
+
+
 def in_alarm(rule: dict[str, Any], state: State | None, open_now: bool = False) -> bool:
     """Is this source in alarm for the rule: a signal — one of its alarm states; a level — past its threshold, and while
-    the alarm is open, until it is back past the threshold by its step (the hysteresis). Not a number: not an alarm."""
+    the alarm is open, until it is back past the threshold by its step (the hysteresis). Not a number: not an alarm.
+    A rule with no own states / threshold takes the source's from the site's policy (`policy`, signals.py) — its states
+    compared by value (any language: an enum «Авария» too)."""
     if state is None:
         return False
-    th = (rule.get("thresholds") or {}).get(state.entity_id)
+    th = _threshold(rule, state.entity_id)
     if th is None:
-        return state.state in rule["alarm_states"]
+        pol = (rule.get("policy") or {}).get(state.entity_id)
+        return state.state in (pol["states"] if pol is not None and "states" in pol else rule["alarm_states"])
+    if "below" in th and "above" in th:
+        v = _value(state)
+        if v is None:
+            return False
+        step = th.get("step", 0)
+        return v < th["below"] or v > th["above"] or (open_now and (v <= th["below"] + step or v >= th["above"] - step))
     v = _value(state)
     if v is None:
         return False
@@ -344,7 +363,7 @@ def in_alarm(rule: dict[str, Any], state: State | None, open_now: bool = False) 
 
 def level_text(rule: dict[str, Any], state: State | None) -> str:
     """« (18 % < 20 %)» — the value and its threshold, said in numbers (no words: any language)."""
-    th = (rule.get("thresholds") or {}).get(state.entity_id) if state is not None else None
+    th = _threshold(rule, state.entity_id) if state is not None else None
     v = _value(state)
     if th is None or v is None or state is None:
         return ""
@@ -495,6 +514,42 @@ def _en(text: str) -> str:
     return re.sub(r"(\d+) (устройство|устройства|устройств)\b", lambda m: f"{m.group(1)} device{'' if m.group(2) == 'устройство' else 's'}", text)
 
 
+def policy_overlay(hass: HomeAssistant | None, sources: list[str], *, own_states: bool, thresholds: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], dict[str, int]]:
+    """({source: its alarm condition}, {source: its hold}) from the site's policy (signals.py) — only what the site chose
+    itself (a scope or the signal's own), only where the rule has no own condition: the rule's own states / threshold /
+    hold always win (audit 10.11 §3.7). «Не авария» ({none}) never silences a rule: the integrator's rule still rings."""
+    pol = signals.policy(hass)
+    if hass is None or not pol or not (pol["scopes"] or pol["entities"]):
+        return {}, {}
+    overlay: dict[str, dict[str, Any]] = {}
+    holds: dict[str, int] = {}
+    for eid in sources:
+        st = hass.states.get(eid)
+        r = signals.resolve(eid, platform=signals.platform_of(hass, eid), device_class=st.attributes.get("device_class") if st else None, name=st.name if st else None, policy=pol)
+        if r["holdS"] is not None:
+            holds[eid] = r["holdS"]
+        a = r["alarm"]
+        if r["from"]["alarm"] == "canon" or not a or "none" in a or eid in thresholds:
+            continue
+        if "states" in a:
+            if not own_states:
+                overlay[eid] = {"states": list(a["states"])}
+        elif not own_states:
+            overlay[eid] = {k: float(a[k]) for k in ("below", "above") if k in a} | {"step": float(a.get("step", 0))}
+    return overlay, holds
+
+
+def policy_hold(hass: HomeAssistant | None, kind: str, sources: list[str], thresholds: dict[str, Any], holds: dict[str, int]) -> int:
+    """The canon hold (default_hold) with the site's own hold of a source in place of its class's; the shortest."""
+    if not holds:
+        return default_hold(hass, kind, sources, thresholds)
+    rest = [e for e in sources if e not in holds]
+    found = [*holds.values()]
+    if rest or kind in HOLD_CANON["kinds"]:
+        found.append(default_hold(hass, kind, rest, thresholds))
+    return int(min(found))
+
+
 def _clean_rules(raw: Any, hass: HomeAssistant | None = None, owns: Callable[[str], bool] | None = None) -> dict[str, Any]:
     """Only what the engine understands; anything else from the wire is dropped."""
     out: dict[str, Any] = {"rules": [], "groups": []}
@@ -536,6 +591,7 @@ def _clean_rules(raw: Any, hass: HomeAssistant | None = None, owns: Callable[[st
         thresholds = _clean_thresholds(hass, r.get("thresholds"), sources)
         kind = str(r.get("kind")) if WORD.match(str(r.get("kind") or "")) else "custom"
         own_hold = hold_value(r.get("hold_s"))
+        overlay, holds = policy_overlay(hass, sources, own_states=bool(states_raw), thresholds=thresholds)
         out["rules"].append(
             {
                 "id": str(r["id"]),
@@ -561,9 +617,11 @@ def _clean_rules(raw: Any, hass: HomeAssistant | None = None, owns: Callable[[st
                 ),
                 **({"outputs": outputs} if outputs else {}),
                 **({"thresholds": thresholds} if thresholds else {}),
+                # The site's policy for its sources where the rule set none (signals.py; derived, never stored as own).
+                **({"policy": overlay} if overlay else {}),
                 # As sent (None — the canon's; Hauflo sees by the key that this agent knows holds) and the one used.
                 "hold_s": own_hold,
-                "hold": own_hold if own_hold is not None else default_hold(hass, kind, sources, thresholds),
+                "hold": own_hold if own_hold is not None else policy_hold(hass, kind, sources, thresholds, holds),
             }
         )
     lang = out.get("lang") or (str(getattr(getattr(hass, "config", None), "language", "") or "ru") if hass is not None else "ru")
@@ -740,6 +798,19 @@ class NotifyEngine:
         if self.locked is not None and self.locked() and (why := narrowing(config, self.config)):
             raise LockedChange(why)
         return config
+
+    @callback
+    def policy_changed(self) -> bool:
+        """The site's policy changed (signals.py): each rule's overlay and hold taken again; True — a rule HA runs as its own
+        automation now needs the engine (its automation is written again by the caller)."""
+        before = {r["id"]: (r.get("policy"), r["hold"]) for r in self.config["rules"]}
+        self.config = _clean_rules(self.config, self.hass, self.owns)
+        after = {r["id"]: (r.get("policy"), r["hold"]) for r in self.config["rules"]}
+        if before == after:
+            return False
+        self._apply()
+        self._changed()
+        return any(rid in self.native and before.get(rid) != after[rid] for rid in after)
 
     async def async_set(self, raw: Any) -> dict[str, Any]:
         config = self.check(raw)
@@ -2064,8 +2135,9 @@ class AlarmsView(HomeAssistantView):
     name = "api:hauflo:alarms"
     requires_auth = True
 
-    def __init__(self, engine_of) -> None:
+    def __init__(self, engine_of, house_of=None) -> None:
         self.engine_of = engine_of
+        self.house_of = house_of
 
     async def get(self, request):
         engine = self.engine_of()
@@ -2090,6 +2162,10 @@ class AlarmsView(HomeAssistantView):
             for key, v in ((engine.unacked_rtn.items()) if engine else [])
             if key not in engine.active
         ]
+        # «Всё хорошо» by the site's policy (signals.py, 0.32): `_house` ok / fault / alarm / offline, `_faults` — the
+        # problems that move it, `_shelved` — «не решено» ones (listed, never moving it).
+        if self.house_of is not None and (house := self.house_of()) is not None:
+            out.update(house)
         return self.json(out)
 
     async def post(self, request):

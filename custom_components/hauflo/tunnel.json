@@ -38,6 +38,8 @@
       { "id": "hauflo", "path": "/api/hauflo/notify", "methods": ["GET", "POST"] },
       { "id": "hauflo", "path": "/api/hauflo/notify/test", "methods": ["POST"] },
       { "id": "hauflo", "path": "/api/hauflo/alarms", "methods": ["GET", "POST"] },
+      { "id": "hauflo", "path": "/api/hauflo/signals", "methods": ["GET", "POST"] },
+      { "id": "hauflo", "path": "/api/hauflo/insights", "methods": ["GET", "POST"] },
       { "id": "hauflo", "path": "/api/hauflo/sidebar", "methods": ["POST"] },
       { "id": "hauflo", "path": "/api/hauflo/owned", "methods": ["GET"] },
       { "id": "hauflo", "path": "/api/hauflo/protect", "methods": ["POST"] },
@@ -57,7 +59,7 @@
       { "id": "entry_delete", "path": "/api/config/config_entries/entry/{entry_id}", "methods": ["DELETE"] },
       { "id": "diagnostics", "path": "/api/diagnostics/config_entry/{entry_id}", "methods": ["GET"] }
     ],
-    "locked_ok": [["/api/hauflo/notify", "POST"], ["/api/hauflo/notify/test", "POST"], ["/api/hauflo/ownership", "POST"], ["/api/hauflo/alarms", "POST"], ["/api/hauflo/protect", "POST"]],
+    "locked_ok": [["/api/hauflo/notify", "POST"], ["/api/hauflo/notify/test", "POST"], ["/api/hauflo/ownership", "POST"], ["/api/hauflo/alarms", "POST"], ["/api/hauflo/protect", "POST"], ["/api/hauflo/signals", "POST"], ["/api/hauflo/insights", "POST"]],
     "locked_read_ops": [{ "path": "/api/hauflo/rules", "method": "POST", "ops": ["preview"] }],
     "locked_never_keys": [{ "path": "/api/hauflo/protect", "method": "POST", "keys": ["unmark"] }]
   },

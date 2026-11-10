@@ -32,6 +32,7 @@ import time
 from datetime import timedelta
 from typing import Any, Callable
 
+from homeassistant.components.http import KEY_HASS, HomeAssistantView
 from homeassistant.const import EVENT_STATE_CHANGED, STATE_ON
 from homeassistant.core import Event, HomeAssistant, State, callback
 from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er
@@ -40,11 +41,13 @@ from homeassistant.util import dt as dt_util
 
 from .derived import NOT_A_STATE, SECONDS_PER_HOUR, num, outdoor
 from .notify import labelled
+from .signals import ENTITY_ID, policy as policy_of
 from .storage import HaufloStore
 from .tuning import TUNING
 
 _LOGGER = logging.getLogger(__name__)
 STORE_KEY = "hauflo.insights"
+META = "_meta"  # the engine's own part of the store (first seen, openings, resets, choices made in HA)
 _T = TUNING["insight"]
 TICK = _T["tick_s"]
 SAVE_DELAY = _T["save_delay_s"]
@@ -79,9 +82,45 @@ STUCK_NORM = _T["stuck_norm_changes"]
 # Known by its words (name, entity, area) or by a learned rate no room reaches.
 AIR_HANDLER_WORDS = re.compile(_T["air_handler_words"], re.IGNORECASE)
 AIR_HANDLER_RATE = _T["air_handler_rate_c_h"]
+# The observation gate (0.32, owner 10.11: an air handler «learned its norm» in under a day and said «slower» 10 times in
+# 72 h): no norm before OBSERVE_H hours since the detector first saw the entity AND OBS_EPS learned episodes; a rate is
+# compared only with episodes that started as far from the target (±GAP_BAND °C — the approach slows near it); the last
+# EPISODES_KEEP episodes are kept with why each was (not) learned; a finding opens at most MAX_PER_DAY times a day.
+OBSERVE_H = _T["observe_min_h"]
+OBS_EPS = _T["observe_min_eps"]
+GAP_BAND = _T["gap_band_c"]
+# Fewer learned episodes from as far away (±GAP_BAND) than this: that band is still learning — no norm, no finding (the
+# nearest of other bands would mix a slow near-target approach into a far one; acceptance 10.11 L5).
+GAP_LIKE_MIN = _T["gap_like_min"]
+# GET /api/hauflo/insights `?offset=`: ASCII digits up to this (a longer one is refused, never a 500).
+OFFSET_MAX = _T["states_offset_max"]
+OFFSET_RE = re.compile(r"[0-9]{1,%d}" % len(str(OFFSET_MAX)))
+# `?limit=`: a longer page, up to this (the HA card «Диагностика» reads the house in one call a tick, not page by page).
+LIMIT_MAX = _T["states_limit_max"]
+# Choices made in HA the site doesn't hold yet, at most this many per status (the newest first; the cloud keeps findingsMax).
+CHOICES_MAX = _T["choices_max"]
+# Choices made in HA kept here at most (the newest; acceptance 10.11 L3: 300 POSTs on made-up entities — 300 records).
+LOCAL_MAX = _T["local_max"]
+LIMIT_RE = re.compile(r"[0-9]{1,%d}" % len(str(LIMIT_MAX)))
+EPISODES_KEEP = _T["episodes_keep"]
+MAX_PER_DAY = _T["insight_max_per_day"]
+# Who reads the per-entity diagnosis in HA (GET /api/hauflo/insights): "admins" — HA's admins; "all" — every HA user.
+# The default until Hauflo pushes the integrator's choice («Диагностика: всем / администраторам», signals.py `diag`).
+DIAG_VISIBLE = TUNING["signals"]["diag"]["default"]
+DIAG_ALL = "all"
+# The card groups its rows by these (kind → section; a kind not listed — the card's «Прочее»), in this order.
+SECTIONS = _T["sections"]
+SECTION_ORDER = _T["section_order"]
+# The integrator's own «порог ×N» for a finding: within these bounds.
+FACTOR_MIN, FACTOR_MAX = _T["factor_min"], _T["factor_max"]
+FEATURE = "insights"
+DAY_S = timedelta(days=1).total_seconds()
+USED, DROPPED = "used", "dropped:"
+ACTIONS_IN = ("normal", "follow", "reset")
 
 HEAT, COOL = "heat", "cool"
 KIND = {HEAT: "no_heat", COOL: "no_cool"}
+DIR_OF = {v: k for k, v in KIND.items()}
 SIGN = {HEAT: 1, COOL: -1}
 # What an episode carries over a restart (its samples don't: fresh observation is needed after it).
 _KEEP = ("dir", "start", "gap", "target", "mode", "last_on", "alerted")
@@ -95,8 +134,29 @@ def _round(v: float) -> float:
     return round(v, 2)
 
 
-def _floats(v: Any) -> list[float]:
-    return [float(x) for x in v if num(x) is not None and float(x) > 0] if isinstance(v, list) else []
+def _rates(v: Any) -> list[list[float | None]]:
+    """Learned rates [rate, start gap]: a plain rate (learned before 0.32) has no gap known."""
+    out: list[list[float | None]] = []
+    for x in v if isinstance(v, list) else []:
+        r, g = (x[0], x[1]) if isinstance(x, list) and len(x) == 2 else (x, None)
+        if num(r) is not None and float(r) > 0:
+            out.append([float(r), float(g) if num(g) is not None else None])
+    return out
+
+
+def _median_rate(rates: list[list[float | None]], gap: float | None) -> float | None:
+    """The median rate; with `gap` — only of the episodes from as far away (±GAP_BAND), fewer than GAP_LIKE_MIN of them:
+    None (that band is still learning; an episode learned before 0.32 has no gap and counts for none)."""
+    if gap is None:
+        like = [r for r, _g in rates]
+    else:
+        like = [r for r, g in rates if g is not None and abs(g - gap) <= GAP_BAND]
+        if len(like) < GAP_LIKE_MIN:
+            return None
+    if not like:
+        return None
+    m = statistics.median(like)
+    return m if m > 0 else None
 
 
 class Detector:
@@ -105,6 +165,10 @@ class Detector:
 
     name = ""
     domains: tuple[str, ...] | None = ()  # None: every domain (a cheap first check in on_event, please)
+    KINDS: tuple[str, ...] = ()  # the finding kinds it says (the key's first part)
+    UNIT = ""  # its norm's unit — a token the reader words (translations: selector.insight_unit)
+    DEV: tuple[str, str] = ("", "")  # an open finding's fields: what the norm was, what it is now
+    diagnostic = False  # watches diagnostic entities too (a battery, a link)
 
     def __init__(self, ctx: Insights) -> None:
         self.ctx = ctx
@@ -122,8 +186,8 @@ class Detector:
         """A state change with the state before it (a detector that counts transitions); by default — the new state."""
         self.on_state(new, now)
 
-    def on_learned(self, eid: str, direction: str, rate: float, now: float) -> None:
-        """ClimateEffect learned a clean episode's rate (°C/h) — a detector that follows the rates' trend listens."""
+    def on_learned(self, eid: str, direction: str, rate: float, now: float, gap: float | None = None) -> None:
+        """ClimateEffect learned a clean episode's rate (°C/h, from `gap` °C away) — a detector following the trend listens."""
 
     def tick(self, now: float) -> None:  # pragma: no cover
         raise NotImplementedError
@@ -131,23 +195,72 @@ class Detector:
     def items(self, now: float) -> list[dict[str, Any]]:  # pragma: no cover
         raise NotImplementedError
 
+    # --- the integrator's view (0.32): one state per (kind, entity) -------------------------------------------------
+
+    def keys(self) -> list[tuple[str, str]]:
+        """(kind, entity) it knows now — learning, ready or off its norm."""
+        return []
+
+    def progress(self, kind: str, eid: str, now: float) -> dict[str, Any]:
+        """learning{have, need, hours, needH} or ready{norm, unit, n} — a detector with a fixed bar is ready at once."""
+        return {"ready": {"norm": None, "unit": self.UNIT, "n": 0}}
+
+    def excluded(self, kind: str, eid: str) -> str | None:
+        """Why it is not judged at all (air_handler | hidden | no_outdoor | coarse_battery | season), None — judged."""
+        return None if self.ctx.visible(eid, self.diagnostic) else "hidden"
+
+    def episodes(self, eid: str) -> list[dict[str, Any]]:
+        return []
+
+    def extra(self, kind: str, eid: str) -> dict[str, Any]:
+        """More of the row for the integrator's view (analytics.py: its unit, the standard, a tip, «нормы нет — спросим»)."""
+        return {}
+
+    def reset(self, eid: str, kind: str) -> None:
+        """«Сбросить обучение»: its norms of this entity forgotten (learned anew)."""
+
+    def learning(self, eid: str, have: int, need: int, now: float) -> dict[str, Any]:
+        return {"learning": {"have": have, "need": need, "hours": _round(self.ctx.hours_seen(self.name, eid, now)), "needH": OBSERVE_H}}
+
+    def state(self, eid: str, now: float, kind: str | None = None, open_items: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+        """One of learning / ready / deviation{since, was, now} / normal{by, at} / excluded{reason}."""
+        kind = kind or next((k for k, e in self.keys() if e == eid), self.KINDS[0] if self.KINDS else "")
+        key = f"{kind}|{eid}"
+        if (why := self.excluded(kind, eid)) is not None:
+            return {"excluded": {"reason": why}}
+        f = self.ctx.finding(key)
+        if f and f.get("normal"):
+            return {"normal": {"by": f.get("by"), "at": f.get("at")}}
+        opened = open_items if open_items is not None else {i["key"]: i for i in self.items(now)}
+        if (item := opened.get(key)) is not None:
+            return {"deviation": {"since": item["since"], "was": item.get(self.DEV[0]), "now": item.get(self.DEV[1])}}
+        return self.progress(kind, eid, now)
+
 
 class ClimateEffect(Detector):
     """Heating / cooling without effect, against the zone's own rate (°C per hour from wanting to reaching)."""
 
     name = "climate"
     domains = ("climate",)
+    KINDS = (KIND[HEAT], KIND[COOL])
+    UNIT = "c_per_h"
+    DEV = ("expectedH", "hours")
 
     def __init__(self, ctx: Insights) -> None:
         super().__init__(ctx)
-        self.norms: dict[str, dict[str, list[float]]] = {}  # entity → direction → its last rates, °C/h
+        # entity → direction → its last learned episodes [rate °C/h, the start gap °C | None (learned before 0.32)]
+        self.norms: dict[str, dict[str, list[list[float | None]]]] = {}
         self.eps: dict[str, dict[str, Any]] = {}  # entity → the running episode
+        self.ring: dict[str, list[dict[str, Any]]] = {}  # entity → its last EPISODES_KEEP episodes, learned or not (why)
 
     def load(self, data: dict[str, Any]) -> None:
         for eid, by in (data.get("norms") or {}).items():
             if isinstance(by, dict):
-                got = {d: _floats(by.get(d))[-SAMPLES:] for d in (HEAT, COOL)}
+                got = {d: _rates(by.get(d))[-SAMPLES:] for d in (HEAT, COOL)}
                 self.norms[str(eid)] = {d: v for d, v in got.items() if v}
+        for eid, ring in (data.get("ring") or {}).items():
+            if isinstance(ring, list):
+                self.ring[str(eid)] = [e for e in ring if isinstance(e, dict)][-EPISODES_KEEP:]
         for eid, ep in (data.get("episodes") or {}).items():
             if not isinstance(ep, dict) or ep.get("dir") not in (HEAT, COOL) or num(ep.get("start")) is None or num(ep.get("gap")) is None:
                 continue
@@ -168,7 +281,7 @@ class ClimateEffect(Detector):
             }
 
     def dump(self) -> dict[str, Any]:
-        return {"norms": self.norms, "episodes": {eid: {k: ep.get(k) for k in _KEEP} for eid, ep in self.eps.items()}}
+        return {"norms": self.norms, "episodes": {eid: {k: ep.get(k) for k in _KEEP} for eid, ep in self.eps.items()}, "ring": self.ring}
 
     # --- the episode -------------------------------------------------------------------------------------------------
 
@@ -200,7 +313,9 @@ class ClimateEffect(Detector):
             self._eval(st, now)
         if now - self.ctx.started > GONE_AFTER:
             for eid in [e for e in self.eps if self.ctx.hass.states.get(e) is None]:
-                self._drop(eid)
+                self._drop(eid, now, "gone")
+            for eid in [e for e in self.ring if e not in self.eps and self.ctx.hass.states.get(e) is None]:
+                del self.ring[eid]
 
     def _eval(self, st: State, now: float) -> None:
         eid = st.entity_id
@@ -208,17 +323,21 @@ class ClimateEffect(Detector):
             return  # frozen: no word and no end (HA starting, the bus away) — «недоступен» is its own alarm
         cur, tgt = num(st.attributes.get("current_temperature")), num(st.attributes.get("temperature"))
         if cur is None or tgt is None:
-            self._drop(eid)
+            self._drop(eid, now, "no_temp")
             return
         ep = self.eps.get(eid)
         if ep is not None:
             d = ep["dir"]
-            if ep["target"] != tgt or ep["mode"] != st.state or not self._season_ok(d):
-                self._drop(eid)  # the target / mode / season changed: a new question, the old episode isn't learned
+            if ep["target"] != tgt:
+                self._drop(eid, now, "target")  # the target changed: a new question, the old episode isn't learned
+            elif ep["mode"] != st.state:
+                self._drop(eid, now, "mode")
+            elif not self._season_ok(d):
+                self._drop(eid, now, "season")
             elif (cur - tgt) * SIGN[d] >= -REACH:
                 self._finish(eid, now)
             elif self.ctx.opening_open(eid):
-                self._drop(eid)  # a window open: the episode says nothing — a fresh one after it closes
+                self._drop(eid, now, "window")  # a window open: the episode says nothing — a fresh one after it closes
             else:
                 self._observe(st, ep, cur, now)
                 return
@@ -241,18 +360,20 @@ class ClimateEffect(Detector):
             samples.pop(0)
         if ep["alerted"] is not None:
             return
-        rate = self.norm(st.entity_id, d)
+        rate = self.norm(st.entity_id, d, ep["gap"])
         if rate is None:
             return  # still learning
         expected = ep["gap"] / rate
         hours = (now - ep["start"]) / SECONDS_PER_HOUR
-        if hours <= max(MIN_H, FACTOR * expected):
+        if hours <= max(MIN_H, self.ctx.factor(f"{KIND[d]}|{st.entity_id}", FACTOR) * expected):
             return
         change = self._change(ep, cur, now)
         if change is None or change * SIGN[d] >= FLAT_C:
             return  # not observed long enough since start / a restart, or it is moving after all
         if now - ep["last_on"] > FLAT_H * SECONDS_PER_HOUR:
             return  # the thermostat stopped asking: not this detector's question
+        if self.ctx.air_handler(st.entity_id):
+            return  # an air handler's supply air: no zone's norm to fall behind (owner 09.11, 0.32 sweep)
         ep["alerted"] = now
         self.ctx.dirty()
 
@@ -265,37 +386,63 @@ class ClimateEffect(Detector):
         anchor = [v for t, v in samples if t <= edge][-1]
         return cur - anchor
 
+    def _log(self, eid: str, ep: dict[str, Any], now: float, result: str) -> None:
+        """One line of the entity's episode ring (the integrator's «why not learned yet»)."""
+        hours = (now - ep["start"]) / SECONDS_PER_HOUR
+        outdoor_now = self.ctx.outdoor_c()
+        line = {"start": _iso(ep["start"]), "dir": ep["dir"], "gap": _round(ep["gap"]), "hours": _round(hours), "result": result}
+        if hours > 0:
+            line["rate"] = _round(ep["gap"] / hours)
+        if outdoor_now is not None:
+            line["outdoor"] = _round(outdoor_now)
+        self.ring[eid] = [*self.ring.get(eid, []), line][-EPISODES_KEEP:]
+
     def _finish(self, eid: str, now: float) -> None:
         ep = self.eps.pop(eid)
         hours = (now - ep["start"]) / SECONDS_PER_HOUR
         # Learned: a clean episode only — not carried over a restart, not one that was said (a failure isn't the norm),
         # from far enough away.
-        if not ep["resumed"] and ep["alerted"] is None and ep["gap"] >= LEARN_GAP and hours > 0:
+        why = "resumed" if ep["resumed"] else "said" if ep["alerted"] is not None else "small_gap" if ep["gap"] < LEARN_GAP or hours <= 0 else None
+        self._log(eid, ep, now, USED if why is None else f"{DROPPED}{why}")
+        if why is None:
             rates = self.norms.setdefault(eid, {}).setdefault(ep["dir"], [])
-            rates.append(round(ep["gap"] / hours, 4))
+            rates.append([round(ep["gap"] / hours, 4), round(ep["gap"], 3)])
             del rates[:-SAMPLES]
-            self.ctx.learned(eid, ep["dir"], rates[-1], now)
+            self.ctx.learned(eid, ep["dir"], rates[-1][0], now, ep["gap"])
         self.ctx.dirty()
 
-    def _drop(self, eid: str) -> None:
-        if self.eps.pop(eid, None) is not None:
+    def _drop(self, eid: str, now: float | None = None, why: str = "") -> None:
+        ep = self.eps.pop(eid, None)
+        if ep is not None:
+            if now is not None:
+                self._log(eid, ep, now, f"{DROPPED}{why}")
             self.ctx.dirty()
 
-    def norm(self, eid: str, d: str) -> float | None:
+    def norm(self, eid: str, d: str, gap: float | None = None) -> float | None:
+        """The zone's own rate, °C/h — only after the observation gate (OBS_EPS learned episodes AND OBSERVE_H hours since
+        first seen); with `gap` — of the episodes that started as far away (±GAP_BAND), fewer than GAP_LIKE_MIN: None."""
         rates = self.norms.get(eid, {}).get(d) or []
-        if len(rates) < LEARN_MIN:
+        if len(rates) < self.need() or not self.ctx.observed(self.name, eid):
             return None
-        m = statistics.median(rates)
-        return m if m > 0 else None
+        return _median_rate(rates, gap)
+
+    def raw(self, eid: str, d: str) -> float | None:
+        """Its rate before the gate (an air handler is known by a rate no room reaches — in its first day too)."""
+        rates = self.norms.get(eid, {}).get(d) or []
+        return _median_rate(rates, None) if len(rates) >= LEARN_MIN else None
+
+    @staticmethod
+    def need() -> int:
+        return max(LEARN_MIN, OBS_EPS)
 
     def items(self, now: float) -> list[dict[str, Any]]:
         out = []
         outdoor_now = self.ctx.outdoor_c()
         for eid, ep in self.eps.items():
-            if ep["alerted"] is None:
+            if ep["alerted"] is None or self.ctx.air_handler(eid):
                 continue
             st = self.ctx.hass.states.get(eid)
-            rate = self.norm(eid, ep["dir"])
+            rate = self.norm(eid, ep["dir"], ep["gap"])
             cur = num(st.attributes.get("current_temperature")) if st is not None else None
             change = self._change(ep, cur, now) if cur is not None else None
             out.append(
@@ -315,12 +462,55 @@ class ClimateEffect(Detector):
             )
         return out
 
+    # --- what the integrator sees (0.32) -------------------------------------------------------------------------------
+
+    def keys(self) -> list[tuple[str, str]]:
+        out = []
+        for eid in dict.fromkeys([*self.norms, *self.eps, *self.ring]):
+            dirs = [d for d in (HEAT, COOL) if d in self.norms.get(eid, {})]
+            if eid in self.eps and self.eps[eid]["dir"] not in dirs:
+                dirs.append(self.eps[eid]["dir"])
+            out += [(KIND[d], eid) for d in dirs or [HEAT]]
+        return out
+
+    def excluded(self, kind: str, eid: str) -> str | None:
+        if self.ctx.air_handler(eid):
+            return "air_handler"
+        if not self._season_ok(DIR_OF[kind]):
+            return "season"
+        return super().excluded(kind, eid)
+
+    def progress(self, kind: str, eid: str, now: float) -> dict[str, Any]:
+        d = DIR_OF[kind]
+        rates = self.norms.get(eid, {}).get(d) or []
+        m = self.norm(eid, d)
+        if m is None:
+            return self.learning(eid, len(rates), self.need(), now)
+        return {"ready": {"norm": _round(m), "unit": self.UNIT, "n": len(rates)}}
+
+    def episodes(self, eid: str) -> list[dict[str, Any]]:
+        return list(self.ring.get(eid, []))
+
+    def reset(self, eid: str, kind: str) -> None:
+        d = DIR_OF[kind]
+        self.norms.get(eid, {}).pop(d, None)
+        if not self.norms.get(eid):
+            self.norms.pop(eid, None)
+        if (self.eps.get(eid) or {}).get("dir") == d:
+            self.eps.pop(eid)
+        self.ring[eid] = [e for e in self.ring.get(eid, []) if e.get("dir") != d]
+        if not self.ring[eid]:
+            del self.ring[eid]
+
 
 class StuckSensor(Detector):
     """A temperature / humidity sensor that normally changes many times a day and hasn't for STUCK_H hours."""
 
     name = "stuck"
     domains = ("sensor",)
+    KINDS = ("stuck",)
+    UNIT = "per_day"
+    DEV = ("perDay", "hours")
 
     def __init__(self, ctx: Insights) -> None:
         super().__init__(ctx)
@@ -394,12 +584,26 @@ class StuckSensor(Detector):
             out.append({"key": f"stuck|{eid}", "kind": "stuck", "entityId": eid, **self.ctx.who(eid), "since": _iso(rec["last"]), "hours": _round(hours), "perDay": _round(per_day)})
         return out
 
+    def keys(self) -> list[tuple[str, str]]:
+        return [("stuck", eid) for eid in self.recs]
+
+    def progress(self, kind: str, eid: str, now: float) -> dict[str, Any]:
+        days = (self.recs.get(eid) or {}).get("days") or []
+        m = self.norm(eid)
+        if m is None:
+            return self.learning(eid, len(days), LEARN_DAYS, now)
+        return {"ready": {"norm": _round(m), "unit": self.UNIT, "n": len(days)}}
+
+    def reset(self, eid: str, kind: str) -> None:
+        self.recs.pop(eid, None)
+
 
 # The trends (predict.py) subclass Detector from here — imported once it exists.
+from .analytics import ANALYTICS, is_note, section_of  # noqa: E402
 from .noeffect import NOEFFECT  # noqa: E402
 from .predict import TRENDS  # noqa: E402
 
-DETECTORS: tuple[type[Detector], ...] = (ClimateEffect, StuckSensor, *TRENDS, *NOEFFECT)
+DETECTORS: tuple[type[Detector], ...] = (ClimateEffect, StuckSensor, *TRENDS, *NOEFFECT, *ANALYTICS)
 
 
 class Insights:
@@ -419,6 +623,14 @@ class Insights:
         self.on_change: Callable[[], None] | None = None
         self.started = 0.0
         self.not_windows: set[str] = set()  # «opening» sensors that are no windows (valve feedback): ONE list, filled by PairEffect, read by every detector
+        # The site's choice per finding (signals.py `findings` {"kind|entity": {normal, factor, resetAt, by, at}}): set by
+        # the agent. «Это норма» — not in the status, the detector learns on; resetAt — its norms forgotten once.
+        self.finding_of: Callable[[str], dict[str, Any] | None] | None = None
+        self.first: dict[str, float] = {}  # "detector|entity" → first seen (the OBSERVE_H gate)
+        self.opens: dict[str, list[float]] = {}  # finding key → when it opened within the last day (MAX_PER_DAY)
+        self.resets: dict[str, str] = {}  # finding key → the resetAt already applied
+        self.local: dict[str, dict[str, Any]] = {}  # finding key → a choice made in HA (POST /api/hauflo/insights)
+        self.owner: dict[str, Detector] = {k: det for det in self.detectors for k in det.KINDS}
         self._listed: frozenset[str] = frozenset()
         self._unsubs: list[Callable[[], None]] = []
 
@@ -431,7 +643,14 @@ class Insights:
             except Exception:  # noqa: BLE001 — a bad saved shape: learned anew, never a crash
                 _LOGGER.warning("Hauflo insights: %s norms unreadable — learning anew", det.name, exc_info=True)
         self.started = self.clock()
-        self._listed = frozenset(i["key"] for i in self.items())
+        meta = data.get(META) if isinstance(data, dict) else None
+        self._load_meta(meta if isinstance(meta, dict) else {})
+        # Learned before 0.32 (no «first seen» kept): observed long enough already — the episodes' count still gates.
+        for det in self.detectors:
+            for _kind, eid in self._keys(det):
+                self.first.setdefault(f"{det.name}|{eid}", self.started - OBSERVE_H * SECONDS_PER_HOUR)
+        # Open before the restart: still open (no new opening counted, no «снова в норме»).
+        self._listed = frozenset(i["key"] for i in self._raw(self.started))
         self._unsubs.append(self.hass.bus.async_listen(EVENT_STATE_CHANGED, self._on_event))
         self._unsubs.append(async_track_time_interval(self.hass, self._tick, timedelta(seconds=TICK)))
 
@@ -441,8 +660,21 @@ class Insights:
             unsub()
         self._unsubs.clear()
 
+    def _load_meta(self, meta: dict[str, Any]) -> None:
+        self.first = {str(k): float(v) for k, v in (meta.get("first") or {}).items() if num(v) is not None}
+        self.opens = {str(k): [float(t) for t in v if num(t) is not None][-MAX_PER_DAY:] for k, v in (meta.get("opens") or {}).items() if isinstance(v, list)}
+        self.resets = {str(k): str(v) for k, v in (meta.get("resets") or {}).items() if isinstance(v, str)}
+        self.local = {str(k): v for k, v in (meta.get("local") or {}).items() if isinstance(v, dict)}
+        self._trim_local()
+
+    def _trim_local(self) -> None:
+        """At most LOCAL_MAX choices made in HA: the oldest go (the site holds what it folded in by then)."""
+        if len(self.local) > LOCAL_MAX:
+            keep = sorted(self.local.items(), key=lambda kv: str(kv[1].get("at") or ""), reverse=True)[:LOCAL_MAX]
+            self.local = dict(keep)
+
     def data(self) -> dict[str, Any]:
-        return {det.name: det.dump() for det in self.detectors}
+        return {**{det.name: det.dump() for det in self.detectors}, META: {"first": self.first, "opens": self.opens, "resets": self.resets, "local": self.local}}
 
     @callback
     def dirty(self) -> None:
@@ -463,16 +695,69 @@ class Insights:
             self._after()
 
     @callback
-    def learned(self, eid: str, direction: str, rate: float, now: float) -> None:
+    def learned(self, eid: str, direction: str, rate: float, now: float, gap: float | None = None) -> None:
         for det in self.detectors:
-            self._run(det.on_learned, eid, direction, rate, now)
+            self._run(det.on_learned, eid, direction, rate, now, gap)
 
     @callback
     def _tick(self, _now: Any = None) -> None:
         now = self.clock()
         for det in self.detectors:
             self._run(det.tick, now)
+        self._seen(now)
         self._after()
+
+    @staticmethod
+    def _keys(det: Detector) -> list[tuple[str, str]]:
+        try:
+            return det.keys()
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("Hauflo insights: %s keys failed", det.name)
+            return []
+
+    def _seen(self, now: float) -> None:
+        """«First seen» of what each detector knows; forgotten with it (once HA had time to load everything)."""
+        known = set()
+        for det in self.detectors:
+            for _kind, eid in self._keys(det):
+                k = f"{det.name}|{eid}"
+                known.add(k)
+                if k not in self.first:
+                    self.first[k] = now
+                    self.dirty()
+        if now - self.started > GONE_AFTER and set(self.first) - known:
+            self.first = {k: v for k, v in self.first.items() if k in known}
+            self.dirty()
+
+    def hours_seen(self, name: str, eid: str, now: float) -> float:
+        first = self.first.get(f"{name}|{eid}")
+        return max(0.0, (now - first) / SECONDS_PER_HOUR) if first is not None else 0.0
+
+    def mark(self, name: str, eid: str, now: float) -> None:
+        """«First seen» right away — for what a detector learns between the ticks (a learned rate)."""
+        if f"{name}|{eid}" not in self.first:
+            self.first[f"{name}|{eid}"] = now
+            self.dirty()
+
+    def observed(self, name: str, eid: str) -> bool:
+        return self.hours_seen(name, eid, self.clock()) >= OBSERVE_H
+
+    def finding(self, key: str) -> dict[str, Any] | None:
+        """The choice about this finding: the site's (Hauflo), or one made in HA since (the newer wins)."""
+        cloud = self.finding_of(key) if self.finding_of else None
+        loc = self.local.get(key)
+        if loc is not None and (cloud is None or str(loc.get("at") or "") >= str(cloud.get("at") or "")):
+            return loc
+        return cloud
+
+    def is_normal(self, key: str) -> bool:
+        """The site said «это норма» for this finding: hidden, and a detector with a norm keeps learning through it."""
+        return bool((self.finding(key) or {}).get("normal"))
+
+    def factor(self, key: str, default: float) -> float:
+        """The detector's «×N» bar — the integrator's own for this finding if set («Порог…»)."""
+        f = self.finding(key)
+        return float(f["factor"]) if f and num(f.get("factor")) is not None else default
 
     @staticmethod
     def _run(fn: Callable[..., None], *args: Any) -> None:
@@ -483,21 +768,114 @@ class Insights:
 
     @callback
     def _after(self) -> None:
-        keys = frozenset(i["key"] for i in self.items())
+        now = self.clock()
+        keys = frozenset(i["key"] for i in self._shown(now))
+        for k in keys - self._listed:
+            self.opens[k] = [*(t for t in self.opens.get(k, []) if now - t < DAY_S), now][-MAX_PER_DAY:]
+            self.dirty()
+        for k in [k for k, ts in self.opens.items() if k not in keys and all(now - t >= DAY_S for t in ts)]:
+            del self.opens[k]
+            self.dirty()
         if keys != self._listed:
             self._listed = keys
             if self.on_change:
                 self.on_change()
 
-    def items(self) -> list[dict[str, Any]]:
-        now = self.clock()
+    def _raw(self, now: float) -> list[dict[str, Any]]:
+        """The detectors' open findings, without those the site called «это норма»."""
         out: list[dict[str, Any]] = []
         for det in self.detectors:
             try:
                 out.extend(det.items(now))
             except Exception:  # noqa: BLE001
                 _LOGGER.exception("Hauflo insights: %s items failed", det.name)
-        return sorted(out, key=lambda i: (i["since"], i["key"]))[:LIST_MAX]
+        return [i for i in out if not (self.finding(i["key"]) or {}).get("normal")]
+
+    def _shown(self, now: float) -> list[dict[str, Any]]:
+        """What goes out: a finding new now (not listed) that already opened MAX_PER_DAY times this day waits."""
+        out = []
+        for i in self._raw(now):
+            k = i["key"]
+            if k in self._listed or sum(1 for t in self.opens.get(k, []) if now - t < DAY_S) < MAX_PER_DAY:
+                out.append(i)
+        # The analytics' hints (п.8) after the findings: many notes never push a «нагрев без эффекта» out of the list.
+        return sorted(out, key=lambda i: (is_note(i["kind"]), i["since"], i["key"]))[:LIST_MAX]
+
+    def items(self) -> list[dict[str, Any]]:
+        return self._shown(self.clock())
+
+    # --- the integrator's view and choices (0.32: GET / POST /api/hauflo/insights, the site's findings) ---------------
+
+    def states(self, entity: str | None = None, offset: int = 0, limit: int = LIST_MAX) -> dict[str, Any]:
+        """Every (kind, entity) a detector knows with its state, `limit` a page; with `entity` — its episodes too."""
+        now = self.clock()
+        rows: list[dict[str, Any]] = []
+        for det in self.detectors:
+            try:
+                opened = {i["key"]: i for i in det.items(now)}
+                for kind, eid in det.keys():
+                    if entity is None or eid == entity:
+                        rows.append({"key": f"{kind}|{eid}", "kind": kind, "detector": det.name, "entityId": eid, "section": section_of(kind), **det.extra(kind, eid), **det.state(eid, now, kind, opened)})
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Hauflo insights: %s states failed", det.name)
+        rows.sort(key=lambda r: (r["entityId"], r["kind"]))
+        page = rows[offset : offset + limit]
+        for r in page:
+            r.update(self.who(r["entityId"]))
+        out: dict[str, Any] = {"total": len(rows), "offset": offset, "items": page}
+        if entity is not None:
+            out["episodes"] = [e for det in self.detectors for e in det.episodes(entity)]
+        return out
+
+    def reset(self, kind: str, eid: str, at: str) -> None:
+        """«Сбросить обучение»: the detector's norms of this entity forgotten, observed anew from now."""
+        det = self.owner.get(kind)
+        if det is None:
+            return
+        self._run(det.reset, eid, kind)
+        key = f"{kind}|{eid}"
+        self.first[f"{det.name}|{eid}"] = self.clock()
+        self.resets[key] = at
+        self.opens.pop(key, None)
+        self.dirty()
+
+    @callback
+    def findings_changed(self) -> None:
+        """The site's findings changed (signals.py): a new resetAt resets once; «это норма» leaves the list at once."""
+        for det in self.detectors:
+            for kind, eid in self._keys(det):
+                key = f"{kind}|{eid}"
+                at = (self.finding(key) or {}).get("resetAt")
+                if at and at != self.resets.get(key):
+                    self.reset(kind, eid, at)
+        self._after()
+
+    @callback
+    def choose(self, kind: str, eid: str, action: str, by: str, factor: float | None = None) -> None:
+        """A choice made in HA (an admin): normal — «это норма»; follow — «снова следить» (with its own ×N); reset."""
+        at = _iso(self.clock())
+        key = f"{kind}|{eid}"
+        if action == "reset":
+            self.reset(kind, eid, at)
+        else:
+            self.local.pop(key, None)
+            self.local[key] = {"by": by, "at": at, **({"normal": True} if action == "normal" else {}), **({"factor": factor} if factor is not None else {})}
+            self._trim_local()
+            self.dirty()
+        self._after()
+
+    def choices(self) -> dict[str, dict[str, Any]]:
+        """Choices made in HA (an admin's «Это норма» / «Снова следить») the site's findings don't hold yet — the status
+        carries them and Hauflo folds them in with the same `at`; the push back then equals them and they stop going."""
+        out: dict[str, dict[str, Any]] = {}
+        for key, loc in sorted(self.local.items(), key=lambda kv: str(kv[1].get("at") or ""), reverse=True):
+            cloud = (self.finding_of(key) if self.finding_of else None) or {}
+            # «Снова следить» with the canon's ×N over no finding there is the site's default already — nothing to say.
+            if str(loc.get("at") or "") > str(cloud.get("at") or "") and (cloud or "normal" in loc or "factor" in loc):
+                out[key] = {k: loc[k] for k in ("normal", "factor", "by", "at") if k in loc}
+            if len(out) >= CHOICES_MAX:
+                break
+        return out
 
     # --- the house, read only ------------------------------------------------------------------------------------------
 
@@ -539,7 +917,7 @@ class Insights:
         if AIR_HANDLER_WORDS.search(f"{eid} {w['name']} {w['area']}"):
             return True
         ce = next((det for det in self.detectors if isinstance(det, ClimateEffect)), None)
-        rates = [r for r in (ce.norm(eid, d) if ce else None for d in (HEAT, COOL)) if r is not None]
+        rates = [r for r in (ce.raw(eid, d) if ce else None for d in (HEAT, COOL)) if r is not None]
         return any(r >= AIR_HANDLER_RATE for r in rates)
 
     def who(self, eid: str) -> dict[str, str]:
@@ -555,3 +933,63 @@ class Insights:
         if not area_id:
             return False
         return any(s.state == STATE_ON and s.entity_id not in ignore and s.entity_id not in self.not_windows and s.attributes.get("device_class") in OPENING and self._area_id(s.entity_id) == area_id for s in self.hass.states.async_all("binary_sensor"))
+
+
+def diag_visible(hass: HomeAssistant | None) -> str:
+    """Who reads the diagnosis now: the integrator's choice Hauflo pushed with the site's signals, else the default."""
+    pushed = ((policy_of(hass) or {}).get("diag") or {}).get("visible")
+    return pushed if isinstance(pushed, str) else DIAG_VISIBLE
+
+
+class InsightsView(HomeAssistantView):
+    """The per-entity diagnosis (0.32). GET → Insights.states() (`?entity=` — with its episodes, `?offset=` — the next
+    page, `?limit=` its length up to LIMIT_MAX; with the canon's sections and the engine's tick and whether the reader may answer): HA's admins, everyone when the diagnosis is
+    shown to all (`diag_visible`). POST (admins only) {entity, kind, action: normal | follow |
+    reset, factor?} — «это норма» / «снова следить» (its own ×N within FACTOR_MIN..FACTOR_MAX) / «сбросить обучение»."""
+
+    url = "/api/hauflo/insights"
+    name = "api:hauflo:insights"
+    requires_auth = True
+
+    def __init__(self, ins_of: Callable[[], Insights | None]) -> None:
+        self.ins_of = ins_of
+
+    async def get(self, request):
+        admin = request["hass_user"].is_admin
+        if not admin and diag_visible(request.app[KEY_HASS]) != DIAG_ALL:
+            return self.json_message("admin only", 403)
+        ins = self.ins_of()
+        if ins is None:
+            return self.json_message("not ready", 409)
+        entity = request.query.get("entity")
+        offset = request.query.get("offset", "0")
+        limit = request.query.get("limit", str(LIST_MAX))
+        if (entity is not None and not ENTITY_ID.match(entity)) or not OFFSET_RE.fullmatch(offset) or int(offset) > OFFSET_MAX:
+            return self.json_message("entity / offset", 400)
+        if not LIMIT_RE.fullmatch(limit) or not 1 <= int(limit) <= LIMIT_MAX:
+            return self.json_message(f"limit: 1..{LIMIT_MAX}", 400)
+        out = ins.states(entity, int(offset), int(limit))
+        # The card's grouping and refresh: the canon's sections, the engine's tick; whether this reader may answer.
+        return self.json({**out, "sections": SECTIONS, "sectionOrder": SECTION_ORDER, "tickS": TICK, "canEdit": admin})
+
+    async def post(self, request):
+        user = request["hass_user"]
+        if not user.is_admin:
+            return self.json_message("admin only", 403)
+        try:
+            body = await request.json()
+        except ValueError:
+            return self.json_message("invalid JSON", 400)
+        ins = self.ins_of()
+        if ins is None:
+            return self.json_message("not ready", 409)
+        if not isinstance(body, dict) or not {"entity", "kind", "action"} <= set(body) <= {"entity", "kind", "action", "factor"}:
+            return self.json_message("{entity, kind, action, factor?} expected", 400)
+        entity, kind, action, factor = body["entity"], body["kind"], body["action"], body.get("factor")
+        # A list / an object for a word is a 400, never a 500 (acceptance 10.11 L1: `kind: []` — unhashable).
+        if not isinstance(entity, str) or not ENTITY_ID.match(entity) or not isinstance(kind, str) or kind not in ins.owner or not isinstance(action, str) or action not in ACTIONS_IN:
+            return self.json_message("entity / kind / action", 400)
+        if factor is not None and (action != "follow" or isinstance(factor, bool) or not isinstance(factor, (int, float)) or not FACTOR_MIN <= float(factor) <= FACTOR_MAX):
+            return self.json_message(f"factor: {FACTOR_MIN}..{FACTOR_MAX} with follow", 400)
+        ins.choose(kind, entity, action, user.name or user.id, float(factor) if factor is not None else None)
+        return self.json(ins.states(entity))

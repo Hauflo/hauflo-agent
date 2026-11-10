@@ -53,7 +53,7 @@ No ETS file, or Home Assistant already runs at the site? Create a project with *
 
 ## Automations your client sets
 
-In the dashboard: **Settings → Automations**. Your client sets blinds and lights to sunrise, sunset, a time or the phone’s alarm clock (read directly on Android; on iPhone through a Shortcuts automation that runs the rule, steps on the rule’s screen). A rule can run up to two hours earlier or later, on the days they choose. There’s a wake-up light that brightens slowly, a timeline of what happens next, and 20 ready recipes for this home (sun, wake-up, night, leaving and arriving, air by CO₂ and humidity). The agent offers only those the home’s devices fit, with safe default values the client edits before saving.
+In the dashboard: **Settings → Automations**. Your client sets blinds and lights to sunrise, sunset, a time or the phone’s alarm clock (read directly on Android; on iPhone through a Shortcuts automation that runs the rule, steps on the rule’s screen). A rule can run up to two hours earlier or later, on the days they choose. There’s a wake-up light that brightens slowly, a timeline of what happens next, and over twenty ready recipes for this home (sun, wake-up, night, leaving and arriving, motion and doors, air by CO₂ and humidity). The agent offers only those the home’s devices fit, with safe default values the client edits before saving.
 
 Rules only use Hauflo’s own lights, blinds and scenes. They never touch locks, the alarm, valves, garage doors or gates. Each rule is a plain Home Assistant automation, so it runs without Hauflo and without the internet.
 
@@ -88,6 +88,8 @@ Rules only use Hauflo’s own lights, blinds and scenes. They never touch locks,
 4. **Add the integration** and enter the code. The code picks the server: `EU-…` → app.hauflo.com, `RU-…` → app.hauflo.ru. **Advanced → Hauflo server** is only for a server of your own; leave it as is. If this Home Assistant is still connected to a site of another Hauflo account, a checkbox **Yes, move this Home Assistant to this project** appears. Without it nothing changes.
 
    [![Open your Home Assistant instance and start setting up Hauflo.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=hauflo)
+
+   The link works only after Home Assistant has been restarted with Hauflo installed, and only if “My Home Assistant” knows your instance address (Settings → My Home Assistant). If it shows “unknown integration” or does not open, go by hand: Settings → Devices & services → **Add integration** → **Hauflo**.
 
 5. **Confirm the KNX addresses.** Remove any Hauflo must not control, such as a gate or a lock.
 6. Hauflo shows **agent online** in a few seconds. Open **Deploy**, check the plan, deploy.
@@ -193,6 +195,9 @@ Set up in Hauflo → **Alarms**. A rule is: what happened → which sensors → 
 - **Telegram** through [@hauflo_bot](https://t.me/hauflo_bot), for you, the engineer on duty or the client. Each person gets only the alarms of their own sites.
 - Every rule is an automation in this Home Assistant with an **Accept** switch, named “Alarm: <rule>” (its id in `automations.yaml` is `hauflo_alarm_…`; the entity id Home Assistant gives it comes from the name, e.g. `automation.avariia_…`, and is never renamed). It runs without Hauflo and without the agent, also when the internet is down, and stays after the integration is removed. A rule Home Assistant can't hold (a hand-formatted `automations.yaml`, changes closed by the owner) stays with the agent, and you're told so. An automation you edited by hand is never overwritten.
 - The automation is small enough to read in the visual editor: three triggers (in alarm for the rule’s hold, every sensor back in normal, **Accept** from the push) and two actions (the push / “back to normal” / “Accepted”, then the repeat while the alarm is open: the first 12 times at the rule’s pace, then hourly). A second helper “Hauflo · alarm open: …” (`input_boolean.hauflo_open_…`) remembers the open alarm. A chattering sensor and “no data” are told by the agent: Home Assistant tells every alarm that held after the sensor was back in normal longer than the rule’s window; the repeat and the button wait in the automation’s run, so a restart of Home Assistant ends them (the next alarm starts them again).
+- **Importance of signals** (by ISA-18.2, the **Importance** block on the Alarms page; the site's integrator and the company's owner / admin change it): leak, smoke, gas, CO, KNX and lost connection — at once; other rules and events — important (a repeat at most once an hour); short connection drops and hints go to the digest. “Off” turns a class off.
+- **Daily digest** at 08:00 site time, one message of up to 12 items, to personal Telegram chats and groups. **Quiet hours** 23:00–08:00 hold “important” messages for the digest; critical alarms always arrive at once. A sensor that fired 3 times in a day goes to the digest for a day.
+- **A Telegram group:** add the bot to a group yourself — if your private chat with the bot is already connected, the group joins the account at once (the link in the app still works); forum topics work as before.
 - Alarms go by push and Telegram only; email is not an alarm channel.
 
 To watch any other entity (a boiler fault, ventilation, a battery), give it the label **Hauflo monitoring** in Home Assistant.
