@@ -414,7 +414,7 @@ ${HFROW_CSS}@container (max-width:440px){.scn.hfrow button{flex-direction:column
         : "";
   const refreshAlarms = (hass) => {
     const sig = [...AGENT.ids].map((id) => hass.states[id]?.state).join();
-    if (AGENT.off || AGENT.wait || (sig === AGENT.sig && Date.now() - AGENT.at < 60000)) return;
+    if (AGENT.off || AGENT.wait || typeof hass.callApi !== "function" || (sig === AGENT.sig && Date.now() - AGENT.at < 60000)) return;
     AGENT.sig = sig;
     AGENT.wait = hass
       .callApi("GET", "hauflo/alarms")
@@ -458,8 +458,21 @@ ${HFROW_CSS}@container (max-width:440px){.scn.hfrow button{flex-direction:column
   const SIGNALS_SKIP = ["hauflo", "mobile_app"];
   const SIG_LOUD = new RegExp(SIGNALS.classless.loudWords, "i");
   const SIG_FAULT = new RegExp(SIGNALS.classless.faultWords, "i");
-  /** One signal by the canon, as the agent's signals.py reads it (base_of + alarm_of) with no choice of the site's:
-   * { key, house: alarm|fault|none, severity, problem (in its alarm state now), undetermined (classless, no words), life }. */
+  /** The agent's verdict on one signal (owner 10.11: «Авария когда: Не авария» set in Hauflo, the tile stayed red) —
+   * signals.py with the site's policy, `_signals` of GET /api/hauflo/alarms: { house: alarm|fault, alarm: its condition }
+   * for a watched one, { house: "none" } for one that is never an alarm here. undefined — the agent says nothing of it
+   * (an older agent, none, not listed): the canon here decides, the same one. */
+  const agentSignal = (id) => {
+    const m = AGENT.data?._signals;
+    const v = m && typeof m === "object" && Object.hasOwn(m, id) ? m[id] : undefined;
+    if (!v || typeof v !== "object") return undefined;
+    // A watched verdict carries its condition; without one (garbage) the canon decides, not «never an alarm».
+    return v.house === "none" || (["alarm", "fault"].includes(v.house) && v.alarm && typeof v.alarm === "object") ? v : undefined;
+  };
+  /** One signal — ONE answer for every card (a tile's red frame and word, a row's «авария», the editor's fault sensors):
+   * the agent's verdict when it gives one, else the canon as the agent's signals.py reads it (base_of + alarm_of) with no
+   * choice of the site's: { key, house: alarm|fault|none, severity, problem (in its alarm state now), undetermined
+   * (classless, no words), life, agent (the agent said it) }. The state is compared live with the condition. */
   const signalOf = (s) => {
     const id = s.entity_id;
     const dom = id.split(".")[0];
@@ -474,10 +487,11 @@ ${HFROW_CSS}@container (max-width:440px){.scn.hfrow button{flex-direction:column
       const name = s.attributes?.friendly_name || id.split(".")[1].replace(/_/g, " ");
       [key, base] = SIG_LOUD.test(name) ? ["classless.loud", { alarm: cl.alarm, ...cl.withLoudWords }] : SIG_FAULT.test(name) ? ["classless.fault", { alarm: cl.alarm, ...cl.withWords }] : ["undetermined", { alarm: cl.alarm, ...SIGNALS.undetermined }];
     }
-    const a = base.alarm;
+    const v = agentSignal(id);
+    const a = v ? (v.house === "none" ? null : v.alarm) : base.alarm;
     const n = typeof s.state === "string" && s.state.trim() !== "" ? Number(s.state) : NaN;
-    const problem = !!a && !(a.none) && (Array.isArray(a.states) ? a.states.includes(s.state) : Number.isFinite(n) && ((a.below !== undefined && n < a.below) || (a.above !== undefined && n > a.above)));
-    return { key, house: base.house, severity: base.severity, problem, undetermined: key === "undetermined", life: SIGNALS.lifeSafety.includes(key) };
+    const problem = !!a && typeof a === "object" && !(a.none) && (Array.isArray(a.states) ? a.states.includes(s.state) : Number.isFinite(n) && ((a.below !== undefined && n < a.below) || (a.above !== undefined && n > a.above)));
+    return { key, house: v ? v.house : base.house, severity: base.severity, problem, undetermined: !v && key === "undetermined", life: SIGNALS.lifeSafety.includes(key), agent: !!v };
   };
   /** «Всё хорошо» of the house — ONE helper for the header, the alarm screen, the screensaver and the tiles (0.32 п.5).
    * The agent's answer when it gives one (`_house` ok / fault / alarm / offline, `_faults` — what moves it, `_shelved` —
@@ -531,7 +545,16 @@ ${HFROW_CSS}@container (max-width:440px){.scn.hfrow button{flex-direction:column
    * name's words. A tile's red frame, the screensaver's list, a device's fault sensors in the editor all ask this. */
   const signalWatched = (s) => {
     const g = signalOf(s);
-    return (SIGNALS.watch.includes(g.key) || g.key.startsWith("classless.")) && g.house !== "none";
+    return (g.agent || SIGNALS.watch.includes(g.key) || g.key.startsWith("classless.")) && g.house !== "none";
+  };
+  /** The agent says this signal is never an alarm here (the site's «Не авария» / «не влияет» / «не следить»): a card's
+   * own words by the name («Авария котла», «Угроза») say nothing of a fault either. */
+  const signalQuiet = (s) => agentSignal(s.entity_id)?.house === "none";
+  /** A two-state signal in its alarm state now: by the agent's condition for a watched one (the site may say «авария when
+   * off»), else HA's «on». */
+  const signalOn = (s) => {
+    const g = signalOf(s);
+    return g.agent && g.house !== "none" ? g.problem : s.state === "on";
   };
   /** The signals that move «Всё хорошо» in this house: the canon's classes over HA's states (house ≠ none) and what the
    * agent says moves it now (`_faults`: its site choices, an entity HA may not have here). `hidden` — HA's hidden ones too:
@@ -2300,11 +2323,12 @@ button:focus-visible{outline:2px solid var(--hf-ice);outline-offset:1px}
     // 07.11 was about the row's wrapping only, never about the captions). One series: a bare row.
     const names = [...new Set(all.filter((x) => x.series).map((x) => x.series))];
     const ownName = all.find((x) => x.series && x.series_head === false)?.series || "";
-    if (names.length < 2) return { btns: all.map((x) => one(x, "")), add };
+    // Scenes exist: no permanent «+ Сцена» (owner 03.11, again 10.11 — a fifth button broke the row into 3+2); a new scene — by holding the header or any scene.
+    if (names.length < 2) return { btns: all.map((x) => one(x, "")), add: "" };
     const ordered = [ownName, ...names.filter((n) => n !== ownName)].filter(Boolean);
     if (!ownName) ordered.unshift("");
     const groups = ordered.map((n) => ({ label: n, btns: all.filter((x) => (x.series || (n === ownName ? ownName : "")) === n).map((x) => one(x, "")) })).filter((g) => g.btns.length);
-    return { btns: all.map((x) => one(x, "")), add, groups };
+    return { btns: all.map((x) => one(x, "")), add: "", groups };
   };
   /** The scenes block is ONE wrapping row of buttons: the kinds one after another (light, blinds), each followed by its own «+»;
    * kinds differ by icon and colour only — no labels. `parts`: [{kind, btns, add}]. */
@@ -6533,11 +6557,14 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
         if (dc === "battery") return s.state === "on" ? ["батарея садится", "warn"] : ["батарея в норме", "ok"];
         // «Ошибка тёплого пола» without a device class is a fault, not «вкл» (persona round 3: «всё в норме» during it).
         // «Угроза протечки» / «Warning» without a class: a warning (amber), not an alarm and not «вкл» (п.63 sweep).
-        if (!dc && WARN_NAME.test(s.attributes.friendly_name || s.entity_id)) return s.state === "on" ? [LL("внимание", "warning"), "warn"] : ["в норме", "ok"];
-        // The word «авария»: a watched signal of the canon (class or classless words), or a classless name that says a fault
-        // the canon leaves undetermined («Перегрев»…) — the word only, the house's level stays the canon's (houseLevel).
-        const faulty = signalWatched(s) || (!dc && /ошибк|авари|неисправ|протечк|утечк|перегрев|fault|error|alarm|leak|failure/i.test(s.attributes.friendly_name || s.entity_id));
-        if (faulty) return s.state === "on" ? ["авария", "fault"] : ["в норме", "ok"];
+        // The site said «Не авария» / «не влияет» (the agent's verdict, signalQuiet): no word of a fault by the name either.
+        const quiet = signalQuiet(s);
+        if (!dc && !quiet && WARN_NAME.test(s.attributes.friendly_name || s.entity_id)) return signalOn(s) ? [LL("внимание", "warning"), "warn"] : ["в норме", "ok"];
+        // The word «авария»: a watched signal (the agent's verdict, else the canon's class or classless words) in its alarm
+        // state, or a classless name that says a fault the canon leaves undetermined («Перегрев»…) — the word only, the
+        // house's level stays houseLevel's.
+        const faulty = signalWatched(s) || (!dc && !quiet && /ошибк|авари|неисправ|протечк|утечк|перегрев|fault|error|alarm|leak|failure/i.test(s.attributes.friendly_name || s.entity_id));
+        if (faulty) return signalOn(s) ? ["авария", "fault"] : ["в норме", "ok"];
         if (dc === "connectivity") return s.state === "on" ? ["на связи", "ok"] : ["нет связи", "fault"];
         // Windows and doors say «открыто/закрыто», not «вкл» with a green dot (integrator run 16).
         if (OPENING.includes(dc)) return s.state === "on" ? ["открыто", "warn"] : ["закрыто", "ok"];
@@ -6568,6 +6595,7 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
 .warn i,i.warn{background:var(--amber);box-shadow:0 0 8px var(--amberGlow)}.warn{background:color-mix(in srgb,var(--amber) 14%,transparent)}.warn .w{color:var(--amberT);font-weight:600}`;
     }
     render() {
+      openAlarms(this, []); // the agent's verdicts (signalOf): asked, the card drawn again when they come
       const rows = (this._config.entities || []).map((e) => (typeof e === "string" ? { entity: e } : e)).map((e) => ({ ...e, s: st(this._hass, e.entity) })).filter((e) => e.s);
       this.hideCard(!rows.length);
       if (!rows.length) return "";
@@ -7267,11 +7295,15 @@ ${isScript ? `<button class="run" data-run="${esc(id)}">Запустить</butt
       if (d === "cover" && !nd(s)) return [s.state === "open" ? "открыта" : s.state === "closed" ? "закрыта" : s.state === "opening" ? "открывается…" : s.state === "closing" ? "закрывается…" : s.state, s.state === "open" ? "run" : "stop"];
       if (d === "sensor" && !nd(s) && num(s.state) === undefined) {
         const nm = `${s.attributes.device_class || ""} ${s.attributes.friendly_name || s.entity_id}`;
+        // The agent's verdict first (the site's choice for it): a watched one — a fault in its alarm state; «Не авария» — a value.
+        const g = signalOf(s);
+        if (g.agent) return [s.state, g.house === "none" ? "val" : g.problem ? "fault" : "ok"];
         return FAULT_NAME.test(nm) ? [s.state, FAULT_OK.test(s.state.trim()) ? "ok" : WARN_NAME.test(nm) ? "warn" : "fault"] : [s.state, "val"];
       }
-      // «Авария котла» / «Угроза» without a class (another integration's): a fault / a warning when on — never «вкл».
-      if (d === "binary_sensor" && !nd(s) && !s.attributes.device_class && FAULT_NAME.test(`${s.attributes.friendly_name || s.entity_id} ${this.label(s.entity_id)}`))
-        return s.state === "on" ? (WARN_NAME.test(s.attributes.friendly_name || s.entity_id) ? [LL("внимание", "warning"), "warn"] : ["авария", "fault"]) : ["в норме", "ok"];
+      // «Авария котла» / «Угроза» without a class (another integration's): a fault / a warning when on — never «вкл»; the
+      // site's «Не авария» (signalQuiet) — the plain words of Status.word.
+      if (d === "binary_sensor" && !nd(s) && !s.attributes.device_class && !signalQuiet(s) && FAULT_NAME.test(`${s.attributes.friendly_name || s.entity_id} ${this.label(s.entity_id)}`))
+        return signalOn(s) ? (WARN_NAME.test(s.attributes.friendly_name || s.entity_id) ? [LL("внимание", "warning"), "warn"] : ["авария", "fault"]) : ["в норме", "ok"];
       if (d === "event") return this.eventWord(s);
       if (d === "lock" && !nd(s)) return [s.state === "locked" ? "заперт" : s.state === "unlocked" ? "не заперт" : s.state, s.state === "locked" ? "ok" : "warn"];
       return super.word(s);
@@ -7620,6 +7652,7 @@ ${RULE_CSS}`;
     render() {
       const h = this._hass;
       HOUSE.get(this); // the agent's protected list (AREA_GUARDED): asked once a page, the card drawn again when it comes
+      openAlarms(this, []); // the agent's verdicts on the signals (signalOf, tileAlarm): the same
       this._hidWhy = "";
       // `block` (п.63): this card is one of the room's three — «Управление», «Показания», «Диагностика»; none — all of it.
       const part = Object.hasOwn(AREA_PARTS, this._config.block || "") ? this._config.block : "";
@@ -9159,6 +9192,18 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
           sys: { issued: "создана ссылка", revoked: "ссылка закрыта", revoked_all: "все ссылки закрыты", opened: "ссылку открыли на новом устройстве", device_refused: "отказ: ссылку открыли на лишнем устройстве" },
           act: { on: "включить", off: "выключить", open: "открыть", close: "закрыть", stop: "стоп", position: "положение", temperature: "температура" },
           failed: "не получилось",
+          tabLink: "По ссылке", tabPages: "Со входом — страницы",
+          pSub: "Гость входит в систему со своим логином и паролем и видит в меню только выбранные страницы панели — на время. Это удобный вид, а не защита: со своим входом гость может открыть и другие разделы и управлять любым устройством системы. Давайте вход только тем, кому доверяете.",
+          noExt: "Внешний адрес не задан в настройках системы: гость откроет только из домашней сети.",
+          needName: "Введите имя", needPages: "Выберите хотя бы одну страницу", needRooms: "Выберите хотя бы одну комнату",
+          pInvite: "Дать гостю вход", pages: "Страницы", pagesHint: "В меню гостя будут только эти страницы.", pAdmin: "служебная", pNested: "вложенная",
+          pCreate: "Выдать", pReady: "Вход для гостя готов",
+          pOnce: "Пароль показан один раз и нигде не хранится — передайте его гостю сейчас. Потерялся — отзовите вход и выдайте новый.",
+          login: "Логин", password: "Пароль", urlOut: "Адрес", urlIn: "Адрес дома (по Wi‑Fi)",
+          pActive: "Входы гостей", pNone: "Сейчас входов для гостей нет.", pCant: "Вход со страницами выдаёт администратор.",
+          noPages: "Нет страниц, которые можно показать гостю.", pState: { revoked: "отозван", expired: "истёк" },
+          hoursMore: { 720: "30 дней" }, closeEvery: "Отозвать весь гостевой доступ", closeEveryAsk: "Точно? Отозвать всё",
+          pSys: { pages_issued: "выдан вход", pages_revoked: "вход отозван", pages_expired: "вход истёк", pages_gone: "вход удалён в настройках" },
         },
       },
       en: {
@@ -9322,6 +9367,18 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
           sys: { issued: "link created", revoked: "link closed", revoked_all: "all links closed", opened: "link opened on a new device", device_refused: "refused: opened on one device too many" },
           act: { on: "on", off: "off", open: "open", close: "close", stop: "stop", position: "position", temperature: "temperature" },
           failed: "didn't work",
+          tabLink: "By link", tabPages: "With a login — pages",
+          pSub: "The guest signs in with their own login and password and sees only the chosen pages of the panel in the menu — for a while. It's a convenient view, not a lock: with a login the guest can also open other sections and control any device of the system. Give a login only to people you trust.",
+          noExt: "No external address is set in the system settings: the guest can open it only from the home network.",
+          needName: "Enter a name", needPages: "Choose at least one page", needRooms: "Choose at least one room",
+          pInvite: "Give a guest a login", pages: "Pages", pagesHint: "The guest's menu will show only these pages.", pAdmin: "service", pNested: "nested",
+          pCreate: "Give access", pReady: "The guest's login is ready",
+          pOnce: "The password is shown once and kept nowhere — pass it to your guest now. Lost it? Revoke the login and give a new one.",
+          login: "Login", password: "Password", urlOut: "Address", urlIn: "Home address (on Wi‑Fi)",
+          pActive: "Guests' logins", pNone: "No guest logins right now.", pCant: "A login with pages is given by an administrator.",
+          noPages: "No pages that could be shown to a guest.", pState: { revoked: "revoked", expired: "expired" },
+          hoursMore: { 720: "30 days" }, closeEvery: "Revoke all guest access", closeEveryAsk: "Sure? Revoke everything",
+          pSys: { pages_issued: "login given", pages_revoked: "login revoked", pages_expired: "login expired", pages_gone: "login deleted in the settings" },
         },
       },
     };
@@ -9459,7 +9516,8 @@ details.man{margin:12px 0 0}details.man summary{font:500 14px Onest,sans-serif;c
 .gnl{flex:1;min-width:200px;display:flex;flex-direction:column;gap:6px}.gnl b{font:600 15px Onest,sans-serif}.gnl input{width:100%;font-size:13px;height:40px}.gnl .row{display:flex;flex-wrap:wrap;gap:8px}
 .gls{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:6px}.gls li{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:var(--hf-r-sm);background:var(--hf-track-08)}
 .gls li.dis{opacity:.6}.gtx{flex:1;min-width:0;display:flex;flex-direction:column}.gtx b{font:600 14px/1.3 Onest,sans-serif;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.gls .btn.sm{align-self:center}
-.guest .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.guest .fld+.row{margin-top:16px}.guest input[data-glabel]{width:100%}
+.guest .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.guest .fld+.row{margin-top:16px}.guest input[data-glabel],.guest input[data-gplabel]{width:100%}
+.guest .gtab{margin:0 0 12px}.guest .seg button[aria-pressed="true"]{background:var(--eh-ink,var(--primary-color));color:var(--hf-card-bg);box-shadow:none}.guest input[aria-invalid="true"]{border-color:var(--hf-alert-text);outline-color:var(--hf-alert-text);box-shadow:0 0 0 1px var(--hf-alert-text)}.gpd{display:grid;gap:6px}.gpd+.gpd{margin-top:10px}.gcr{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 8px;align-items:center}.gcr .caps{grid-column:1/-1;margin-top:6px}.gcr input{font-family:ui-monospace,monospace}
 .pick{padding:12px;border-radius:var(--hf-r-md);margin:0 0 8px;box-shadow:inset 0 0 0 1px var(--hf-hair-35);display:grid;gap:10px}
 .prm .caps{margin:0 0 6px}.chips button:disabled{opacity:.45;cursor:default}.chips button small{font:400 12px Onest,sans-serif;opacity:.75;margin-left:4px}
 .vbox{display:grid;gap:8px;margin:10px 0 0}.fld .chips+.vbox,.act .vbox{margin-top:4px}
@@ -9613,7 +9671,7 @@ ha-icon{--mdc-icon-size:var(--hf-icon-m)}`;
       // --- «Гостевой доступ» (guest.py, docs/guest-access.md) -----------------------------------------------------------
       async loadGuest() {
         try {
-          this.gst = await this._hass.callApi("GET", "hauflo/guest?rooms=1");
+          this.gst = await this._hass.callApi("GET", "hauflo/guest?rooms=1&pages=1");
         } catch (e) {
           this.gst = null; // an agent before 0.16.10: no section
         }
@@ -9629,10 +9687,17 @@ ha-icon{--mdc-icon-size:var(--hf-icon-m)}`;
             this.gForm = false;
             this.gCopied = false;
             await this.loadGuest();
+          } else if (body.op === "issue_pages") {
+            // Shown once (the password isn't kept anywhere) — gone with «Готово» or a revoke.
+            this.gNewP = r;
+            this.gFormP = false;
+            this.gCopiedP = "";
+            await this.loadGuest();
           } else {
             this.gst = { ...this.gst, ...r };
             // The «link is ready» panel of a link just revoked would hand out a dead link.
             if (body.op === "revoke_all" || (body.op === "revoke" && (!this.gNew?.id || this.gNew.id === body.id))) this.gNew = null;
+            if (body.op === "revoke_all" || (body.op === "revoke" && this.gNewP?.id === body.id)) this.gNewP = null;
           }
         } catch (e) {
           const m = e?.body?.message || e?.message || "";
@@ -9657,6 +9722,10 @@ ha-icon{--mdc-icon-size:var(--hf-icon-m)}`;
         const date = (iso) => this.fmtParts(Date.parse(iso), { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" });
         const roomNames = (x) => (x.rooms || []).map((r) => r.name).join(", ");
         const active = (gs.grants || []).filter((x) => x.status === "active");
+        const pActive = (gs.pages || []).filter((x) => x.status === "active");
+        // Two kinds side by side once a login may be given (an administrator) or one is still open.
+        const tabs = gs.can_issue_pages || (gs.pages || []).length;
+        const tab = tabs && this.gTab === "pages" ? "pages" : "link";
         const ended = (gs.grants || []).filter((x) => x.status !== "active").slice(0, 3);
         const rooms = gs.rooms || [];
         const sel = this.gSel || new Set();
@@ -9667,6 +9736,7 @@ ha-icon{--mdc-icon-size:var(--hf-icon-m)}`;
           const share = typeof navigator !== "undefined" && navigator.share ? `<button class="btn sm" data-gshare>${esc(g.share)}</button>` : "";
           fresh = `<div class="gnew"><div class="qr">${this.qrSvg(this.gNew.qr || [])}</div><div class="gnl"><b>${esc(g.ready)}</b><p class="hint">${esc(g.once)}</p><input readonly data-glink value="${esc(this.gNew.link)}" aria-label="${esc(g.ready)}"><div class="row"><button class="btn sm" data-gcopy>${esc(this.gCopied ? g.copied : g.copy)}</button>${share}<button class="btn sm pri" data-gdone>${esc(g.done)}</button></div></div></div>`;
         }
+        const need = (k, t) => (this.gNeed?.has(k) ? `<p class="msg bad" role="status" data-gneed="${k}">${esc(t)}</p>` : "");
         let form = "";
         // A restricted (child) profile asks an admin instead of a dead end (family review round 3, item 8).
         if (!gs.can_issue)
@@ -9674,14 +9744,14 @@ ha-icon{--mdc-icon-size:var(--hf-icon-m)}`;
         else if (!rooms.length) form = `<p class="hint">${esc(g.noRooms)}</p>`;
         else if (this.gForm)
           form = `<div class="fld"><div class="caps">${esc(g.who)}</div><input data-glabel maxlength="40" placeholder="${esc(g.whoPh)}" value="${esc(this.gLabel || "")}" aria-label="${esc(g.who)}"></div>
-<div class="fld"><div class="caps">${esc(g.rooms)}</div><div class="chips">${rooms.map((r) => `<button aria-pressed="${sel.has(r.id)}" data-groom="${esc(r.id)}"><span data-own>${esc(r.name)}</span></button>`).join("")}</div><p class="hint">${esc(g.roomsHint)}</p></div>
+<div class="fld"><div class="caps">${esc(g.rooms)}</div><div class="chips">${rooms.map((r) => `<button aria-pressed="${sel.has(r.id)}" data-groom="${esc(r.id)}"><span data-own>${esc(r.name)}</span></button>`).join("")}</div>${need("rooms", g.needRooms)}<p class="hint">${esc(g.roomsHint)}</p></div>
 <div class="fld"><div class="caps">${esc(g.howLong)}</div><div class="seg">${[3, 24, 72, 168].map((h) => `<button aria-pressed="${hours === h}" data-ghours="${h}">${esc(g.hours[h])}</button>`).join("")}</div></div>
-<div class="row"><button class="btn pri" data-gissue ${sel.size && !this.gBusy ? "" : "disabled"}>${esc(g.create)}</button><button class="btn" data-gcancel>${esc(g.cancel)}</button></div>`;
+<div class="row"><button class="btn pri" data-gissue ${this.gBusy ? "disabled" : ""}>${esc(g.create)}</button><button class="btn" data-gcancel>${esc(g.cancel)}</button></div>`;
         else if (!this.gNew) form = `<button class="btn sm pri" data-ginvite ${dis}>+ ${esc(g.invite)}</button>`;
         const grantRow = (x, live) =>
           `<li class="${live ? "" : "dis"}"><div class="gtx"><b>${esc(x.label || g.guest)}</b><span class="muted">${esc([roomNames(x), live ? g.until(date(x.expires)) : g[x.status] || x.status, live ? g.devices(x.devices, x.max_devices) : ""].filter(Boolean).join(" · "))}</span></div>${live ? `<button class="btn sm" data-grevoke="${esc(x.id)}" data-ask="${esc(g.closeAsk)}" ${dis}>${esc(g.close)}</button>` : ""}</li>`;
         const list = active.length
-          ? `<div class="fld"><div class="caps">${esc(g.active)}</div><ul class="gls">${active.map((x) => grantRow(x, true)).join("")}</ul>${active.length > 1 ? `<button class="lnk" data-grevall data-ask="${esc(g.closeAllAsk)}" ${dis}>${esc(g.closeAll)}</button>` : ""}</div>`
+          ? `<div class="fld"><div class="caps">${esc(g.active)}</div><ul class="gls">${active.map((x) => grantRow(x, true)).join("")}</ul></div>`
           : `<p class="muted">${esc(g.none)}</p>`;
         const endedHtml = ended.length ? `<div class="fld"><div class="caps">${esc(g.ended)}</div><ul class="gls">${ended.map((x) => grantRow(x, false)).join("")}</ul></div>` : "";
         const when = (iso) => {
@@ -9690,7 +9760,7 @@ ha-icon{--mdc-icon-size:var(--hf-icon-m)}`;
         };
         const line = (x) => {
           const who = x.label || g.guest;
-          if (x.sys) return `<b>${esc(who)}</b>: ${esc(g.sys[x.sys] || x.sys)}${x.by ? ` — ${esc(x.by)}` : ""}`;
+          if (x.sys) return `<b>${esc(who)}</b>: ${esc(g.sys[x.sys] || g.pSys[x.sys] || x.sys)}${x.by ? ` — ${esc(x.by)}` : ""}`;
           const v = x.value === null || x.value === undefined ? "" : x.do === "temperature" ? ` ${String(x.value).replace(".", this.lang === "ru" ? "," : ".")}°` : ` ${x.value}\u00a0%`;
           return `<b>${esc(who)}</b>: ${esc(x.name || x.entity_id)} — ${esc((g.act[x.do] || x.do) + v)}${x.ok === false ? ` — ${esc(g.failed)}` : ""}`;
         };
@@ -9701,9 +9771,58 @@ ha-icon{--mdc-icon-size:var(--hf-icon-m)}`;
               .map((x) => `<li class="${x.ok === false ? "dis" : ""}"><span class="rel">${esc(when(x.t))}</span><span class="txt">${line(x)}</span></li>`)
               .join("")}</ul>${log.length > 5 ? `<button class="lnk" data-gall>${esc(this.gAll ? g.less : g.all)}</button>` : ""}</div>`
           : "";
+        // «Закрыть всё» closes both kinds (guest.py revoke(None)).
+        const every = active.length + pActive.length;
+        const closeAll = every > 1 ? `<button class="lnk" data-grevall data-ask="${esc(pActive.length ? g.closeEveryAsk : g.closeAllAsk)}" ${dis}>${esc(pActive.length ? g.closeEvery : g.closeAll)}</button>` : "";
+        const seg = tabs ? `<div class="seg gtab" role="tablist">${[["link", g.tabLink], ["pages", g.tabPages]].map(([k, v]) => `<button role="tab" aria-pressed="${tab === k}" aria-selected="${tab === k}" data-gtab="${k}">${esc(v)}</button>`).join("")}</div>` : "";
+        const body = tab === "pages" ? this.guestPagesHtml(date, pActive, dis) : `<p class="sub">${esc(g.sub)}</p>${fresh}${form}${list}${endedHtml}`;
         return `<section class="box guest" aria-label="${esc(g.title)}"><div class="hd"><span class="pic"><ha-icon icon="mdi:account-key-outline"></ha-icon></span><h2>${esc(g.title)}</h2></div>
-<p class="sub">${esc(g.sub)}</p>${this.gMsg ? `<p class="msg bad" role="status">${esc(this.gMsg)}</p>` : ""}
-${fresh}${form}${list}${endedHtml}${logHtml}</section>`;
+${seg}${this.gMsg ? `<p class="msg bad" role="status">${esc(this.gMsg)}</p>` : ""}
+${body}${closeAll}${logHtml}</section>`;
+      }
+      // «Со входом — страницы»: a login of the house's system shown once, the chosen pages, the logins given (guest.py issue_pages).
+      guestPagesHtml(date, pActive, dis) {
+        const gs = this.gst;
+        const g = this.w.g;
+        const avail = gs.pages_available || [];
+        const title = (pg) => {
+          const d = avail.find((x) => x.url_path === pg.dashboard);
+          const v = d?.views.find((x) => x.path === pg.view);
+          return v?.title || pg.view;
+        };
+        const label = (h) => g.hours[h] || g.hoursMore[h] || String(h);
+        const hoursList = gs.pages_hours || [];
+        const hours = hoursList.includes(this.gHoursP) ? this.gHoursP : hoursList.includes(24) ? 24 : hoursList[0];
+        const sel = this.gSelP || new Set();
+        const need = (k, t) => (this.gNeed?.has(k) ? `<p class="msg bad" role="status" data-gneed="${k}">${esc(t)}</p>` : "");
+        let fresh = "";
+        if (this.gNewP) {
+          const n = this.gNewP;
+          const urls = n.urls?.length ? n.urls : [`${location.origin}/${n.pages[0].dashboard}/${n.pages[0].view}`];
+          const field = (k, cap, v) => `<div class="gcr"><span class="caps">${esc(cap)}</span><input readonly data-gpv="${k}" value="${esc(v)}" aria-label="${esc(cap)}"><button class="btn sm" data-gpcopy="${k}">${esc(this.gCopiedP === k ? g.copied : g.copy)}</button></div>`;
+          fresh = `<div class="gnew gnp"><div class="gnl"><b>${esc(g.pReady)}</b><p class="hint">${esc(g.pOnce)}</p>${field("login", g.login, n.username)}${field("password", g.password, n.password)}${urls.map((u, i) => field(`url${i}`, i ? g.urlIn : g.urlOut, u)).join("")}${n.urls_source === "fallback" || !n.urls?.length ? `<p class="msg warn" role="status">${esc(g.noExt)}</p>` : ""}<div class="row"><button class="btn sm pri" data-gpdone>${esc(g.done)}</button></div></div></div>`;
+        }
+        // A page's toggle: «служебная» (only the administrators saw it) / «вложенная» (opened from another page) marked.
+        const pk = (d, v) => `${d.url_path}/${v.path}`;
+        const mark = (v) => [v.admin ? g.pAdmin : "", v.sub ? g.pNested : ""].filter(Boolean).join(", ");
+        let form = "";
+        if (!gs.can_issue_pages) form = `<p class="hint">${esc(g.pCant)}</p>`;
+        else if (!avail.some((d) => d.views.length)) form = `<p class="hint">${esc(g.noPages)}</p>`;
+        else if (this.gFormP)
+          form = `<div class="fld"><div class="caps">${esc(g.who)}</div><input data-gplabel maxlength="40" placeholder="${esc(g.whoPh)}" value="${esc(this.gLabelP || "")}" aria-label="${esc(g.who)}"${this.gNeed?.has("name") ? ' aria-invalid="true"' : ""}>${need("name", g.needName)}</div>
+<div class="fld"><div class="caps">${esc(g.pages)}</div>${avail
+            .filter((d) => d.views.length)
+            .map((d) => `<div class="gpd">${avail.length > 1 ? `<span class="muted">${esc(d.title)}</span>` : ""}<div class="chips">${d.views.map((v) => `<button aria-pressed="${sel.has(pk(d, v))}" data-gpage="${esc(pk(d, v))}"><span data-own>${esc(v.title)}</span>${mark(v) ? `<small>${esc(mark(v))}</small>` : ""}</button>`).join("")}</div></div>`)
+            .join("")}${need("pages", g.needPages)}<p class="hint">${esc(g.pagesHint)}</p></div>
+<div class="fld"><div class="caps">${esc(g.howLong)}</div><div class="seg">${hoursList.map((h) => `<button aria-pressed="${hours === h}" data-gphours="${h}">${esc(label(h))}</button>`).join("")}</div></div>
+<div class="row"><button class="btn pri" data-gpissue ${this.gBusy ? "disabled" : ""}>${esc(g.pCreate)}</button><button class="btn" data-gpcancel>${esc(g.cancel)}</button></div>`;
+        else if (!this.gNewP) form = `<button class="btn sm pri" data-gpinvite ${dis}>+ ${esc(g.pInvite)}</button>`;
+        const row = (x, live) =>
+          `<li class="${live ? "" : "dis"}"><div class="gtx"><b>${esc(x.label || g.guest)}</b><span class="muted">${esc([x.username, x.pages.map(title).join(", "), live ? g.until(date(x.until)) : g.pState[x.status] || x.status].filter(Boolean).join(" · "))}</span></div>${live ? `<button class="btn sm" data-grevoke="${esc(x.id)}" data-ask="${esc(g.closeAsk)}" ${dis}>${esc(g.close)}</button>` : ""}</li>`;
+        const ended = (gs.pages || []).filter((x) => x.status !== "active").slice(0, 3);
+        const list = pActive.length ? `<div class="fld"><div class="caps">${esc(g.pActive)}</div><ul class="gls">${pActive.map((x) => row(x, true)).join("")}</ul></div>` : `<p class="muted">${esc(g.pNone)}</p>`;
+        const endedHtml = ended.length ? `<div class="fld"><div class="caps">${esc(g.ended)}</div><ul class="gls">${ended.map((x) => row(x, false)).join("")}</ul></div>` : "";
+        return `<p class="sub">${esc(g.pSub)}</p>${fresh}${form}${list}${endedHtml}`;
       }
       // --- «Нет дома — имитация присутствия» (presence.py) --------------------------------------------------------------
       async loadPres() {
@@ -10071,10 +10190,13 @@ ${logHtml}</section>`;
         }
         // «Гостевой доступ» from «Настройки» (owner 04.11: it opened the rules page): the guest links alone.
         const body = this._config?.only === "guest" ? this.guestHtml() || `<h1>${esc(w.g.title)}</h1>` : this.view === "edit" ? this.editHtml() : this.view === "loc" ? this.locHtml() : this.listHtml();
-        sr.innerHTML = `<style>${TZ(CSS3)}</style><div class="pg">${this._config?.overlay ? `<div class="row end"><button class="btn sm" data-close>${esc(w.close)}</button></div>` : ""}${body}</div>`;
-        sr.querySelector("[data-close]")?.addEventListener("click", () => this.dispatchEvent(new CustomEvent("hauflo-close", { bubbles: true, composed: true })));
-        askWrap(sr);
-        this.bind();
+        // The whole page is drawn again on every tap: keepPlace puts the focus back on the same control (keyboard / screen reader).
+        keepPlace(sr, () => {
+          sr.innerHTML = `<style>${TZ(CSS3)}</style><div class="pg">${this._config?.overlay ? `<div class="row end"><button class="btn sm" data-close>${esc(w.close)}</button></div>` : ""}${body}</div>`;
+          sr.querySelector("[data-close]")?.addEventListener("click", () => this.dispatchEvent(new CustomEvent("hauflo-close", { bubbles: true, composed: true })));
+          askWrap(sr);
+          this.bind();
+        });
         done();
       }
       listHtml() {
@@ -10527,16 +10649,24 @@ ${seg("sto", ["on", "off"].map((x) => [x, w.stTo[kind][x]]), v.to)}${kind === "m
         // «Гостевой доступ»: the form keeps what's typed across redraws.
         const gl = sr.querySelector("[data-glabel]");
         gl?.addEventListener("input", () => (this.gLabel = gl.value));
+        // A must left empty: said at its field on «Выдать», gone as soon as it's filled (no greyed button without a reason).
+        const needOff = (k) => {
+          if (!this.gNeed?.delete(k)) return;
+          sr.querySelector(`[data-gneed="${k}"]`)?.remove();
+          if (k === "name") sr.querySelector("[data-gplabel]")?.removeAttribute("aria-invalid");
+        };
         on("[data-ginvite]", () => {
           this.gForm = true;
           this.gSel = new Set((this.gst?.rooms || []).length === 1 ? [this.gst.rooms[0].id] : []);
           this.gHours = 24;
           this.gLabel = "";
           this.gMsg = "";
+          this.gNeed = null;
           this.draw();
         });
         on("[data-gcancel]", () => {
           this.gForm = false;
+          this.gNeed = null;
           this.draw();
         });
         on("[data-gaskfor]", (el) => {
@@ -10563,13 +10693,21 @@ ${seg("sto", ["on", "off"].map((x) => [x, w.stTo[kind][x]]), v.to)}${kind === "m
         on("[data-groom]", (el) => {
           const s = (this.gSel ||= new Set());
           s.has(el.dataset.groom) ? s.delete(el.dataset.groom) : s.add(el.dataset.groom);
+          if (s.size) this.gNeed?.delete("rooms");
           this.draw();
         });
         on("[data-ghours]", (el) => {
           this.gHours = Number(el.dataset.ghours);
           this.draw();
         });
-        on("[data-gissue]", () => this.guestDo({ op: "issue", label: (this.gLabel || "").trim(), rooms: [...(this.gSel || [])], hours: this.gHours || 24 }));
+        on("[data-gissue]", () => {
+          if (!(this.gSel || new Set()).size) {
+            this.gNeed = new Set(["rooms"]);
+            return this.draw();
+          }
+          this.gNeed = null;
+          this.guestDo({ op: "issue", label: (this.gLabel || "").trim(), rooms: [...this.gSel], hours: this.gHours || 24 });
+        });
         // Revoking cuts a guest off at once and can't be undone: one link asks «Sure?» like all of them (client review, stage 10).
         const armed = (el) => {
           if (el.dataset.arm === "1") return true;
@@ -10600,6 +10738,70 @@ ${seg("sto", ["on", "off"].map((x) => [x, w.stTo[kind][x]]), v.to)}${kind === "m
           this.draw();
         });
         on("[data-gshare]", () => navigator.share?.({ title: this.w.g.title, url: this.gNew?.link }).catch(() => undefined));
+        // «Со входом — страницы»
+        on("[data-gtab]", (el) => {
+          this.gTab = el.dataset.gtab;
+          this.gMsg = "";
+          this.draw();
+        });
+        const gpl = sr.querySelector("[data-gplabel]");
+        gpl?.addEventListener("input", () => {
+          this.gLabelP = gpl.value;
+          if (gpl.value.trim()) needOff("name");
+        });
+        on("[data-gpinvite]", () => {
+          this.gFormP = true;
+          this.gSelP = new Set();
+          this.gHoursP = null;
+          this.gLabelP = "";
+          this.gMsg = "";
+          this.gNeed = null;
+          this.draw();
+        });
+        on("[data-gpcancel]", () => {
+          this.gFormP = false;
+          this.gNeed = null;
+          this.draw();
+        });
+        on("[data-gpage]", (el) => {
+          const s = (this.gSelP ||= new Set());
+          s.has(el.dataset.gpage) ? s.delete(el.dataset.gpage) : s.add(el.dataset.gpage);
+          if (s.size) this.gNeed?.delete("pages");
+          this.draw();
+        });
+        on("[data-gphours]", (el) => {
+          this.gHoursP = Number(el.dataset.gphours);
+          this.draw();
+        });
+        on("[data-gpissue]", () => {
+          const hl = this.gst?.pages_hours || [];
+          const hours = hl.includes(this.gHoursP) ? this.gHoursP : hl.includes(24) ? 24 : hl[0];
+          const pages = [...(this.gSelP || [])].map((k) => ({ dashboard: k.slice(0, k.indexOf("/")), view: k.slice(k.indexOf("/") + 1) }));
+          const miss = new Set([...((this.gLabelP || "").trim() ? [] : ["name"]), ...(pages.length ? [] : ["pages"])]);
+          if (miss.size) {
+            this.gNeed = miss;
+            this.draw();
+            return sr.querySelector(miss.has("name") ? "[data-gplabel]" : "[data-gpage]")?.focus();
+          }
+          this.gNeed = null;
+          this.guestDo({ op: "issue_pages", label: (this.gLabelP || "").trim(), pages, hours });
+        });
+        on("[data-gpdone]", () => {
+          this.gNewP = null;
+          this.draw();
+        });
+        on("[data-gpcopy]", async (el) => {
+          const k = el.dataset.gpcopy;
+          const inp = sr.querySelector(`[data-gpv="${k}"]`);
+          try {
+            await navigator.clipboard.writeText(inp?.value || "");
+          } catch (e) {
+            inp?.select();
+            document.execCommand?.("copy");
+          }
+          this.gCopiedP = k;
+          this.draw();
+        });
         on("[data-pk]", (el) => this.setPres({ [el.dataset.pk]: el.getAttribute("aria-pressed") !== "true" }));
         on("[data-pmode]", (el) => this.pres?.mode !== el.dataset.pmode && this.setPres({ mode: el.dataset.pmode }));
         on("[data-puclear]", () => this.pres?.until && this.setPres({ until: null }));
@@ -11304,7 +11506,7 @@ ${seg("sto", ["on", "off"].map((x) => [x, w.stTo[kind][x]]), v.to)}${kind === "m
         names: "Названия блоков", namesHint: "Сохраняются сразу и видны всем. Пусто — как задал сервис.",
         namesError: "Не удалось сохранить. Проверьте связь или сообщите сервису.",
         ro: "Детский профиль: настройки меняют взрослые. Свет, шторы и температура — ваши.",
-        tsHuge: "Ещё крупнее", pro: "Для специалиста", guest: "Гостевой доступ", guestSub: "Ссылка или QR для гостя на время",
+        tsHuge: "Ещё крупнее", pro: "Для специалиста", guest: "Гостевой доступ", guestSub: "Ссылка, QR или свой вход для гостя на время",
         fav: "Избранное", unfav: "Убрать", favHint: "Долго нажмите на свет, штору или сцену → «В избранное». Избранное — сверху «Главной», только у вас.",
         myRoom: "Моя комната", myRoomHint: "Ваша комната — первой в «Избранном» на «Главной».",
         seasonAsk: (m, n) => `Точно? ${n === 1 ? "Кондиционер переключится" : n === 2 ? "Оба кондиционера переключатся" : `Все кондиционеры (${n}) переключатся`} на ${m === "heat" ? "обогрев" : "охлаждение"}.`,
@@ -11355,7 +11557,7 @@ ${seg("sto", ["on", "off"].map((x) => [x, w.stTo[kind][x]]), v.to)}${kind === "m
         names: "Block titles", namesHint: "Saved at once and visible to everyone. Empty — as your service set it.",
         namesError: "Couldn't save. Check the connection or please contact your service.",
         ro: "Child profile: settings are changed by the adults. Lights, blinds and temperature are yours.",
-        tsHuge: "Largest", pro: "For the specialist", guest: "Guest access", guestSub: "A link or QR for a guest, for a while",
+        tsHuge: "Largest", pro: "For the specialist", guest: "Guest access", guestSub: "A link, a QR or a login for a guest, for a while",
         fav: "Favourites", unfav: "Remove", favHint: "Long-press a light, blind or scene → “Add to favourites”. Favourites are on top of “Home”, just for you.",
         myRoom: "My room", myRoomHint: "Your room — first among the favourites on “Home”.",
         seasonAsk: (m, n) => `Sure? ${n === 1 ? "The AC switches" : n === 2 ? "Both ACs switch" : `All ${n} ACs switch`} to ${m === "heat" ? "heating" : "cooling"}.`,

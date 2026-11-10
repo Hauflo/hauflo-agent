@@ -18,6 +18,7 @@ from homeassistant.core import Event, HomeAssistant
 
 from .storage import HaufloStore
 from .const import DATA_SIDEBAR_LISTENER
+from .house import is_guest
 
 STORE_KEY = "hauflo.sidebar"
 
@@ -60,8 +61,8 @@ async def async_apply(hass: HomeAssistant, hide: list[str], show: list[str], adm
     ours = {p for p in kept if p in MENU_EXTRAS}
     users = 0
     for user in await hass.auth.async_get_users():
-        if user.system_generated or not user.is_active:
-            continue
+        if user.system_generated or not user.is_active or is_guest(hass, user):
+            continue  # a guest's menu is guest.py's: only his pages
         if user.is_admin and not admins:
             # Switched off for administrators: what Hauflo hid for them comes back (a panel of their own stays hidden).
             if before:
@@ -102,7 +103,7 @@ async def async_setup(hass: HomeAssistant) -> None:
         data = (await HaufloStore(hass, STORE_KEY).async_load()) or {}
         hide = data.get("hide", [])
         user = await hass.auth.async_get_user(event.data.get("user_id", ""))
-        if not hide or user is None or user.system_generated or (user.is_admin and not _admins_of(data)):
+        if not hide or user is None or user.system_generated or is_guest(hass, user) or (user.is_admin and not _admins_of(data)):
             return
         await _set_hidden(hass, user.id, hide, set())
 

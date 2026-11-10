@@ -10,6 +10,12 @@ still a safe Hauflo light / cover / climate, the issuer still a person allowed t
 
 GET/POST /api/hauflo/guest — a signed-in person of this HA (issuing: one who may control the entities and isn't a
 restricted profile; revoking: any; «ask»: a restricted profile asks the admins for a link — family review round 3).
+
+A guest WITH A LOGIN («pages», owner 10.11: a heating engineer → the boiler room page): an HA administrator gives
+chosen pages of Hauflo's dashboards for up to 30 days; the agent makes a non-admin HA user (its password shown once,
+never kept here), every page gets a list of who sees it (dashmerge.expand_access), the guest's menu shows only those
+dashboards. Revoked / expired → the user is deleted. A convenient view, not a lock: HA has no rights per page or entity
+(docs/guest-access.md «Гость со входом: страницы»).
 """
 
 from __future__ import annotations
@@ -27,11 +33,13 @@ import time
 from typing import Any
 
 from homeassistant.components.http import KEY_HASS, HomeAssistantView
-from homeassistant.core import Context, HomeAssistant
+from homeassistant.core import Context, HomeAssistant, callback
 from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er
-from homeassistant.util import dt as dt_util
+from homeassistant.helpers.event import async_call_later, async_track_time_interval
+from homeassistant.util import dt as dt_util, slugify
 
-from .house import may_edit, refuse
+from .dashmerge import Access
+from .house import GUEST_USERS, is_guest, may_edit, refuse
 from .natural import natural_key
 from .storage import HaufloStore
 from . import qr
@@ -56,6 +64,17 @@ RATE_STATE = _T["rate_state"]  # reads a minute per link (the page polls every 1
 RATE_ACT_DEVICE = _T["rate_act_device"]
 RATE_STATE_DEVICE = _T["rate_state_device"]
 RATE_BAD = _T["rate_bad"]  # wrong tokens a minute for the whole house → every wrong one gets 429
+# Guests with a login («pages»).
+PAGES = "pages"
+PAGES_MAX_DAYS = _T["pages_max_days"]
+PAGES_MAX_ACTIVE = _T["pages_max_active"]
+PAGES_MAX = _T["pages_max"]  # pages one guest may be given
+PAGES_HOURS = [h for h in _T["pages_hours"] if h <= PAGES_MAX_DAYS * 24]  # the card's presets; never «unlimited»
+PAGES_CHECK = dt.timedelta(seconds=_T["pages_check_s"])  # expiry, users added / deleted in HA, pages added in HA
+PAGES_DEBOUNCE = _T["pages_debounce_s"]
+PASSWORD_LEN = max(12, int(_T["pages_password_len"]))
+SLUG_MAX = int(_T["pages_slug_max"])
+_PASSWORD_ABC = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no 0/O, 1/l/I: read off a screen
 _TOKEN = re.compile(r"([A-Za-z0-9_-]{12})\.([A-Za-z0-9_-]{32})")
 _DEVICE = re.compile(r"[A-Za-z0-9_-]{16,64}")
 _ENTITY = re.compile(r"(light|cover|climate)\.[a-z0-9_]{1,128}")
@@ -131,6 +150,12 @@ class GuestAccess:
         self.bad = _Window(RATE_BAD)
         self.rates: dict[tuple[str, ...], _Window] = {}
         self.refused: set[tuple[str, str]] = set()
+        self.dashboards: Any = None  # dashmerge.DashboardMerge (set by __init__): the pages and their lists of who sees them
+        self._pending: set[str] = set()  # a guest's user made, its grant not stored yet
+        self._applied: Any = None  # the Access.key() the dashboards were last brought to
+        self._unsubs: list[Callable[[], None]] = []
+        self._later: Callable[[], None] | None = None
+        self._sync_lock = asyncio.Lock()
 
     # --- storage -----------------------------------------------------------------------------------------------------
     async def async_load(self) -> None:
@@ -145,10 +170,17 @@ class GuestAccess:
             if isinstance(data, dict):
                 self.grants = [g for g in data.get("grants", []) if isinstance(g, dict) and isinstance(g.get("id"), str)]
                 self.log = [x for x in data.get("log", []) if isinstance(x, dict)]
+            self._mark()
             self.loaded = True
 
     async def async_stop(self) -> None:
         """The entry unloaded: the log noted in the last second is written now, not by a timer of a gone agent."""
+        for unsub in self._unsubs:
+            unsub()
+        self._unsubs.clear()
+        if self._later is not None:
+            self._later()
+            self._later = None
         if self.loaded:
             async with self.lock:
                 await self.store.async_save(self._data())
@@ -160,7 +192,8 @@ class GuestAccess:
 
     def _prune(self) -> None:
         now = dt_util.utcnow()
-        self.grants = [g for g in self.grants if (end := self._ended_at(g)) is None or now - end < KEEP_ENDED]
+        # A guest with a login stays until his user is deleted (the check does it) — then a week in the list, as a link.
+        self.grants = [g for g in self.grants if (g.get("kind") == PAGES and not g.get("removed")) or (end := self._ended_at(g)) is None or now - end < KEEP_ENDED]
         cut = now - dt.timedelta(days=LOG_DAYS)
         self.log = [x for x in self.log if (t := _parse(x.get("t"))) is not None and t >= cut][:LOG_MAX]
 
@@ -202,16 +235,20 @@ class GuestAccess:
         return sorted(out, key=lambda r: natural_key(r["name"]))
 
     # --- the family's side -------------------------------------------------------------------------------------------
+    @staticmethod
+    def _end(g: dict[str, Any]) -> dt.datetime | None:
+        return _parse(g.get("until") if g.get("kind") == PAGES else g.get("expires"))
+
     def _ended_at(self, g: dict[str, Any]) -> dt.datetime | None:
         if g.get("revoked"):
             return _parse(g["revoked"]) or dt_util.utcnow()
-        exp = _parse(g.get("expires"))
+        exp = self._end(g)
         return exp if exp is not None and exp <= dt_util.utcnow() else None
 
     def _status(self, g: dict[str, Any]) -> str:
         if g.get("revoked"):
             return "revoked"
-        exp = _parse(g.get("expires"))
+        exp = self._end(g)
         return "expired" if exp is None or exp <= dt_util.utcnow() else "active"
 
     def answer(self, user: Any = None) -> dict[str, Any]:
@@ -233,7 +270,24 @@ class GuestAccess:
                     "max_devices": g.get("max_devices", DEFAULT_DEVICES),
                 }
                 for g in self.grants
+                if g.get("kind") != PAGES
             ],
+            "pages": [
+                {
+                    "id": g["id"],
+                    "label": g.get("label") or "",
+                    "username": g.get("username") or "",
+                    "pages": [dict(x) for x in g.get("pages", [])],
+                    "by": g.get("issued_by") or "",
+                    "created": g.get("created"),
+                    "until": g.get("until"),
+                    "revoked": g.get("revoked"),
+                    "status": self._status(g),
+                }
+                for g in self.grants
+                if g.get("kind") == PAGES
+            ],
+            "pages_hours": PAGES_HOURS,
             "log": self.log[:100],
             "can_issue": user is not None and _issuer_ok(user),
         }
@@ -260,7 +314,7 @@ class GuestAccess:
             raise Invalid("nothing a guest may control in these rooms")
         async with self.lock:
             self._prune()
-            if sum(1 for g in self.grants if self._status(g) == "active") >= MAX_ACTIVE:
+            if sum(1 for g in self.grants if g.get("kind") != PAGES and self._status(g) == "active") >= MAX_ACTIVE:
                 raise Invalid(f"at most {MAX_ACTIVE} guest links at once — close one first")
             gid, secret = secrets.token_urlsafe(9), secrets.token_urlsafe(24)
             now = dt_util.utcnow()
@@ -290,17 +344,280 @@ class GuestAccess:
         n = 0
         async with self.lock:
             now = _iso(dt_util.utcnow())
+            one = next((g for g in self.grants if g["id"] == grant_id), None)
+            if grant_id is not None and one is None:
+                raise Invalid("no such guest link")
             for g in self.grants:
                 if (grant_id is None or g["id"] == grant_id) and self._status(g) == "active":
                     g["revoked"], g["revoked_by"] = now, getattr(user, "name", "") or ""
                     n += 1
-            one = next((g for g in self.grants if g["id"] == grant_id), None)
-            if grant_id is not None and one is None:
-                raise Invalid("no such guest link")
             label = (one or {}).get("label") or ""
-            self.log.insert(0, {"t": now, "sys": "revoked" if grant_id else "revoked_all", "grant": grant_id, "label": label, "by": getattr(user, "name", "") or "", "n": n})
+            what = ("pages_revoked" if one.get("kind") == PAGES else "revoked") if one else "revoked_all"
+            self.log.insert(0, {"t": now, "sys": what, "grant": grant_id, "label": label, "by": getattr(user, "name", "") or "", "n": n})
+            del self.log[LOG_MAX:]
+            # The guest's login goes at once: his user deleted before anything else (the pages' lists follow).
+            for g in self.grants:
+                if g.get("kind") == PAGES and g.get("revoked") and not g.get("removed"):
+                    await self._remove_user(g)
+            await self.store.async_save(self._data())
+        await self.sync()
+        return n
+
+    # --- guests with a login («pages») ----------------------------------------------------------------------------------
+    def _mark(self) -> None:
+        """Who is a guest — for house.is_restricted, the people lists and the sidebar (a set of user ids in hass.data)."""
+        self.hass.data[GUEST_USERS] = {g["user_id"] for g in self.grants if g.get("kind") == PAGES and isinstance(g.get("user_id"), str) and not g.get("removed")} | self._pending
+
+    async def access(self) -> Access:
+        """Who sees which page now (dashmerge.Access): every active person of HA but the guests; the guests given a page."""
+        users = await self.hass.auth.async_get_users()
+        present = {u.id for u in users}
+        self._mark()
+        known = {g["user_id"] for g in self.grants if g.get("kind") == PAGES and isinstance(g.get("user_id"), str)} | self._pending
+        live = [g for g in self.grants if g.get("kind") == PAGES and self._status(g) == "active" and not g.get("removed") and g.get("user_id") in present]
+        family = sorted(u.id for u in users if u.is_active and not u.system_generated and u.id not in known)
+        pages: dict[str, dict[str, list[str]]] = {}
+        for g in live:
+            for x in g.get("pages", []):
+                pages.setdefault(x["dashboard"], {}).setdefault(x["view"], []).append(g["user_id"])
+        return Access(family, known, pages, bool(live))
+
+    async def available(self) -> list[dict[str, Any]]:
+        if self.dashboards is None:
+            return []
+        try:
+            return await self.dashboards.page_list()
+        except Exception:  # noqa: BLE001 — the dashboards not readable now: nothing to offer, the links still work
+            _LOGGER.warning("Hauflo guest: pages not readable", exc_info=True)
+            return []
+
+    @staticmethod
+    def _username(label: str, taken: set[str]) -> str:
+        # «Guest Ivan» / «Гость Иван» → guest-ivan, not guest-guest-ivan; nothing readable (emoji only: HA's slugify
+        # says «unknown») → a few random letters.
+        base = re.sub(r"^((guest|gost|gosti)(-|$))+", "", slugify(label, separator="-"))[:SLUG_MAX].strip("-")
+        if base in ("", "unknown"):
+            base = secrets.token_hex(2)
+        name, n = f"guest-{base}", 1
+        while name in taken:
+            n += 1
+            name = f"guest-{base}-{n}"
+        return name
+
+    def _urls(self, first: dict[str, str]) -> list[str]:
+        path = f"/{first['dashboard']}/{first['view']}"
+        out: list[str] = []
+        for base in (self.hass.config.external_url, self.hass.config.internal_url):
+            if isinstance(base, str) and base and (url := base.rstrip("/") + path) not in out:
+                out.append(url)
+        return out
+
+    async def issue_pages(self, user: Any, body: dict[str, Any]) -> dict[str, Any]:
+        """A guest with a login: a non-admin HA user, his password shown once (HA keeps only its hash)."""
+        from homeassistant.auth.const import GROUP_ID_USER  # noqa: PLC0415
+        from homeassistant.auth.providers import homeassistant as auth_ha  # noqa: PLC0415
+
+        # Making a login of HA is HA's administrators' (config/auth is admin-only in HA itself).
+        if user is None or not user.is_admin or user.system_generated or not user.is_active or is_guest(self.hass, user):
+            raise PermissionError("only an administrator gives a guest a login")
+        label = _clean(body.get("label"), 40)
+        if not label:
+            raise Invalid("label: the guest's name")
+        pages = body.get("pages")
+        if not isinstance(pages, list) or not 1 <= len(pages) <= PAGES_MAX or not all(isinstance(x, dict) and set(x) == {"dashboard", "view"} and isinstance(x["dashboard"], str) and isinstance(x["view"], str) for x in pages):
+            raise Invalid(f"pages: 1…{PAGES_MAX} of {{dashboard, view}}")
+        chosen = list(dict.fromkeys((x["dashboard"], x["view"]) for x in pages))
+        offered = {(d["url_path"], v["path"]) for d in await self.available() for v in d["views"]}
+        if any(c not in offered for c in chosen):
+            raise Invalid("no such page")
+        hours = body.get("hours")
+        if isinstance(hours, bool) or not isinstance(hours, int) or not 1 <= hours <= PAGES_MAX_DAYS * 24:
+            raise Invalid(f"hours: 1…{PAGES_MAX_DAYS * 24}")
+        provider = auth_ha.async_get_provider(self.hass)
+        if provider.data is None:
+            await provider.async_initialize()
+        async with self.lock:
+            self._prune()
+            if sum(1 for g in self.grants if g.get("kind") == PAGES and self._status(g) == "active") >= PAGES_MAX_ACTIVE:
+                raise Invalid(f"at most {PAGES_MAX_ACTIVE} guests with a login at once — close one first")
+            taken = {str(u.get("username", "")) for u in provider.data.users}
+            username = self._username(label, taken)
+            password = "".join(secrets.choice(_PASSWORD_ABC) for _ in range(PASSWORD_LEN))
+            guest = await self.hass.auth.async_create_user(label, group_ids=[GROUP_ID_USER])
+            # Marked a guest before anything awaits: sidebar's «user_added» must not give him the family's menu.
+            self._pending.add(guest.id)
+            self._mark()
+            try:
+                # As HA's own config/auth_provider/homeassistant/create does.
+                await provider.async_add_auth(username, password)
+                creds = await provider.async_get_or_create_credentials({"username": username})
+                await self.hass.auth.async_link_user(guest, creds)
+            except Exception:
+                await self.hass.auth.async_remove_user(guest)
+                self._pending.discard(guest.id)
+                self._mark()
+                raise
+            now = dt_util.utcnow()
+            grant = {
+                "id": secrets.token_urlsafe(9),
+                "kind": PAGES,
+                "label": label,
+                "user_id": guest.id,
+                "username": username,
+                "pages": [{"dashboard": d, "view": v} for d, v in chosen],
+                "until": _iso(now + dt.timedelta(hours=hours)),
+                "issued_by": user.name or "",
+                "by_id": user.id,
+                "created": _iso(now),
+                "revoked": None,
+                "removed": None,
+            }
+            self.grants.insert(0, grant)
+            self._pending.discard(guest.id)
+            self._mark()
+            self.log.insert(0, {"t": _iso(now), "sys": "pages_issued", "grant": grant["id"], "label": label, "by": user.name or "", "hours": hours, "n": len(chosen)})
             del self.log[LOG_MAX:]
             await self.store.async_save(self._data())
+        await self.sync()
+        # Shown once: the password isn't kept anywhere by Hauflo.
+        # No external / internal address set in HA: no urls — the card puts in the address it's open at (home only).
+        urls = self._urls(grant["pages"][0])
+        return {"id": grant["id"], "username": username, "password": password, "urls": urls, "urls_source": "configured" if urls else "fallback", "until": grant["until"], "pages": grant["pages"]}
+
+    async def _remove_user(self, g: dict[str, Any]) -> None:
+        """The guest's HA user deleted (its login with it); one HA refuses (the owner — never a guest's) is switched off."""
+        u = await self.hass.auth.async_get_user(g.get("user_id") or "")
+        if u is not None and not u.system_generated:
+            try:
+                await self.hass.auth.async_remove_user(u)
+            except Exception:  # noqa: BLE001 — HA refused: at least he can't sign in
+                _LOGGER.warning("Hauflo guest: user of %s not deleted, switched off", g.get("id"), exc_info=True)
+                await self.hass.auth.async_update_user(u, is_active=False)
+                return
+        g["removed"] = _iso(dt_util.utcnow())
+
+    async def _guest_menu(self, g: dict[str, Any]) -> None:
+        """His menu: only the dashboards of his pages, the first of them his start page (HA's frontend user data:
+        «sidebar».hiddenPanels / panelOrder, «core».default_panel). Other addresses still open — a view, not a lock."""
+        from homeassistant.components.frontend import DATA_PANELS  # noqa: PLC0415
+        from homeassistant.components.frontend.storage import async_user_store  # noqa: PLC0415
+
+        mine = list(dict.fromkeys(x["dashboard"] for x in g.get("pages", [])))
+        if not mine:
+            return
+        store = await async_user_store(self.hass, g["user_id"])
+        sidebar = dict(store.data.get("sidebar") or {})
+        want = {**sidebar, "hiddenPanels": sorted(p for p in (self.hass.data.get(DATA_PANELS) or {}) if p not in mine), "panelOrder": mine}
+        if want != sidebar:
+            await store.async_set_item("sidebar", want)
+        core = dict(store.data.get("core") or {})
+        if core.get("default_panel") != mine[0]:
+            await store.async_set_item("core", {**core, "default_panel": mine[0]})
+
+    async def check(self) -> None:
+        """Every minute and on HA's own changes: an expired guest's user deleted, one deleted in HA by hand noted."""
+        await self.async_load()
+        present = {u.id for u in await self.hass.auth.async_get_users()}
+        async with self.lock:
+            changed = False
+            now = _iso(dt_util.utcnow())
+            for g in self.grants:
+                if g.get("kind") != PAGES or g.get("removed"):
+                    continue
+                status = self._status(g)
+                if g.get("user_id") not in present:
+                    if status == "active":
+                        g["revoked"], g["revoked_by"] = now, ""
+                    g["removed"] = now
+                    self.log.insert(0, {"t": now, "sys": "pages_gone", "grant": g["id"], "label": g.get("label") or ""})
+                    changed = True
+                elif status != "active":
+                    await self._remove_user(g)
+                    if status == "expired":
+                        self.log.insert(0, {"t": now, "sys": "pages_expired", "grant": g["id"], "label": g.get("label") or ""})
+                    changed = True
+            if changed:
+                del self.log[LOG_MAX:]
+                self._prune()
+                await self.store.async_save(self._data())
+        await self.sync()
+
+    async def sync(self, force: bool = False) -> None:
+        """The guests' menus and every page's list of who sees it, brought to now: when who-sees-what changed, or (force)
+        a dashboard was saved in HA — a page added there gets its list."""
+        async with self._sync_lock:
+            access = await self.access()
+            for g in self.grants:
+                if g.get("kind") == PAGES and not g.get("removed") and self._status(g) == "active":
+                    try:
+                        await self._guest_menu(g)
+                    except Exception:  # noqa: BLE001 — the menu is a convenience: the pages' lists still go on
+                        _LOGGER.warning("Hauflo guest: menu of %s not set", g.get("id"), exc_info=True)
+            if self.dashboards is None or (not force and access.key() == self._applied):
+                return
+            # No guest with a login ever known here: nothing of ours is in the dashboards — not even read.
+            if force and not access.guests and self._applied is not None:
+                return
+            await self.dashboards.apply_access()
+            self._applied = access.key()
+
+    def _soon(self, force: bool = False) -> None:
+        """A check a moment later: a burst of HA events (a dashboard saved, users changed) is one."""
+        if self._later is not None:
+            self._later()
+
+        async def _run(_now: Any) -> None:
+            self._later = None
+            try:
+                await self.check()
+                if force:
+                    await self.sync(force=True)
+            except Exception:  # noqa: BLE001 — the next minute's check tries again
+                _LOGGER.warning("Hauflo guest: check failed", exc_info=True)
+
+        self._later = async_call_later(self.hass, PAGES_DEBOUNCE, _run)
+
+    async def async_start(self) -> None:
+        """The checks of guests with a login: every minute, on a user added / changed / deleted, on a dashboard saved."""
+        await self.async_load()
+
+        async def _tick(_now: Any) -> None:
+            try:
+                await self.check()
+            except Exception:  # noqa: BLE001
+                _LOGGER.warning("Hauflo guest: check failed", exc_info=True)
+
+        self._unsubs.append(async_track_time_interval(self.hass, _tick, PAGES_CHECK))
+        @callback
+        def _users(_event: Any) -> None:
+            self._soon()
+
+        for event in ("user_added", "user_updated", "user_removed"):
+            self._unsubs.append(self.hass.bus.async_listen(event, _users))
+
+        @callback
+        def _saved(event: Any) -> None:
+            if self.dashboards is not None and event.data.get("url_path") in self.dashboards.pages():
+                self._soon(force=True)
+
+        self._unsubs.append(self.hass.bus.async_listen("lovelace_updated", _saved))
+        await self.check()
+
+    async def async_remove(self) -> int:
+        """The integration removed: every guest's user deleted, every page back to what it was. How many deleted."""
+        await self.async_load()
+        n = 0
+        async with self.lock:
+            now = _iso(dt_util.utcnow())
+            for g in self.grants:
+                if g.get("kind") == PAGES and not g.get("removed"):
+                    g["revoked"] = g.get("revoked") or now
+                    await self._remove_user(g)
+                    n += 1
+        # The grants stay known till their store goes: their ids are taken out of lists HA's editor stripped of the tags.
+        self._applied = None
+        await self.sync()
+        self.hass.data.pop(GUEST_USERS, None)
         return n
 
     # --- the guest's side (a «guest» frame from the cloud) --------------------------------------------------------------
@@ -519,12 +836,18 @@ class GuestView(HomeAssistantView):
             return self.json_message("Hauflo agent not set up", 503)
         await engine.async_load()
         user = request["hass_user"]
+        if is_guest(request.app[KEY_HASS], user):
+            return self.json_message("a guest has no guest settings", 403)
         out = engine.answer(user)
         # Guest links are the house's settings too: a restricted (child) profile (house.py) doesn't issue — it asks.
         out["can_issue"] = bool(out["can_issue"]) and await may_edit(request.app[KEY_HASS], user)
         out["can_ask"] = not out["can_issue"] and user is not None and not user.system_generated
         if request.query.get("rooms"):
             out["rooms"] = engine.rooms(user) if out["can_issue"] else []
+        # A guest with a login is a new HA user: HA's administrators only (HA's own user settings are theirs).
+        out["can_issue_pages"] = bool(out["can_issue"]) and bool(user and user.is_admin)
+        if out["can_issue_pages"] and request.query.get("pages"):
+            out["pages_available"] = await engine.available()
         return self.json(out)
 
     async def post(self, request):
@@ -539,9 +862,11 @@ class GuestView(HomeAssistantView):
         if not isinstance(body, dict):
             return self.json_message("an object expected", 400)
         op = body.get("op")
+        if is_guest(request.app[KEY_HASS], request["hass_user"]):
+            return self.json_message("a guest has no guest settings", 403)
         # A new link is the house's settings (house.py: admins and the people an admin allowed); closing one is the safe
         # direction — any person of the house.
-        if op == "issue" and (no := await refuse(request)) is not None:
+        if op in ("issue", "issue_pages") and (no := await refuse(request)) is not None:
             return no
         user = request["hass_user"]
         if op == "ask":
@@ -565,6 +890,10 @@ class GuestView(HomeAssistantView):
                 if set(body) - {"op", "label", "rooms", "hours", "max_devices"}:
                     return self.json_message("only label, rooms, hours, max_devices", 400)
                 return self.json(await engine.issue(user, body))
+            if op == "issue_pages":
+                if set(body) - {"op", "label", "pages", "hours"}:
+                    return self.json_message("only label, pages, hours", 400)
+                return self.json(await engine.issue_pages(user, body))
             if op == "revoke":
                 if not isinstance(body.get("id"), str):
                     return self.json_message("id expected", 400)
@@ -575,4 +904,4 @@ class GuestView(HomeAssistantView):
             return self.json_message(str(err), 403)
         except Invalid as err:
             return self.json_message(str(err), 400)
-        return self.json_message("op: issue | revoke | revoke_all | ask", 400)
+        return self.json_message("op: issue | issue_pages | revoke | revoke_all | ask", 400)

@@ -94,6 +94,7 @@
     "hash_format": "^[0-9a-f]{16}$",
     "stamp_len": 120,
     "watch_skip_platforms": ["hauflo", "mobile_app"],
+    "cards_max": 2000,
     "entity_id": "^[a-z_]+\\.[a-z0-9_]{1,200}$",
     "platform": "^[a-z0-9_]{1,64}$",
     "domain": "^[a-z_]{1,40}$",
@@ -140,7 +141,15 @@
     "rate_act_device": 20,
     "rate_state_device": 30,
     "rate_bad": 20,
-    "ask_gap_s": 600
+    "ask_gap_s": 600,
+    "pages_max_days": 30,
+    "pages_max_active": 10,
+    "pages_max": 60,
+    "pages_hours": [3, 24, 72, 168, 720],
+    "pages_check_s": 60,
+    "pages_debounce_s": 2,
+    "pages_password_len": 16,
+    "pages_slug_max": 24
   },
   "scenes": {
     "learn_every_s": 5.0,

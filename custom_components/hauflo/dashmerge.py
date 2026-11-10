@@ -1374,6 +1374,79 @@ def collapse_admins(cfg: Any, ids: list[str]) -> Any:
     return _walk_admins(cfg, fix)
 
 
+# --- who sees which page: guests with a login (guest.py «pages», owner 10.11) ----------------------------------------
+# HA hides a view only by a list of users (`visible: [{user: id}]`); «everyone» is no list. While a guest with a login
+# exists, every page of Hauflo's dashboards gets a list: the family (every active person of this HA but the guests) and
+# the guests given this page; a page only for some people keeps its list plus those guests. A tag in the list says what
+# it was before — so a read for the cloud, the merge and the base never see guests (collapse_access is the exact
+# inverse). No guest: nothing is touched, the config is byte for byte what it was.
+ACCESS_ALL = "hauflo:all"  # the page was for everyone (no `visible`)
+ACCESS_ALL_TRUE = "hauflo:all-true"  # … said as `visible: true`
+ACCESS_MORE = "hauflo:guests"  # the page had its own list: what follows the tag are guests added to it
+_ACCESS_TAGS = (ACCESS_ALL, ACCESS_ALL_TRUE, ACCESS_MORE)
+
+
+class Access:
+    """Who may see Hauflo's pages now (built by guest.py): `family` — HA's active people but guests; `guests` — every
+    guest user the agent made and still knows (ended ones too: never family); `pages` — dashboard → view path → the
+    active guests given it; `active` — a guest with a login exists, so pages get lists."""
+
+    def __init__(self, family: list[str], guests: set[str], pages: dict[str, dict[str, list[str]]], active: bool) -> None:
+        self.family = family
+        self.guests = guests
+        self.pages = pages
+        self.active = active
+
+    def key(self) -> tuple[Any, ...]:
+        return (tuple(self.family), tuple(sorted(self.guests)), json.dumps(self.pages, sort_keys=True), self.active)
+
+
+def _views(cfg: Any) -> list[Any]:
+    return cfg["views"] if isinstance(cfg, dict) and isinstance(cfg.get("views"), list) else []
+
+
+def expand_access(cfg: Any, access: Access | None, url_path: str) -> Any:
+    """Every page of this dashboard → its list of people while a guest with a login exists (in place)."""
+    if access is None or not access.active:
+        return cfg
+    given = access.pages.get(url_path, {})
+    for v in _views(cfg):
+        if not isinstance(v, dict):
+            continue
+        path = v.get("path")
+        mine = list(given.get(path, [])) if isinstance(path, str) else []
+        vis = v.get("visible", None)
+        if "visible" not in v or vis is True:
+            people = [*access.family, *[g for g in mine if g not in access.family]]
+            v["visible"] = [{"user": ACCESS_ALL if "visible" not in v else ACCESS_ALL_TRUE}, *({"user": u} for u in people)]
+        elif isinstance(vis, list):
+            had = {x.get("user") for x in vis if isinstance(x, dict)}
+            add = [g for g in mine if g not in had]
+            if add:
+                v["visible"] = [*vis, {"user": ACCESS_MORE}, *({"user": g} for g in add)]
+        # `visible: false` (nobody) or anything else: as it is.
+    return cfg
+
+
+def collapse_access(cfg: Any, guests: set[str] | frozenset[str] = frozenset()) -> Any:
+    """The pages as they were before expand_access (in place): by the tag; a list whose tag HA's own editor dropped —
+    the known guests out of it, the rest is a list someone chose."""
+    for v in _views(cfg):
+        if not isinstance(v, dict) or not isinstance(v.get("visible"), list):
+            continue
+        vis = v["visible"]
+        users = [x.get("user") if isinstance(x, dict) else None for x in vis]
+        if ACCESS_ALL in users:
+            del v["visible"]
+        elif ACCESS_ALL_TRUE in users:
+            v["visible"] = True
+        elif ACCESS_MORE in users:
+            v["visible"] = vis[: users.index(ACCESS_MORE)]
+        elif guests and any(u in guests for u in users):
+            v["visible"] = [x for x, u in zip(vis, users) if u not in guests]
+    return cfg
+
+
 # --- the agent's side -------------------------------------------------------------------------------------------------
 
 
@@ -1427,6 +1500,69 @@ class DashboardMerge:
         self.copies: dict[str, list[str]] = {}
         self.taken_copies: set[str] = set()  # of those, the ones made before a take-save
         self.key: bytes = b""
+        # Who sees which page (guest.py sets it: guests with a login); None — no guest module, nothing expanded.
+        self.access_of: Callable[[], Any] | None = None
+        # One writer of a dashboard at a time: a cloud save and a guest's grant / revoke never interleave (a revoked
+        # guest's id put back by a save that read the grants before).
+        self.write_lock = asyncio.Lock()
+
+    async def _access(self) -> Access | None:
+        if self.access_of is None:
+            return None
+        try:
+            return await self.access_of()
+        except Exception:  # noqa: BLE001 — not knowable now: no expansion (the next check of guest.py does it)
+            _LOGGER.warning("Hauflo: who sees which page not known", exc_info=True)
+            return None
+
+    def _plain(self, current: Any, access: Access | None) -> Any:
+        """HA's config without the guests' lists (collapse_access) — what the merge, the base and the cloud see."""
+        return collapse_access(copy.deepcopy(current), access.guests if access else frozenset()) if current is not None else None
+
+    def pages(self) -> list[str]:
+        """Hauflo's dashboards whose pages may be given to a guest: the merged ones, never a copy."""
+        return [u for u in self.bases if not is_copy(u)]
+
+    async def apply_access(self) -> int:
+        """Every merged dashboard's pages → the lists of who sees them now (a guest given / revoked / expired, a person
+        added to HA). Only `visible` of the pages changes; the base and the merge are not touched. How many saved."""
+        access = await self._access()
+        saved = 0
+        async with self.write_lock:
+            for url_path in self.pages():
+                exists, current = await self._current(url_path)
+                if not exists or not isinstance(current, dict):
+                    continue
+                out = expand_access(self._plain(current, access), access, url_path)
+                if out != current:
+                    await self._dashboard(url_path).async_save(out)
+                    saved += 1
+        return saved
+
+    async def page_list(self) -> list[dict[str, Any]]:
+        """The pages a guest with a login may be given (guest.py): every page with a path of the merged dashboards, as
+        the family sees them (collapse_access) — a page only for the administrators marked, a hidden one (`visible:
+        false`) and a dashboard only for administrators (`require_admin`: HA refuses it to a guest) left out."""
+        access = await self._access()
+        admins = set(await self._admin_ids())
+        out: list[dict[str, Any]] = []
+        for url_path in self.pages():
+            exists, current = await self._current(url_path)
+            item = getattr(self._dashboard(url_path), "config", None) or {}
+            if not exists or not isinstance(current, dict) or not isinstance(item, dict) or item.get("require_admin"):
+                continue
+            views = []
+            for v in _views(self._plain(current, access)):
+                if not isinstance(v, dict) or not isinstance(v.get("path"), str) or not v["path"] or v.get("visible") is False:
+                    continue
+                vis = v.get("visible")
+                users = [x.get("user") for x in vis if isinstance(x, dict)] if isinstance(vis, list) else []
+                title = v.get("title") if isinstance(v.get("title"), str) and v.get("title") else v["path"]
+                views.append({"path": v["path"], "title": title, "admin": bool(users) and all(u in admins for u in users), "sub": bool(v.get("subview"))})
+            if views:
+                title = item.get("title") if isinstance(item.get("title"), str) and item.get("title") else url_path
+                out.append({"url_path": url_path, "title": title, "views": views})
+        return out
 
     async def async_load(self) -> None:
         data = await self.store.async_load()
@@ -1473,7 +1609,8 @@ class DashboardMerge:
             raise MergeError("not_found", "no such storage dashboard")
         if current is None:
             raise MergeError("config_not_found", "no config yet")
-        return collapse_admins(redact(current, self.bases[url_path], self.key), await self._admin_ids())
+        plain = self._plain(current, await self._access())
+        return collapse_admins(redact(plain, self.bases[url_path], self.key), await self._admin_ids())
 
     async def _admin_ids(self) -> list[str]:
         """HA's administrators (active people, not HA's own system users), read here — never sent to the cloud."""
@@ -1487,6 +1624,7 @@ class DashboardMerge:
         exists, current = await self._current(url_path)
         if not exists:
             return {"base": False, "exists": False}
+        current = self._plain(current, await self._access())
         base = self.bases.get(url_path) if current is not None else None
         _, out = plan_and_merge(expand_admins(ensure_ids(copy.deepcopy(config)), await self._admin_ids()), current, base)
         # «Заменить на Hauflo»: the integrator's stock cards here, offered — made only by his ticks (`save` … `stock`).
@@ -1496,9 +1634,17 @@ class DashboardMerge:
         return {**out, "exists": True, **({"stock": offers[:200]} if offers else {}), **({"twins": pairs} if pairs else {})}
 
     async def save(self, url_path: str, config: dict[str, Any], take: Any, restore: Any, replace: bool, title: str | None, local_ws: Callable[[list[dict[str, Any]]], Any], lang: str | None = None, stock: Any = (), drop: Any = ()) -> dict[str, Any]:
-        exists, current = await self._current(url_path)
+        async with self.write_lock:
+            return await self._save(url_path, config, take, restore, replace, title, local_ws, lang, stock, drop)
+
+    async def _save(self, url_path: str, config: dict[str, Any], take: Any, restore: Any, replace: bool, title: str | None, local_ws: Callable[[list[dict[str, Any]]], Any], lang: str | None, stock: Any, drop: Any) -> dict[str, Any]:
+        exists, raw = await self._current(url_path)
         if not exists:
             raise MergeError("not_found", "no such storage dashboard")
+        # The guests' lists of who sees a page (expand_access) are the agent's, not the integrator's edit: merged without
+        # them, put back on what is written.
+        access = await self._access()
+        current = self._plain(raw, access)
         base = self.bases.get(url_path) if current is not None else None
         new = expand_admins(ensure_ids(copy.deepcopy(config)), await self._admin_ids())
         new = rekey(new, unpanel(base, new) if base is not None else None)
@@ -1531,19 +1677,20 @@ class DashboardMerge:
                 shown = getattr(self._dashboard(url_path), "config", None) or {}
                 title = shown.get("title") if isinstance(shown.get("title"), str) else None
             copy_url, pruned = await self._copy(url_path, current, title, local_ws, lang, before_take=bool(report.get("taken")))
-        if merged != current:
-            await self._dashboard(url_path).async_save(merged)
+        out = expand_access(copy.deepcopy(merged), access, url_path)
+        if out != raw:
+            await self._dashboard(url_path).async_save(out)
             # Owner 05.11 п.54д: read back from HA — exactly what was planned is there, or the alarm.
             _, back = await self._current(url_path)
-            report["verify"] = "ok" if back == merged else "mismatch"
-            if back != merged:
+            report["verify"] = "ok" if back == out else "mismatch"
+            if back != out:
                 _LOGGER.warning("Hauflo: dashboard %s reads back other than saved", url_path)
         self.bases[url_path] = new
         await self.store.async_save(self.bases)
         # «upgrade»: no Hauflo version stored yet (first save by this agent) — the copy is only a precaution, nobody is
         # known to have edited the dashboard; «edited»: it differs from what Hauflo saved last.
         # «copies_removed»: the oldest of the agent's own copies pruned with this one (п.8 acceptance A: the backend said nothing of them).
-        return {**report, "saved": merged != current, **({"copy": copy_url, "copy_reason": "upgrade" if base is None else "edited"} if copy_url else {}), **({"copies_removed": pruned} if pruned else {})}
+        return {**report, "saved": out != raw, **({"copy": copy_url, "copy_reason": "upgrade" if base is None else "edited"} if copy_url else {}), **({"copies_removed": pruned} if pruned else {})}
 
     async def _copy(self, url_path: str, config: Any, title: str | None, local_ws: Callable[[list[dict[str, Any]]], Any], lang: str | None = None, before_take: bool = False) -> tuple[str, int]:
         """The copy's url_path and how many old copies went with it."""

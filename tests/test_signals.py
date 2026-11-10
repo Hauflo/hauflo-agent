@@ -125,6 +125,51 @@ async def test_house_by_the_policy(hass: HomeAssistant, entry, hass_client):
     assert agent.status()["signalsHash"] == "0123456789abcdef"
 
 
+async def test_cards_verdicts_follow_the_policy(hass: HomeAssistant, entry, hass_client):
+    """Owner 10.11: «Авария когда: Не авария» for a ZONT heat sensor — the cards' `_signals` say «none» for it at once (the
+    tile's red frame and «авария» go), a policy change back says it again; the canon's ones and the classless ones by
+    their words are listed, «не решено» and the unlisted are not (the cards' canon, the same)."""
+    agent = entry.runtime_data
+    reg = er.async_get(hass)
+    reg.async_get_or_create("binary_sensor", "zont_ha", "gk", suggested_object_id="gk", original_device_class="heat")
+    reg.async_get_or_create("binary_sensor", "hauflo", "own", suggested_object_id="own", original_device_class="problem")
+    _set(hass, "binary_sensor.gk", "on", device_class="heat", friendly_name="ГК Состояние")
+    _set(hass, "binary_sensor.zont", "off", device_class="problem", friendly_name="Zont")
+    _set(hass, "binary_sensor.knopka", "on", friendly_name="Кнопка")  # «не решено»
+    _set(hass, "binary_sensor.boiler", "on", friendly_name="Авария котла")  # classless by its words
+    _set(hass, "binary_sensor.door", "on", device_class="door", friendly_name="Дверь")  # unlisted
+    _set(hass, "binary_sensor.own", "on", device_class="problem", friendly_name="Hauflo")  # the agent's own
+    v = agent.house()["_signals"]
+    assert v["binary_sensor.gk"] == {"house": "alarm", "alarm": {"states": ["on"]}}
+    assert v["binary_sensor.zont"] == {"house": "fault", "alarm": {"states": ["on"]}}
+    assert v["binary_sensor.boiler"]["house"] == "fault"
+    assert not {"binary_sensor.knopka", "binary_sensor.door", "binary_sensor.own"} & set(v)
+    client = await hass_client()
+
+    async def push(ents, h):
+        res = await client.post("/api/hauflo/signals", json={"signals": {"entities": ents}, "hash": h})
+        assert res.status == 200
+
+    # «Не авария»: never an alarm here — in the view the cards read, at once.
+    await push({"binary_sensor.gk": {"alarm": {"none": True}, "by": "t", "at": AT}}, "0123456789abcdef")
+    body = await (await client.get("/api/hauflo/alarms")).json()
+    assert body["_signals"]["binary_sensor.gk"] == {"house": "none"} and body["_house"] == "ok"
+    # «не влияет» / «не следить» alike; a «не решено» one decided but not watched moves nothing — not listed (the canon).
+    await push({"binary_sensor.gk": {"house": "none", "by": "t", "at": AT}, "binary_sensor.zont": {"watch": False, "by": "t", "at": AT}, "binary_sensor.knopka": {"house": "fault", "by": "t", "at": AT}}, "1123456789abcdef")
+    v = agent.house()["_signals"]
+    assert v["binary_sensor.gk"] == v["binary_sensor.zont"] == {"house": "none"} and "binary_sensor.knopka" not in v
+    # Watched by the site's «следить»: listed with its fault.
+    await push({"binary_sensor.knopka": {"house": "fault", "watch": True, "by": "t", "at": AT}}, "3123456789abcdef")
+    assert agent.house()["_signals"]["binary_sensor.knopka"] == {"house": "fault", "alarm": {"states": ["on"]}}
+    # Back to the canon: an alarm again; the site's own condition goes as it is (the card compares HA's live state).
+    await push({"binary_sensor.gk": {"alarm": {"states": ["off"]}, "by": "t", "at": AT}}, "2123456789abcdef")
+    v = agent.house()["_signals"]
+    assert v["binary_sensor.gk"] == {"house": "alarm", "alarm": {"states": ["off"]}} and v["binary_sensor.zont"]["house"] == "fault"
+    # The size: at most cards_max, the site's own choices first.
+    with patch.object(signals, "CARDS_MAX", 1):
+        assert list(agent.house()["_signals"]) == ["binary_sensor.gk"]
+
+
 async def test_signals_view_rights_and_bodies(hass: HomeAssistant, entry, hass_client, hass_read_only_access_token):
     client = await hass_client()
     got = await (await client.get("/api/hauflo/signals")).json()

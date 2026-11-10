@@ -28,6 +28,13 @@ from .storage import HaufloStore
 
 STORE_KEY = "hauflo.house"
 DATA = "hauflo_house"
+# The users guest.py made for guests with a login (a set of ids, kept by guest.py): never the house's people — a
+# guest is a restricted profile everywhere in Hauflo, isn't listed among the people and can't open the guest settings.
+GUEST_USERS = "hauflo_guest_users"
+
+
+def is_guest(hass: HomeAssistant, user: Any) -> bool:
+    return user is not None and getattr(user, "id", None) in hass.data.get(GUEST_USERS, ())
 MAX_FAV = 24
 MAX_RESTRICTED = 50
 OLD_ISSUE = "house_editors"  # round 2's Repairs note (allow-list model): removed at start
@@ -132,7 +139,7 @@ def house(hass: HomeAssistant) -> House:
 
 async def is_restricted(hass: HomeAssistant, user: Any) -> bool:
     """«Ограниченный (детский) профиль»: an admin marked this person (an admin never is)."""
-    if user is None or not getattr(user, "is_active", False):
+    if user is None or not getattr(user, "is_active", False) or is_guest(hass, user):
         return True
     if user.is_admin:
         return False
@@ -197,7 +204,7 @@ class HouseView(HomeAssistantView):
             "rules": _rule_states(hass, bool(user and user.is_admin)),
         }
         if user and user.is_admin:
-            people = [u for u in await hass.auth.async_get_users() if not u.system_generated and u.is_active]
+            people = [u for u in await hass.auth.async_get_users() if not u.system_generated and u.is_active and not is_guest(hass, u)]
             out["restricted"] = list(data.get("restricted") or [])
             out["users"] = [{"id": u.id, "name": u.name or "", "admin": u.is_admin} for u in sorted(people, key=lambda u: (not u.is_admin, natural_key(u.name)))]
         return self.json(out)
@@ -220,7 +227,7 @@ class HouseView(HomeAssistantView):
             if not isinstance(ids, list) or not all(isinstance(x, str) and _USER.match(x) for x in ids):
                 return self.json_message("restricted: a list of user ids", 400)
             # An admin is never restricted (HA's admin can do everything anyway); unknown ids are dropped.
-            known = {u.id for u in await hass.auth.async_get_users() if not u.system_generated and not u.is_admin}
+            known = {u.id for u in await hass.auth.async_get_users() if not u.system_generated and not u.is_admin and not is_guest(hass, u)}
             data["restricted"] = sorted({x for x in ids if x in known})[:MAX_RESTRICTED]
         if "favorites" in body:
             fav = clean_favorites(body["favorites"])

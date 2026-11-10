@@ -2749,7 +2749,41 @@ class Agent:
                 faults.append({"entity": m["entityId"], "name": m["name"], "house": m["house"], "severity": m["severity"], "offline": m["state"] == "unavailable"})
         live = [f for f in faults if not f["offline"]]
         level = "alarm" if any(f["house"] == "alarm" for f in live) else "fault" if live else "offline" if faults else "ok"
-        return {"_house": level, "_faults": faults, "_shelved": shelved}
+        return {"_house": level, "_faults": faults, "_shelved": shelved, "_signals": self.signal_verdicts()}
+
+    def signal_verdicts(self) -> dict[str, dict[str, Any]]:
+        """The cards' answer «is this signal an alarm here» by the one calculator (signals.py with the site's policy, 0.32
+        п.5 — owner 10.11: «Авария когда: Не авария» set in Hauflo, the tile stayed red): {entity: {"house": alarm |
+        fault, "alarm": its alarm condition}} for a watched one — the card compares HA's live state with the condition
+        (no wait for the next read); {"house": "none"} — never an alarm here (the site's «Не авария» / «не влияет» / «не
+        следить»). Listed: what the canon watches by class (hidden ones too: a card may list a project's hidden inputs) or
+        a classless one by its name's words, what the agent watches (the label, «Уведомлять», the site's «следить») and
+        what it was told not to. Not listed — the cards' canon, the same one (scripts/check-cards-logic.mjs): the rest
+        (the site's choice for a signal nobody watches moves nothing, as in the cloud's «Сигналы дома»), «не решено»
+        unless switched off, the agent's own and the phones'. At most signals_agent.cards_max, the site's own first."""
+        reg = er.async_get(self.hass)
+        pol = signals.policy(self.hass)
+        own = (pol or {}).get("entities") or {}
+        monitored = set(self._monitored_ids())
+        sig = signals.store(self.hass)
+        off = foreign.notify_off(self.hass) | (sig.watch_off() if sig else set())
+        out: dict[str, dict[str, Any]] = {}
+        for s in sorted(self.hass.states.async_all(signals.SIGNAL_DOMAINS), key=lambda x: (x.entity_id not in own, x.entity_id)):
+            if len(out) >= signals.CARDS_MAX:
+                break
+            eid = s.entity_id
+            ent = reg.async_get(eid)
+            platform = str(ent.platform) if ent is not None and ent.platform else None
+            if platform in signals.WATCH_SKIP:
+                continue
+            ev = signals.evaluate(s, platform=platform, policy=pol)
+            by_canon = signals.watch_by_class(eid, s.attributes.get("device_class"), platform) or ev["base"] in signals.CLASSLESS_WATCHED
+            if not (eid in monitored or eid in off or by_canon) or (ev["undetermined"] and eid not in off):
+                continue
+            alarm = ev["alarm"]
+            watched = eid not in off and ev["watch"] and (eid in monitored or by_canon) and ev["house"] != "none"
+            out[eid] = {"house": ev["house"], "alarm": alarm} if watched and alarm and "none" not in alarm else {"house": "none"}
+        return out
 
     def _knx(self) -> dict[str, Any]:
         entries = self.hass.config_entries.async_entries("knx")
@@ -3050,6 +3084,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
         await agent.guest.async_load()
     except Exception as err:  # noqa: BLE001 — never stops the agent (loaded again on the first request)
         degrade("guest access", err)
+    # Guests with a login: who sees which page of Hauflo's dashboards (guest.py ↔ dashmerge.expand_access).
+    agent.guest.dashboards = agent.dashboards
+    agent.dashboards.access_of = agent.guest.access
+    try:
+        await agent.guest.async_start()
+    except Exception as err:  # noqa: BLE001 — never stops the agent (the minute's check tries again)
+        degrade("guest pages", err)
     engine = notify.NotifyEngine(hass)
     # Set here too: the link may say «welcome» before the engine exists (re-added integration — monitoring
     # stayed empty until the minute status, integrator run 14).
@@ -3392,6 +3433,16 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         _LOGGER.exception("Hauflo: dashboard cards not kept")
     with contextlib.suppress(Exception):
         await notify.NotifyEngine(hass).async_remove()
+    # Guests with a login: their HA users deleted (nobody revokes them any more), every page's list of who sees it back
+    # to what Hauflo's dashboards said — before the guest store goes.
+    try:
+        gone = guest.GuestAccess(hass, lambda _eid: False, lambda: "")
+        gone.dashboards = dashmerge.DashboardMerge(hass)
+        await gone.dashboards.async_load()
+        gone.dashboards.access_of = gone.access
+        await gone.async_remove()
+    except Exception:  # noqa: BLE001 — never stops the removal
+        _LOGGER.exception("Hauflo: guests with a login not removed")
     # The alarm rules made HA's own automations keep working without the agent (0.26, 5B) — the owner told so.
     try:
         await independent.async_removed(hass)

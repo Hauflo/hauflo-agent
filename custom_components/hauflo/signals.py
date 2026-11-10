@@ -38,6 +38,12 @@ HASH = re.compile(_A["hash_format"])
 STAMP_LEN = _A["stamp_len"]
 # Not watched by class: the agent's own entities (its link to Hauflo) and the family's phones (as notify.status).
 WATCH_SKIP = frozenset(_A["watch_skip_platforms"])
+# The cards' verdicts (`_signals` of GET /api/hauflo/alarms): at most this many entities, the site's own choices first.
+CARDS_MAX = _A["cards_max"]
+# The domains a signal can be of: the canon's classes' and the classless ones'.
+SIGNAL_DOMAINS = tuple(sorted({k.split(".", 1)[0] for k in CANON["classes"]} | set(CANON["classless"]["domains"])))
+# Watched by the canon without a class: a classless one whose name says a leak / smoke… or a fault.
+CLASSLESS_WATCHED = ("classless.loud", "classless.fault")
 HOLD_MAX = TUNING["notify"]["hold"]["max_s"]
 LEVEL_ABS_MAX = TUNING["notify"]["level_abs_max"]
 LOUD = re.compile(CANON["classless"]["loudWords"], re.I)
