@@ -12,6 +12,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .device import device_info
+from .intercom.entities import entities as intercom_entities
 from .ownership import SIGNAL
 from .season import SeasonCurrent, SeasonRecommended
 
@@ -21,6 +22,8 @@ PARALLEL_UPDATES = 0
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEntitiesCallback) -> None:
     add([HaufloOwnership(entry)])
+    # Р55: each door's «Домофон» state with the plate's diagnosis (intercom/entities.py).
+    add(intercom_entities(getattr(entry.runtime_data, "intercom", None), "sensor"))
     # «Рекомендуемый сезон» / «Текущий сезон» (season.py), push-updated.
     if (season := getattr(entry.runtime_data, "season", None)) is not None:
         add([SeasonRecommended(entry, season), SeasonCurrent(entry, season)])

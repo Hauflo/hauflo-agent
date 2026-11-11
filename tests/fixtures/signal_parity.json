@@ -4185,7 +4185,1041 @@
   },
   {
    "ref": {
-    "entityId": "binary_sensor.parity_28",
+    "entityId": "lock.parity_own"
+   },
+   "policy": null,
+   "state": "unavailable",
+   "want": {
+    "base": "class",
+    "baseKey": "lock",
+    "alarm": {
+     "states": [
+      "jammed"
+     ]
+    },
+    "house": "alarm",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "lock.parity_own"
+   },
+   "policy": null,
+   "state": "unknown",
+   "want": {
+    "base": "class",
+    "baseKey": "lock",
+    "alarm": {
+     "states": [
+      "jammed"
+     ]
+    },
+    "house": "alarm",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "lock.parity_own"
+   },
+   "policy": null,
+   "state": "off",
+   "want": {
+    "base": "class",
+    "baseKey": "lock",
+    "alarm": {
+     "states": [
+      "jammed"
+     ]
+    },
+    "house": "alarm",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "lock.parity_own"
+   },
+   "policy": null,
+   "state": "on",
+   "want": {
+    "base": "class",
+    "baseKey": "lock",
+    "alarm": {
+     "states": [
+      "jammed"
+     ]
+    },
+    "house": "alarm",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "lock.parity_own"
+   },
+   "policy": null,
+   "state": "jammed",
+   "want": {
+    "base": "class",
+    "baseKey": "lock",
+    "alarm": {
+     "states": [
+      "jammed"
+     ]
+    },
+    "house": "alarm",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "lock.parity_own_knx",
+    "platform": "knx"
+   },
+   "policy": null,
+   "state": "unavailable",
+   "want": {
+    "base": "class",
+    "baseKey": "lock",
+    "alarm": {
+     "states": [
+      "jammed"
+     ]
+    },
+    "house": "alarm",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "lock.parity_own_knx",
+    "platform": "knx"
+   },
+   "policy": null,
+   "state": "unknown",
+   "want": {
+    "base": "class",
+    "baseKey": "lock",
+    "alarm": {
+     "states": [
+      "jammed"
+     ]
+    },
+    "house": "alarm",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "lock.parity_own_knx",
+    "platform": "knx"
+   },
+   "policy": null,
+   "state": "off",
+   "want": {
+    "base": "class",
+    "baseKey": "lock",
+    "alarm": {
+     "states": [
+      "jammed"
+     ]
+    },
+    "house": "alarm",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "lock.parity_own_knx",
+    "platform": "knx"
+   },
+   "policy": null,
+   "state": "on",
+   "want": {
+    "base": "class",
+    "baseKey": "lock",
+    "alarm": {
+     "states": [
+      "jammed"
+     ]
+    },
+    "house": "alarm",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "lock.parity_own_knx",
+    "platform": "knx"
+   },
+   "policy": null,
+   "state": "jammed",
+   "want": {
+    "base": "class",
+    "baseKey": "lock",
+    "alarm": {
+     "states": [
+      "jammed"
+     ]
+    },
+    "house": "alarm",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "sensor.parity_lock_battery",
+    "deviceClass": "battery",
+    "deviceKind": "lock"
+   },
+   "policy": null,
+   "state": "unavailable",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:sensor.battery",
+    "alarm": {
+     "below": 20,
+     "step": 5
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "sensor.parity_lock_battery",
+    "deviceClass": "battery",
+    "deviceKind": "lock"
+   },
+   "policy": null,
+   "state": "unknown",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:sensor.battery",
+    "alarm": {
+     "below": 20,
+     "step": 5
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "sensor.parity_lock_battery",
+    "deviceClass": "battery",
+    "deviceKind": "lock"
+   },
+   "policy": null,
+   "state": "off",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:sensor.battery",
+    "alarm": {
+     "below": 20,
+     "step": 5
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "sensor.parity_lock_battery",
+    "deviceClass": "battery",
+    "deviceKind": "lock"
+   },
+   "policy": null,
+   "state": "on",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:sensor.battery",
+    "alarm": {
+     "below": 20,
+     "step": 5
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "sensor.parity_lock_battery",
+    "deviceClass": "battery",
+    "deviceKind": "lock"
+   },
+   "policy": null,
+   "state": "19",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:sensor.battery",
+    "alarm": {
+     "below": 20,
+     "step": 5
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "sensor.parity_lock_battery",
+    "deviceClass": "battery",
+    "deviceKind": "lock"
+   },
+   "policy": null,
+   "state": "20",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:sensor.battery",
+    "alarm": {
+     "below": 20,
+     "step": 5
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "sensor.parity_lock_battery",
+    "deviceClass": "battery",
+    "deviceKind": "lock"
+   },
+   "policy": null,
+   "state": "21",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:sensor.battery",
+    "alarm": {
+     "below": 20,
+     "step": 5
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "sensor.parity_lock_battery_knx",
+    "deviceClass": "battery",
+    "deviceKind": "lock",
+    "platform": "knx"
+   },
+   "policy": null,
+   "state": "unavailable",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:sensor.battery",
+    "alarm": {
+     "below": 20,
+     "step": 5
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "sensor.parity_lock_battery_knx",
+    "deviceClass": "battery",
+    "deviceKind": "lock",
+    "platform": "knx"
+   },
+   "policy": null,
+   "state": "unknown",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:sensor.battery",
+    "alarm": {
+     "below": 20,
+     "step": 5
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "sensor.parity_lock_battery_knx",
+    "deviceClass": "battery",
+    "deviceKind": "lock",
+    "platform": "knx"
+   },
+   "policy": null,
+   "state": "off",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:sensor.battery",
+    "alarm": {
+     "below": 20,
+     "step": 5
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "sensor.parity_lock_battery_knx",
+    "deviceClass": "battery",
+    "deviceKind": "lock",
+    "platform": "knx"
+   },
+   "policy": null,
+   "state": "on",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:sensor.battery",
+    "alarm": {
+     "below": 20,
+     "step": 5
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "sensor.parity_lock_battery_knx",
+    "deviceClass": "battery",
+    "deviceKind": "lock",
+    "platform": "knx"
+   },
+   "policy": null,
+   "state": "19",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:sensor.battery",
+    "alarm": {
+     "below": 20,
+     "step": 5
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "sensor.parity_lock_battery_knx",
+    "deviceClass": "battery",
+    "deviceKind": "lock",
+    "platform": "knx"
+   },
+   "policy": null,
+   "state": "20",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:sensor.battery",
+    "alarm": {
+     "below": 20,
+     "step": 5
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "sensor.parity_lock_battery_knx",
+    "deviceClass": "battery",
+    "deviceKind": "lock",
+    "platform": "knx"
+   },
+   "policy": null,
+   "state": "21",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:sensor.battery",
+    "alarm": {
+     "below": 20,
+     "step": 5
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_lock_battery",
+    "deviceClass": "battery",
+    "deviceKind": "lock"
+   },
+   "policy": null,
+   "state": "unavailable",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:binary_sensor.battery",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_lock_battery",
+    "deviceClass": "battery",
+    "deviceKind": "lock"
+   },
+   "policy": null,
+   "state": "unknown",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:binary_sensor.battery",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_lock_battery",
+    "deviceClass": "battery",
+    "deviceKind": "lock"
+   },
+   "policy": null,
+   "state": "off",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:binary_sensor.battery",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_lock_battery",
+    "deviceClass": "battery",
+    "deviceKind": "lock"
+   },
+   "policy": null,
+   "state": "on",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:binary_sensor.battery",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_lock_battery_knx",
+    "deviceClass": "battery",
+    "deviceKind": "lock",
+    "platform": "knx"
+   },
+   "policy": null,
+   "state": "unavailable",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:binary_sensor.battery",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_lock_battery_knx",
+    "deviceClass": "battery",
+    "deviceKind": "lock",
+    "platform": "knx"
+   },
+   "policy": null,
+   "state": "unknown",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:binary_sensor.battery",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_lock_battery_knx",
+    "deviceClass": "battery",
+    "deviceKind": "lock",
+    "platform": "knx"
+   },
+   "policy": null,
+   "state": "off",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:binary_sensor.battery",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_lock_battery_knx",
+    "deviceClass": "battery",
+    "deviceKind": "lock",
+    "platform": "knx"
+   },
+   "policy": null,
+   "state": "on",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:binary_sensor.battery",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "sensor.parity_kind_unknown",
+    "deviceClass": "battery",
+    "deviceKind": "toaster"
+   },
+   "policy": null,
+   "state": "5",
+   "want": {
+    "base": "class",
+    "baseKey": "sensor.battery",
+    "alarm": {
+     "below": 20,
+     "step": 5
+    },
+    "house": "none",
+    "severity": "info",
+    "defaultSeverity": "info",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": true,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "sensor.parity_kind_unknown",
+    "deviceClass": "battery",
+    "deviceKind": "toaster"
+   },
+   "policy": null,
+   "state": "50",
+   "want": {
+    "base": "class",
+    "baseKey": "sensor.battery",
+    "alarm": {
+     "below": 20,
+     "step": 5
+    },
+    "house": "none",
+    "severity": "info",
+    "defaultSeverity": "info",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_35",
     "name": "Протечка ванная"
    },
    "policy": null,
@@ -4215,1001 +5249,11 @@
   },
   {
    "ref": {
-    "entityId": "binary_sensor.parity_28",
+    "entityId": "binary_sensor.parity_35",
     "name": "Протечка ванная"
    },
    "policy": null,
    "state": "off",
-   "want": {
-    "base": "classless.loud",
-    "baseKey": "classless.loud",
-    "alarm": {
-     "states": [
-      "on"
-     ]
-    },
-    "house": "alarm",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": true,
-    "undetermined": false,
-    "from": {
-     "alarm": "canon",
-     "severity": "canon",
-     "house": "canon"
-    },
-    "problem": false,
-    "affects": false
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_28",
-    "name": "Протечка ванная"
-   },
-   "policy": null,
-   "state": "unavailable",
-   "want": {
-    "base": "classless.loud",
-    "baseKey": "classless.loud",
-    "alarm": {
-     "states": [
-      "on"
-     ]
-    },
-    "house": "alarm",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": true,
-    "undetermined": false,
-    "from": {
-     "alarm": "canon",
-     "severity": "canon",
-     "house": "canon"
-    },
-    "problem": true,
-    "affects": true
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_28",
-    "name": "Протечка ванная"
-   },
-   "policy": null,
-   "state": "Авария",
-   "want": {
-    "base": "classless.loud",
-    "baseKey": "classless.loud",
-    "alarm": {
-     "states": [
-      "on"
-     ]
-    },
-    "house": "alarm",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": true,
-    "undetermined": false,
-    "from": {
-     "alarm": "canon",
-     "severity": "canon",
-     "house": "canon"
-    },
-    "problem": false,
-    "affects": false
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_28",
-    "name": "Протечка ванная"
-   },
-   "policy": null,
-   "state": "авария",
-   "want": {
-    "base": "classless.loud",
-    "baseKey": "classless.loud",
-    "alarm": {
-     "states": [
-      "on"
-     ]
-    },
-    "house": "alarm",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": true,
-    "undetermined": false,
-    "from": {
-     "alarm": "canon",
-     "severity": "canon",
-     "house": "canon"
-    },
-    "problem": false,
-    "affects": false
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_29",
-    "name": "Water leak"
-   },
-   "policy": null,
-   "state": "on",
-   "want": {
-    "base": "classless.loud",
-    "baseKey": "classless.loud",
-    "alarm": {
-     "states": [
-      "on"
-     ]
-    },
-    "house": "alarm",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": true,
-    "undetermined": false,
-    "from": {
-     "alarm": "canon",
-     "severity": "canon",
-     "house": "canon"
-    },
-    "problem": true,
-    "affects": true
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_29",
-    "name": "Water leak"
-   },
-   "policy": null,
-   "state": "off",
-   "want": {
-    "base": "classless.loud",
-    "baseKey": "classless.loud",
-    "alarm": {
-     "states": [
-      "on"
-     ]
-    },
-    "house": "alarm",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": true,
-    "undetermined": false,
-    "from": {
-     "alarm": "canon",
-     "severity": "canon",
-     "house": "canon"
-    },
-    "problem": false,
-    "affects": false
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_29",
-    "name": "Water leak"
-   },
-   "policy": null,
-   "state": "unavailable",
-   "want": {
-    "base": "classless.loud",
-    "baseKey": "classless.loud",
-    "alarm": {
-     "states": [
-      "on"
-     ]
-    },
-    "house": "alarm",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": true,
-    "undetermined": false,
-    "from": {
-     "alarm": "canon",
-     "severity": "canon",
-     "house": "canon"
-    },
-    "problem": true,
-    "affects": true
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_29",
-    "name": "Water leak"
-   },
-   "policy": null,
-   "state": "Авария",
-   "want": {
-    "base": "classless.loud",
-    "baseKey": "classless.loud",
-    "alarm": {
-     "states": [
-      "on"
-     ]
-    },
-    "house": "alarm",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": true,
-    "undetermined": false,
-    "from": {
-     "alarm": "canon",
-     "severity": "canon",
-     "house": "canon"
-    },
-    "problem": false,
-    "affects": false
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_29",
-    "name": "Water leak"
-   },
-   "policy": null,
-   "state": "авария",
-   "want": {
-    "base": "classless.loud",
-    "baseKey": "classless.loud",
-    "alarm": {
-     "states": [
-      "on"
-     ]
-    },
-    "house": "alarm",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": true,
-    "undetermined": false,
-    "from": {
-     "alarm": "canon",
-     "severity": "canon",
-     "house": "canon"
-    },
-    "problem": false,
-    "affects": false
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_30",
-    "name": "Ошибка насоса"
-   },
-   "policy": null,
-   "state": "on",
-   "want": {
-    "base": "classless.fault",
-    "baseKey": "classless.fault",
-    "alarm": {
-     "states": [
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": false,
-    "from": {
-     "alarm": "canon",
-     "severity": "canon",
-     "house": "canon"
-    },
-    "problem": true,
-    "affects": true
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_30",
-    "name": "Ошибка насоса"
-   },
-   "policy": null,
-   "state": "off",
-   "want": {
-    "base": "classless.fault",
-    "baseKey": "classless.fault",
-    "alarm": {
-     "states": [
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": false,
-    "from": {
-     "alarm": "canon",
-     "severity": "canon",
-     "house": "canon"
-    },
-    "problem": false,
-    "affects": false
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_30",
-    "name": "Ошибка насоса"
-   },
-   "policy": null,
-   "state": "unavailable",
-   "want": {
-    "base": "classless.fault",
-    "baseKey": "classless.fault",
-    "alarm": {
-     "states": [
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": false,
-    "from": {
-     "alarm": "canon",
-     "severity": "canon",
-     "house": "canon"
-    },
-    "problem": true,
-    "affects": true
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_30",
-    "name": "Ошибка насоса"
-   },
-   "policy": null,
-   "state": "Авария",
-   "want": {
-    "base": "classless.fault",
-    "baseKey": "classless.fault",
-    "alarm": {
-     "states": [
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": false,
-    "from": {
-     "alarm": "canon",
-     "severity": "canon",
-     "house": "canon"
-    },
-    "problem": false,
-    "affects": false
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_30",
-    "name": "Ошибка насоса"
-   },
-   "policy": null,
-   "state": "авария",
-   "want": {
-    "base": "classless.fault",
-    "baseKey": "classless.fault",
-    "alarm": {
-     "states": [
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": false,
-    "from": {
-     "alarm": "canon",
-     "severity": "canon",
-     "house": "canon"
-    },
-    "problem": false,
-    "affects": false
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_31",
-    "name": "Pump fault"
-   },
-   "policy": null,
-   "state": "on",
-   "want": {
-    "base": "classless.fault",
-    "baseKey": "classless.fault",
-    "alarm": {
-     "states": [
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": false,
-    "from": {
-     "alarm": "canon",
-     "severity": "canon",
-     "house": "canon"
-    },
-    "problem": true,
-    "affects": true
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_31",
-    "name": "Pump fault"
-   },
-   "policy": null,
-   "state": "off",
-   "want": {
-    "base": "classless.fault",
-    "baseKey": "classless.fault",
-    "alarm": {
-     "states": [
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": false,
-    "from": {
-     "alarm": "canon",
-     "severity": "canon",
-     "house": "canon"
-    },
-    "problem": false,
-    "affects": false
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_31",
-    "name": "Pump fault"
-   },
-   "policy": null,
-   "state": "unavailable",
-   "want": {
-    "base": "classless.fault",
-    "baseKey": "classless.fault",
-    "alarm": {
-     "states": [
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": false,
-    "from": {
-     "alarm": "canon",
-     "severity": "canon",
-     "house": "canon"
-    },
-    "problem": true,
-    "affects": true
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_31",
-    "name": "Pump fault"
-   },
-   "policy": null,
-   "state": "Авария",
-   "want": {
-    "base": "classless.fault",
-    "baseKey": "classless.fault",
-    "alarm": {
-     "states": [
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": false,
-    "from": {
-     "alarm": "canon",
-     "severity": "canon",
-     "house": "canon"
-    },
-    "problem": false,
-    "affects": false
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_31",
-    "name": "Pump fault"
-   },
-   "policy": null,
-   "state": "авария",
-   "want": {
-    "base": "classless.fault",
-    "baseKey": "classless.fault",
-    "alarm": {
-     "states": [
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": false,
-    "from": {
-     "alarm": "canon",
-     "severity": "canon",
-     "house": "canon"
-    },
-    "problem": false,
-    "affects": false
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_32",
-    "name": "Кнопка"
-   },
-   "policy": null,
-   "state": "on",
-   "want": {
-    "base": "undetermined",
-    "baseKey": "undetermined",
-    "alarm": {
-     "states": [
-      "on"
-     ]
-    },
-    "house": "none",
-    "severity": "info",
-    "defaultSeverity": "info",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": true,
-    "from": {
-     "alarm": "canon",
-     "severity": "canon",
-     "house": "canon"
-    },
-    "problem": true,
-    "affects": false
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_32",
-    "name": "Кнопка"
-   },
-   "policy": null,
-   "state": "off",
-   "want": {
-    "base": "undetermined",
-    "baseKey": "undetermined",
-    "alarm": {
-     "states": [
-      "on"
-     ]
-    },
-    "house": "none",
-    "severity": "info",
-    "defaultSeverity": "info",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": true,
-    "from": {
-     "alarm": "canon",
-     "severity": "canon",
-     "house": "canon"
-    },
-    "problem": false,
-    "affects": false
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_32",
-    "name": "Кнопка"
-   },
-   "policy": null,
-   "state": "unavailable",
-   "want": {
-    "base": "undetermined",
-    "baseKey": "undetermined",
-    "alarm": {
-     "states": [
-      "on"
-     ]
-    },
-    "house": "none",
-    "severity": "info",
-    "defaultSeverity": "info",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": true,
-    "from": {
-     "alarm": "canon",
-     "severity": "canon",
-     "house": "canon"
-    },
-    "problem": true,
-    "affects": false
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_32",
-    "name": "Кнопка"
-   },
-   "policy": null,
-   "state": "Авария",
-   "want": {
-    "base": "undetermined",
-    "baseKey": "undetermined",
-    "alarm": {
-     "states": [
-      "on"
-     ]
-    },
-    "house": "none",
-    "severity": "info",
-    "defaultSeverity": "info",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": true,
-    "from": {
-     "alarm": "canon",
-     "severity": "canon",
-     "house": "canon"
-    },
-    "problem": false,
-    "affects": false
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_32",
-    "name": "Кнопка"
-   },
-   "policy": null,
-   "state": "авария",
-   "want": {
-    "base": "undetermined",
-    "baseKey": "undetermined",
-    "alarm": {
-     "states": [
-      "on"
-     ]
-    },
-    "house": "none",
-    "severity": "info",
-    "defaultSeverity": "info",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": true,
-    "from": {
-     "alarm": "canon",
-     "severity": "canon",
-     "house": "canon"
-    },
-    "problem": false,
-    "affects": false
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_33",
-    "name": ""
-   },
-   "policy": null,
-   "state": "on",
-   "want": {
-    "base": "undetermined",
-    "baseKey": "undetermined",
-    "alarm": {
-     "states": [
-      "on"
-     ]
-    },
-    "house": "none",
-    "severity": "info",
-    "defaultSeverity": "info",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": true,
-    "from": {
-     "alarm": "canon",
-     "severity": "canon",
-     "house": "canon"
-    },
-    "problem": true,
-    "affects": false
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_33",
-    "name": ""
-   },
-   "policy": null,
-   "state": "off",
-   "want": {
-    "base": "undetermined",
-    "baseKey": "undetermined",
-    "alarm": {
-     "states": [
-      "on"
-     ]
-    },
-    "house": "none",
-    "severity": "info",
-    "defaultSeverity": "info",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": true,
-    "from": {
-     "alarm": "canon",
-     "severity": "canon",
-     "house": "canon"
-    },
-    "problem": false,
-    "affects": false
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_33",
-    "name": ""
-   },
-   "policy": null,
-   "state": "unavailable",
-   "want": {
-    "base": "undetermined",
-    "baseKey": "undetermined",
-    "alarm": {
-     "states": [
-      "on"
-     ]
-    },
-    "house": "none",
-    "severity": "info",
-    "defaultSeverity": "info",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": true,
-    "from": {
-     "alarm": "canon",
-     "severity": "canon",
-     "house": "canon"
-    },
-    "problem": true,
-    "affects": false
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_33",
-    "name": ""
-   },
-   "policy": null,
-   "state": "Авария",
-   "want": {
-    "base": "undetermined",
-    "baseKey": "undetermined",
-    "alarm": {
-     "states": [
-      "on"
-     ]
-    },
-    "house": "none",
-    "severity": "info",
-    "defaultSeverity": "info",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": true,
-    "from": {
-     "alarm": "canon",
-     "severity": "canon",
-     "house": "canon"
-    },
-    "problem": false,
-    "affects": false
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_33",
-    "name": ""
-   },
-   "policy": null,
-   "state": "авария",
-   "want": {
-    "base": "undetermined",
-    "baseKey": "undetermined",
-    "alarm": {
-     "states": [
-      "on"
-     ]
-    },
-    "house": "none",
-    "severity": "info",
-    "defaultSeverity": "info",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": true,
-    "from": {
-     "alarm": "canon",
-     "severity": "canon",
-     "house": "canon"
-    },
-    "problem": false,
-    "affects": false
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_34",
-    "name": "Газ кухня"
-   },
-   "policy": null,
-   "state": "on",
-   "want": {
-    "base": "classless.loud",
-    "baseKey": "classless.loud",
-    "alarm": {
-     "states": [
-      "on"
-     ]
-    },
-    "house": "alarm",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": true,
-    "undetermined": false,
-    "from": {
-     "alarm": "canon",
-     "severity": "canon",
-     "house": "canon"
-    },
-    "problem": true,
-    "affects": true
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_34",
-    "name": "Газ кухня"
-   },
-   "policy": null,
-   "state": "off",
-   "want": {
-    "base": "classless.loud",
-    "baseKey": "classless.loud",
-    "alarm": {
-     "states": [
-      "on"
-     ]
-    },
-    "house": "alarm",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": true,
-    "undetermined": false,
-    "from": {
-     "alarm": "canon",
-     "severity": "canon",
-     "house": "canon"
-    },
-    "problem": false,
-    "affects": false
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_34",
-    "name": "Газ кухня"
-   },
-   "policy": null,
-   "state": "unavailable",
-   "want": {
-    "base": "classless.loud",
-    "baseKey": "classless.loud",
-    "alarm": {
-     "states": [
-      "on"
-     ]
-    },
-    "house": "alarm",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": true,
-    "undetermined": false,
-    "from": {
-     "alarm": "canon",
-     "severity": "canon",
-     "house": "canon"
-    },
-    "problem": true,
-    "affects": true
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_34",
-    "name": "Газ кухня"
-   },
-   "policy": null,
-   "state": "Авария",
-   "want": {
-    "base": "classless.loud",
-    "baseKey": "classless.loud",
-    "alarm": {
-     "states": [
-      "on"
-     ]
-    },
-    "house": "alarm",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": true,
-    "undetermined": false,
-    "from": {
-     "alarm": "canon",
-     "severity": "canon",
-     "house": "canon"
-    },
-    "problem": false,
-    "affects": false
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_34",
-    "name": "Газ кухня"
-   },
-   "policy": null,
-   "state": "авария",
    "want": {
     "base": "classless.loud",
     "baseKey": "classless.loud",
@@ -5236,6 +5280,996 @@
   {
    "ref": {
     "entityId": "binary_sensor.parity_35",
+    "name": "Протечка ванная"
+   },
+   "policy": null,
+   "state": "unavailable",
+   "want": {
+    "base": "classless.loud",
+    "baseKey": "classless.loud",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "alarm",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": true,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_35",
+    "name": "Протечка ванная"
+   },
+   "policy": null,
+   "state": "Авария",
+   "want": {
+    "base": "classless.loud",
+    "baseKey": "classless.loud",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "alarm",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": true,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_35",
+    "name": "Протечка ванная"
+   },
+   "policy": null,
+   "state": "авария",
+   "want": {
+    "base": "classless.loud",
+    "baseKey": "classless.loud",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "alarm",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": true,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_36",
+    "name": "Water leak"
+   },
+   "policy": null,
+   "state": "on",
+   "want": {
+    "base": "classless.loud",
+    "baseKey": "classless.loud",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "alarm",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": true,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_36",
+    "name": "Water leak"
+   },
+   "policy": null,
+   "state": "off",
+   "want": {
+    "base": "classless.loud",
+    "baseKey": "classless.loud",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "alarm",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": true,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_36",
+    "name": "Water leak"
+   },
+   "policy": null,
+   "state": "unavailable",
+   "want": {
+    "base": "classless.loud",
+    "baseKey": "classless.loud",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "alarm",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": true,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_36",
+    "name": "Water leak"
+   },
+   "policy": null,
+   "state": "Авария",
+   "want": {
+    "base": "classless.loud",
+    "baseKey": "classless.loud",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "alarm",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": true,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_36",
+    "name": "Water leak"
+   },
+   "policy": null,
+   "state": "авария",
+   "want": {
+    "base": "classless.loud",
+    "baseKey": "classless.loud",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "alarm",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": true,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_37",
+    "name": "Ошибка насоса"
+   },
+   "policy": null,
+   "state": "on",
+   "want": {
+    "base": "classless.fault",
+    "baseKey": "classless.fault",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_37",
+    "name": "Ошибка насоса"
+   },
+   "policy": null,
+   "state": "off",
+   "want": {
+    "base": "classless.fault",
+    "baseKey": "classless.fault",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_37",
+    "name": "Ошибка насоса"
+   },
+   "policy": null,
+   "state": "unavailable",
+   "want": {
+    "base": "classless.fault",
+    "baseKey": "classless.fault",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_37",
+    "name": "Ошибка насоса"
+   },
+   "policy": null,
+   "state": "Авария",
+   "want": {
+    "base": "classless.fault",
+    "baseKey": "classless.fault",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_37",
+    "name": "Ошибка насоса"
+   },
+   "policy": null,
+   "state": "авария",
+   "want": {
+    "base": "classless.fault",
+    "baseKey": "classless.fault",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_38",
+    "name": "Pump fault"
+   },
+   "policy": null,
+   "state": "on",
+   "want": {
+    "base": "classless.fault",
+    "baseKey": "classless.fault",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_38",
+    "name": "Pump fault"
+   },
+   "policy": null,
+   "state": "off",
+   "want": {
+    "base": "classless.fault",
+    "baseKey": "classless.fault",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_38",
+    "name": "Pump fault"
+   },
+   "policy": null,
+   "state": "unavailable",
+   "want": {
+    "base": "classless.fault",
+    "baseKey": "classless.fault",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_38",
+    "name": "Pump fault"
+   },
+   "policy": null,
+   "state": "Авария",
+   "want": {
+    "base": "classless.fault",
+    "baseKey": "classless.fault",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_38",
+    "name": "Pump fault"
+   },
+   "policy": null,
+   "state": "авария",
+   "want": {
+    "base": "classless.fault",
+    "baseKey": "classless.fault",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_39",
+    "name": "Кнопка"
+   },
+   "policy": null,
+   "state": "on",
+   "want": {
+    "base": "undetermined",
+    "baseKey": "undetermined",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "none",
+    "severity": "info",
+    "defaultSeverity": "info",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": true,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": true,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_39",
+    "name": "Кнопка"
+   },
+   "policy": null,
+   "state": "off",
+   "want": {
+    "base": "undetermined",
+    "baseKey": "undetermined",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "none",
+    "severity": "info",
+    "defaultSeverity": "info",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": true,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_39",
+    "name": "Кнопка"
+   },
+   "policy": null,
+   "state": "unavailable",
+   "want": {
+    "base": "undetermined",
+    "baseKey": "undetermined",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "none",
+    "severity": "info",
+    "defaultSeverity": "info",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": true,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": true,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_39",
+    "name": "Кнопка"
+   },
+   "policy": null,
+   "state": "Авария",
+   "want": {
+    "base": "undetermined",
+    "baseKey": "undetermined",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "none",
+    "severity": "info",
+    "defaultSeverity": "info",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": true,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_39",
+    "name": "Кнопка"
+   },
+   "policy": null,
+   "state": "авария",
+   "want": {
+    "base": "undetermined",
+    "baseKey": "undetermined",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "none",
+    "severity": "info",
+    "defaultSeverity": "info",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": true,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_40",
+    "name": ""
+   },
+   "policy": null,
+   "state": "on",
+   "want": {
+    "base": "undetermined",
+    "baseKey": "undetermined",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "none",
+    "severity": "info",
+    "defaultSeverity": "info",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": true,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": true,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_40",
+    "name": ""
+   },
+   "policy": null,
+   "state": "off",
+   "want": {
+    "base": "undetermined",
+    "baseKey": "undetermined",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "none",
+    "severity": "info",
+    "defaultSeverity": "info",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": true,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_40",
+    "name": ""
+   },
+   "policy": null,
+   "state": "unavailable",
+   "want": {
+    "base": "undetermined",
+    "baseKey": "undetermined",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "none",
+    "severity": "info",
+    "defaultSeverity": "info",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": true,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": true,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_40",
+    "name": ""
+   },
+   "policy": null,
+   "state": "Авария",
+   "want": {
+    "base": "undetermined",
+    "baseKey": "undetermined",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "none",
+    "severity": "info",
+    "defaultSeverity": "info",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": true,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_40",
+    "name": ""
+   },
+   "policy": null,
+   "state": "авария",
+   "want": {
+    "base": "undetermined",
+    "baseKey": "undetermined",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "none",
+    "severity": "info",
+    "defaultSeverity": "info",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": true,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_41",
+    "name": "Газ кухня"
+   },
+   "policy": null,
+   "state": "on",
+   "want": {
+    "base": "classless.loud",
+    "baseKey": "classless.loud",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "alarm",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": true,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_41",
+    "name": "Газ кухня"
+   },
+   "policy": null,
+   "state": "off",
+   "want": {
+    "base": "classless.loud",
+    "baseKey": "classless.loud",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "alarm",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": true,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_41",
+    "name": "Газ кухня"
+   },
+   "policy": null,
+   "state": "unavailable",
+   "want": {
+    "base": "classless.loud",
+    "baseKey": "classless.loud",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "alarm",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": true,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_41",
+    "name": "Газ кухня"
+   },
+   "policy": null,
+   "state": "Авария",
+   "want": {
+    "base": "classless.loud",
+    "baseKey": "classless.loud",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "alarm",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": true,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_41",
+    "name": "Газ кухня"
+   },
+   "policy": null,
+   "state": "авария",
+   "want": {
+    "base": "classless.loud",
+    "baseKey": "classless.loud",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "alarm",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": true,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_42",
     "name": "Газон"
    },
    "policy": null,
@@ -5265,7 +6299,7 @@
   },
   {
    "ref": {
-    "entityId": "binary_sensor.parity_35",
+    "entityId": "binary_sensor.parity_42",
     "name": "Газон"
    },
    "policy": null,
@@ -5295,7 +6329,7 @@
   },
   {
    "ref": {
-    "entityId": "binary_sensor.parity_35",
+    "entityId": "binary_sensor.parity_42",
     "name": "Газон"
    },
    "policy": null,
@@ -5325,7 +6359,7 @@
   },
   {
    "ref": {
-    "entityId": "binary_sensor.parity_35",
+    "entityId": "binary_sensor.parity_42",
     "name": "Газон"
    },
    "policy": null,
@@ -5355,7 +6389,7 @@
   },
   {
    "ref": {
-    "entityId": "binary_sensor.parity_35",
+    "entityId": "binary_sensor.parity_42",
     "name": "Газон"
    },
    "policy": null,
@@ -10842,7 +11876,1025 @@
   },
   {
    "ref": {
-    "entityId": "binary_sensor.parity_28",
+    "entityId": "lock.parity_own"
+   },
+   "policy": "site",
+   "state": "unavailable",
+   "want": {
+    "base": "class",
+    "baseKey": "lock",
+    "alarm": {
+     "states": [
+      "jammed"
+     ]
+    },
+    "house": "alarm",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "lock.parity_own"
+   },
+   "policy": "site",
+   "state": "unknown",
+   "want": {
+    "base": "class",
+    "baseKey": "lock",
+    "alarm": {
+     "states": [
+      "jammed"
+     ]
+    },
+    "house": "alarm",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "lock.parity_own"
+   },
+   "policy": "site",
+   "state": "off",
+   "want": {
+    "base": "class",
+    "baseKey": "lock",
+    "alarm": {
+     "states": [
+      "jammed"
+     ]
+    },
+    "house": "alarm",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "lock.parity_own"
+   },
+   "policy": "site",
+   "state": "on",
+   "want": {
+    "base": "class",
+    "baseKey": "lock",
+    "alarm": {
+     "states": [
+      "jammed"
+     ]
+    },
+    "house": "alarm",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "lock.parity_own"
+   },
+   "policy": "site",
+   "state": "jammed",
+   "want": {
+    "base": "class",
+    "baseKey": "lock",
+    "alarm": {
+     "states": [
+      "jammed"
+     ]
+    },
+    "house": "alarm",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "lock.parity_own_knx",
+    "platform": "knx"
+   },
+   "policy": "site",
+   "state": "unavailable",
+   "want": {
+    "base": "class",
+    "baseKey": "lock",
+    "alarm": {
+     "states": [
+      "jammed"
+     ]
+    },
+    "house": "none",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "scope"
+    },
+    "problem": true,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "lock.parity_own_knx",
+    "platform": "knx"
+   },
+   "policy": "site",
+   "state": "unknown",
+   "want": {
+    "base": "class",
+    "baseKey": "lock",
+    "alarm": {
+     "states": [
+      "jammed"
+     ]
+    },
+    "house": "none",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "scope"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "lock.parity_own_knx",
+    "platform": "knx"
+   },
+   "policy": "site",
+   "state": "off",
+   "want": {
+    "base": "class",
+    "baseKey": "lock",
+    "alarm": {
+     "states": [
+      "jammed"
+     ]
+    },
+    "house": "none",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "scope"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "lock.parity_own_knx",
+    "platform": "knx"
+   },
+   "policy": "site",
+   "state": "on",
+   "want": {
+    "base": "class",
+    "baseKey": "lock",
+    "alarm": {
+     "states": [
+      "jammed"
+     ]
+    },
+    "house": "none",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "scope"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "lock.parity_own_knx",
+    "platform": "knx"
+   },
+   "policy": "site",
+   "state": "jammed",
+   "want": {
+    "base": "class",
+    "baseKey": "lock",
+    "alarm": {
+     "states": [
+      "jammed"
+     ]
+    },
+    "house": "none",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "canon",
+     "house": "scope"
+    },
+    "problem": true,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "sensor.parity_lock_battery",
+    "deviceClass": "battery",
+    "deviceKind": "lock"
+   },
+   "policy": "site",
+   "state": "unavailable",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:sensor.battery",
+    "alarm": {
+     "below": 30
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "sensor.parity_lock_battery",
+    "deviceClass": "battery",
+    "deviceKind": "lock"
+   },
+   "policy": "site",
+   "state": "unknown",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:sensor.battery",
+    "alarm": {
+     "below": 30
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "sensor.parity_lock_battery",
+    "deviceClass": "battery",
+    "deviceKind": "lock"
+   },
+   "policy": "site",
+   "state": "off",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:sensor.battery",
+    "alarm": {
+     "below": 30
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "sensor.parity_lock_battery",
+    "deviceClass": "battery",
+    "deviceKind": "lock"
+   },
+   "policy": "site",
+   "state": "on",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:sensor.battery",
+    "alarm": {
+     "below": 30
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "sensor.parity_lock_battery",
+    "deviceClass": "battery",
+    "deviceKind": "lock"
+   },
+   "policy": "site",
+   "state": "19",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:sensor.battery",
+    "alarm": {
+     "below": 30
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "sensor.parity_lock_battery",
+    "deviceClass": "battery",
+    "deviceKind": "lock"
+   },
+   "policy": "site",
+   "state": "20",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:sensor.battery",
+    "alarm": {
+     "below": 30
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "sensor.parity_lock_battery",
+    "deviceClass": "battery",
+    "deviceKind": "lock"
+   },
+   "policy": "site",
+   "state": "21",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:sensor.battery",
+    "alarm": {
+     "below": 30
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "sensor.parity_lock_battery_knx",
+    "deviceClass": "battery",
+    "deviceKind": "lock",
+    "platform": "knx"
+   },
+   "policy": "site",
+   "state": "unavailable",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:sensor.battery",
+    "alarm": {
+     "below": 30
+    },
+    "house": "none",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "canon",
+     "house": "scope"
+    },
+    "problem": true,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "sensor.parity_lock_battery_knx",
+    "deviceClass": "battery",
+    "deviceKind": "lock",
+    "platform": "knx"
+   },
+   "policy": "site",
+   "state": "unknown",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:sensor.battery",
+    "alarm": {
+     "below": 30
+    },
+    "house": "none",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "canon",
+     "house": "scope"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "sensor.parity_lock_battery_knx",
+    "deviceClass": "battery",
+    "deviceKind": "lock",
+    "platform": "knx"
+   },
+   "policy": "site",
+   "state": "off",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:sensor.battery",
+    "alarm": {
+     "below": 30
+    },
+    "house": "none",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "canon",
+     "house": "scope"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "sensor.parity_lock_battery_knx",
+    "deviceClass": "battery",
+    "deviceKind": "lock",
+    "platform": "knx"
+   },
+   "policy": "site",
+   "state": "on",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:sensor.battery",
+    "alarm": {
+     "below": 30
+    },
+    "house": "none",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "canon",
+     "house": "scope"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "sensor.parity_lock_battery_knx",
+    "deviceClass": "battery",
+    "deviceKind": "lock",
+    "platform": "knx"
+   },
+   "policy": "site",
+   "state": "19",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:sensor.battery",
+    "alarm": {
+     "below": 30
+    },
+    "house": "none",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "canon",
+     "house": "scope"
+    },
+    "problem": true,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "sensor.parity_lock_battery_knx",
+    "deviceClass": "battery",
+    "deviceKind": "lock",
+    "platform": "knx"
+   },
+   "policy": "site",
+   "state": "20",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:sensor.battery",
+    "alarm": {
+     "below": 30
+    },
+    "house": "none",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "canon",
+     "house": "scope"
+    },
+    "problem": true,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "sensor.parity_lock_battery_knx",
+    "deviceClass": "battery",
+    "deviceKind": "lock",
+    "platform": "knx"
+   },
+   "policy": "site",
+   "state": "21",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:sensor.battery",
+    "alarm": {
+     "below": 30
+    },
+    "house": "none",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "canon",
+     "house": "scope"
+    },
+    "problem": true,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_lock_battery",
+    "deviceClass": "battery",
+    "deviceKind": "lock"
+   },
+   "policy": "site",
+   "state": "unavailable",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:binary_sensor.battery",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "info",
+    "defaultSeverity": "info",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "scope",
+     "house": "canon"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_lock_battery",
+    "deviceClass": "battery",
+    "deviceKind": "lock"
+   },
+   "policy": "site",
+   "state": "unknown",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:binary_sensor.battery",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "info",
+    "defaultSeverity": "info",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "scope",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_lock_battery",
+    "deviceClass": "battery",
+    "deviceKind": "lock"
+   },
+   "policy": "site",
+   "state": "off",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:binary_sensor.battery",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "info",
+    "defaultSeverity": "info",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "scope",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_lock_battery",
+    "deviceClass": "battery",
+    "deviceKind": "lock"
+   },
+   "policy": "site",
+   "state": "on",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:binary_sensor.battery",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "info",
+    "defaultSeverity": "info",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "scope",
+     "house": "canon"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_lock_battery_knx",
+    "deviceClass": "battery",
+    "deviceKind": "lock",
+    "platform": "knx"
+   },
+   "policy": "site",
+   "state": "unavailable",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:binary_sensor.battery",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "none",
+    "severity": "info",
+    "defaultSeverity": "info",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "scope",
+     "house": "scope"
+    },
+    "problem": true,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_lock_battery_knx",
+    "deviceClass": "battery",
+    "deviceKind": "lock",
+    "platform": "knx"
+   },
+   "policy": "site",
+   "state": "unknown",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:binary_sensor.battery",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "none",
+    "severity": "info",
+    "defaultSeverity": "info",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "scope",
+     "house": "scope"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_lock_battery_knx",
+    "deviceClass": "battery",
+    "deviceKind": "lock",
+    "platform": "knx"
+   },
+   "policy": "site",
+   "state": "off",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:binary_sensor.battery",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "none",
+    "severity": "info",
+    "defaultSeverity": "info",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "scope",
+     "house": "scope"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_lock_battery_knx",
+    "deviceClass": "battery",
+    "deviceKind": "lock",
+    "platform": "knx"
+   },
+   "policy": "site",
+   "state": "on",
+   "want": {
+    "base": "class",
+    "baseKey": "lock:binary_sensor.battery",
+    "alarm": {
+     "states": [
+      "on"
+     ]
+    },
+    "house": "none",
+    "severity": "info",
+    "defaultSeverity": "info",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "canon",
+     "severity": "scope",
+     "house": "scope"
+    },
+    "problem": true,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "sensor.parity_kind_unknown",
+    "deviceClass": "battery",
+    "deviceKind": "toaster"
+   },
+   "policy": "site",
+   "state": "5",
+   "want": {
+    "base": "class",
+    "baseKey": "sensor.battery",
+    "alarm": {
+     "below": 30
+    },
+    "house": "none",
+    "severity": "info",
+    "defaultSeverity": "info",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": true,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "sensor.parity_kind_unknown",
+    "deviceClass": "battery",
+    "deviceKind": "toaster"
+   },
+   "policy": "site",
+   "state": "50",
+   "want": {
+    "base": "class",
+    "baseKey": "sensor.battery",
+    "alarm": {
+     "below": 30
+    },
+    "house": "none",
+    "severity": "info",
+    "defaultSeverity": "info",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "canon",
+     "house": "canon"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_35",
     "name": "Протечка ванная"
    },
    "policy": "site",
@@ -10873,1034 +12925,11 @@
   },
   {
    "ref": {
-    "entityId": "binary_sensor.parity_28",
+    "entityId": "binary_sensor.parity_35",
     "name": "Протечка ванная"
    },
    "policy": "site",
    "state": "off",
-   "want": {
-    "base": "classless.loud",
-    "baseKey": "classless.loud",
-    "alarm": {
-     "states": [
-      "Авария",
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": true,
-    "undetermined": false,
-    "from": {
-     "alarm": "scope",
-     "severity": "scope",
-     "house": "scope"
-    },
-    "problem": false,
-    "affects": false
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_28",
-    "name": "Протечка ванная"
-   },
-   "policy": "site",
-   "state": "unavailable",
-   "want": {
-    "base": "classless.loud",
-    "baseKey": "classless.loud",
-    "alarm": {
-     "states": [
-      "Авария",
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": true,
-    "undetermined": false,
-    "from": {
-     "alarm": "scope",
-     "severity": "scope",
-     "house": "scope"
-    },
-    "problem": true,
-    "affects": true
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_28",
-    "name": "Протечка ванная"
-   },
-   "policy": "site",
-   "state": "Авария",
-   "want": {
-    "base": "classless.loud",
-    "baseKey": "classless.loud",
-    "alarm": {
-     "states": [
-      "Авария",
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": true,
-    "undetermined": false,
-    "from": {
-     "alarm": "scope",
-     "severity": "scope",
-     "house": "scope"
-    },
-    "problem": true,
-    "affects": true
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_28",
-    "name": "Протечка ванная"
-   },
-   "policy": "site",
-   "state": "авария",
-   "want": {
-    "base": "classless.loud",
-    "baseKey": "classless.loud",
-    "alarm": {
-     "states": [
-      "Авария",
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": true,
-    "undetermined": false,
-    "from": {
-     "alarm": "scope",
-     "severity": "scope",
-     "house": "scope"
-    },
-    "problem": false,
-    "affects": false
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_29",
-    "name": "Water leak"
-   },
-   "policy": "site",
-   "state": "on",
-   "want": {
-    "base": "classless.loud",
-    "baseKey": "classless.loud",
-    "alarm": {
-     "states": [
-      "Авария",
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": true,
-    "undetermined": false,
-    "from": {
-     "alarm": "scope",
-     "severity": "scope",
-     "house": "scope"
-    },
-    "problem": true,
-    "affects": true
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_29",
-    "name": "Water leak"
-   },
-   "policy": "site",
-   "state": "off",
-   "want": {
-    "base": "classless.loud",
-    "baseKey": "classless.loud",
-    "alarm": {
-     "states": [
-      "Авария",
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": true,
-    "undetermined": false,
-    "from": {
-     "alarm": "scope",
-     "severity": "scope",
-     "house": "scope"
-    },
-    "problem": false,
-    "affects": false
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_29",
-    "name": "Water leak"
-   },
-   "policy": "site",
-   "state": "unavailable",
-   "want": {
-    "base": "classless.loud",
-    "baseKey": "classless.loud",
-    "alarm": {
-     "states": [
-      "Авария",
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": true,
-    "undetermined": false,
-    "from": {
-     "alarm": "scope",
-     "severity": "scope",
-     "house": "scope"
-    },
-    "problem": true,
-    "affects": true
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_29",
-    "name": "Water leak"
-   },
-   "policy": "site",
-   "state": "Авария",
-   "want": {
-    "base": "classless.loud",
-    "baseKey": "classless.loud",
-    "alarm": {
-     "states": [
-      "Авария",
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": true,
-    "undetermined": false,
-    "from": {
-     "alarm": "scope",
-     "severity": "scope",
-     "house": "scope"
-    },
-    "problem": true,
-    "affects": true
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_29",
-    "name": "Water leak"
-   },
-   "policy": "site",
-   "state": "авария",
-   "want": {
-    "base": "classless.loud",
-    "baseKey": "classless.loud",
-    "alarm": {
-     "states": [
-      "Авария",
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": true,
-    "undetermined": false,
-    "from": {
-     "alarm": "scope",
-     "severity": "scope",
-     "house": "scope"
-    },
-    "problem": false,
-    "affects": false
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_30",
-    "name": "Ошибка насоса"
-   },
-   "policy": "site",
-   "state": "on",
-   "want": {
-    "base": "classless.fault",
-    "baseKey": "classless.fault",
-    "alarm": {
-     "states": [
-      "Авария",
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": false,
-    "from": {
-     "alarm": "scope",
-     "severity": "scope",
-     "house": "scope"
-    },
-    "problem": true,
-    "affects": true
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_30",
-    "name": "Ошибка насоса"
-   },
-   "policy": "site",
-   "state": "off",
-   "want": {
-    "base": "classless.fault",
-    "baseKey": "classless.fault",
-    "alarm": {
-     "states": [
-      "Авария",
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": false,
-    "from": {
-     "alarm": "scope",
-     "severity": "scope",
-     "house": "scope"
-    },
-    "problem": false,
-    "affects": false
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_30",
-    "name": "Ошибка насоса"
-   },
-   "policy": "site",
-   "state": "unavailable",
-   "want": {
-    "base": "classless.fault",
-    "baseKey": "classless.fault",
-    "alarm": {
-     "states": [
-      "Авария",
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": false,
-    "from": {
-     "alarm": "scope",
-     "severity": "scope",
-     "house": "scope"
-    },
-    "problem": true,
-    "affects": true
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_30",
-    "name": "Ошибка насоса"
-   },
-   "policy": "site",
-   "state": "Авария",
-   "want": {
-    "base": "classless.fault",
-    "baseKey": "classless.fault",
-    "alarm": {
-     "states": [
-      "Авария",
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": false,
-    "from": {
-     "alarm": "scope",
-     "severity": "scope",
-     "house": "scope"
-    },
-    "problem": true,
-    "affects": true
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_30",
-    "name": "Ошибка насоса"
-   },
-   "policy": "site",
-   "state": "авария",
-   "want": {
-    "base": "classless.fault",
-    "baseKey": "classless.fault",
-    "alarm": {
-     "states": [
-      "Авария",
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": false,
-    "from": {
-     "alarm": "scope",
-     "severity": "scope",
-     "house": "scope"
-    },
-    "problem": false,
-    "affects": false
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_31",
-    "name": "Pump fault"
-   },
-   "policy": "site",
-   "state": "on",
-   "want": {
-    "base": "classless.fault",
-    "baseKey": "classless.fault",
-    "alarm": {
-     "states": [
-      "Авария",
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": false,
-    "from": {
-     "alarm": "scope",
-     "severity": "scope",
-     "house": "scope"
-    },
-    "problem": true,
-    "affects": true
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_31",
-    "name": "Pump fault"
-   },
-   "policy": "site",
-   "state": "off",
-   "want": {
-    "base": "classless.fault",
-    "baseKey": "classless.fault",
-    "alarm": {
-     "states": [
-      "Авария",
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": false,
-    "from": {
-     "alarm": "scope",
-     "severity": "scope",
-     "house": "scope"
-    },
-    "problem": false,
-    "affects": false
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_31",
-    "name": "Pump fault"
-   },
-   "policy": "site",
-   "state": "unavailable",
-   "want": {
-    "base": "classless.fault",
-    "baseKey": "classless.fault",
-    "alarm": {
-     "states": [
-      "Авария",
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": false,
-    "from": {
-     "alarm": "scope",
-     "severity": "scope",
-     "house": "scope"
-    },
-    "problem": true,
-    "affects": true
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_31",
-    "name": "Pump fault"
-   },
-   "policy": "site",
-   "state": "Авария",
-   "want": {
-    "base": "classless.fault",
-    "baseKey": "classless.fault",
-    "alarm": {
-     "states": [
-      "Авария",
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": false,
-    "from": {
-     "alarm": "scope",
-     "severity": "scope",
-     "house": "scope"
-    },
-    "problem": true,
-    "affects": true
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_31",
-    "name": "Pump fault"
-   },
-   "policy": "site",
-   "state": "авария",
-   "want": {
-    "base": "classless.fault",
-    "baseKey": "classless.fault",
-    "alarm": {
-     "states": [
-      "Авария",
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": false,
-    "from": {
-     "alarm": "scope",
-     "severity": "scope",
-     "house": "scope"
-    },
-    "problem": false,
-    "affects": false
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_32",
-    "name": "Кнопка"
-   },
-   "policy": "site",
-   "state": "on",
-   "want": {
-    "base": "undetermined",
-    "baseKey": "undetermined",
-    "alarm": {
-     "states": [
-      "Авария",
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": false,
-    "from": {
-     "alarm": "scope",
-     "severity": "scope",
-     "house": "scope"
-    },
-    "problem": true,
-    "affects": true
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_32",
-    "name": "Кнопка"
-   },
-   "policy": "site",
-   "state": "off",
-   "want": {
-    "base": "undetermined",
-    "baseKey": "undetermined",
-    "alarm": {
-     "states": [
-      "Авария",
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": false,
-    "from": {
-     "alarm": "scope",
-     "severity": "scope",
-     "house": "scope"
-    },
-    "problem": false,
-    "affects": false
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_32",
-    "name": "Кнопка"
-   },
-   "policy": "site",
-   "state": "unavailable",
-   "want": {
-    "base": "undetermined",
-    "baseKey": "undetermined",
-    "alarm": {
-     "states": [
-      "Авария",
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": false,
-    "from": {
-     "alarm": "scope",
-     "severity": "scope",
-     "house": "scope"
-    },
-    "problem": true,
-    "affects": true
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_32",
-    "name": "Кнопка"
-   },
-   "policy": "site",
-   "state": "Авария",
-   "want": {
-    "base": "undetermined",
-    "baseKey": "undetermined",
-    "alarm": {
-     "states": [
-      "Авария",
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": false,
-    "from": {
-     "alarm": "scope",
-     "severity": "scope",
-     "house": "scope"
-    },
-    "problem": true,
-    "affects": true
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_32",
-    "name": "Кнопка"
-   },
-   "policy": "site",
-   "state": "авария",
-   "want": {
-    "base": "undetermined",
-    "baseKey": "undetermined",
-    "alarm": {
-     "states": [
-      "Авария",
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": false,
-    "from": {
-     "alarm": "scope",
-     "severity": "scope",
-     "house": "scope"
-    },
-    "problem": false,
-    "affects": false
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_33",
-    "name": ""
-   },
-   "policy": "site",
-   "state": "on",
-   "want": {
-    "base": "undetermined",
-    "baseKey": "undetermined",
-    "alarm": {
-     "states": [
-      "Авария",
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": false,
-    "from": {
-     "alarm": "scope",
-     "severity": "scope",
-     "house": "scope"
-    },
-    "problem": true,
-    "affects": true
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_33",
-    "name": ""
-   },
-   "policy": "site",
-   "state": "off",
-   "want": {
-    "base": "undetermined",
-    "baseKey": "undetermined",
-    "alarm": {
-     "states": [
-      "Авария",
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": false,
-    "from": {
-     "alarm": "scope",
-     "severity": "scope",
-     "house": "scope"
-    },
-    "problem": false,
-    "affects": false
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_33",
-    "name": ""
-   },
-   "policy": "site",
-   "state": "unavailable",
-   "want": {
-    "base": "undetermined",
-    "baseKey": "undetermined",
-    "alarm": {
-     "states": [
-      "Авария",
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": false,
-    "from": {
-     "alarm": "scope",
-     "severity": "scope",
-     "house": "scope"
-    },
-    "problem": true,
-    "affects": true
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_33",
-    "name": ""
-   },
-   "policy": "site",
-   "state": "Авария",
-   "want": {
-    "base": "undetermined",
-    "baseKey": "undetermined",
-    "alarm": {
-     "states": [
-      "Авария",
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": false,
-    "from": {
-     "alarm": "scope",
-     "severity": "scope",
-     "house": "scope"
-    },
-    "problem": true,
-    "affects": true
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_33",
-    "name": ""
-   },
-   "policy": "site",
-   "state": "авария",
-   "want": {
-    "base": "undetermined",
-    "baseKey": "undetermined",
-    "alarm": {
-     "states": [
-      "Авария",
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": false,
-    "undetermined": false,
-    "from": {
-     "alarm": "scope",
-     "severity": "scope",
-     "house": "scope"
-    },
-    "problem": false,
-    "affects": false
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_34",
-    "name": "Газ кухня"
-   },
-   "policy": "site",
-   "state": "on",
-   "want": {
-    "base": "classless.loud",
-    "baseKey": "classless.loud",
-    "alarm": {
-     "states": [
-      "Авария",
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": true,
-    "undetermined": false,
-    "from": {
-     "alarm": "scope",
-     "severity": "scope",
-     "house": "scope"
-    },
-    "problem": true,
-    "affects": true
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_34",
-    "name": "Газ кухня"
-   },
-   "policy": "site",
-   "state": "off",
-   "want": {
-    "base": "classless.loud",
-    "baseKey": "classless.loud",
-    "alarm": {
-     "states": [
-      "Авария",
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": true,
-    "undetermined": false,
-    "from": {
-     "alarm": "scope",
-     "severity": "scope",
-     "house": "scope"
-    },
-    "problem": false,
-    "affects": false
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_34",
-    "name": "Газ кухня"
-   },
-   "policy": "site",
-   "state": "unavailable",
-   "want": {
-    "base": "classless.loud",
-    "baseKey": "classless.loud",
-    "alarm": {
-     "states": [
-      "Авария",
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": true,
-    "undetermined": false,
-    "from": {
-     "alarm": "scope",
-     "severity": "scope",
-     "house": "scope"
-    },
-    "problem": true,
-    "affects": true
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_34",
-    "name": "Газ кухня"
-   },
-   "policy": "site",
-   "state": "Авария",
-   "want": {
-    "base": "classless.loud",
-    "baseKey": "classless.loud",
-    "alarm": {
-     "states": [
-      "Авария",
-      "on"
-     ]
-    },
-    "house": "fault",
-    "severity": "important",
-    "defaultSeverity": "important",
-    "watch": true,
-    "lifeSafety": true,
-    "undetermined": false,
-    "from": {
-     "alarm": "scope",
-     "severity": "scope",
-     "house": "scope"
-    },
-    "problem": true,
-    "affects": true
-   }
-  },
-  {
-   "ref": {
-    "entityId": "binary_sensor.parity_34",
-    "name": "Газ кухня"
-   },
-   "policy": "site",
-   "state": "авария",
    "want": {
     "base": "classless.loud",
     "baseKey": "classless.loud",
@@ -11928,6 +12957,1029 @@
   {
    "ref": {
     "entityId": "binary_sensor.parity_35",
+    "name": "Протечка ванная"
+   },
+   "policy": "site",
+   "state": "unavailable",
+   "want": {
+    "base": "classless.loud",
+    "baseKey": "classless.loud",
+    "alarm": {
+     "states": [
+      "Авария",
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": true,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "scope",
+     "house": "scope"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_35",
+    "name": "Протечка ванная"
+   },
+   "policy": "site",
+   "state": "Авария",
+   "want": {
+    "base": "classless.loud",
+    "baseKey": "classless.loud",
+    "alarm": {
+     "states": [
+      "Авария",
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": true,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "scope",
+     "house": "scope"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_35",
+    "name": "Протечка ванная"
+   },
+   "policy": "site",
+   "state": "авария",
+   "want": {
+    "base": "classless.loud",
+    "baseKey": "classless.loud",
+    "alarm": {
+     "states": [
+      "Авария",
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": true,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "scope",
+     "house": "scope"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_36",
+    "name": "Water leak"
+   },
+   "policy": "site",
+   "state": "on",
+   "want": {
+    "base": "classless.loud",
+    "baseKey": "classless.loud",
+    "alarm": {
+     "states": [
+      "Авария",
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": true,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "scope",
+     "house": "scope"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_36",
+    "name": "Water leak"
+   },
+   "policy": "site",
+   "state": "off",
+   "want": {
+    "base": "classless.loud",
+    "baseKey": "classless.loud",
+    "alarm": {
+     "states": [
+      "Авария",
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": true,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "scope",
+     "house": "scope"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_36",
+    "name": "Water leak"
+   },
+   "policy": "site",
+   "state": "unavailable",
+   "want": {
+    "base": "classless.loud",
+    "baseKey": "classless.loud",
+    "alarm": {
+     "states": [
+      "Авария",
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": true,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "scope",
+     "house": "scope"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_36",
+    "name": "Water leak"
+   },
+   "policy": "site",
+   "state": "Авария",
+   "want": {
+    "base": "classless.loud",
+    "baseKey": "classless.loud",
+    "alarm": {
+     "states": [
+      "Авария",
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": true,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "scope",
+     "house": "scope"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_36",
+    "name": "Water leak"
+   },
+   "policy": "site",
+   "state": "авария",
+   "want": {
+    "base": "classless.loud",
+    "baseKey": "classless.loud",
+    "alarm": {
+     "states": [
+      "Авария",
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": true,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "scope",
+     "house": "scope"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_37",
+    "name": "Ошибка насоса"
+   },
+   "policy": "site",
+   "state": "on",
+   "want": {
+    "base": "classless.fault",
+    "baseKey": "classless.fault",
+    "alarm": {
+     "states": [
+      "Авария",
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "scope",
+     "house": "scope"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_37",
+    "name": "Ошибка насоса"
+   },
+   "policy": "site",
+   "state": "off",
+   "want": {
+    "base": "classless.fault",
+    "baseKey": "classless.fault",
+    "alarm": {
+     "states": [
+      "Авария",
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "scope",
+     "house": "scope"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_37",
+    "name": "Ошибка насоса"
+   },
+   "policy": "site",
+   "state": "unavailable",
+   "want": {
+    "base": "classless.fault",
+    "baseKey": "classless.fault",
+    "alarm": {
+     "states": [
+      "Авария",
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "scope",
+     "house": "scope"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_37",
+    "name": "Ошибка насоса"
+   },
+   "policy": "site",
+   "state": "Авария",
+   "want": {
+    "base": "classless.fault",
+    "baseKey": "classless.fault",
+    "alarm": {
+     "states": [
+      "Авария",
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "scope",
+     "house": "scope"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_37",
+    "name": "Ошибка насоса"
+   },
+   "policy": "site",
+   "state": "авария",
+   "want": {
+    "base": "classless.fault",
+    "baseKey": "classless.fault",
+    "alarm": {
+     "states": [
+      "Авария",
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "scope",
+     "house": "scope"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_38",
+    "name": "Pump fault"
+   },
+   "policy": "site",
+   "state": "on",
+   "want": {
+    "base": "classless.fault",
+    "baseKey": "classless.fault",
+    "alarm": {
+     "states": [
+      "Авария",
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "scope",
+     "house": "scope"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_38",
+    "name": "Pump fault"
+   },
+   "policy": "site",
+   "state": "off",
+   "want": {
+    "base": "classless.fault",
+    "baseKey": "classless.fault",
+    "alarm": {
+     "states": [
+      "Авария",
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "scope",
+     "house": "scope"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_38",
+    "name": "Pump fault"
+   },
+   "policy": "site",
+   "state": "unavailable",
+   "want": {
+    "base": "classless.fault",
+    "baseKey": "classless.fault",
+    "alarm": {
+     "states": [
+      "Авария",
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "scope",
+     "house": "scope"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_38",
+    "name": "Pump fault"
+   },
+   "policy": "site",
+   "state": "Авария",
+   "want": {
+    "base": "classless.fault",
+    "baseKey": "classless.fault",
+    "alarm": {
+     "states": [
+      "Авария",
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "scope",
+     "house": "scope"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_38",
+    "name": "Pump fault"
+   },
+   "policy": "site",
+   "state": "авария",
+   "want": {
+    "base": "classless.fault",
+    "baseKey": "classless.fault",
+    "alarm": {
+     "states": [
+      "Авария",
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "scope",
+     "house": "scope"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_39",
+    "name": "Кнопка"
+   },
+   "policy": "site",
+   "state": "on",
+   "want": {
+    "base": "undetermined",
+    "baseKey": "undetermined",
+    "alarm": {
+     "states": [
+      "Авария",
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "scope",
+     "house": "scope"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_39",
+    "name": "Кнопка"
+   },
+   "policy": "site",
+   "state": "off",
+   "want": {
+    "base": "undetermined",
+    "baseKey": "undetermined",
+    "alarm": {
+     "states": [
+      "Авария",
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "scope",
+     "house": "scope"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_39",
+    "name": "Кнопка"
+   },
+   "policy": "site",
+   "state": "unavailable",
+   "want": {
+    "base": "undetermined",
+    "baseKey": "undetermined",
+    "alarm": {
+     "states": [
+      "Авария",
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "scope",
+     "house": "scope"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_39",
+    "name": "Кнопка"
+   },
+   "policy": "site",
+   "state": "Авария",
+   "want": {
+    "base": "undetermined",
+    "baseKey": "undetermined",
+    "alarm": {
+     "states": [
+      "Авария",
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "scope",
+     "house": "scope"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_39",
+    "name": "Кнопка"
+   },
+   "policy": "site",
+   "state": "авария",
+   "want": {
+    "base": "undetermined",
+    "baseKey": "undetermined",
+    "alarm": {
+     "states": [
+      "Авария",
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "scope",
+     "house": "scope"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_40",
+    "name": ""
+   },
+   "policy": "site",
+   "state": "on",
+   "want": {
+    "base": "undetermined",
+    "baseKey": "undetermined",
+    "alarm": {
+     "states": [
+      "Авария",
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "scope",
+     "house": "scope"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_40",
+    "name": ""
+   },
+   "policy": "site",
+   "state": "off",
+   "want": {
+    "base": "undetermined",
+    "baseKey": "undetermined",
+    "alarm": {
+     "states": [
+      "Авария",
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "scope",
+     "house": "scope"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_40",
+    "name": ""
+   },
+   "policy": "site",
+   "state": "unavailable",
+   "want": {
+    "base": "undetermined",
+    "baseKey": "undetermined",
+    "alarm": {
+     "states": [
+      "Авария",
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "scope",
+     "house": "scope"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_40",
+    "name": ""
+   },
+   "policy": "site",
+   "state": "Авария",
+   "want": {
+    "base": "undetermined",
+    "baseKey": "undetermined",
+    "alarm": {
+     "states": [
+      "Авария",
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "scope",
+     "house": "scope"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_40",
+    "name": ""
+   },
+   "policy": "site",
+   "state": "авария",
+   "want": {
+    "base": "undetermined",
+    "baseKey": "undetermined",
+    "alarm": {
+     "states": [
+      "Авария",
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": false,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "scope",
+     "house": "scope"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_41",
+    "name": "Газ кухня"
+   },
+   "policy": "site",
+   "state": "on",
+   "want": {
+    "base": "classless.loud",
+    "baseKey": "classless.loud",
+    "alarm": {
+     "states": [
+      "Авария",
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": true,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "scope",
+     "house": "scope"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_41",
+    "name": "Газ кухня"
+   },
+   "policy": "site",
+   "state": "off",
+   "want": {
+    "base": "classless.loud",
+    "baseKey": "classless.loud",
+    "alarm": {
+     "states": [
+      "Авария",
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": true,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "scope",
+     "house": "scope"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_41",
+    "name": "Газ кухня"
+   },
+   "policy": "site",
+   "state": "unavailable",
+   "want": {
+    "base": "classless.loud",
+    "baseKey": "classless.loud",
+    "alarm": {
+     "states": [
+      "Авария",
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": true,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "scope",
+     "house": "scope"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_41",
+    "name": "Газ кухня"
+   },
+   "policy": "site",
+   "state": "Авария",
+   "want": {
+    "base": "classless.loud",
+    "baseKey": "classless.loud",
+    "alarm": {
+     "states": [
+      "Авария",
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": true,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "scope",
+     "house": "scope"
+    },
+    "problem": true,
+    "affects": true
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_41",
+    "name": "Газ кухня"
+   },
+   "policy": "site",
+   "state": "авария",
+   "want": {
+    "base": "classless.loud",
+    "baseKey": "classless.loud",
+    "alarm": {
+     "states": [
+      "Авария",
+      "on"
+     ]
+    },
+    "house": "fault",
+    "severity": "important",
+    "defaultSeverity": "important",
+    "watch": true,
+    "lifeSafety": true,
+    "undetermined": false,
+    "from": {
+     "alarm": "scope",
+     "severity": "scope",
+     "house": "scope"
+    },
+    "problem": false,
+    "affects": false
+   }
+  },
+  {
+   "ref": {
+    "entityId": "binary_sensor.parity_42",
     "name": "Газон"
    },
    "policy": "site",
@@ -11958,7 +14010,7 @@
   },
   {
    "ref": {
-    "entityId": "binary_sensor.parity_35",
+    "entityId": "binary_sensor.parity_42",
     "name": "Газон"
    },
    "policy": "site",
@@ -11989,7 +14041,7 @@
   },
   {
    "ref": {
-    "entityId": "binary_sensor.parity_35",
+    "entityId": "binary_sensor.parity_42",
     "name": "Газон"
    },
    "policy": "site",
@@ -12020,7 +14072,7 @@
   },
   {
    "ref": {
-    "entityId": "binary_sensor.parity_35",
+    "entityId": "binary_sensor.parity_42",
     "name": "Газон"
    },
    "policy": "site",
@@ -12051,7 +14103,7 @@
   },
   {
    "ref": {
-    "entityId": "binary_sensor.parity_35",
+    "entityId": "binary_sensor.parity_42",
     "name": "Газон"
    },
    "policy": "site",

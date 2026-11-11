@@ -35,13 +35,14 @@ from typing import Any, Callable
 from homeassistant.components.http import KEY_HASS, HomeAssistantView
 from homeassistant.const import EVENT_STATE_CHANGED, STATE_ON
 from homeassistant.core import Event, HomeAssistant, State, callback
-from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er
+from homeassistant.helpers import area_registry as ar, entity_registry as er
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
 from .derived import NOT_A_STATE, SECONDS_PER_HOUR, num, outdoor
-from .notify import labelled
+from .notify import label, labelled
 from .signals import ENTITY_ID, policy as policy_of
+from .ownership import entity_room
 from .storage import HaufloStore
 from .tuning import TUNING
 
@@ -108,6 +109,8 @@ MAX_PER_DAY = _T["insight_max_per_day"]
 # The default until Hauflo pushes the integrator's choice («Диагностика: всем / администраторам», signals.py `diag`).
 DIAG_VISIBLE = TUNING["signals"]["diag"]["default"]
 DIAG_ALL = "all"
+INPUTS_MAX = _T["inputs_max"]  # signals listed per check («что анализируется»)
+INPUT_GAS_MAX = _T["input_addresses_max"]  # KNX addresses listed per signal
 # The card groups its rows by these (kind → section; a kind not listed — the card's «Прочее»), in this order.
 SECTIONS = _T["sections"]
 SECTION_ORDER = _T["section_order"]
@@ -215,6 +218,11 @@ class Detector:
     def extra(self, kind: str, eid: str) -> dict[str, Any]:
         """More of the row for the integrator's view (analytics.py: its unit, the standard, a tip, «нормы нет — спросим»)."""
         return {}
+
+    def inputs(self, kind: str, eid: str) -> list[dict[str, Any]]:
+        """What the check reads (0.33 Р26 «что анализируется»): the entity itself and every other signal that takes part —
+        `role` a token the reader words (translations: selector.insight_input), `entityId` when it is an entity of HA."""
+        return [{"role": "self", "entityId": eid}]
 
     def reset(self, eid: str, kind: str) -> None:
         """«Сбросить обучение»: its norms of this entity forgotten (learned anew)."""
@@ -491,6 +499,11 @@ class ClimateEffect(Detector):
     def episodes(self, eid: str) -> list[dict[str, Any]]:
         return list(self.ring.get(eid, []))
 
+    def inputs(self, kind: str, eid: str) -> list[dict[str, Any]]:
+        """The climate (its temperature, setpoint and mode), the room's windows / doors (an open one pauses the check),
+        the street's temperature (kept with each episode) and the season (heating / cooling)."""
+        return self.ctx.climate_inputs(eid)
+
     def reset(self, eid: str, kind: str) -> None:
         d = DIR_OF[kind]
         self.norms.get(eid, {}).pop(d, None)
@@ -633,6 +646,15 @@ class Insights:
         self.owner: dict[str, Detector] = {k: det for det in self.detectors for k in det.KINDS}
         self._listed: frozenset[str] = frozenset()
         self._unsubs: list[Callable[[], None]] = []
+        # entity → its KNX group addresses («1/2/3»), set by the agent (HA's KNX integration); none — no KNX here.
+        self.addresses: Callable[[], dict[str, list[str]]] | None = None
+
+    def _addresses(self) -> dict[str, list[str]]:
+        try:
+            return (self.addresses() if self.addresses else None) or {}
+        except Exception:  # noqa: BLE001 — KNX unreadable: the rows go without addresses
+            _LOGGER.debug("Hauflo insights: KNX addresses not read", exc_info=True)
+            return {}
 
     async def async_start(self) -> None:
         data = await self.store.async_load() or {}
@@ -820,8 +842,13 @@ class Insights:
                 _LOGGER.exception("Hauflo insights: %s states failed", det.name)
         rows.sort(key=lambda r: (r["entityId"], r["kind"]))
         page = rows[offset : offset + limit]
+        addresses = self._addresses()
         for r in page:
             r.update(self.who(r["entityId"]))
+            # What is analysed (0.33 Р26): the signals of the check with their KNX addresses; `how` — its explanation's key.
+            if (det := self.owner.get(r["kind"])) is not None:
+                r["uses"] = self.uses(det, r["kind"], r["entityId"], addresses)
+                r["how"] = det.name
         out: dict[str, Any] = {"total": len(rows), "offset": offset, "items": page}
         if entity is not None:
             out["episodes"] = [e for det in self.detectors for e in det.episodes(entity)]
@@ -901,13 +928,7 @@ class Insights:
         return num(st.attributes.get(src["attribute"])) if src["attribute"] else num(st.state)
 
     def _area_id(self, eid: str) -> str | None:
-        entry = er.async_get(self.hass).async_get(eid)
-        if entry is None:
-            return None
-        if entry.area_id:
-            return entry.area_id
-        device = dr.async_get(self.hass).async_get(entry.device_id) if entry.device_id else None
-        return device.area_id if device else None
+        return entity_room(self.hass, eid)  # Р57: a zone area of Alice's counts as its room
 
     def air_handler(self, eid: str) -> bool:
         """A climate of an air handler (AIR_HANDLER_WORDS / AIR_HANDLER_RATE): no «slower», no short cycling for it."""
@@ -924,7 +945,7 @@ class Insights:
         st = self.hass.states.get(eid)
         area_id = self._area_id(eid)
         area = ar.async_get(self.hass).async_get_area(area_id) if area_id else None
-        return {"name": (st.attributes.get("friendly_name") if st else None) or eid, "area": area.name if area else ""}
+        return {"name": label(self.hass, eid, st), "area": area.name if area else ""}
 
     def opening_open(self, eid: str, ignore: set[str] | frozenset[str] = frozenset()) -> bool:
         """A window / door of the same room is open now (a room unknown: none known open). `ignore`: entities that are
@@ -933,6 +954,36 @@ class Insights:
         if not area_id:
             return False
         return any(s.state == STATE_ON and s.entity_id not in ignore and s.entity_id not in self.not_windows and s.attributes.get("device_class") in OPENING and self._area_id(s.entity_id) == area_id for s in self.hass.states.async_all("binary_sensor"))
+
+    def windows_of(self, eid: str) -> list[str]:
+        """The windows / doors of the entity's room the checks look at (an open one pauses them)."""
+        area_id = self._area_id(eid)
+        if not area_id:
+            return []
+        return sorted(s.entity_id for s in self.hass.states.async_all("binary_sensor") if s.entity_id not in self.not_windows and s.attributes.get("device_class") in OPENING and self._area_id(s.entity_id) == area_id)
+
+    def climate_inputs(self, eid: str) -> list[dict[str, Any]]:
+        """A climate check's signals: the climate itself, its room's windows, the street's temperature, the season."""
+        src = outdoor(self.hass, self.owns)
+        return [
+            {"role": "self", "entityId": eid},
+            *({"role": "window", "entityId": w} for w in self.windows_of(eid)),
+            *([{"role": "outdoor", "entityId": src["entity_id"]}] if src else []),
+            {"role": "season"},
+        ]
+
+    def uses(self, det: Detector, kind: str, eid: str, addresses: dict[str, list[str]]) -> list[dict[str, Any]]:
+        """`inputs` for the reader: each entity's name, room and KNX group addresses (what the integrator knows it by)."""
+        out: list[dict[str, Any]] = []
+        try:
+            got = det.inputs(kind, eid)
+        except Exception:  # noqa: BLE001 — a detector's own fault never hides the row
+            _LOGGER.exception("Hauflo insights: %s inputs failed", det.name)
+            got = [{"role": "self", "entityId": eid}]
+        for i in got[:INPUTS_MAX]:
+            e = i.get("entityId")
+            out.append({**i, **(self.who(e) if e else {}), **({"knx": addresses[e][:INPUT_GAS_MAX]} if e and addresses.get(e) else {})})
+        return out
 
 
 def diag_visible(hass: HomeAssistant | None) -> str:

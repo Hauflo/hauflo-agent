@@ -452,3 +452,73 @@ def test_every_token_is_worded():
         sel = json.loads((base / name).read_text("utf8"))["selector"]
         for key, tokens in want.items():
             assert tokens <= set(sel[key]["options"]), (name, key, tokens - set(sel[key]["options"]))
+
+
+async def test_analysis_is_its_own_sidebar_panel_who_sees_it_follows_the_choice(hass: HomeAssistant, entry, hass_client):
+    """0.33 Р26/Р8: «Анализ» — an item of HA's sidebar (a `custom` panel with the cards' element), not a dashboard tab;
+    admins only by default, everyone when the integrator shows the diagnosis to all; gone with the integration."""
+    from custom_components.hauflo import analysis
+
+    panels = hass.data.get("frontend_panels") or {}
+    panel = panels.get(analysis.URL_PATH)
+    assert panel is not None and panel.require_admin is True and panel.component_name == "custom"
+    assert panel.config["_panel_custom"]["name"] == analysis.ELEMENT and panel.config["_panel_custom"]["embed_iframe"] is False
+    assert panel.sidebar_title in (analysis.TITLES["ru"], analysis.TITLES["en"]) and panel.sidebar_icon == analysis.ICON
+    admin = await hass_client()
+    push = lambda diag, h: admin.post("/api/hauflo/signals", json={"signals": {"scopes": [], "entities": {}, "findings": {}, "diag": diag}, "hash": h})
+    await push({"visible": "all"}, "e" * 16)
+    await hass.async_block_till_done()
+    assert hass.data["frontend_panels"][analysis.URL_PATH].require_admin is False
+    await push({"visible": "admins"}, "f" * 16)
+    await hass.async_block_till_done()
+    assert hass.data["frontend_panels"][analysis.URL_PATH].require_admin is True
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert analysis.URL_PATH not in (hass.data.get("frontend_panels") or {})
+
+
+async def test_analysis_title_speaks_the_house_language_not_has(hass: HomeAssistant, entry):
+    """fix3 п.3: the sidebar's «Анализ» in the project's language (the alarm engine's `lang`, const.site_ru), re-registered
+    when it changes — «Analysis» stood beside a Russian dashboard on an English HA; HA's own language only without one."""
+    from custom_components.hauflo import analysis, notify
+
+    engine = entry.runtime_data.engine
+    hass.config.language = "en"
+    engine.config = notify._clean_rules({"lang": "ru", "rules": []}, hass, engine.owns)
+    entry.runtime_data.status_now()
+    assert hass.data["frontend_panels"][analysis.URL_PATH].sidebar_title == analysis.TITLES["ru"]
+    engine.config = notify._clean_rules({"lang": "en", "rules": []}, hass, engine.owns)
+    entry.runtime_data.status_now()
+    assert hass.data["frontend_panels"][analysis.URL_PATH].sidebar_title == analysis.TITLES["en"]
+    # The same again: not re-registered.
+    assert analysis.async_register(hass, hass.data[analysis.DATA_ADMIN], config=engine.config) is False
+    # No project language: HA's.
+    assert analysis.title_of("ru", None) == analysis.TITLES["ru"] and analysis.title_of("en", {}) == analysis.TITLES["en"]
+
+
+async def test_each_row_says_what_is_analysed_and_how(hass: HomeAssistant, entry, hass_client):
+    """Р8: a row carries its inputs (role, entity, its name/room, KNX addresses when known) and the detector («how»)."""
+    engine = entry.runtime_data.insights
+    engine.detectors[0].norms[FLOOR] = {"heat": [[2.0, 2.0]]}
+    engine.addresses = lambda: {FLOOR: ["1/2/3", "1/2/4"]}
+    got = await (await (await hass_client()).get("/api/hauflo/insights")).json()
+    row = next(r for r in got["items"] if r["entityId"] == FLOOR)
+    assert row["how"] == engine.detectors[0].name
+    me = next(u for u in row["uses"] if u.get("role") == "self")
+    assert me["entityId"] == FLOOR and me["knx"] == ["1/2/3", "1/2/4"]
+    assert any(u.get("role") == "season" for u in row["uses"])
+
+
+async def test_analysis_title_follows_the_language_the_cloud_sends(hass: HomeAssistant, entry):
+    """fix4 п.4: the cloud sends the house's language alone (no rules: its config back with `lang`, on the link and when
+    the language changes in Hauflo) — the engine takes it and the sidebar's title follows at once, through the same
+    path as a rules' push (async_set → on_change → status_now)."""
+    from custom_components.hauflo import analysis
+
+    engine = entry.runtime_data.engine
+    hass.config.language = "en"
+    await engine.async_set({"rules": [], "groups": [], "rings": {}, "lang": "ru"})
+    assert hass.data["frontend_panels"][analysis.URL_PATH].sidebar_title == analysis.TITLES["ru"]
+    await engine.async_set({**engine.config, "lang": "en"})
+    assert hass.data["frontend_panels"][analysis.URL_PATH].sidebar_title == analysis.TITLES["en"]
+    assert engine.config["rules"] == [] and engine.config["lang"] == "en"

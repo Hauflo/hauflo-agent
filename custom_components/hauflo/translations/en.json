@@ -166,6 +166,96 @@
           "heat": "Heating",
           "cool": "Cooling"
         }
+      },
+      "intercom": {
+        "name": "Intercom",
+        "state": {
+          "idle": "Idle",
+          "ringing": "Ringing",
+          "talking": "Call in progress",
+          "answered_elsewhere": "Answered on another device"
+        },
+        "state_attributes": {
+          "problem": {
+            "name": "What's wrong",
+            "state": {
+              "sip_port_busy": "The call port is taken by another program — choose another port in the intercom settings",
+              "no_address": "This server's network address was not found — set it in the intercom settings",
+              "missing_host": "The panel's address is not set",
+              "missing_sip_server": "The call server is not set",
+              "missing_sip_account": "The line's number and password are not set",
+              "server_not_found": "The call server's name was not found (DNS)",
+              "not_registered": "No connection to the call server: check the number, the password and the internet access",
+              "panel_not_registered": "The panel has not connected: set this server, the line's number and password in the panel",
+              "call_from_unknown_address": "A call came from an address the door's settings don't name — refused; set that address in the door if it is the panel",
+              "no_calls_yet": "Connected, no calls yet: if the panel did call, check this number is in its call forwarding and the router doesn't rewrite calls (SIP ALG off)",
+              "codec_mismatch": "The panel offered no G.711 sound (PCMA / PCMU) — turn it on in the panel",
+              "no_ack": "The panel did not confirm the answer — the call was ended",
+              "no_audio_from_panel": "Call without sound from the panel: no audio arrives — the sound ports are closed, the address in the sound description is wrong or the cloud doesn't pass audio",
+              "no_audio_to_panel": "Call without sound to the panel: the microphone is off or there's no secure (https) access"
+            }
+          },
+          "mode": {
+            "name": "How the panel calls",
+            "state": {
+              "direct": "Directly to this server",
+              "register": "Through the panel's server",
+              "registrar": "The panel connects to this server",
+              "cloud": "Through the maker's cloud"
+            }
+          },
+          "call_audio": {
+            "name": "Sound in the call",
+            "state": {
+              "none": "No sound",
+              "no_rx": "No sound from the panel",
+              "no_tx": "No sound to the panel",
+              "bidirectional": "Both ways"
+            }
+          },
+          "audio_path": {
+            "name": "Sound in the app",
+            "state": {
+              "none": "No — answer on the monitor",
+              "webrtc": "Yes"
+            }
+          },
+          "nat_mode": {
+            "name": "Address for the panel",
+            "state": {
+              "lan": "Local network",
+              "manual": "Set by hand",
+              "observed": "As the server sees it"
+            }
+          },
+          "registered": {
+            "name": "Connected"
+          },
+          "talker": {
+            "name": "Talking"
+          },
+          "last_call": {
+            "name": "Last call"
+          },
+          "last_open": {
+            "name": "Last opening"
+          },
+          "last_register_at": {
+            "name": "Last connection"
+          },
+          "last_invite_at": {
+            "name": "Last incoming call"
+          },
+          "rtp_bytes_in": {
+            "name": "Sound from the panel, bytes"
+          },
+          "rtp_bytes_out": {
+            "name": "Sound to the panel, bytes"
+          },
+          "error": {
+            "name": "The server's answer"
+          }
+        }
       }
     },
     "switch": {
@@ -174,6 +264,28 @@
       },
       "season_auto": {
         "name": "Switch automatically"
+      }
+    },
+    "camera": {
+      "intercom_talk": {
+        "name": "Talk"
+      }
+    },
+    "event": {
+      "intercom_call": {
+        "name": "Call",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "ring": "Someone's at the door"
+            }
+          }
+        }
+      }
+    },
+    "button": {
+      "intercom_open": {
+        "name": "Open"
       }
     }
   },
@@ -185,12 +297,14 @@
         "data": {
           "allow_changes": "Allow Hauflo to change this site's setup",
           "ranges": "Allowed addresses (1/1/5, a span 1/1/1-21 or a whole group 1/1; comma-separated or one per line)",
-          "independent": "Make the site independent of Hauflo"
+          "independent": "Make the site independent of Hauflo",
+          "intercom": "Set up the intercom"
         },
         "data_description": {
           "allow_changes": "Off: Hauflo changes nothing in Home Assistant — deploys, dashboards, rooms, KNX entities and backups started by Hauflo are refused. Monitoring, alarms and voice keep working.",
           "ranges": "Remove any Hauflo must not control (a gate, a lock).",
-          "independent": "Next step explains it: the dashboard cards stay in /config/www/hauflo and the alarm automations are brought up to date. Nothing is deleted."
+          "independent": "Next step explains it: the dashboard cards stay in /config/www/hauflo and the alarm automations are brought up to date. Nothing is deleted.",
+          "intercom": "On the next step — the doors: the panel model, its address and how to open."
         }
       },
       "init_pending": {
@@ -200,13 +314,15 @@
           "allow_changes": "Allow Hauflo to change this site's setup",
           "ranges": "Allowed addresses (1/1/5, a span 1/1/1-21 or a whole group 1/1; comma-separated or one per line)",
           "accept_pending": "Allow these requested addresses",
-          "independent": "Make the site independent of Hauflo"
+          "independent": "Make the site independent of Hauflo",
+          "intercom": "Set up the intercom"
         },
         "data_description": {
           "allow_changes": "Off: Hauflo changes nothing in Home Assistant — deploys, dashboards, rooms, KNX entities and backups started by Hauflo are refused. Monitoring, alarms and voice keep working.",
           "ranges": "Remove any Hauflo must not control (a gate, a lock).",
           "accept_pending": "Tick only your own project's addresses. Check each one: it may be a gate or a lock.",
-          "independent": "Next step explains it: the dashboard cards stay in /config/www/hauflo and the alarm automations are brought up to date. Nothing is deleted."
+          "independent": "Next step explains it: the dashboard cards stay in /config/www/hauflo and the alarm automations are brought up to date. Nothing is deleted.",
+          "intercom": "On the next step — the doors: the panel model, its address and how to open."
         }
       },
       "independent": {
@@ -216,7 +332,34 @@
       "independent_done": {
         "title": "The site is independent",
         "description": "{report}\n\nThe same text is in HA's notifications. Submit to close."
+      },
+      "intercom": {
+        "title": "Intercom",
+        "description": "Doors with a call panel. Models: {presets}. Passwords stay on this server only.",
+        "data": {
+          "bind": "This server's address for calls",
+          "port": "Call port",
+          "public": "The router's public address (if the panel calls from another network)",
+          "doors": "Doors"
+        },
+        "data_description": {
+          "bind": "Automatic — the home network address. The panel in another network or VLAN — choose that network's address.",
+          "public": "Usually empty. Only when the panel calls from the internet to a forwarded port.",
+          "port": "Set the same port number in the panel.",
+          "doors": "One line per door: the panel model, how it calls, its address and how to open the door."
+        }
       }
+    },
+    "error": {
+      "intercom_bad_address": "Not an IPv4 address",
+      "intercom_missing_host": "Door \"{door}\": set the panel's address",
+      "intercom_missing_sip_server": "Door \"{door}\": set the call server",
+      "intercom_missing_sip_account": "Door \"{door}\": set the line's number and password",
+      "intercom_bad_port": "The port is a number from 1 to 65535",
+      "intercom_bad_preset": "Door \"{door}\": no such model in the list",
+      "intercom_bad_mode": "Door \"{door}\": unknown way of calling",
+      "intercom_bad_open": "Door \"{door}\": unknown way of opening",
+      "intercom_bad_ice": "Connection servers: an address like turn:host:3478 or stun:host:3478"
     }
   },
   "issues": {
@@ -261,6 +404,10 @@
     "cards_need_agent": {
       "title": "Hauflo Cards {plugin} need a newer Hauflo agent",
       "description": "The Hauflo Cards plugin {plugin} needs the Hauflo agent {agent_min} or newer; this one is {agent}. The dashboards use the agent's own cards meanwhile — nothing is broken. Update the agent (Settings → Updates → Hauflo → Install), then restart Home Assistant. This message goes away by itself."
+    },
+    "integration_down": {
+      "title": "Integration “{name}” didn't come back",
+      "description": "The integration “{name}” ({domain}) stopped working and {attempts} automatic restarts by Hauflo didn't bring it back. Open it in Settings → Devices & services: usually its account, password or device needs attention (the device powered off, an expired login). This goes by itself once it works again."
     },
     "rule_fault": {
       "title": "Value rule “{name}”: its sensor gives no data",
@@ -840,14 +987,116 @@
     "alarm_native_chatter_ha": {
       "message": "{name}: keeps going off and back ({count} times in {minutes} min) — looks like a faulty sensor. Check it: the rule's alarms keep coming."
     },
-    "alarm_native_ring_title": {
+    "event_push_title": {
+      "message": "{what} · {where}"
+    },
+    "event_push_title_bare": {
+      "message": "{what}"
+    },
+    "event_push_doorbell": {
+      "message": "🔔 Doorbell"
+    },
+    "event_push_doorbell_text": {
+      "message": "{name}"
+    },
+    "event_push_sos": {
+      "message": "🆘 SOS"
+    },
+    "event_push_sos_text": {
+      "message": "{name}: the SOS button was pressed"
+    },
+    "event_push_event": {
       "message": "🔔 {name}"
     },
-    "alarm_native_ring": {
-      "message": "{name}: the doorbell rang"
+    "event_push_event_text": {
+      "message": "The event fired"
     },
-    "alarm_native_fired": {
-      "message": "{name}: the event fired"
+    "intercom_no_call": {
+      "message": "There's no call now"
+    },
+    "intercom_answered_elsewhere": {
+      "message": "Already answered on another device"
+    },
+    "intercom_not_yours": {
+      "message": "Someone else is on this call"
+    },
+    "intercom_no_audio_port": {
+      "message": "No free port for the sound"
+    },
+    "intercom_unknown_door": {
+      "message": "Intercom not found"
+    },
+    "intercom_open_not_set": {
+      "message": "How to open this door is not set"
+    },
+    "intercom_open_needs_call": {
+      "message": "This door opens only during a call"
+    },
+    "intercom_open_refused": {
+      "message": "The panel refused: check the panel's login and password"
+    },
+    "intercom_open_failed": {
+      "message": "The door didn't open: the panel didn't answer"
+    },
+    "lock_op_unlock": {
+      "message": "unlocked"
+    },
+    "lock_op_lock": {
+      "message": "locked"
+    },
+    "lock_op_jammed": {
+      "message": "the lock is jammed"
+    },
+    "lock_op_tamper": {
+      "message": "tamper alarm"
+    },
+    "lock_op_wrong": {
+      "message": "{n} wrong attempts in a row"
+    },
+    "lock_by_fingerprint": {
+      "message": "by fingerprint"
+    },
+    "lock_by_face": {
+      "message": "by face"
+    },
+    "lock_by_card": {
+      "message": "by card"
+    },
+    "lock_by_code": {
+      "message": "by code"
+    },
+    "lock_by_key": {
+      "message": "with a key"
+    },
+    "lock_by_app": {
+      "message": "from the app"
+    },
+    "lock_by_phone": {
+      "message": "from a phone"
+    },
+    "lock_by_manual": {
+      "message": "by hand"
+    },
+    "lock_by_auto": {
+      "message": "automatically"
+    },
+    "lock_user_index": {
+      "message": "user #{n}"
+    },
+    "lock_unknown": {
+      "message": "This lock was not found"
+    },
+    "lock_no_rights": {
+      "message": "No rights to unlock this door"
+    },
+    "lock_no_open": {
+      "message": "This lock only unlocks, it can't open the door"
+    },
+    "lock_failed": {
+      "message": "The lock didn't respond: try again"
+    },
+    "intercom_open_no_rights": {
+      "message": "No rights to open this door"
     }
   },
   "selector": {
@@ -984,6 +1233,93 @@
         "norm_motion": "Motion off its usual",
         "norm_generic": "Readings off their usual"
       }
+    },
+    "insight_input": {
+      "options": {
+        "self": "The device itself",
+        "window": "Window / door of the room",
+        "outdoor": "Outdoor temperature",
+        "season": "Season (heating / cooling)",
+        "effect": "Reading that should change",
+        "exec": "What drives it",
+        "trigger": "What is switched on",
+        "supply": "Supply temperature",
+        "peers": "Similar loops of the house"
+      }
+    },
+    "insight_how": {
+      "options": {
+        "climate": "While the thermostat wants heat (or cold), I watch how fast the room's temperature moves towards the setpoint. The norm is this room's own speed from its past episodes. If the temperature has hardly moved for much longer than usual, I say so. Paused while a window or door of the room is open, off-season, and when the setpoint changes.",
+        "stuck": "A temperature or humidity sensor normally changes many times a day. I learn how often this one changes; if it stays at one value far longer than usual, it has probably frozen or lost power.",
+        "battery": "I follow the battery level over the days and forecast when it runs out, so it can be replaced in advance.",
+        "link": "I follow the radio signal of the device over the days; a steady drop means it will soon drop off.",
+        "host": "I follow the free disk space of the house's server and the age of its last backup.",
+        "slowing": "From each heating (cooling) episode I keep its speed; if recent episodes are clearly slower than this room's usual at a similar outdoor temperature, the heating is losing power (filter, valve, pump).",
+        "cycling": "I count how often the equipment starts per hour. The norm is its own usual; far more starts than usual wear it out.",
+        "flapping": "I count how often the device goes offline per day. The norm is its own usual.",
+        "water": "I watch water use at night, when nobody uses water. A steady night flow above the usual is a likely leak.",
+        "noeffect": "When the device is on, the reading it drives should change within a set time (for example the floor gets warmer). If it is on and nothing changes, I say so. Paused while a window is open and off-season.",
+        "series": "I learn this reading's usual values by time of day and day of week (and season, where it matters) and say when it stays far outside them.",
+        "correlation": "After the device switches on, the linked reading should move (consumption appears, CO₂ or humidity falls). I learn by how much it usually moves; if it does not, I say so.",
+        "loops": "I compare this loop with similar loops of the house: speed, time to reach the setpoint, overshoot, starts per day, share of time running. Clearly worse than its peers = worth a look."
+      }
+    },
+    "intercom_bind": {
+      "options": {
+        "auto": "Automatic (this server's network address)"
+      }
+    },
+    "intercom_mode": {
+      "options": {
+        "direct": "The panel calls this server directly",
+        "register": "This server connects to the panel's server",
+        "registrar": "The panel connects to this server",
+        "cloud": "Through the maker's cloud"
+      }
+    },
+    "intercom_open": {
+      "options": {
+        "dtmf": "By a code during the call",
+        "http": "By the panel's command",
+        "entity": "By a relay or lock of this home"
+      }
+    },
+    "intercom_doors": {
+      "fields": {
+        "name": "Door name",
+        "preset": "Panel model",
+        "host": "Panel address",
+        "user": "Panel login",
+        "password": "Panel password",
+        "mode": "How the panel calls (default: by model)",
+        "sip_server": "Call server",
+        "sip_port": "Call server port",
+        "sip_user": "Line number",
+        "sip_password": "Line password",
+        "rtsp": "Video address (default: by model)",
+        "open": "How to open the door",
+        "dtmf": "Opening code",
+        "relay": "Relay number",
+        "open_entity": "The door's relay or lock",
+        "codec": "Sound (PCMA — Europe, PCMU — US)",
+        "area": "Room"
+      }
+    },
+    "intercom_preset": {
+      "options": {
+        "hikvision": "Hikvision (DS-KV / DS-KD) — per the maker's documentation",
+        "dahua": "Dahua VTO — per the maker's documentation",
+        "2n": "2N IP Verso / Solo — per the maker's documentation",
+        "akuvox": "Akuvox — per the maker's documentation",
+        "basip": "BAS-IP (local network) — per the maker's documentation",
+        "basip_cloud": "BAS-IP (cloud) — per the maker's documentation",
+        "dahua_cloud": "Dahua (cloud) — per the maker's documentation",
+        "beward": "Beward DS — per the maker's documentation",
+        "fanvil": "Fanvil (i-series) — per the maker's documentation",
+        "doorbird": "DoorBird — per the maker's documentation",
+        "grandstream": "Grandstream GDS — per the maker's documentation",
+        "generic": "Other panel (standard SIP)"
+      }
     }
   },
   "services": {
@@ -1018,6 +1354,40 @@
     "remove_alarms": {
       "name": "Remove Hauflo alarms",
       "description": "For Home Assistant's admin only (Hauflo's cloud can't call it). Removes every alarm automation “Alarm: …” and helper “Hauflo · accepted: …” Hauflo made, edited ones too; the Hauflo agent sends the alarms itself again until the next project is applied."
+    },
+    "intercom_answer": {
+      "name": "Answer the intercom call",
+      "description": "Answers the call: the person who answered talks, everyone else sees \"Answered on another device\". The sound goes through the door's \"Talk\" camera.",
+      "fields": {
+        "entity_id": {
+          "name": "Intercom",
+          "description": "Any entity of the door (intercom, call, camera, button)."
+        }
+      }
+    },
+    "intercom_hangup": {
+      "name": "End the intercom call",
+      "description": "Declines the ring or ends the call. Only an admin ends someone else's call.",
+      "fields": {
+        "entity_id": {
+          "name": "Intercom",
+          "description": "Any entity of the door (intercom, call, camera, button)."
+        }
+      }
+    },
+    "lock": {
+      "name": "Lock / unlock / open the door",
+      "description": "The panel's lock buttons: locking is always allowed; unlocking or opening — only by the people chosen in the lock's settings (none chosen — anyone).",
+      "fields": {
+        "entity_id": {
+          "name": "Lock",
+          "description": "The door lock."
+        },
+        "action": {
+          "name": "Action",
+          "description": "lock, unlock or open (open — only a lock that can open the door)."
+        }
+      }
     }
   }
 }

@@ -35,7 +35,7 @@ from homeassistant.setup import async_setup_component
 from homeassistant.util import slugify
 
 from . import automations, keep, yamlfile
-from .const import ACK_ACTION, ACK_PREFIX, ALARM_PREFIX, ASSET_TAG, CHATTER_PREFIX, DOMAIN, NATIVE_STORE, OPEN_PREFIX, RUN_ACTION
+from .const import ACK_ACTION, ACK_PREFIX, ALARM_PREFIX, ASSET_TAG, CHATTER_PREFIX, DOMAIN, NATIVE_STORE, OPEN_PREFIX, RUN_ACTION, site_ru
 from .storage import HaufloStore
 from .notify import ACTION_EVENT, LINK_KINDS, NATIVE_HOLD, OUTPUTS, default_hold, hold_value, LIST_MAX, REPEAT_FAST, REPEAT_SLOW, RUN_SERVICES, NotifyEngine, native_back, push_data
 
@@ -67,20 +67,26 @@ NO_DATA = ["unavailable", "unknown"]
 ICON = "mdi:bell-check"
 OPEN_ICON = "mdi:bell-ring"
 _TEXT = "alarm_native_"
+def _name(e: str) -> str:
+    """The Jinja of an entity's name in a native push: its friendly name, else its object id in words («leak_bath» →
+    «Leak bath», as notify.label and HA say an unnamed entity) — never the raw id (acceptance 0.33 п.5)."""
+    return f"(state_attr({e}, 'friendly_name') or ({e}.split('.')[1] | replace('_', ' ') | capitalize))"
+
+
 # One alarm's names in the push: «Протечка кухня · Кухня, …» — up to LIST_MAX, then «+N» (rendered by HA when it runs).
 _NAMES = (
     "{%- set ns = namespace(o=[]) -%}{%- for e in alarmed[:" + str(LIST_MAX) + "] -%}{%- set a = area_name(e) -%}"
-    "{%- set ns.o = ns.o + [(state_attr(e, 'friendly_name') or e) ~ (' · ' ~ a if a else '')] -%}{%- endfor -%}"
+    "{%- set ns.o = ns.o + [" + _name("e") + " ~ (' · ' ~ a if a else '')] -%}{%- endfor -%}"
     "{{ ns.o | join(', ') }}{% if alarmed | count > " + str(LIST_MAX) + " %} +{{ alarmed | count - " + str(LIST_MAX) + " }}{% endif %}"
 )
 # A level's names say its value too: «Батарея датчика · Кухня (18 %)».
 _LEVEL_NAMES = (
     "{%- set ns = namespace(o=[]) -%}{%- for e in alarmed[:" + str(LIST_MAX) + "] -%}{%- set a = area_name(e) -%}{%- set u = state_attr(e, 'unit_of_measurement') -%}"
-    "{%- set ns.o = ns.o + [(state_attr(e, 'friendly_name') or e) ~ (' · ' ~ a if a else '')"
+    "{%- set ns.o = ns.o + [" + _name("e") + " ~ (' · ' ~ a if a else '')"
     " ~ ((' (' ~ states(e) ~ ((' ' ~ u) if u else '') ~ ')') if e in levels else '')] -%}{%- endfor -%}"
     "{{ ns.o | join(', ') }}{% if alarmed | count > " + str(LIST_MAX) + " %} +{{ alarmed | count - " + str(LIST_MAX) + " }}{% endif %}"
 )
-_ONE = "{{ (state_attr(trigger.entity_id, 'friendly_name') or trigger.entity_id) ~ ((' · ' ~ area_name(trigger.entity_id)) if area_name(trigger.entity_id) else '') }}"
+_ONE = "{{ " + _name("trigger.entity_id") + " ~ ((' · ' ~ area_name(trigger.entity_id)) if area_name(trigger.entity_id) else '') }}"
 _ALARMED = "{{ expand(sources) | selectattr('state', 'in', alarm_states) | map(attribute='entity_id') | list }}"
 # A level rule's sources in alarm, the open alarm's way (notify.in_alarm, open_now): a level until it is back past its
 # threshold by the step (battery < 20 → alarm, > 25 → back: 18 → 22 → 19 is one alarm), a signal in its states.
@@ -609,7 +615,7 @@ async def written_english(hass: HomeAssistant, engine: NotifyEngine | None) -> b
         return lang == "en"
     if engine is not None:
         return engine._english()  # noqa: SLF001
-    return not str(hass.config.language or "ru").lower().startswith("ru")
+    return not site_ru(hass.config.language)
 
 
 SERVICE = "remove_alarms"

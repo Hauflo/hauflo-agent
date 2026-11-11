@@ -24,6 +24,7 @@ from homeassistant.core import HomeAssistant
 
 from . import service as service_info
 from .natural import natural_key
+from .ownership import ZONES_KEY
 from .storage import HaufloStore
 
 STORE_KEY = "hauflo.house"
@@ -179,6 +180,15 @@ def _rule_states(hass: HomeAssistant, admin: bool) -> dict[str, str]:
     return rule_states(hass, admin)
 
 
+def _locks_view(hass: HomeAssistant, user_id: str | None) -> dict[str, Any]:
+    from .const import DOMAIN  # noqa: PLC0415
+
+    for entry in hass.config_entries.async_loaded_entries(DOMAIN):
+        locks = getattr(entry.runtime_data, "locks", None)
+        return locks.view(user_id) if locks is not None else {}
+    return {}
+
+
 class HouseView(HomeAssistantView):
     url = "/api/hauflo/house"
     name = "api:hauflo:house"
@@ -202,6 +212,10 @@ class HouseView(HomeAssistantView):
             "protected_why": _protected_why(hass, protected),
             # What a Hauflo rule watches, by entity: «ok» / «fired» / «off» — the tile's bell (rules.py, notify.py).
             "rules": _rule_states(hass, bool(user and user.is_admin)),
+            # Р57: Alice's zone areas → their rooms' areas — a card counts a zone's device in its room.
+            "zones": dict(hass.data.get(ZONES_KEY) or {}),
+            # Р56: the locks' tile — the last event, the battery, the door, may this person unlock, a cloud one's reads.
+            "locks": _locks_view(hass, user.id if user else None),
         }
         if user and user.is_admin:
             people = [u for u in await hass.auth.async_get_users() if not u.system_generated and u.is_active and not is_guest(hass, u)]

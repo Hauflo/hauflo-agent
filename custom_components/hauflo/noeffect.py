@@ -444,6 +444,17 @@ class PairEffect(Detector):
 
         return any(isinstance(d, ClimateEffect) and d.norm(eff, "heat") is not None for d in self.ctx.detectors)
 
+    def inputs(self, kind: str, eid: str) -> list[dict[str, Any]]:
+        """The effect (a room's temperature / CO₂ / humidity), the executor that should move it, the room's windows."""
+        p = self.pairs.get(eid) or self.saved.get(eid) or {}
+        cfg = KINDS.get(p.get("kind", "")) or {}
+        return [
+            {"role": "effect", "entityId": eid},
+            *([{"role": "exec", "entityId": p["exec"]}] if p.get("exec") else []),
+            *({"role": "window", "entityId": w} for w in (self.ctx.windows_of(eid) if cfg.get("windows") else [])),
+            {"role": "season"},
+        ]
+
     def keys(self) -> list[tuple[str, str]]:
         return [(KIND, eff) for eff in dict.fromkeys([*self.pairs, *self.saved])]
 

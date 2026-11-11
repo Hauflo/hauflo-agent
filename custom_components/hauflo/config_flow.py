@@ -13,11 +13,11 @@ from homeassistant.components import persistent_notification
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import section
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.selector import BooleanSelector, SelectSelector, SelectSelectorConfig, SelectSelectorMode, TextSelector, TextSelectorConfig
+from homeassistant.helpers.selector import BooleanSelector, NumberSelector, NumberSelectorConfig, NumberSelectorMode, ObjectSelector, ObjectSelectorConfig, SelectSelector, SelectSelectorConfig, SelectSelectorMode, TextSelector, TextSelectorConfig
 
 from . import relinked as _relinked, servers, service
 from . import ranges as ranges_mod
-from .const import CONF_CARDS_VIEW_OLD, CONF_INDEPENDENT, CONF_ACCEPT_PENDING, CONF_ALLOW_CHANGES, CONF_CODE, CONF_CONFIRM_TAKEOVER, CONF_RANGES, CONF_SECRET, CONF_SERVER, DATA_PENDING_RANGES, DATA_UNLINKED, DEFAULT_SERVER, DOMAIN, FALLBACK_SERVER, REGION_SERVERS
+from .const import CONF_CARDS_VIEW_OLD, CONF_INDEPENDENT, CONF_INTERCOM, CONF_ACCEPT_PENDING, CONF_ALLOW_CHANGES, CONF_CODE, CONF_CONFIRM_TAKEOVER, CONF_RANGES, CONF_SECRET, CONF_SERVER, DATA_PENDING_RANGES, DATA_UNLINKED, DEFAULT_SERVER, DOMAIN, FALLBACK_SERVER, REGION_SERVERS
 from .ranges import parse_ranges
 from .ranges import range_key as _range_key
 from .tuning import TUNING
@@ -322,6 +322,7 @@ class HaufloOptionsFlow(OptionsFlow):
     _shown_pending: list[str] | None = None
     _saved: dict[str, Any] | None = None
     _report: str = ""
+    _independent: bool = False
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
@@ -340,11 +341,84 @@ class HaufloOptionsFlow(OptionsFlow):
                 CONF_ALLOW_CHANGES: user_input.get(CONF_ALLOW_CHANGES) is not False,
                 CONF_RANGES: parse_ranges(ranges + accepted),
             }
-            if user_input.get(CONF_INDEPENDENT) is True:
-                # Its own step: what it does and what stops, then the owner confirms (service review 29.10).
-                self._saved = options
-                return await self.async_step_independent()
-            return self.async_create_entry(data=options)
+            self._saved = options
+            self._independent = user_input.get(CONF_INDEPENDENT) is True
+            if user_input.get(CONF_INTERCOM) is True:
+                return await self.async_step_intercom()  # Р55: the doors, their own step
+            return await self._done()
+        return await self._show_init()
+
+    async def _done(self) -> ConfigFlowResult:
+        if self._independent:
+            # Its own step: what it does and what stops, then the owner confirms (service review 29.10).
+            return await self.async_step_independent()
+        return self.async_create_entry(data=self._saved if self._saved is not None else dict(self.config_entry.options))
+
+    async def async_step_intercom(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """«Домофон»: the address the agent takes calls on (auto — HA's own LAN address; another network card / VLAN by
+        hand), its port, the router's public address when a panel calls from outside, and the doors (a preset of
+        intercom/presets.json + the panel's address and accounts). Saved as they are; what a door lacks is refused here."""
+        from .intercom import door as door_mod, setup as setup_mod  # noqa: PLC0415 — the intercom is loaded only when it is set up
+
+        current = dict(self.config_entry.options.get(CONF_INTERCOM) or {})
+        errors: dict[str, str] = {}
+        placeholders = {"door": "", "presets": ", ".join(dict.fromkeys(p["maker"] for p in door_mod.PRESETS.values() if p.get("maker")))}
+        if user_input is not None:
+            doors = user_input.get("doors") or []
+            doors = [d for d in (doors if isinstance(doors, list) else [doors]) if isinstance(d, dict)]
+            try:
+                value = setup_mod.normalize({**user_input, "doors": doors}, current)
+            except setup_mod.SetupError as err:
+                errors[err.field] = f"intercom_{err.code}"
+                placeholders["door"] = err.door
+                value = {**current, **{k: user_input.get(k) for k in ("bind", "port", "public")}, "doors": doors}
+            else:
+                self._saved = {**(self._saved or dict(self.config_entry.options)), CONF_INTERCOM: value}
+                return await self._done()
+            current = value
+        binds = ["auto"]
+        try:
+            from homeassistant.components import network  # noqa: PLC0415
+
+            for adapter in await network.async_get_adapters(self.hass):
+                binds += [str(a["address"]) for a in adapter["ipv4"] if str(a["address"]) not in binds]
+        except Exception:  # noqa: BLE001 — no list: «auto» or an address typed by hand
+            pass
+        text = {"text": {}}
+        secret = {"text": {"type": "password"}}
+        fields = {
+            "name": {"required": True, "selector": text},
+            "area": {"selector": {"area": {}}},
+            "preset": {"required": True, "selector": {"select": {"options": list(door_mod.PRESETS), "translation_key": "intercom_preset", "mode": "dropdown"}}},
+            "host": {"selector": text},
+            "user": {"selector": text},
+            "password": {"selector": secret},
+            "mode": {"selector": {"select": {"options": list(door_mod.MODES), "translation_key": "intercom_mode", "mode": "dropdown"}}},
+            "sip_server": {"selector": text},
+            "sip_port": {"selector": {"number": {"min": 1, "max": 65535, "mode": "box"}}},
+            "sip_user": {"selector": text},
+            "sip_password": {"selector": secret},
+            "rtsp": {"selector": text},
+            "open": {"selector": {"select": {"options": list(door_mod.OPENERS), "translation_key": "intercom_open", "mode": "dropdown"}}},
+            "dtmf": {"selector": text},
+            "relay": {"selector": {"number": {"min": 1, "max": 16, "mode": "box"}}},
+            "open_entity": {"selector": {"entity": {"domain": sorted(TUNING["intercom"]["open_services"])}}},
+            "codec": {"selector": {"select": {"options": ["PCMA", "PCMU"], "mode": "dropdown"}}},
+        }
+        return self.async_show_form(
+            step_id="intercom",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("bind", default=str(current.get("bind") or "auto")): SelectSelector(SelectSelectorConfig(options=binds, custom_value=True, mode=SelectSelectorMode.DROPDOWN, translation_key="intercom_bind")),
+                    vol.Required("port", default=int(current.get("port") or TUNING["intercom"]["sip_port"])): NumberSelector(NumberSelectorConfig(min=1, max=65535, mode=NumberSelectorMode.BOX)),
+                    vol.Optional("public", default=str(current.get("public") or "")): TextSelector(),
+                    vol.Optional("doors", default=list(current.get("doors") or [])): ObjectSelector(ObjectSelectorConfig(fields=fields, multiple=True, label_field="name", translation_key="intercom_doors")),
+                }
+            ),
+            errors=errors,
+            description_placeholders=placeholders,
+        )
+    async def _show_init(self) -> ConfigFlowResult:
         current = list(self.config_entry.options.get(CONF_RANGES) or [])
         pending = sorted(self.hass.data.get(DATA_PENDING_RANGES, set()), key=_range_key)
         self._shown_pending = pending
@@ -366,6 +440,7 @@ class HaufloOptionsFlow(OptionsFlow):
                     vol.Required(CONF_ALLOW_CHANGES, default=self.config_entry.options.get(CONF_ALLOW_CHANGES, True) is True): BooleanSelector(),
                     vol.Optional(CONF_RANGES, default=shown): TextSelector(TextSelectorConfig(multiline=True)),
                     **extra,
+                    vol.Optional(CONF_INTERCOM, default=False): BooleanSelector(),
                     vol.Optional(CONF_INDEPENDENT, default=False): BooleanSelector(),
                 }
             ),

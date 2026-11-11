@@ -19,6 +19,8 @@ from homeassistant.core import HomeAssistant, State
 from homeassistant.components.homeassistant.exposed_entities import async_should_expose
 from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er, intent
 
+from .ownership import room_area
+
 _LOGGER = logging.getLogger(__name__)
 
 HEADER = "# Hauflo agent — generated, removed with the integration. Do not edit.\n"
@@ -168,7 +170,8 @@ class _Climate(intent.IntentHandler):
                 continue
             device = devs.async_get(e.device_id) if e.device_id else None
             area = e.area_id or (device.area_id if device else None)
-            if area_ids is None or area in area_ids:
+            # Р57: «на кухне-гостиной» finds a thermostat in its zone area too; «в зоне Остров» — the zone's own.
+            if area_ids is None or area in area_ids or room_area(hass, area) in area_ids:
                 found.append((state, floor))
         if self.kind == "room":
             found = [x for x in found if not x[1]] or found

@@ -17,7 +17,12 @@ very list ({"members": [...]}, the whole set each time, kept across restarts: a 
 group's options need it later too). Only a listed light / cover of a real integration, enabled, not hidden by the
 family, never protected (a lock / gate / garage door, a group or a «Switch as X» / template helper over one, a cover
 named as a gate) — member_refusal says why not. The registry of such an entity stays out of Hauflo's reach (_own_entity
-is unchanged): a scene / group of Hauflo deleted never touches it, a group never hides it."""
+is unchanged): a scene / group of Hauflo deleted never touches it, a group never hides it.
+
+Smart locks (Р56, agent feature «foreign_locks», locks.py): the wizard's «Замок» sends {"locks": {lock entity: {push,
+alarms, users, names, door, poll}}} — the whole map each time: a push on each unlock (off by default), the alarms' pushes
+(on by default), the HA users who may unlock from the panel, the integrator's names for the lock's user numbers, the
+intercom door it opens, a cloud lock's read every N minutes."""
 
 from __future__ import annotations
 
@@ -58,6 +63,10 @@ LABELS_MAX = TUNING["ownership"]["foreign_labels_max"]
 FEATURE = "foreign_wizard"
 MEMBERS_FEATURE = "foreign_scene_members"
 MEMBER_DOMAINS = frozenset({"light", "cover"})
+# What the family dashboard's own cards may name from another integration (0.33, Р50/Р51): a room's light, blind,
+# thermostat, socket, player — never a lock, an alarm panel, a siren (no domain here), a gate (protected) or the bus.
+SHOWN_DOMAINS = frozenset(TUNING["ownership"]["foreign_shown_domains"])
+SHOWN_FEATURE = "foreign_shown"
 ROLE_PREFIX = "hauflo_role_"
 _ROLE_RE = re.compile(r"^hauflo_role_[a-z0-9_]{1,40}$")
 # Only the canon's roles (the cards'): any other name would make a label of its own — the registry flooded (red team 3).
@@ -72,6 +81,12 @@ DEVICE_KEYS = frozenset({"area_id", "name_by_user", "labels"})
 ENTITY_KEYS = frozenset({"area_id", "name", "hidden_by", "labels"})
 DEVICE_UPDATE = "config/device_registry/update"
 ENTITY_UPDATE = "config/entity_registry/update"
+LOCKS_FEATURE = "foreign_locks"
+LOCK_KEYS = frozenset({"push", "alarms", "users", "names", "door", "poll"})
+_LT = TUNING["locks"]
+_USER_ID = re.compile(r"^[0-9a-f]{32}$")
+_DOOR_ID = re.compile(r"^[a-z0-9_]{1,64}$")
+_USER_KEY = re.compile(r"^[A-Za-z0-9_-]{1,16}$")
 
 
 class Flags:
@@ -84,6 +99,11 @@ class Flags:
         self.journal: dict[str, dict[str, dict[str, Any]]] = {}
         # Other integrations' lights / blinds the integrator put in Hauflo's scenes and groups (399-6): entity ids.
         self.members: set[str] = set()
+        # Р56: the locks' settings (locks.py) and who hears their change (the locks' listeners, the intercom's button).
+        self.locks: dict[str, dict[str, Any]] = {}
+        self.on_locks: Any = None
+        # The wizard's «Замок» facts (locks.Locks.wizard with the intercom's doors), set by the agent: None — no locks yet.
+        self.lock_info: Any = None
         self._store = HaufloStore(hass, STORE_KEY)
 
     async def async_load(self) -> None:
@@ -93,9 +113,10 @@ class Flags:
         j = data.get("journal") if isinstance(data, dict) else None
         self.journal = {k: v for k, v in j.items() if isinstance(k, str) and isinstance(v, dict) and isinstance(v.get("was"), dict) and isinstance(v.get("set"), dict)} if isinstance(j, dict) else {}
         self.members = members_ok(data.get("members") if isinstance(data, dict) else None) or set()
+        self.locks = locks_ok(data.get("locks") if isinstance(data, dict) else None) or {}
 
     def _data(self) -> dict[str, Any]:
-        return {"notify": self.notify, "journal": self.journal, "members": sorted(self.members)}
+        return {"notify": self.notify, "journal": self.journal, "members": sorted(self.members), "locks": self.locks}
 
     def save(self) -> None:
         self._store.async_delay_save(self._data, 0)
@@ -107,6 +128,13 @@ class Flags:
     def set_members(self, ids: set[str]) -> None:
         self.members = set(ids)
         self.save()
+
+    def set_locks(self, m: dict[str, dict[str, Any]]) -> None:
+        was = self.locks
+        self.locks = m
+        self.save()
+        if callable(self.on_locks):
+            self.on_locks(was, m)
 
     async def async_remove(self) -> None:
         await self._store.async_remove()
@@ -155,6 +183,53 @@ def members_ok(v: Any) -> set[str] | None:
     return set(v)
 
 
+def locks_ok(v: Any) -> dict[str, dict[str, Any]] | None:
+    """{"locks": {lock entity: {push?, alarms?: bool, users?: [HA user ids], names?: {user no.: name}, door?: intercom
+    door id | null, poll?: minutes}}} — anything else refuses the whole body (a flood or a garbage name never kept)."""
+    if not isinstance(v, dict) or len(v) > _LT["locks_max"]:
+        return None
+    out: dict[str, dict[str, Any]] = {}
+    for eid, s in v.items():
+        if not (isinstance(eid, str) and cv.valid_entity_id(eid) and eid.startswith("lock.") and isinstance(s, dict) and not set(s) - LOCK_KEYS):
+            return None
+        c: dict[str, Any] = {}
+        for k in ("push", "alarms"):
+            if k in s:
+                if not isinstance(s[k], bool):
+                    return None
+                c[k] = s[k]
+        users = s.get("users", [])
+        if not isinstance(users, list) or len(users) > _LT["users_max"] or not all(isinstance(u, str) and _USER_ID.match(u) for u in users):
+            return None
+        if users:
+            c["users"] = sorted(set(users))
+        names = s.get("names", {})
+        if not isinstance(names, dict) or len(names) > _LT["names_max"]:
+            return None
+        for k, n in names.items():
+            if not (isinstance(k, str) and _USER_KEY.match(k) and isinstance(n, str) and 0 < len(n.strip()) <= _LT["name_max"] and not UNSAFE_NAME.search(n)):
+                return None
+        if names:
+            c["names"] = {k: n.strip() for k, n in names.items()}
+        door = s.get("door")
+        if door is not None and not (isinstance(door, str) and _DOOR_ID.match(door)):
+            return None
+        if door:
+            c["door"] = door
+        poll = s.get("poll", 0)
+        if isinstance(poll, bool) or not isinstance(poll, int) or not 0 <= poll <= _LT["poll_max_min"]:
+            return None
+        if poll:
+            c["poll"] = poll
+        out[eid] = c
+    return out
+
+
+def locks_of(hass: HomeAssistant | None) -> dict[str, dict[str, Any]]:
+    f = flags(hass)
+    return f.locks if f is not None else {}
+
+
 def member_refusal(hass: HomeAssistant | None, entity_id: Any) -> str | None:
     """Why another integration's entity may not be in a Hauflo scene / group (None — it may). Each check fails closed;
     a Hauflo entity is never judged here (_hauflo_entity is)."""
@@ -192,6 +267,39 @@ def member_refusal(hass: HomeAssistant | None, entity_id: Any) -> str | None:
 
 def member_ok(hass: HomeAssistant | None, entity_id: Any) -> bool:
     return member_refusal(hass, entity_id) is None
+
+
+def shown_refusal(hass: HomeAssistant | None, entity_id: Any) -> str | None:
+    """Why another integration's entity may not be named on Hauflo's dashboard cards (None — it may). Shown only: the
+    card operates it with the viewer's own HA rights, a dashboard action still names Hauflo's own only (service_ok).
+    Each check fails closed, as member_refusal."""
+    if not isinstance(entity_id, str) or not cv.valid_entity_id(entity_id) or entity_id.split(".", 1)[0] not in SHOWN_DOMAINS:
+        return "domain_not_allowed"
+    if hass is None:
+        return "no_hass"
+    reg = er.async_get(hass).async_get(entity_id)
+    if reg is None:
+        return "unknown_entity"
+    if reg.platform in NEVER_PLATFORMS:
+        return "platform_not_allowed"
+    if reg.disabled_by is not None:
+        return "disabled"
+    if not reg.config_entry_id:
+        return "no_config_entry"
+    if _is_protected(hass, entity_id):
+        return "protected"
+    if entity_id.startswith("cover."):
+        from . import _GATE_NAME, _PROTECTED_COVERS  # noqa: PLC0415 — the package imports this module
+
+        st = hass.states.get(entity_id)
+        names = ((st.attributes.get("friendly_name") if st else None), reg.name, reg.original_name, entity_id.split(".", 1)[1].replace("_", " "))
+        if (st is not None and st.attributes.get("device_class") in _PROTECTED_COVERS) or reg.original_device_class in _PROTECTED_COVERS or reg.device_class in _PROTECTED_COVERS or any(isinstance(n, str) and _GATE_NAME.search(n) for n in names):
+            return "gate"
+    return None
+
+
+def shown_ok(hass: HomeAssistant | None, entity_id: Any) -> bool:
+    return shown_refusal(hass, entity_id) is None
 
 
 # --- the wizard (п.57) ----------------------------------------------------------------------------------------------
@@ -520,12 +628,14 @@ def revert(hass: HomeAssistant, devices: set[str], entities: set[str]) -> dict[s
 
 
 class ForeignView(HomeAssistantView):
-    """GET → {"notify": {...}, "features": [...], "plan": bool, "journal": {"devices": [...], "entities": [...]}};
+    """GET → {"notify": {...}, "features": [...], "plan": bool, "journal": {"devices": [...], "entities": [...]}, "locks":
+    {...}, "lock_info": {"seen", "people", "doors"} (Р56, only with a lock in the house)};
     POST (admin only), any of:
       {"notify": {entity_id: bool}} — replaces the alarm sources map;
       {"plan": {"areas": [...], "devices": [...], "entities": [...]} | null, "plan_id": "<id>"} — a deploy's plan (п.57),
         by its id (none — the one legacy plan): each item written once, gone when idle PLAN_TTL; null — dropped;
       {"revert": {"devices": [...], "entities": [...]}} — «Вернуть как было» (a fresh backup first, as any change);
+      {"locks": {lock entity: {...}}} — the locks' settings (Р56, locks_ok), the whole map;
       {"members": [entity_id, ...]} — other integrations' lights / covers for Hauflo's scenes and groups (399-6), the
         whole set; the answer says each one refused and why ({"refused": {entity_id: reason}})."""
 
@@ -538,7 +648,8 @@ class ForeignView(HomeAssistantView):
             return self.json_message("admin only", 403)
         hass = request.app[KEY_HASS]
         f = flags(hass)
-        return self.json({"notify": f.notify if f is not None else {}, "features": [FEATURE, PLAN_FEATURE, WRITE_PLAN_FEATURE, MEMBERS_FEATURE], "plan": bool(active_plans(hass)), "journal": _journal_list(hass)})
+        info = await f.lock_info() if f is not None and callable(f.lock_info) else None
+        return self.json({"notify": f.notify if f is not None else {}, "features": [FEATURE, PLAN_FEATURE, WRITE_PLAN_FEATURE, MEMBERS_FEATURE, LOCKS_FEATURE], "plan": bool(active_plans(hass)), "journal": _journal_list(hass), "locks": f.locks if f is not None else {}, **({"lock_info": info} if info else {})})
 
     async def post(self, request):
         if not request["hass_user"].is_admin:
@@ -547,8 +658,8 @@ class ForeignView(HomeAssistantView):
             body = await request.json()
         except ValueError:
             return self.json_message("invalid JSON", 400)
-        if not isinstance(body, dict) or not body or set(body) - {"notify", "plan", "plan_id", "revert", "members"}:
-            return self.json_message("notify / plan / revert / members expected", 400)
+        if not isinstance(body, dict) or not body or set(body) - {"notify", "plan", "plan_id", "revert", "members", "locks"}:
+            return self.json_message("notify / plan / revert / members / locks expected", 400)
         pid = body.get("plan_id", LEGACY_PLAN)
         if "plan_id" in body and ("plan" not in body or not isinstance(pid, str) or not PLAN_ID.match(pid)):
             return self.json_message("plan_id: [A-Za-z0-9_-]{1,64} with a plan expected", 400)
@@ -557,6 +668,9 @@ class ForeignView(HomeAssistantView):
         members = members_ok(body.get("members")) if "members" in body else None
         if "members" in body and members is None:
             return self.json_message("members: a list of light / cover entity ids expected", 400)
+        locks = locks_ok(body.get("locks")) if "locks" in body else None
+        if "locks" in body and locks is None:
+            return self.json_message("locks: {lock entity: {push, alarms, users, names, door, poll}} expected", 400)
         plan = plan_ok(body["plan"]) if body.get("plan") is not None else None
         if "plan" in body and body["plan"] is not None and plan is None:
             return self.json_message("plan: {areas, devices, entities} lists of ids expected", 400)
@@ -584,6 +698,9 @@ class ForeignView(HomeAssistantView):
         if members is not None:
             f.set_members(members)
             out["refused"] = {e: r for e in sorted(members) if (r := member_refusal(hass, e)) is not None}
+        if locks is not None:
+            f.set_locks(locks)
+            out["locks"] = f.locks
         if "revert" in body:
             out["reverted"] = revert(hass, set(rv.get("devices", [])), set(rv.get("entities", [])))
         return self.json({"notify": f.notify, "plan": bool(active_plans(hass)), **out})

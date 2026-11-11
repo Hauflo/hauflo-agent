@@ -23,6 +23,7 @@ from homeassistant.components.http import KEY_HASS, HomeAssistantView
 from homeassistant.core import HomeAssistant
 
 from .house import refuse
+from .ownership import room_area
 from .storage import HaufloStore
 STORE_KEY = "hauflo.order"
 MAX_KEY = 300
@@ -101,7 +102,9 @@ def _area_members(hass: HomeAssistant, area: str) -> set[str]:
     devs = dr.async_get(hass)
     out: set[str] = set()
     for e in er.async_get(hass).entities.values():
-        if e.area_id == area or (not e.area_id and e.device_id and (d := devs.async_get(e.device_id)) is not None and d.area_id == area):
+        own = e.area_id or ((d := devs.async_get(e.device_id)) is not None and d.area_id if e.device_id else None) or None
+        # Р57: a device in a zone area of Alice's stays in its room's block.
+        if own and area in (own, room_area(hass, own)):
             out.add(e.entity_id)
     return out
 

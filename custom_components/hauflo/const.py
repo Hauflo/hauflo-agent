@@ -9,7 +9,7 @@ from homeassistant.util.hass_dict import HassKey
 from . import servers as _servers
 
 DOMAIN = "hauflo"
-VERSION = "0.32.1"
+VERSION = "0.33.0"
 
 
 def _www_hash() -> str:
@@ -71,6 +71,7 @@ CONF_CARDS_VIEW_OLD = "cards_view"
 CONF_ACCEPT_PENDING = "accept_pending"
 # «Сделать дом независимым» (independent.py): a tick in the options that leads to its own confirm step.
 CONF_INDEPENDENT = "independent"
+CONF_INTERCOM = "intercom"  # Р55: the doors' intercom (intercom/): {bind, port, public, doors: [...]}
 # Alarm rules as Home Assistant's own objects (wave 5B, owner 06.11): per rule an automation in automations.yaml and two
 # helpers («Принято», «авария открыта») — they push, repeat and take «Принято» without the agent or the internet (independent.py).
 ALARM_PREFIX = "hauflo_alarm_"  # the automation's id (not an entity id: HA names the entity from the alias)
@@ -86,6 +87,15 @@ NATIVE_STORE = f"{DOMAIN}.notify_native"
 QUIET_PARENT = f"{DOMAIN}_quiet"
 # The tunnel's answer to a write while the owner keeps the house closed (Hauflo says where to switch it back).
 LOCKED_CODE = "locked_by_owner"
+
+
+def site_ru(hass_language: str | None, config: object = None) -> bool:
+    """The ONE language of everything the house says by itself — every push, HA notice and logbook line (0.33 С3): the
+    project's, as Hauflo wrote it into the alarm engine's config (`lang`), else Home Assistant's. A push in English over
+    a Russian HA said «🚨 Equipment alarm» while the value rules' pushes to the same phone came in Russian. Names of rooms
+    and devices are the integrator's and stay as written."""
+    lang = config.get("lang") if isinstance(config, dict) else None
+    return str(lang if isinstance(lang, str) and lang.strip() else hass_language or "ru").lower().startswith("ru")
 
 
 def wants_ru(body: object, hass_language: str | None) -> bool:

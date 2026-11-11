@@ -22,6 +22,7 @@ from typing import Any
 
 from homeassistant.components.http import KEY_HASS, HomeAssistantView
 from homeassistant.core import HomeAssistant, State, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 
 from .storage import HaufloStore
@@ -61,6 +62,15 @@ _JS_RADIX = re.compile(r"^0([xX][0-9a-fA-F]+|[oO][0-7]+|[bB][01]+)$")
 POLICY_KEYS = ("alarm", "holdS", "severity", "house", "watch", "shelvedUntil")
 # Who reads the diagnosis in HA, as the integrator chose it (the cloud's model.diag.visible).
 DIAG_VISIBLE = tuple(CANON["diag"]["visible"])
+# «Авария когда» chosen on a card's row in HA (Р9/Р19): the canon's meanings (on / off / none / reading) and «default» —
+# the site's own choice for the signal dropped. At most LOCAL_MAX such choices kept until Hauflo holds them.
+MEANINGS = CANON["meanings"]
+MEANING_DEFAULT = "default"
+LOCAL_MAX = _A["local_max"]
+# At most this many integration domains with the watchdog switched off (Р58) — the cloud caps the same.
+WATCHDOG_OFF_MAX = TUNING["watchdog"]["off_max"]
+# The keys of a policy a meaning decides (the rest of the site's choice for the signal stays).
+MEANING_KEYS = ("alarm", "watch")
 
 
 # --- the canon's resolution (signals.ts) -------------------------------------------------------------------------------
@@ -94,13 +104,21 @@ def js_number(text: str) -> float | None:
     return v if math.isfinite(v) else None
 
 
-def base_of(eid: str, device_class: Any, name: str | None) -> tuple[str, str, dict[str, Any]]:
-    """(kind, the canon's key, the base) of a signal before any choice."""
+def base_of(eid: str, device_class: Any, name: str | None, device_kind: str | None = None) -> tuple[str, str, dict[str, Any]]:
+    """(kind, the canon's key, the base) of a signal before any choice. `device_kind` — the canon's onDevice key of its
+    device (a lock's battery is no «info», Р56 L2; device_kind_of); a domain's own key (a lock) needs no class."""
     dom = eid.split(".", 1)[0]
     dc = class_of(device_class)
+    own = f"{dom}.{dc}" if dc else dom
+    on_dev = (CANON.get("onDevice") or {}).get(device_kind or "")
+    if on_dev and own in on_dev:
+        return "class", f"{device_kind}:{own}", on_dev[own]
+    if dc and own in CANON["classes"]:
+        return "class", own, CANON["classes"][own]
+    if dom in CANON["classes"]:
+        return "class", dom, CANON["classes"][dom]
     if dc:
-        key = f"{dom}.{dc}"
-        return ("class", key, CANON["classes"][key]) if key in CANON["classes"] else ("unlisted", "unlisted", CANON["unlisted"])
+        return "unlisted", "unlisted", CANON["unlisted"]
     cl = CANON["classless"]
     if dom not in cl["domains"]:
         return "unlisted", "unlisted", CANON["unlisted"]
@@ -124,10 +142,10 @@ def scope_matches(m: dict[str, Any], eid: str, platform: str | None, device_clas
     return not ("deviceClass" in m and m["deviceClass"] != class_of(device_class))
 
 
-def resolve(eid: str, *, platform: str | None = None, device_class: Any = None, name: str | None = None, policy: dict[str, Any] | None = None) -> dict[str, Any]:
+def resolve(eid: str, *, platform: str | None = None, device_class: Any = None, name: str | None = None, policy: dict[str, Any] | None = None, device_kind: str | None = None) -> dict[str, Any]:
     """One signal's policy: entity → scopes → the canon's class → classless → unlisted (signals.ts resolvePolicy).
     `source` — the last layer that chose anything for it (entity / scope), else the canon's base kind."""
-    kind, key, base = base_of(eid, device_class, name)
+    kind, key, base = base_of(eid, device_class, name, device_kind)
     r: dict[str, Any] = {
         "base": kind,
         "baseKey": key,
@@ -193,10 +211,33 @@ def affects_house(problem: bool, house: str, undetermined: bool) -> bool:
 def watch_by_class(eid: str, device_class: Any, platform: str | None = None) -> bool:
     """Watched by default by the canon (its watch list of «domain.device_class»), not the agent's own nor a phone's."""
     dc = class_of(device_class)
-    return bool(dc) and platform not in WATCH_SKIP and f"{eid.split('.', 1)[0]}.{dc}" in CANON["watch"]
+    dom = eid.split(".", 1)[0]
+    return platform not in WATCH_SKIP and ((bool(dc) and f"{dom}.{dc}" in CANON["watch"]) or dom in CANON["watch"])
 
 
-def evaluate(state: State | str | None, *, eid: str | None = None, platform: str | None = None, device_class: Any = None, name: str | None = None, area: str | None = None, policy: dict[str, Any] | None = None) -> dict[str, Any]:
+def device_kinds(hass: HomeAssistant) -> dict[str, str]:
+    """{device id: the canon's onDevice key} — a device holding an entity of that key's domain (a lock's device), the
+    first key of the canon's order. One registry pass per call; the callers ask it once per round."""
+    kinds = list(CANON.get("onDevice") or {})
+    if not kinds:
+        return {}
+    out: dict[str, str] = {}
+    for e in er.async_get(hass).entities.values():
+        dom = e.entity_id.split(".", 1)[0]
+        if e.device_id and dom in kinds and (e.device_id not in out or kinds.index(dom) < kinds.index(out[e.device_id])):
+            out[e.device_id] = dom
+    return out
+
+
+def device_kind_of(hass: HomeAssistant, eid: str, kinds: dict[str, str] | None = None) -> str | None:
+    """The onDevice key of an entity's device (None: none / no device)."""
+    e = er.async_get(hass).async_get(eid)
+    if e is None or not e.device_id:
+        return None
+    return (kinds if kinds is not None else device_kinds(hass)).get(e.device_id)
+
+
+def evaluate(state: State | str | None, *, eid: str | None = None, platform: str | None = None, device_class: Any = None, name: str | None = None, area: str | None = None, policy: dict[str, Any] | None = None, device_kind: str | None = None) -> dict[str, Any]:
     """{problem, house, severity, undetermined, watch, source, …} of one signal now. `state` — HA's State (its entity id,
     class and name are read from it unless given) or the raw state with `eid`. `area` is accepted for the callers' one
     shape; the canon doesn't resolve by it (a room's choice is the cloud's bulk edit into `entities`)."""
@@ -209,7 +250,7 @@ def evaluate(state: State | str | None, *, eid: str | None = None, platform: str
         raw = state
     if not eid:
         raise ValueError("evaluate: an entity id")
-    r = resolve(eid, platform=platform, device_class=device_class, name=name, policy=policy)
+    r = resolve(eid, platform=platform, device_class=device_class, name=name, policy=policy, device_kind=device_kind)
     problem = alarm_of(raw, r["alarm"])
     return {
         "problem": problem,
@@ -289,6 +330,39 @@ def policy_in(v: Any) -> dict[str, Any] | None:
     return p
 
 
+def meaning_policy(meaning: str) -> dict[str, Any]:
+    """The policy one of the canon's meanings stands for: {alarm[, watch: False]}; «default» — {} (nothing of its own)."""
+    if meaning == MEANING_DEFAULT:
+        return {}
+    m = MEANINGS[meaning]
+    p: dict[str, Any] = {"alarm": {"states": list(m["states"])} if "states" in m else {"none": True}}
+    if m.get("watch") == "off":
+        p["watch"] = False
+    return p
+
+
+def meaning_of(p: dict[str, Any] | None) -> str | None:
+    """Which canon meaning a signal's own policy says (its alarm condition and watch exactly), None — none of them."""
+    if not p or not p.get("alarm"):
+        return None
+    for k in MEANINGS:
+        want = meaning_policy(k)
+        if p["alarm"] == want["alarm"] and (p.get("watch") is False) == ("watch" in want):
+            return k
+    return None
+
+
+def _when(v: Any) -> Any:
+    """An ISO time as compared (a cloud's «…Z» and an agent's «+00:00» alike); None — not one."""
+    return dt_util.parse_datetime(v) if isinstance(v, str) else None
+
+
+def newer(a: Any, b: Any) -> bool:
+    """`a` is a later time than `b` (no `b` — any `a` is)."""
+    ta, tb = _when(a), _when(b)
+    return ta is not None and (tb is None or ta > tb)
+
+
 def match_in(v: Any) -> dict[str, str] | None:
     if not isinstance(v, dict) or not v or set(v) - {"platform", "domain", "deviceClass"}:
         return None
@@ -323,9 +397,19 @@ def diag_in(v: Any) -> dict[str, str] | None:
     return {"visible": v["visible"]} if isinstance(v, dict) and set(v) == {"visible"} and v["visible"] in DIAG_VISIBLE else None
 
 
+def watchdog_in(v: Any) -> dict[str, list[str]] | None:
+    """The integrator's watchdog switches (Р58): {off: [integration domains]} — the watchdog leaves these alone."""
+    if not isinstance(v, dict) or set(v) != {"off"} or not isinstance(v["off"], list) or len(v["off"]) > WATCHDOG_OFF_MAX:
+        return None
+    if not all(isinstance(d, str) and PLATFORM.match(d) for d in v["off"]):
+        return None
+    return {"off": sorted(set(v["off"]))}
+
+
 def signals_in(v: Any) -> tuple[dict[str, Any], int] | None:
-    """({scopes, entities, findings[, diag]}, rows dropped) — None: not the shape at all (the whole body refused)."""
-    if not isinstance(v, dict) or set(v) - {"scopes", "entities", "findings", "diag", "v", "hash"}:
+    """({scopes, entities, findings[, diag][, watchdog]}, rows dropped) — None: not the shape at all (the whole body
+    refused)."""
+    if not isinstance(v, dict) or set(v) - {"scopes", "entities", "findings", "diag", "watchdog", "v", "hash"}:
         return None
     scopes_raw, ents_raw, finds_raw = v.get("scopes") or [], v.get("entities") or {}, v.get("findings") or {}
     if not isinstance(scopes_raw, list) or not isinstance(ents_raw, dict) or not isinstance(finds_raw, dict):
@@ -344,11 +428,12 @@ def signals_in(v: Any) -> tuple[dict[str, Any], int] | None:
     entities = {}
     for eid, x in ents_raw.items():
         ok = isinstance(x, dict) and isinstance(eid, str) and ENTITY_ID.match(eid)
-        p = policy_in({k: w for k, w in x.items() if k not in ("by", "at", "lifeSafety")}) if ok else None
+        p = policy_in({k: w for k, w in x.items() if k not in ("by", "at", "lifeSafety", "ha")}) if ok else None
         if not p:
             dropped += 1
             continue
-        entities[eid] = p
+        # Its time (the newer of the site's and HA's own choice wins, Р9/Р19) — never a part of the policy.
+        entities[eid] = {**p, **({"at": x["at"]} if _iso(x.get("at")) else {})}
     findings = {}
     for k, x in finds_raw.items():
         f = finding_in(x) if isinstance(k, str) and FINDING_KEY.match(k) else None
@@ -362,6 +447,13 @@ def signals_in(v: Any) -> tuple[dict[str, Any], int] | None:
             dropped += 1
         else:
             out["diag"] = d
+    # Absent = every integration watched (the cloud sends it only with something switched off — an older cloud's hash
+    # stays the same): never kept from an earlier push.
+    if v.get("watchdog") is not None:
+        if (w := watchdog_in(v["watchdog"])) is None:
+            dropped += 1
+        else:
+            out["watchdog"] = w
     return out, dropped
 
 
@@ -372,36 +464,107 @@ class Signals:
     def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass
         self.store = HaufloStore(hass, STORE_KEY)
-        self.policy: dict[str, Any] = {"scopes": [], "entities": {}, "findings": {}}
+        # The site's policy as Hauflo sent it; `policy` — with HA's own newer choices over it (what every reader resolves by).
+        self.cloud: dict[str, Any] = {"scopes": [], "entities": {}, "findings": {}}
+        self.policy: dict[str, Any] = self.cloud
         self.hash: str | None = None
         self.at: str | None = None
         self.listeners: list[Callable[[], None]] = []
+        # «Авария когда» chosen in HA (Р9/Р19): entity → {meaning, by, at} — over the site's own until Hauflo holds a newer.
+        self.local: dict[str, dict[str, Any]] = {}
 
     async def async_load(self) -> None:
         data = await self.store.async_load()
-        got = signals_in({k: v for k, v in data.items() if k in ("scopes", "entities", "findings", "diag")}) if isinstance(data, dict) else None
+        got = signals_in({k: v for k, v in data.items() if k in ("scopes", "entities", "findings", "diag", "watchdog")}) if isinstance(data, dict) else None
         if got is not None:
-            self.policy = got[0]
+            self.cloud = got[0]
             h = data.get("hash")
             self.hash = h if isinstance(h, str) and HASH.match(h) else None
             self.at = data.get("at") if isinstance(data.get("at"), str) else None
+        if isinstance(data, dict) and isinstance(data.get("local"), dict):
+            self.local = {e: c for e, c in data["local"].items() if isinstance(e, str) and ENTITY_ID.match(e) and local_in(c) is not None}
+            self._trim()
+        self._merge()
+
+    def _merge(self) -> None:
+        own = dict(self.cloud.get("entities") or {})
+        for eid, c in self.local.items():
+            was = own.get(eid) or {}
+            if not newer(c["at"], was.get("at")):
+                continue
+            rest = {k: v for k, v in was.items() if k not in MEANING_KEYS and k != "at"}
+            p = {**rest, **meaning_policy(c["meaning"])}
+            if any(k in p for k in POLICY_KEYS):
+                own[eid] = {**p, "at": c["at"]}
+            else:
+                own.pop(eid, None)
+        self.policy = {**self.cloud, "entities": own}
+
+    def _trim(self) -> None:
+        if len(self.local) > LOCAL_MAX:
+            self.local = dict(sorted(self.local.items(), key=lambda kv: _when(kv[1]["at"]) or dt_util.utc_from_timestamp(0), reverse=True)[:LOCAL_MAX])
 
     def _data(self) -> dict[str, Any]:
-        return {**self.policy, "hash": self.hash, "at": self.at}
+        return {**self.cloud, "hash": self.hash, "at": self.at, "local": self.local}
 
-    @callback
-    def apply(self, policy: dict[str, Any], hash_: str) -> None:
-        # Who reads the diagnosis stays as last chosen when a push doesn't say it (an older cloud) or says it wrong (dropped):
-        # «всем» never goes silently (acceptance 10.11 L2); never pushed — the canon's default (diag_visible).
-        if "diag" not in policy and "diag" in self.policy:
-            policy = {**policy, "diag": self.policy["diag"]}
-        self.policy, self.hash, self.at = policy, hash_, dt_util.utcnow().isoformat()
-        self.store.async_delay_save(self._data, 0)
+    def _told(self) -> None:
         for fn in list(self.listeners):
             try:
                 fn()
             except Exception:  # noqa: BLE001 — a listener's bug never refuses the policy
                 _LOGGER.exception("Hauflo signals: a listener failed")
+
+    @callback
+    def choose(self, eid: str, meaning: str, by: str) -> None:
+        """«Авария когда» chosen on a card's row in HA by an admin: applied at once (the cards, the push engine, «Всё
+        хорошо»), kept, and carried to Hauflo by the status (`choices`) — the newer of the two choices wins."""
+        was = self.local.pop(eid, None)
+        # «По умолчанию» for a signal the site holds nothing of its own for (and no card choice on its way there): nothing
+        # to choose, nothing to carry (0.33 L4).
+        if meaning == MEANING_DEFAULT and was is None and eid not in (self.cloud.get("entities") or {}):
+            self._merge()
+            self.store.async_delay_save(self._data, 0)
+            self._told()
+            return
+        self.local[eid] = {"meaning": meaning, "by": str(by or "")[:STAMP_LEN], "at": dt_util.utcnow().isoformat()}
+        self._trim()
+        self._merge()
+        self.store.async_delay_save(self._data, 0)
+        self._told()
+
+    def choices(self) -> dict[str, dict[str, Any]]:
+        """HA's choices the site's policy doesn't hold yet (newer than its own for the signal), newest first — Hauflo folds
+        them in with the same `at`; its push back then equals them and they stop going."""
+        own = self.cloud.get("entities") or {}
+        out: dict[str, dict[str, Any]] = {}
+        for eid, c in sorted(self.local.items(), key=lambda kv: _when(kv[1]["at"]) or dt_util.utc_from_timestamp(0), reverse=True):
+            if newer(c["at"], (own.get(eid) or {}).get("at")):
+                out[eid] = dict(c)
+        return out
+
+    def own_of(self, eid: str) -> dict[str, Any]:
+        """Who chose the signal's own policy now: {meaning, ha: chosen in HA (not held by the site yet), by}."""
+        p = (self.policy.get("entities") or {}).get(eid)
+        c = self.local.get(eid)
+        # «По умолчанию» chosen on a card is no choice of its own (0.33 L4): the row reads its real default, not «на карточке».
+        ha = c is not None and c["meaning"] != MEANING_DEFAULT and newer(c["at"], ((self.cloud.get("entities") or {}).get(eid) or {}).get("at"))
+        return {"meaning": meaning_of(p), "ha": ha, **({"by": c["by"]} if ha and c else {})}
+
+    @callback
+    def apply(self, policy: dict[str, Any], hash_: str) -> None:
+        # Who reads the diagnosis stays as last chosen when a push doesn't say it (an older cloud) or says it wrong (dropped):
+        # «всем» never goes silently (acceptance 10.11 L2); never pushed — the canon's default (diag_visible).
+        if "diag" not in policy and "diag" in self.cloud:
+            policy = {**policy, "diag": self.cloud["diag"]}
+        self.cloud, self.hash, self.at = policy, hash_, dt_util.utcnow().isoformat()
+        # HA's own choices the site now holds (its time equal or newer) are done: forgotten.
+        own = policy.get("entities") or {}
+        # A «По умолчанию» the site holds no own policy for is done too (Hauflo dropped the signal's own: nothing to hold
+        # it by — kept, it went in every status and the row said «на карточке» for good, 0.33 L4).
+        self.local = {e: c for e, c in self.local.items() if newer(c["at"], (own.get(e) or {}).get("at")) and not (c["meaning"] == MEANING_DEFAULT and e not in own)}
+        self._merge()
+        self.store.async_delay_save(self._data, 0)
+        self._told()
 
     @callback
     def listen(self, fn: Callable[[], None]) -> Callable[[], None]:
@@ -414,7 +577,7 @@ class Signals:
         return off
 
     def counts(self) -> dict[str, int]:
-        return {"scopes": len(self.policy["scopes"]), "entities": len(self.policy["entities"]), "findings": len(self.policy["findings"])}
+        return {"scopes": len(self.cloud["scopes"]), "entities": len(self.cloud["entities"]), "findings": len(self.cloud["findings"])}
 
     def finding(self, key: str) -> dict[str, Any] | None:
         return self.policy["findings"].get(key)
@@ -424,6 +587,19 @@ class Signals:
 
     def watch_off(self) -> set[str]:
         return {e for e, p in self.policy["entities"].items() if p.get("watch") is False}
+
+
+def local_in(v: Any) -> dict[str, Any] | None:
+    """One HA choice as kept: {meaning: a canon one | default, by, at (ISO)}."""
+    if not isinstance(v, dict) or (v.get("meaning") not in MEANINGS and v.get("meaning") != MEANING_DEFAULT) or not _iso(v.get("at")):
+        return None
+    return {"meaning": v["meaning"], "by": str(v.get("by") or "")[:STAMP_LEN], "at": v["at"]}
+
+
+def watchdog_off(hass: HomeAssistant | None) -> set[str]:
+    """The integration domains the integrator switched the watchdog off for (Р58)."""
+    s = store(hass)
+    return set(((s.cloud.get("watchdog") or {}).get("off") or ())) if s is not None else set()
 
 
 def store(hass: HomeAssistant | None) -> Signals | None:
@@ -450,8 +626,6 @@ def current_hash(hass: HomeAssistant | None) -> str | None:
 
 
 def platform_of(hass: HomeAssistant, eid: str) -> str | None:
-    from homeassistant.helpers import entity_registry as er
-
     ent = er.async_get(hass).async_get(eid)
     return ent.platform if ent is not None else None
 
@@ -500,3 +674,39 @@ class SignalsView(HomeAssistantView):
             return self.json({"hash": s.hash, "applied": False, "counts": s.counts(), "dropped": got[1]})
         s.apply(got[0], body["hash"])
         return self.json({"hash": s.hash, "applied": True, "counts": s.counts(), "dropped": got[1]})
+
+
+class SignalChooseView(HomeAssistantView):
+    """«Авария когда» on a card's row (Р9/Р19), admins only: POST {entity, meaning: on | off | none | reading | default} →
+    {entity, meaning, ha, problem, house, alarm} — applied at once, kept, carried to Hauflo by the status."""
+
+    url = "/api/hauflo/signals/choose"
+    name = "api:hauflo:signals:choose"
+    requires_auth = True
+
+    async def post(self, request):
+        user = request["hass_user"]
+        if not user.is_admin:
+            return self.json_message("admin only", 403)
+        try:
+            body = await request.json()
+        except ValueError:
+            return self.json_message("invalid JSON", 400)
+        if not isinstance(body, dict) or set(body) != {"entity", "meaning"}:
+            return self.json_message("{entity, meaning} expected", 400)
+        eid, meaning = body["entity"], body["meaning"]
+        if not isinstance(eid, str) or not ENTITY_ID.match(eid) or eid.split(".", 1)[0] not in SIGNAL_DOMAINS:
+            return self.json_message("entity: a signal's entity id", 400)
+        if not isinstance(meaning, str) or (meaning not in MEANINGS and meaning != MEANING_DEFAULT):
+            return self.json_message(f"meaning: one of {', '.join([*MEANINGS, MEANING_DEFAULT])}", 400)
+        hass = request.app[KEY_HASS]
+        s = store(hass)
+        if s is None:
+            return self.json_message("not ready", 409)
+        s.choose(eid, meaning, user.name or user.id)
+        st = hass.states.get(eid)
+        ev = evaluate_in(hass, st) if st is not None else None
+        out: dict[str, Any] = {"entity": eid, **s.own_of(eid)}
+        if ev is not None:
+            out.update({"problem": ev["problem"], "house": ev["house"], "alarm": ev["alarm"]})
+        return self.json(out)

@@ -17,6 +17,23 @@
     "chatter_window_s": 600,
     "chatter_window_life_s": 60,
     "ring_window_s": 30,
+    "event_critical_kinds": ["sos"],
+    "quiet_channel": "hauflo_quiet",
+    "event_kinds": {
+      "_doc": "0.33 п.9: what a press of a watched event entity is — by its HA device class, else by words of its event type / name (a SIP call of an intercom integration has no doorbell class). One push per press, its words by kind; «sos» is critical (through silent mode and quiet hours).",
+      "sos": {"words": "(?<![a-z])sos(?![a-z])|panic|emergency|паник|тревожн|экстренн"},
+      "doorbell": {"classes": ["doorbell"], "words": "doorbell|(?<![a-z])ring|incoming|(?<![a-z])call|intercom|(?<![a-z])sip(?![a-z])|звон|вызов|домофон"}
+    },
+    "ring_push": {
+      "_doc": "Р55: a doorbell's push — the door's picture (a camera of the same device, the talk camera skipped), a tap opens the dashboard view with the door, time-sensitive (iOS) / high (Android) unless quiet hours or critical. «Answered» (the agent's intercom state, a SIP integration's event type) takes the push off every phone; a hang-up / an ended or answered call is no push of its own (a missed call keeps the ring's push).",
+      "kinds": ["doorbell"],
+      "skip_camera_keys": ["intercom_talk"],
+      "ios": {"interruption-level": "time-sensitive"},
+      "android": {"priority": "high", "ttl": 0, "importance": "high"},
+      "clear_states": ["talking", "answered_elsewhere"],
+      "clear_event_types": ["connected", "answered", "answered_elsewhere", "talking"],
+      "skip_event_types": ["ended", "hangup", "hang_up", "hung_up", "cancelled", "canceled", "rejected", "missed", "idle"]
+    },
     "rule_states_max": 8,
     "life_safety_kinds": ["leak", "flood", "smoke", "fire", "gas", "co", "carbon_monoxide"],
     "push_hour_max": 20,
@@ -60,11 +77,18 @@
       "binary_sensor.battery": {"alarm": {"states": ["on"]}, "house": "none", "severity": "info"},
       "binary_sensor.connectivity": {"alarm": {"states": ["off"]}, "house": "none", "severity": "important"},
       "sensor.battery": {"alarm": {"below": 20, "step": 5}, "house": "none", "severity": "info"},
-      "event.doorbell": {"house": "none", "severity": "important"}
+      "event.doorbell": {"house": "none", "severity": "important"},
+      "lock": {"alarm": {"states": ["jammed"]}, "house": "alarm", "severity": "important"}
+    },
+    "onDevice": {
+      "lock": {
+        "sensor.battery": {"alarm": {"below": 20, "step": 5}, "house": "fault", "severity": "important"},
+        "binary_sensor.battery": {"alarm": {"states": ["on"]}, "house": "fault", "severity": "important"}
+      }
     },
     "lifeSafety": ["binary_sensor.moisture", "binary_sensor.smoke", "binary_sensor.gas", "binary_sensor.carbon_monoxide", "classless.loud"],
     "watch": ["binary_sensor.problem", "binary_sensor.safety", "binary_sensor.smoke", "binary_sensor.gas", "binary_sensor.moisture", "binary_sensor.carbon_monoxide",
-              "binary_sensor.tamper", "binary_sensor.heat", "binary_sensor.battery", "sensor.battery", "event.doorbell"],
+              "binary_sensor.tamper", "binary_sensor.heat", "binary_sensor.battery", "sensor.battery", "event.doorbell", "lock"],
     "classless": {
       "domains": ["binary_sensor"],
       "alarm": {"states": ["on"]},
@@ -76,6 +100,7 @@
     "undetermined": {"house": "none", "severity": "info"},
     "unlisted": {"house": "none", "severity": "important"},
     "houses": ["alarm", "fault", "none"],
+    "meanings": {"on": {"states": ["on"]}, "off": {"states": ["off"]}, "none": {"alarm": "none"}, "reading": {"alarm": "none", "watch": "off"}},
     "entitiesMax": 2000,
     "scopesMax": 100,
     "findingsMax": 200,
@@ -100,7 +125,8 @@
     "domain": "^[a-z_]{1,40}$",
     "device_class": "^[a-z_]{0,30}$",
     "finding_key": "^[a-z_]{1,30}\\|[a-z_]+\\.[a-z0-9_]+$",
-    "iso": "^\\d{4}-\\d{2}-\\d{2}T[0-9:.+\\-Z]{1,30}$"
+    "iso": "^\\d{4}-\\d{2}-\\d{2}T[0-9:.+\\-Z]{1,30}$",
+    "local_max": 200
   },
   "backup": {
     "wait_s": 20,
@@ -109,6 +135,15 @@
     "keep_week_s": 604800,
     "reuse_s": 600,
     "fresh_s": 1800
+  },
+  "install": {
+    "wait_s": 20,
+    "download_timeout_s": 120,
+    "max_download_bytes": 20971520,
+    "max_unpacked_bytes": 52428800,
+    "max_members": 2000,
+    "max_redirects": 5,
+    "keep_backups": 3
   },
   "season": {
     "resend_s": 3600,
@@ -149,7 +184,8 @@
     "pages_check_s": 60,
     "pages_debounce_s": 2,
     "pages_password_len": 16,
-    "pages_slug_max": 24
+    "pages_slug_max": 24,
+    "pages_roles": { "technician": { "pick": "admin", "hours": 72 } }
   },
   "scenes": {
     "learn_every_s": 5.0,
@@ -179,6 +215,7 @@
   "ownership": {
     "gate_words": ["(?<!\\p{L})ворот\\p{L}*", "(?<!\\p{L})калитк\\p{L}*", "(?<!\\p{L})шлагбаум\\p{L}*", "(?<!\\p{L})(электро)?замо?к(?!\\p{L})", "(?<!\\p{L})(электро)?замк[аеиоу]\\p{L}*", "\\bgates?\\b", "\\bgarage\\s*doors?\\b", "\\bbarriers?\\b", "\\bwickets?\\b", "\\b(un)?lock(s|ed)?\\b", "\\bdoor\\s*(opener|strike|release)\\b"],
     "sync_delay_s": 20,
+    "zones_max": 500,
     "protect_max": 500,
     "foreign_max": 2000,
     "foreign_name_max": 100,
@@ -186,6 +223,7 @@
     "foreign_plans_max": 8,
     "foreign_labels_max": 10,
     "foreign_roles": ["climate", "lights", "covers", "devices", "status", "leaks", "security", "media", "camera", "readings", "diag", "hidden"],
+    "foreign_shown_domains": ["climate", "water_heater", "humidifier", "fan", "light", "cover", "switch", "valve", "media_player", "vacuum"],
     "foreign_deviceless_domains": ["climate", "water_heater", "humidifier", "fan", "light", "cover", "switch", "valve", "button", "number", "select", "text", "input_number", "input_select", "input_boolean", "siren", "lock", "alarm_control_panel", "camera", "image", "media_player", "remote", "vacuum", "lawn_mower", "binary_sensor", "event", "sensor", "weather"]
   },
   "presence": {
@@ -258,6 +296,8 @@
     "state_all_margin_s": 1
   },
   "insight": {
+    "inputs_max": 12,
+    "input_addresses_max": 6,
     "tick_s": 60,
     "save_delay_s": 60,
     "list_max": 20,
@@ -334,7 +374,7 @@
     "scan_page": 500,
     "choices_max": 200,
     "local_max": 500,
-    "card": { "tick_min_s": 10, "tick_max_s": 3600, "timeout_s": 20, "denied_every_ticks": 5 },
+    "card": { "tick_min_s": 10, "tick_max_s": 3600, "timeout_s": 20, "denied_every_ticks": 5, "uses_max": 4, "fold": 8 },
     "episodes_keep": 20,
     "insight_max_per_day": 1,
     "factor_min": 1.1,
@@ -579,5 +619,89 @@
   },
   "ranges": {
     "shown_items": 12
+  },
+  "intercom": {
+    "_doc": "Р55 домофон в агенте (intercom/): порты, таймеры SIP (RFC 3261 T1/T2/F), RTP, разговор, диагностика. Пресеты панелей — intercom/presets.json.",
+    "sip_port": 5060,
+    "rtsp_port": 18554,
+    "rtp_ports": [31000, 31998],
+    "ring_timeout_s": 60,
+    "answered_elsewhere_s": 6,
+    "register_expires_s": 300,
+    "cloud_register_expires_s": 60,
+    "register_retry_s": 30,
+    "nat_keepalive_s": 25,
+    "registrar_max_expires_s": 3600,
+    "nonce_ttl_s": 300,
+    "t1_s": 0.5,
+    "t2_s": 4,
+    "transaction_s": 32,
+    "answers_kept": 128,
+    "frame_ms": 20,
+    "no_audio_s": 3,
+    "talk_refresh_s": 2,
+    "dtmf_ms": 160,
+    "http_timeout_s": 8,
+    "rtsp_max_head": 8192,
+    "rtsp_max_clients": 4,
+    "realm": "hauflo",
+    "user_agent": "Hauflo",
+    "open_services": {"button": "press", "switch": "turn_on", "lock": "unlock", "input_boolean": "turn_on", "script": "turn_on"},
+    "_ice_doc": "ice_servers (the options' intercom block, set by the cloud wizard): STUN / TURN for the talk from outside the home network. A coturn use-auth-secret server — {urls, secret, ttl_s}: time-limited credentials made per request (TURN REST API); else {urls, username, credential}.",
+    "ice_schemes": ["stun", "stuns", "turn", "turns"],
+    "turn_ttl_s": 86400,
+    "turn_user": "hauflo"
+  },
+  "locks": {
+    "_doc": "Р56 умные замки любой интеграции (locks.py): что за событие (порядок проверки слов: ignore, затем ops по порядку), чем открыли, кто; когда слать пуш. Слова — регулярки без учёта регистра; замок узнаётся по домену lock и сущностям того же устройства, не по бренду.",
+    "ignore": "reset|power|radio|ajar|battery|non_?access|low_?batt|сброс",
+    "ops": {"jammed": "jam|заклин", "tamper": "tamper|hijack|duress|pry|forced|escutcheon|взлом|принужд", "wrong": "fail|invalid|wrong|unauthori|denied|limit|error|неверн|ошибк", "unlock": "unlock|unlatch|open|отпер|откр", "lock": "lock|запер|закр"},
+    "methods": {"fingerprint": "finger|biometric|отпеч", "face": "face|лиц", "card": "rfid|card|nfc|tag|карт", "code": "keypad|pin|code|password|passcode|код|парол", "key": "(?<![a-z])key(?!pad)|mechanical|ключ", "app": "(?<![a-z])app(?![a-z])|application|прилож", "phone": "remote|zigbee|^rf$|phone|bluetooth|aliro|телефон", "manual": "manual|button|one_?touch|thumb|вручн|кнопк", "auto": "auto|schedule|авто|расписан"},
+    "state_ops": {"unlocked": "unlock", "open": "unlock", "locked": "lock", "jammed": "jammed"},
+    "op_attrs": ["operation_type", "operation", "lock_operation_type", "action"],
+    "user_attrs": ["action_user", "user", "user_name", "username", "changed_by", "user_id", "user_index", "userIndex", "operation_user"],
+    "method_attrs": ["action_source_name", "action_source", "method", "source", "operation_source", "operationSource", "lock_source"],
+    "user_sensor_words": "user|пользоват",
+    "method_sensor_words": "source|method|способ",
+    "icons": {"unlock": "🔓", "lock": "🔒", "jammed": "⚠️", "tamper": "🚨", "wrong": "🚫"},
+    "alarm_ops": ["jammed", "tamper", "wrong"],
+    "critical_ops": ["tamper"],
+    "wrong_count": 3,
+    "wrong_window_s": 300,
+    "merge_s": 3,
+    "locks_max": 32,
+    "users_max": 32,
+    "names_max": 64,
+    "name_max": 40,
+    "poll_max_min": 1440
+  },
+  "analysis": {
+    "_doc": "«Анализ» (0.33 Р8/Р26): the house's diagnosis as its own sidebar panel next to «Дом» (analysis.py), not a dashboard tab — its address, icon, element and title by HA's language.",
+    "url_path": "hauflo-analysis",
+    "icon": "mdi:chart-timeline-variant-shimmer",
+    "element": "hauflo-analysis-panel",
+    "title": {"ru": "Анализ", "en": "Analysis"}
+  },
+  "watchdog": {
+    "tick_s": 60,
+    "start_grace_s": 600,
+    "error_wait_s": 120,
+    "retry_wait_s": 1800,
+    "unavailable_after_s": 600,
+    "first_s": 120,
+    "factor": 2,
+    "max_s": 1800,
+    "attempts_max": 6,
+    "window_h": 24,
+    "down_after_attempts": 3,
+    "settle_s": 180,
+    "spacing_s": 60,
+    "reload_timeout_s": 300,
+    "keep_recovered_h": 24,
+    "error_len": 200,
+    "save_delay_s": 10,
+    "off_max": 300,
+    "never_domains": ["knx", "mobile_app", "hassio", "cloud", "backup", "homeassistant_alerts"],
+    "skip_types": ["helper", "system"]
   }
 }

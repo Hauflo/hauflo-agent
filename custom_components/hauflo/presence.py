@@ -43,14 +43,17 @@ from typing import Any
 
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import CALLBACK_TYPE, Context, CoreState, HomeAssistant, State, callback
-from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er
+from homeassistant.helpers import area_registry as ar, entity_registry as er
 from homeassistant.helpers.event import async_track_point_in_time, async_track_state_change_event, async_track_time_change
 from homeassistant.helpers.start import async_at_started
 from homeassistant.util import dt as dt_util
 
 from .house import refuse
+from .ownership import entity_room
 from .storage import HaufloStore
 from .tuning import TUNING
+from .notify import label
+
 _LOGGER = logging.getLogger(__name__)
 STORE_KEY = "hauflo.presence"
 _T = TUNING["presence"]
@@ -538,13 +541,10 @@ class Presence:
         return out
 
     def rooms(self, eids: list[str]) -> dict[str, tuple[str, str]]:
-        ents, devs, areas = er.async_get(self.hass), dr.async_get(self.hass), ar.async_get(self.hass)
+        areas = ar.async_get(self.hass)
         out = {}
         for eid in eids:
-            ent = ents.async_get(eid)
-            area_id = ent.area_id if ent else None
-            if ent and not area_id and ent.device_id and (dev := devs.async_get(ent.device_id)):
-                area_id = dev.area_id
+            area_id = entity_room(self.hass, eid)  # Р57: a zone area of Alice's counts as its room
             area = areas.async_get_area(area_id) if area_id else None
             st = self.hass.states.get(eid)
             out[eid] = (area.id, area.name) if area else (eid, (st.attributes.get("friendly_name") if st else None) or eid)
@@ -739,7 +739,7 @@ class Presence:
 
     async def _off_now(self, eid: str, st: State) -> None:
         ev = {"entity_id": eid, "do": "off", "value": None}
-        name = st.attributes.get("friendly_name") or eid
+        name = label(self.hass, eid, st)
         if await self._send(ev, name):
             key, room = self.rooms([eid])[eid]
             self._log({**_brief(ev), "name": name, "room": room if key != eid else None})
@@ -988,7 +988,7 @@ class Presence:
             if mine:
                 self._unlit(eid)
             return
-        name = st.attributes.get("friendly_name") or eid
+        name = label(self.hass, eid, st)
         if st.state in ("unavailable", "unknown"):
             self._log({**_brief(ev), "name": name, "skip": "offline"})
             return

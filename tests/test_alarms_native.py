@@ -313,7 +313,7 @@ async def test_chattering_sensor_is_bounded(hass: HomeAssistant, house) -> None:
     # Another sensor of the rule: a new alarm, said at once, though the first one just chattered.
     hass.states.async_set(LEAK2, "on")
     await _later(hass, freezer, 6)
-    assert len(pushes) == 2 and LEAK2 in pushes[0].data["message"]
+    assert len(pushes) == 2 and "Leak bath" in pushes[0].data["message"]  # unnamed: its id in words (0.33 п.5)
     pushes.clear()
     hass.states.async_set(LEAK2, "off")
     await _later(hass, freezer, BACK + 60)
@@ -345,7 +345,8 @@ async def test_chatter_while_another_is_in_alarm(hass: HomeAssistant, house) -> 
     pushes.clear()
     await _later(hass, freezer, 1)  # not the very instant of the other's alarm (frozen time: «the rule acted in this phase»)
     await _flap(hass, freezer, LEAK, 15)
-    assert len(pushes) == 4 and LEAK in pushes[0].data["message"] and LEAK2 in pushes[0].data["message"]
+    assert len(pushes) == 4 and "Leak kitchen" in pushes[0].data["message"] and "Leak bath" in pushes[0].data["message"]
+    assert LEAK not in pushes[0].data["message"] and LEAK2 not in pushes[0].data["message"]  # never the raw id (0.33 п.5)
     assert [c.data["title"] for c in pushes if c.service == "mobile_app_anna"] == ["🚨 Протечка", "📳 Протечка"]  # and «дребезжит», the engine's
     pushes.clear()
     await _later(hass, freezer, BACK)
@@ -901,7 +902,8 @@ async def test_flapping_through_unavailable_is_one_alarm(hass: HomeAssistant, ho
     await _later(hass, freezer, 6)
     await _later(hass, freezer, notify.GROUP_WINDOW)
     # HA's automation keeps no memory of the sources it told: the engine tells this one, with its tag.
-    assert len(pushes) == 2 and LEAK2 in pushes[0].data["message"] and pushes[0].data["data"]["tag"] == AID
+    # The agent's own push names the unnamed sensor in words, not by its raw id (acceptance 0.33 п.5).
+    assert len(pushes) == 2 and "Leak bath" in pushes[0].data["message"] and LEAK2 not in pushes[0].data["message"] and pushes[0].data["data"]["tag"] == AID
     for _ in range(20):
         hass.states.async_set(LEAK2, "unavailable")
         await _later(hass, freezer, 2)

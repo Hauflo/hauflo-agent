@@ -582,7 +582,7 @@ class Merge:
                 continue
             # Hauflo dropped it.
             if self._edited(h):
-                self.local.append(self._local_label(c, child_level, dropped=True))
+                self.local.append(self._local_label(c, child_level, dropped=h))
                 put(self._local(c, child_level))
             elif id(c) not in self.rehomed:
                 items = self.held.pop(id(c)) if id(c) in self.held else self._orphans(c, child_level)
@@ -636,7 +636,7 @@ class Merge:
                     self.moved.append(self._label(self.B, h))
                     out.append((cl, self._build(h)))
             elif self._edited(h):
-                self.local.append(self._local_label(x, cl, dropped=True))
+                self.local.append(self._local_label(x, cl, dropped=h))
                 out.append((cl, self._local(x, cl)))
             else:
                 out.extend(self._orphans(x, cl))
@@ -681,7 +681,7 @@ class Merge:
             views.append(view)
         return views
 
-    def _local_label(self, c: dict[str, Any], level: int, dropped: bool = False) -> dict[str, Any]:
+    def _local_label(self, c: dict[str, Any], level: int, dropped: str | None = None) -> dict[str, Any]:
         out: dict[str, Any] = {"kind": ("view", "section", "card")[level - 1]}
         if level == 3 and isinstance(c.get("type"), str):
             out["type"] = c["type"][:60]
@@ -694,7 +694,10 @@ class Merge:
         if level > 1 and (w := self.on_view.get(id(c))):
             out["where"] = w
         if dropped:
-            out["dropped"] = True  # Hauflo's, edited in HA, no longer in Hauflo's version: kept as the integrator's
+            # Hauflo's, edited in HA, no longer in Hauflo's version: kept as the integrator's. Its Hauflo id (the cloud's
+            # own) lets the loss guard say «сохранится как ваше» instead of «удалится» (0.33 Р2).
+            out["dropped"] = True
+            out["id"] = dropped
         return out
 
     # the integrator's items: all still there
@@ -1059,6 +1062,7 @@ def _skey(c: dict[str, Any]) -> str:
                 x
                 for x in (
                     _str(c.get("entity")),
+                    _str(c.get("intercom")),
                     _first_of(c.get("entities")),
                     _str(c.get("block")),
                     _str(c.get("area")),
@@ -1302,6 +1306,67 @@ def _local_prints(cfg: Any, base: dict[str, Any]) -> Counter[str]:
     return out
 
 
+_KEY = re.compile(r"^[A-Za-z0-9_:-]{1,40}$")
+
+
+def edited_where(seen: Any, base: Any, limit: int = 5) -> list[dict[str, Any]]:
+    """Where HA's config differs from Hauflo's last saved version (owner 11.11 Р33: «edited» with nothing to choose and a
+    copy at every save — what differs was nowhere to see). Only places, never content: the path of list indexes and
+    keys, the key that differs and how (changed / added / removed / count), Hauflo's own view title and the card's type
+    when the place is in one. At most `limit` places, the first found in config order."""
+    out: list[dict[str, Any]] = []
+
+    def place(path: list[Any], key: str | None, op: str) -> None:
+        item: dict[str, Any] = {"path": "/".join(str(p) for p in path), "op": op}
+        if key is not None:
+            item["key"] = key if _KEY.match(key) else "?"
+        views = base.get("views") if isinstance(base, dict) else None
+        if len(path) >= 2 and path[0] == "views" and isinstance(path[1], int) and isinstance(views, list) and path[1] < len(views):
+            title = views[path[1]].get("title") if isinstance(views[path[1]], dict) else None
+            if isinstance(title, str) and title:
+                item["view"] = title[:80]
+        node: Any = base
+        for p in path:
+            if isinstance(node, dict) and isinstance(p, str):
+                node = node.get(p)
+            elif isinstance(node, list) and isinstance(p, int) and p < len(node):
+                node = node[p]
+            else:
+                node = None
+                break
+        if isinstance(node, dict) and isinstance(node.get("type"), str):
+            item["type"] = node["type"][:60]
+        out.append(item)
+
+    def walk(a: Any, b: Any, path: list[Any]) -> None:
+        if len(out) >= limit or a == b:
+            return
+        if isinstance(a, dict) and isinstance(b, dict):
+            for k in [*b.keys(), *(k for k in a.keys() if k not in b)]:
+                if len(out) >= limit:
+                    return
+                if k not in a:
+                    place(path, str(k), "removed")
+                elif k not in b:
+                    place(path, str(k), "added")
+                elif a[k] != b[k]:
+                    if isinstance(a[k], (dict, list)) and type(a[k]) is type(b[k]):
+                        walk(a[k], b[k], [*path, str(k)])
+                    else:
+                        place(path, str(k), "changed")
+        elif isinstance(a, list) and isinstance(b, list):
+            if len(a) != len(b):
+                place(path, None, "count")
+                return
+            for i, (x, y) in enumerate(zip(a, b)):
+                walk(x, y, [*path, i])
+        else:
+            place(path, None, "changed")
+
+    walk(seen, base, [])
+    return out
+
+
 def plan_and_merge(new: dict[str, Any], current: Any, base: dict[str, Any] | None, take: Any = (), restore: Any = ()) -> tuple[dict[str, Any], dict[str, Any]]:
     """(the config to save, what the plan says). No base: Hauflo's config as it is, nothing known about HA's."""
     new = ensure_ids(copy.deepcopy(new))
@@ -1319,6 +1384,8 @@ def plan_and_merge(new: dict[str, Any], current: Any, base: dict[str, Any] | Non
     unique_paths(m.result)
     lost = sum((_local_prints(seen, base) - m._prints(m.result, False) - (info["allow"] if info else Counter())).values())
     report = {**m.summary(), "base": True, "edited": seen != base, "changes": m.result != current, "lost": max(m.lost(), lost), "untouched": len(m.untouched())}
+    if seen != base:
+        report["edited_where"] = edited_where(seen, base)
     if info:
         report["layout"] = {"blocks": info["blocks"], "copies": len(info["copies"]), "moved": info["moved"]}
     return m.result, report
@@ -1776,7 +1843,7 @@ async def local_ws(session: Any, url: str, token: str, cmds: list[dict[str, Any]
         return out
 
 
-async def handle(agent: Any, ch: int, msg: dict[str, Any], validate: Callable[[Any], bool], fresh_backup: Callable[[], bool], locked_code: str) -> None:
+async def handle(agent: Any, ch: int, msg: dict[str, Any], validate: Callable[[Any], str | None], fresh_backup: Callable[[], bool], locked_code: str) -> None:
     """`hauflo/dashboard/plan` and `lovelace/config` of a dashboard the agent merges (reads), `hauflo/dashboard/save`
     and every plain `lovelace/config/save` of a `hauflo-…` dashboard (writes): answered here, never relayed to HA."""
     t, mid = msg.get("type"), msg.get("id")
@@ -1800,9 +1867,16 @@ async def handle(agent: Any, ch: int, msg: dict[str, Any], validate: Callable[[A
         return
     # Hauflo's own dashboard only (never a copy, never the family's), and Hauflo's part only — the tunnel's dashboard
     # check exactly as for a plain save: no card, service or entity of the cloud's choosing.
-    if t == "lovelace/config" or not (isinstance(url, str) and url.startswith("hauflo-") and not is_copy(url)) or not isinstance(config, dict) or not validate(config):
+    if t == "lovelace/config" or not (isinstance(url, str) and url.startswith("hauflo-") and not is_copy(url)) or not isinstance(config, dict):
         _LOGGER.warning("Hauflo: «%s» isn't allowed through the tunnel", t)
         await reply(code="not_allowed", message="not allowed")
+        return
+    # `validate`: why the dashboard is refused (None — it passes). The first item refused goes to the log and to the
+    # cloud — its deploy message and journal name it (acceptance 0.33 K1: a bare «not allowed» named nothing to fix).
+    why = validate(config)
+    if why is not None:
+        _LOGGER.warning("Hauflo: «%s» of %s isn't allowed through the tunnel — %s", t, url, why)
+        await reply(code="not_allowed", message=f"not allowed ({why})")
         return
     try:
         if t == PLAN:

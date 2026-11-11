@@ -26,6 +26,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.util.unit_conversion import TemperatureConverter
 
 from .canon import CANON
+from .notify import label
 
 # Physics (named, not settings): Magnus over water (Sonntag 1990 / WMO), −45…60 °C; the ideal gas law for water vapour.
 MAGNUS_B, MAGNUS_C = 17.62, 243.12
@@ -203,11 +204,11 @@ def outdoor(hass: HomeAssistant, owns: Any = None) -> dict[str, Any] | None:
     if best:
         eid = sorted(best)[0][1]
         st = hass.states.get(eid)
-        return {"entity_id": eid, "attribute": None, "forecast": False, "name": st.attributes.get("friendly_name") or eid}
+        return {"entity_id": eid, "attribute": None, "forecast": False, "name": label(hass, eid, st)}
     weathers = sorted(s.entity_id for s in hass.states.async_all("weather") if num(s.attributes.get("temperature")) is not None)
     if weathers:
         st = hass.states.get(weathers[0])
-        return {"entity_id": weathers[0], "attribute": "temperature", "forecast": True, "name": st.attributes.get("friendly_name") or weathers[0]}
+        return {"entity_id": weathers[0], "attribute": "temperature", "forecast": True, "name": label(hass, weathers[0], st)}
     return None
 
 

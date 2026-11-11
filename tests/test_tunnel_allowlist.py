@@ -3,13 +3,13 @@ Runs without Home Assistant installed: python3 agent/tests/test_tunnel_allowlist
 import ast, contextlib, glob, ipaddress, json, pathlib, re, sys, types
 src = open(pathlib.Path(__file__).parents[1] / "custom_components/hauflo/__init__.py").read()
 tree = ast.parse(src)
-HELPERS = ("_ws_allowed", "_ga_key", "_knx_listens", "_entry_domain", "_flow_handler", "_http_allowed", "_own_entity", "_own_device", "_owned_knx", "_forbidden", "_lan_host", "_flow_input_ok", "_unused_label", "_device_entities_owned", "_protected", "_sticky", "_class_protected", "_self_protected", "unknown_source", "_helper_links", "_option_refs", "_own_dashboard", "_alice_labels", "_homekit_step_ok", "_hauflo_entity", "_knx_writes", "_foreign_knx_writes", "_knx_config_ok", "_flow_step", "_platform", "_lovelace_ok", "_area_lights_owned", "_image_ok", "_svg_ok", "_owned_knx_writes", "_owned_scene_sends", "_protected_writes", "_shown_protected", "_words", "_named_as", "_wrapped_source", "_label_ok", "_scrub_states", "_scrub_devices", "_scrub_entities", "_phone_ids", "_scrub_monitor", "_scrub_notes", "_ws_changes", "_http_changes", "_owns", "_area_floor_empty", "_foreign_holders", "_scrub_diagnostics", "_overlap_kind", "knx_data", "_knx_store", "_route", "_owned_entry", "_template_entities", "_rule_reads_ok", "_template_step_ok", "_switch_as_x_step_ok", "_theme_ok", "_foreign_device_placeable", "_foreign_entity_shown")
+HELPERS = ("_ws_allowed", "_ga_key", "_knx_listens", "_entry_domain", "_flow_handler", "_http_allowed", "_own_entity", "_own_device", "_owned_knx", "_forbidden", "_lan_host", "_flow_input_ok", "_unused_label", "_device_entities_owned", "_protected", "_sticky", "_class_protected", "_self_protected", "unknown_source", "_helper_links", "_option_refs", "_own_dashboard", "_alice_labels", "_homekit_step_ok", "_hauflo_entity", "_knx_writes", "_foreign_knx_writes", "_knx_config_ok", "_flow_step", "_platform", "_lovelace_ok", "_lovelace_refusal", "_area_lights_owned", "_image_ok", "_svg_ok", "_owned_knx_writes", "_owned_scene_sends", "_protected_writes", "_shown_protected", "_words", "_named_as", "_wrapped_source", "_label_ok", "_scrub_states", "_scrub_devices", "_scrub_entities", "_phone_ids", "_scrub_monitor", "_scrub_notes", "_ws_changes", "_http_changes", "_owns", "_area_floor_empty", "_foreign_holders", "_scrub_diagnostics", "_overlap_kind", "knx_data", "_knx_store", "_route", "_owned_entry", "_template_entities", "_rule_reads_ok", "_template_step_ok", "_switch_as_x_step_ok", "_theme_ok", "_foreign_device_placeable", "_foreign_entity_shown")
 keep = [n for n in tree.body if (isinstance(n, ast.Assign) and any(getattr(t, "id", "").startswith("_") for t in n.targets)) or (isinstance(n, ast.FunctionDef) and n.name in HELPERS)]
 import logging
 sys.path.insert(0, str(pathlib.Path(__file__).parents[1] / "custom_components/hauflo"))
 from tunnel import TUNNEL  # noqa: E402 — plain Python, no HA
 from tuning import TUNING  # noqa: E402
-ns = {"theme": types.SimpleNamespace(names=lambda: {"Hauflo Atelier", "Hauflo Atelier · тёмная"}), "TUNNEL": TUNNEL, "TUNING": TUNING, "json": json, "re": re, "contextlib": contextlib, "ipaddress": ipaddress, "Any": object, "HomeAssistant": object, "logging": logging, "__name__": "agent", "DOMAIN": "hauflo", "degrade": lambda feature, err: None, "foreign": types.SimpleNamespace(wizard_refusal=lambda hass, msg: "no_plan", planned=lambda hass, msg: False, member_ok=lambda hass, eid: False, MEMBER_DOMAINS=frozenset({"light", "cover"}), UNSAFE_NAME=re.compile("[\x00-\x1f\x7f-\x9f\u200e\u200f\u202a-\u202e\u2066-\u2069]"))}  # foreign.UNSAFE_NAME
+ns = {"theme": types.SimpleNamespace(names=lambda: {"Hauflo Atelier", "Hauflo Atelier · тёмная"}), "TUNNEL": TUNNEL, "TUNING": TUNING, "json": json, "re": re, "contextlib": contextlib, "ipaddress": ipaddress, "Any": object, "HomeAssistant": object, "logging": logging, "__name__": "agent", "DOMAIN": "hauflo", "degrade": lambda feature, err: None, "foreign": types.SimpleNamespace(wizard_refusal=lambda hass, msg: "no_plan", planned=lambda hass, msg: False, member_ok=lambda hass, eid: False, shown_ok=lambda hass, eid: False, shown_refusal=lambda hass, eid: "domain_not_allowed", MEMBER_DOMAINS=frozenset({"light", "cover"}), UNSAFE_NAME=re.compile("[\x00-\x1f\x7f-\x9f\u200e\u200f\u202a-\u202e\u2066-\u2069]"))}  # foreign.UNSAFE_NAME
 # Compiled as the module is (`from __future__ import annotations`): annotations stay strings, so a name used only in
 # a signature (Callable, ConfigEntry…) needs no stub here — Python 3.13 evaluated them and the whole file failed to load.
 import __future__
@@ -464,9 +464,32 @@ def test_lovelace_service_targets_security_2810():
     assert not wrong, f"disagree: {wrong}"
 
 
+
+def test_lovelace_refusal_says_what_and_where_k1():
+    """Acceptance 0.33 K1: the agent names the first item it refuses and where it is — the cloud shows it to the integrator."""
+    why = lambda cfg: ns["_lovelace_refusal"](hass, cfg, {"u-hauflo"}, OWNED_ENTRIES)
+    door = {"type": "custom:hauflo-camera", "intercom": "sensor.podezd_intercom", "hauflo_id": "v/building/camera:sensor.podezd_intercom"}
+    # Р55: the intercom door's card passes; HA's own buttons on it still run Hauflo's own entities only.
+    assert why({"views": [{"sections": [{"cards": [door]}]}]}) is None
+    assert why({"views": [{"sections": [{"cards": [{**door, "tap_action": {"action": "perform-action", "perform_action": "lock.unlock", "target": {"entity_id": "lock.front"}}}]}]}]}) == \
+        "views[0].sections[0].cards[0].tap_action: service lock.unlock not allowed"
+    assert why({"views": [{"cards": [{"type": "custom:hauflo-x"}]}]}) == "views[0].cards[0]: card type custom:hauflo-x not allowed"
+    # Another integration's lock: never on a card by its id, never run (only its device on «Главная» via hauflo-area).
+    assert why({"views": [{"cards": [{"type": "tile", "entity": "lock.front"}]}]}) == "views[0].cards[0].entity: lock.front — protected, not shown by Hauflo"
+    assert why({"views": [{"cards": [{"type": "tile", "entity": "light.hue_lamp"}]}]}) == "views[0].cards[0].entity: light.hue_lamp — not Hauflo's (domain_not_allowed)"
+    assert why({"views": [{"cards": [{"type": "button", "entity": "light.knx_1", "tap_action": {"action": "perform-action", "perform_action": "light.toggle", "target": {"entity_id": "light.hue_lamp"}}}]}]}) == \
+        "views[0].cards[0].tap_action: light.toggle on light.hue_lamp — runs Hauflo's own entities only"
+    assert why({"views": [], "url_path": "family"}) == "url_path: url_path not Hauflo's"
+    assert why([]) == "config: not an object"
+    # Long reasons are cut: the cloud's message stays one line.
+    assert len(why({"views": [{"cards": [{"type": "x" * 1000}]}]})) == ns["_WHY_MAX"]
+    assert ns["_lovelace_ok"](hass, {"views": [{"sections": [{"cards": [door]}]}]}, {"u-hauflo"}, OWNED_ENTRIES)
+
+
 if __name__ == "__main__":
     test_allowlist()
     test_lovelace_service_targets_security_2810()
+    test_lovelace_refusal_says_what_and_where_k1()
     print(f"{len(cases)} cases ok")
 
 # Dashboards Hauflo generated and deployed pass the check whole (their entities taken as Hauflo's own).

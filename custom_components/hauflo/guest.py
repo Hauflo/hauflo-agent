@@ -34,16 +34,19 @@ from typing import Any
 
 from homeassistant.components.http import KEY_HASS, HomeAssistantView
 from homeassistant.core import Context, HomeAssistant, callback
-from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er
+from homeassistant.helpers import area_registry as ar, entity_registry as er
 from homeassistant.helpers.event import async_call_later, async_track_time_interval
 from homeassistant.util import dt as dt_util, slugify
 
+from .const import site_ru
 from .dashmerge import Access
 from .house import GUEST_USERS, is_guest, may_edit, refuse
 from .natural import natural_key
+from .ownership import entity_room
 from .storage import HaufloStore
 from . import qr
 from .tuning import TUNING
+from .notify import label
 
 _LOGGER = logging.getLogger(__name__)
 STORE_KEY = "hauflo.guest"
@@ -74,6 +77,10 @@ PAGES_CHECK = dt.timedelta(seconds=_T["pages_check_s"])  # expiry, users added /
 PAGES_DEBOUNCE = _T["pages_debounce_s"]
 PASSWORD_LEN = max(12, int(_T["pages_password_len"]))
 SLUG_MAX = int(_T["pages_slug_max"])
+# A guest's role (В8, owner 11.11: «техник» — the «Сервис» pages and rooms, control, no settings, a term): a preset of
+# the form — which pages it ticks («admin»: the ones only the administrators saw) and the term; the grant stays a guest
+# with a login (restricted: never the house's settings, house.py), the role only named on it.
+ROLES = {k: {"pick": v["pick"], "hours": v["hours"]} for k, v in (_T.get("pages_roles") or {}).items() if isinstance(v, dict) and v.get("pick") in ("admin", "none") and v.get("hours") in PAGES_HOURS}
 _PASSWORD_ABC = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no 0/O, 1/l/I: read off a screen
 _TOKEN = re.compile(r"([A-Za-z0-9_-]{12})\.([A-Za-z0-9_-]{32})")
 _DEVICE = re.compile(r"[A-Za-z0-9_-]{16,64}")
@@ -204,14 +211,7 @@ class GuestAccess:
 
     # --- what a guest may get ----------------------------------------------------------------------------------------
     def _area(self, eid: str) -> str | None:
-        ent = er.async_get(self.hass).async_get(eid)
-        if ent is None:
-            return None
-        if ent.area_id:
-            return ent.area_id
-        if ent.device_id and (dev := dr.async_get(self.hass).async_get(ent.device_id)):
-            return dev.area_id
-        return None
+        return entity_room(self.hass, eid)  # Р57: a zone area of Alice's counts as its room
 
     def _safe(self, eid: Any) -> bool:
         """A Hauflo light / cover / climate on the family's screen, never a lock / alarm / valve / garage, gate or door
@@ -283,11 +283,13 @@ class GuestAccess:
                     "until": g.get("until"),
                     "revoked": g.get("revoked"),
                     "status": self._status(g),
+                    "role": g.get("role"),
                 }
                 for g in self.grants
                 if g.get("kind") == PAGES
             ],
             "pages_hours": PAGES_HOURS,
+            "pages_roles": [{"id": k, **v} for k, v in ROLES.items()],
             "log": self.log[:100],
             "can_issue": user is not None and _issuer_ok(user),
         }
@@ -433,6 +435,9 @@ class GuestAccess:
         hours = body.get("hours")
         if isinstance(hours, bool) or not isinstance(hours, int) or not 1 <= hours <= PAGES_MAX_DAYS * 24:
             raise Invalid(f"hours: 1…{PAGES_MAX_DAYS * 24}")
+        role = body.get("role")
+        if role is not None and role not in ROLES:
+            raise Invalid(f"role: one of {', '.join(ROLES) or '—'}")
         provider = auth_ha.async_get_provider(self.hass)
         if provider.data is None:
             await provider.async_initialize()
@@ -471,11 +476,12 @@ class GuestAccess:
                 "created": _iso(now),
                 "revoked": None,
                 "removed": None,
+                **({"role": role} if role else {}),
             }
             self.grants.insert(0, grant)
             self._pending.discard(guest.id)
             self._mark()
-            self.log.insert(0, {"t": _iso(now), "sys": "pages_issued", "grant": grant["id"], "label": label, "by": user.name or "", "hours": hours, "n": len(chosen)})
+            self.log.insert(0, {"t": _iso(now), "sys": "pages_issued", "grant": grant["id"], "label": label, "by": user.name or "", "hours": hours, "n": len(chosen), **({"role": role} if role else {})})
             del self.log[LOG_MAX:]
             await self.store.async_save(self._data())
         await self.sync()
@@ -681,7 +687,7 @@ class GuestAccess:
         st = self.hass.states.get(eid)
         a = st.attributes if st is not None else {}
         domain = eid.split(".")[0]
-        out: dict[str, Any] = {"id": eid, "name": _clean(a.get("friendly_name") or eid, 60), "domain": domain, "state": st.state if st else "unavailable"}
+        out: dict[str, Any] = {"id": eid, "name": _clean(label(self.hass, eid, st) if st else eid, 60), "domain": domain, "state": st.state if st else "unavailable"}
         if domain == "light":
             modes = a.get("supported_color_modes") or []
             out["dim"] = any(mode != "onoff" for mode in modes)
@@ -791,12 +797,12 @@ def _may_control(user: Any, eid: str) -> bool:
 ASK_GAP = _T["ask_gap_s"]  # «Попросить администратора»: once in 10 minutes per person
 
 
-async def ask_admins(hass: HomeAssistant, user: Any, note: str, phones: list[dict[str, Any]]) -> dict[str, Any]:
+async def ask_admins(hass: HomeAssistant, user: Any, note: str, phones: list[dict[str, Any]], config: dict[str, Any] | None = None) -> dict[str, Any]:
     """«Марина просит гостевую ссылку на вечер» to the admins: a notification in HA and a push to the admins' phones (the
     HA app, found as the alarms find them). The guest link itself is still made by an admin — nothing is issued here."""
     from homeassistant.components import persistent_notification  # noqa: PLC0415
 
-    ru = str(hass.config.language or "ru").lower().startswith("ru")
+    ru = site_ru(hass.config.language, config)  # the house's one language, as its alarms' pushes (С3)
     who = (user.name or "").strip() or ("Кто-то из семьи" if ru else "Someone in the family")
     what = f"{who} просит гостевую ссылку" if ru else f"{who} asks for a guest link"
     if note:
@@ -884,15 +890,15 @@ class GuestView(HomeAssistantView):
                 phones = alarms.phones() if alarms is not None else []
             except Exception:  # noqa: BLE001 — no phones: the HA notification alone
                 phones = []
-            return self.json(await ask_admins(request.app[KEY_HASS], user, " ".join(note.split()), phones))
+            return self.json(await ask_admins(request.app[KEY_HASS], user, " ".join(note.split()), phones, getattr(alarms, "config", None)))
         try:
             if op == "issue":
                 if set(body) - {"op", "label", "rooms", "hours", "max_devices"}:
                     return self.json_message("only label, rooms, hours, max_devices", 400)
                 return self.json(await engine.issue(user, body))
             if op == "issue_pages":
-                if set(body) - {"op", "label", "pages", "hours"}:
-                    return self.json_message("only label, pages, hours", 400)
+                if set(body) - {"op", "label", "pages", "hours", "role"}:
+                    return self.json_message("only label, pages, hours, role", 400)
                 return self.json(await engine.issue_pages(user, body))
             if op == "revoke":
                 if not isinstance(body.get("id"), str):

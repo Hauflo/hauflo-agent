@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "_doc": "Р59: the integrations from outside HA's core Hauflo may install on the integrator's click (install.py; the cloud's copy backend/src/ha/integrations.json is byte-identical, a test on each side keeps them so). Only these, only github.com: an asked domain or repository not listed here is refused. Per entry: repo (owner/name on GitHub), version (the release tag pinned, never «latest»), asset (the release's zip file) and sha256 (of that file, checked before anything is unpacked), zip_path (the integration's folder inside the zip, \"\" = the zip's root as HACS' zip_release has it), store (the category Marketplace / HACS keep it under — used first when HA has one of them), min_ha (the HA version the integration's hacs.json asks for), after (what the cloud does once HA runs it: alisa = its setup by alisa.ts). download: where the release asset is fetched from when neither store is there; after_restart: how often and how long the cloud asks the agent after the confirmed restart before it sets the integration up; hosts: the only hosts that download (and each of its redirects) may go to. Bump a version: download the asset, sha256 it, change both files.",
+  "download": "https://github.com/{repo}/releases/download/{version}/{asset}",
+  "hosts": ["github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com"],
+  "after_restart": { "poll_s": 10, "wait_s": 300 },
+  "integrations": [
+    {
+      "domain": "yandex_smart_home",
+      "repo": "dext0r/yandex_smart_home",
+      "version": "v1.1.3",
+      "asset": "yandex_smart_home.zip",
+      "sha256": "10945c903fa6ca7a620f465801357b6699398766e1f64b7ef45fa86a0cf36b23",
+      "zip_path": "",
+      "store": { "category": "integration" },
+      "min_ha": "2025.12.0",
+      "after": "alisa"
+    }
+  ]
+}

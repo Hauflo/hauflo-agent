@@ -68,12 +68,13 @@ from homeassistant.helpers.event import async_call_later, async_track_time_inter
 from homeassistant.util import dt as dt_util
 
 from . import derived as dv
-from .const import DOMAIN
+from .const import DOMAIN, site_ru
 from .device import device_info
 from .house import may_edit, refuse
 from .storage import HaufloStore
 from .rules import window_off
 from .tuning import TUNING
+from .notify import label
 
 _LOGGER = logging.getLogger(__name__)
 STORE_KEY = "hauflo.season"
@@ -151,7 +152,7 @@ def climates(hass: HomeAssistant, exclude: frozenset[str] | set[str] = frozenset
         out.append(
             {
                 "entity_id": s.entity_id,
-                "name": s.attributes.get("friendly_name") or s.entity_id,
+                "name": label(hass, s.entity_id, s),
                 "platform": ent.platform if ent else None,
                 "modes": list(s.attributes.get("hvac_modes") or []),
                 "state": s.state,
@@ -170,10 +171,10 @@ def sensors(hass: HomeAssistant) -> list[dict[str, Any]]:
     out = []
     for s in sorted(hass.states.async_all("sensor"), key=lambda x: x.entity_id):
         if s.attributes.get("device_class") == "temperature" and s.attributes.get("state_class"):
-            out.append({"entity_id": s.entity_id, "name": s.attributes.get("friendly_name") or s.entity_id, "kind": "sensor"})
+            out.append({"entity_id": s.entity_id, "name": label(hass, s.entity_id, s), "kind": "sensor"})
     for s in sorted(hass.states.async_all("weather"), key=lambda x: x.entity_id):
         if dv.num(s.attributes.get("temperature")) is not None:
-            out.append({"entity_id": s.entity_id, "name": s.attributes.get("friendly_name") or s.entity_id, "kind": "weather"})
+            out.append({"entity_id": s.entity_id, "name": label(hass, s.entity_id, s), "kind": "weather"})
     return out
 
 
@@ -401,8 +402,7 @@ class Season:
 
     def _lang(self) -> str:
         engine = self.notify_of()
-        lang = str((getattr(engine, "config", None) or {}).get("lang") or self.hass.config.language or LANGS[0])
-        return LANGS[0] if lang.lower().startswith(LANGS[0]) else LANGS[1]
+        return LANGS[0] if site_ru(self.hass.config.language, getattr(engine, "config", None)) else LANGS[1]
 
     def say(self, key: str, lang: str, **ph: Any) -> str:
         text = self.texts.get(lang, {}).get(key) or self.texts[LANGS[1]].get(key) or key
@@ -645,7 +645,7 @@ class Season:
             "labels": self.config["labels"],
             "auto": self.auto_on(),
             "suggestion": self.suggestion(),
-            "acs": [{"entity_id": s.entity_id, "name": s.attributes.get("friendly_name") or s.entity_id, "state": s.state} for s in items],
+            "acs": [{"entity_id": s.entity_id, "name": label(self.hass, s.entity_id, s), "state": s.state} for s in items],
         }
 
     def setup_answer(self) -> dict[str, Any]:

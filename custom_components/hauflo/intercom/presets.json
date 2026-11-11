@@ -1,0 +1,206 @@
+{
+  "_doc": "Р55: door panel presets — the canon (no address, path or code in the agent's code). A door in the options names a preset; any field of the door overrides the preset's. `mode`: direct (the panel calls the agent's address), register (the agent registers on the panel's own SIP server), registrar (the panel registers on the agent), cloud (the agent registers on the maker's cloud SIP server, through the internet). Templates: {host} {user} {password} {relay} (URL-quoted). `open`: dtmf | http | entity; `open_http` / `snapshot`: {method, path, body, content_type, auth: digest | basic | none, scheme, port}. `register_extra` (mode register / cloud): {content_type, body} added to each REGISTER — the extension point for a server that wants more than RFC 3261 (a Hikvision indoor monitor's private-SIP regXML: not filled yet, no preset until it is tried on a real monitor). `checked`: false — taken from the maker's documentation, not yet tried on a real panel by Hauflo.",
+  "hikvision": {
+    "label": "Hikvision (DS-KV / DS-KD)",
+    "maker": "Hikvision",
+    "mode": "registrar",
+    "codec": "PCMU",
+    "rtsp": "rtsp://{user}:{password}@{host}:554/Streaming/Channels/101",
+    "snapshot": {
+      "path": "/ISAPI/Streaming/channels/101/picture",
+      "auth": "digest"
+    },
+    "open": "http",
+    "open_http": {
+      "method": "PUT",
+      "path": "/ISAPI/AccessControl/RemoteControl/door/{relay}",
+      "body": "<RemoteControlDoor><cmd>open</cmd></RemoteControlDoor>",
+      "content_type": "application/xml",
+      "auth": "digest"
+    },
+    "dtmf": "",
+    "relay": 1,
+    "checked": false,
+    "_source": "ISAPI AccessControl RemoteControl/door; standard SIP: the panel registers to a SIP server — the agent"
+  },
+  "dahua": {
+    "label": "Dahua VTO",
+    "maker": "Dahua",
+    "mode": "register",
+    "codec": "PCMA",
+    "rtsp": "rtsp://{user}:{password}@{host}:554/cam/realmonitor?channel=1&subtype=0",
+    "snapshot": {
+      "path": "/cgi-bin/snapshot.cgi?channel=1",
+      "auth": "digest"
+    },
+    "open": "http",
+    "open_http": {
+      "method": "GET",
+      "path": "/cgi-bin/accessControl.cgi?action=openDoor&channel={relay}&UserID=101&Type=Remote",
+      "auth": "digest"
+    },
+    "sip_user": "9901#1",
+    "relay": 1,
+    "checked": false,
+    "_source": "VTO built-in SIP server: an indoor extension 9901#N registers to it; CGI accessControl openDoor"
+  },
+  "2n": {
+    "label": "2N IP Verso / Solo",
+    "maker": "2N",
+    "mode": "direct",
+    "codec": "PCMA",
+    "rtsp": "rtsp://{user}:{password}@{host}:554/h264_stream",
+    "snapshot": {
+      "path": "/api/camera/snapshot?width=640&height=480",
+      "auth": "digest",
+      "scheme": "https"
+    },
+    "open": "http",
+    "open_http": {
+      "method": "GET",
+      "path": "/api/switch/ctrl?switch={relay}&action=trigger",
+      "auth": "digest",
+      "scheme": "https"
+    },
+    "relay": 1,
+    "checked": false,
+    "_source": "wiki.2n.com Direct call without IP PBX; HTTP API switch/ctrl"
+  },
+  "akuvox": {
+    "label": "Akuvox",
+    "maker": "Akuvox",
+    "mode": "direct",
+    "codec": "PCMU",
+    "rtsp": "rtsp://{user}:{password}@{host}:554/live/ch00_0",
+    "open": "dtmf",
+    "dtmf": "#",
+    "open_http": {
+      "method": "GET",
+      "path": "/fcgi/do?action=OpenDoor&UserName={user}&Password={password}&DoorNum={relay}",
+      "auth": "none"
+    },
+    "relay": 1,
+    "checked": false,
+    "_source": "Direct IP call on :5060; relay by DTMF (default #) or the HTTP API"
+  },
+  "basip": {
+    "label": "BAS-IP",
+    "maker": "BAS-IP",
+    "mode": "direct",
+    "codec": "PCMU",
+    "rtsp": "rtsp://{host}:8554/ch01",
+    "open": "dtmf",
+    "dtmf": "#",
+    "relay": 1,
+    "checked": false,
+    "_source": "SIP P2P; RTSP yes, ONVIF no"
+  },
+  "basip_cloud": {
+    "label": "BAS-IP cloud SIP",
+    "maker": "BAS-IP",
+    "mode": "cloud",
+    "codec": "PCMU",
+    "sip_server": "sip.cloud.bas-ip.ru",
+    "sip_port": 5060,
+    "rtsp": "rtsp://{host}:8554/ch01",
+    "open": "dtmf",
+    "dtmf": "#",
+    "relay": 1,
+    "checked": false,
+    "_source": "the panel calls an extension of the maker's cloud SIP server (sip.cloud.bas-ip.ru); the agent registers there as that extension — for panels and monitors in different networks"
+  },
+  "dahua_cloud": {
+    "label": "Dahua cloud SIP (DMSS)",
+    "maker": "Dahua",
+    "mode": "cloud",
+    "codec": "PCMA",
+    "sip_server": "",
+    "sip_port": 5060,
+    "rtsp": "rtsp://{user}:{password}@{host}:554/cam/realmonitor?channel=1&subtype=0",
+    "open": "http",
+    "open_http": {
+      "method": "GET",
+      "path": "/cgi-bin/accessControl.cgi?action=openDoor&channel={relay}&UserID=101&Type=Remote",
+      "auth": "digest"
+    },
+    "relay": 1,
+    "checked": false,
+    "_source": "the server is the one the panel's cloud SIP account names (not fixed)"
+  },
+  "beward": {
+    "label": "Beward DS",
+    "maker": "Beward",
+    "mode": "registrar",
+    "codec": "PCMA",
+    "rtsp": "rtsp://{user}:{password}@{host}:554/av0_0",
+    "snapshot": {
+      "path": "/cgi-bin/images_cgi?channel=0",
+      "auth": "basic"
+    },
+    "open": "http",
+    "open_http": {
+      "method": "GET",
+      "path": "/cgi-bin/intercom_cgi?action=maindoor",
+      "auth": "basic"
+    },
+    "relay": 1,
+    "checked": false,
+    "_source": "SIP to a server; CGI intercom_cgi maindoor"
+  },
+  "fanvil": {
+    "label": "Fanvil (i-series)",
+    "maker": "Fanvil",
+    "mode": "direct",
+    "codec": "PCMU",
+    "rtsp": "",
+    "open": "dtmf",
+    "dtmf": "*",
+    "relay": 1,
+    "checked": false,
+    "_source": "Fanvil door phones: direct IP call (peer to peer) or a SIP account; remote opening by a DTMF access code (set in the panel, «*» by default per the maker)"
+  },
+  "doorbird": {
+    "label": "DoorBird",
+    "maker": "DoorBird",
+    "mode": "registrar",
+    "codec": "PCMU",
+    "rtsp": "rtsp://{user}:{password}@{host}:554/mpeg/media.amp",
+    "snapshot": {
+      "path": "/bha-api/image.cgi",
+      "auth": "basic"
+    },
+    "open": "http",
+    "open_http": {
+      "method": "GET",
+      "path": "/bha-api/open-door.cgi?r={relay}",
+      "auth": "basic"
+    },
+    "relay": 1,
+    "checked": false,
+    "_source": "DoorBird LAN API: open-door.cgi, image.cgi, RTSP media.amp; SIP: the station registers to a SIP server — the agent"
+  },
+  "grandstream": {
+    "label": "Grandstream GDS",
+    "maker": "Grandstream",
+    "mode": "direct",
+    "codec": "PCMU",
+    "rtsp": "rtsp://{user}:{password}@{host}:554/0",
+    "open": "dtmf",
+    "dtmf": "",
+    "relay": 1,
+    "checked": false,
+    "_source": "GDS37xx: peer-to-peer IP call or a SIP account; the door opens by the remote PIN + #, set in the panel (fill «dtmf»)"
+  },
+  "generic": {
+    "label": "Other panel (standard SIP)",
+    "maker": "",
+    "mode": "direct",
+    "codec": "PCMA",
+    "rtsp": "",
+    "open": "dtmf",
+    "dtmf": "#",
+    "relay": 1,
+    "checked": false,
+    "_source": "any panel with standard SIP: the fields are filled by hand"
+  }
+}

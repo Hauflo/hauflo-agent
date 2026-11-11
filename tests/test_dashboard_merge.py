@@ -950,3 +950,46 @@ def test_design_round_trip_keeps_the_integrators_card(pair):
                 v["sections"] = [sec for sec in v["sections"] if sec.get(ID) or sec.get("cards")]
         no_mine["views"] = [v for v in no_mine["views"] if v.get(ID) or v.get("sections") or v.get("cards")]
         assert _unsuffixed(no_mine) == _unsuffixed(dashmerge.ensure_ids(copy.deepcopy(first)))
+
+
+def test_edited_where_names_the_places_never_the_content():
+    """Р33 (owner 11.11): «edited» said nothing of where — the plan names the places (path, key, how), no values."""
+    base = hauflo()
+    cur = copy.deepcopy(base)
+    cards_of(cur, 0, 0)[1]["name"] = "Секретное имя"
+    _, plan = plan_and_merge(hauflo(), cur, base)
+    assert plan["edited"] is True
+    assert plan["edited_where"] == [{"path": "views/0/sections/0/cards/1", "op": "changed", "key": "name", "view": "Гостиная", "type": "tile"}]
+    assert "Секретное имя" not in json.dumps(plan["edited_where"], ensure_ascii=False)
+    _, same = plan_and_merge(hauflo(), copy.deepcopy(base), base)
+    assert same["edited"] is False and "edited_where" not in same
+
+
+def test_edited_where_is_capped():
+    base = hauflo()
+    cur = copy.deepcopy(base)
+    for v in cur["views"]:
+        v["icon"] = "mdi:home"
+        v["subview"] = False
+        v["badges"] = []
+    where = dashmerge.edited_where(cur, base, limit=3)
+    assert len(where) == 3 and all(x["op"] == "added" for x in where)
+
+
+def test_r2_a_block_he_edited_that_hauflo_drops_stays_his_and_says_its_hauflo_id():
+    """0.33 Р2 (Горького 3, «Котельная»): the integrator added the pump to Hauflo's «Отопление» block in its editor (his
+    rows, `items`); the project no longer has that block. The merge keeps the block as his (ручное не удаляется) — and its
+    plan line carries the block's Hauflo id, so the platform's loss guard says «сохранится как ваше», not «удалится»."""
+    heat = {"type": "custom:hauflo-area", "block": "heating", "title": "Отопление", "area": "kotelnaia", ID: "v/boiler/s:main/heat"}
+    old = {"views": [view("v/boiler", "boiler", "Котельная", {"type": "grid", ID: "v/boiler/s:main", "cards": [card("v/boiler/s:main/t", "sensor.boiler_t"), heat]})]}
+    new = {"views": [view("v/boiler", "boiler", "Котельная", {"type": "grid", ID: "v/boiler/s:main", "cards": [card("v/boiler/s:main/t", "sensor.boiler_t")]})]}
+    cur = copy.deepcopy(old)
+    cur["views"][0]["sections"][0]["cards"][1]["items"] = [{"entity": "switch.nasos_tp", "name": "Насос тёплого пола"}]
+    merged, plan = plan_and_merge(new, cur, copy.deepcopy(old))
+    kept = merged["views"][0]["sections"][0]["cards"]
+    assert any(c.get("title") == "Отопление" and c.get("items") for c in kept), kept
+    assert plan["lost"] == 0
+    assert [x for x in plan["local"] if x.get("dropped")] == [{"kind": "card", "type": "custom:hauflo-area", "title": "Отопление", "where": "Котельная", "dropped": True, "id": "v/boiler/s:main/heat"}]
+    # Not edited — Hauflo dropping it removes it, no line of his.
+    merged, plan = plan_and_merge(new, copy.deepcopy(old), copy.deepcopy(old))
+    assert "Отопление" not in json.dumps(merged, ensure_ascii=False) and not plan["local"]

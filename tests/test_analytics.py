@@ -551,3 +551,129 @@ async def test_big_gap_is_not_a_long_warmup(hass, ins):
     assert len(eps) >= 10 and all(w == pytest.approx(4 / 6, abs=0.05) for _r, w, _o in eps)
     assert lt.items(ins.clock.t) == []
     assert row(ins, "loop_warmup", e)["ready"]["unit"] == "h_per_c"
+
+
+# --- edge branches: bad stored rows, a vanished entity, units it doesn't know ---------------------------------------------
+
+
+def test_matches_flags_regexes_and_callables():
+    import re
+
+    assert an._matches({"a": re.compile("x")}, {"a": "xy"}) and not an._matches({"a": re.compile("x")}, {"a": None})
+    assert not an._matches({"a": re.compile("x")}, {"a": "zz"})
+    assert an._matches({"f": 1}, {"f": lambda: True}) and not an._matches({"f": 0}, {"f": lambda: True})
+    assert an._matches({"v": 3}, {"v": 3}) and not an._matches({"v": 3}, {"v": 4})
+
+
+def test_value_of_edges():
+    from homeassistant.core import State
+
+    spec = {"units": {"W": 1, "kW": 1000}, "minus": {"kW": 0}}
+    assert an.value_of(spec, None) is None
+    assert an.value_of(spec, State("sensor.a", "unavailable")) is None
+    assert an.value_of(spec, State("sensor.a", "abc", {"unit_of_measurement": "W"})) is None
+    assert an.value_of({}, State("sensor.a", "5")) == 5
+    assert an.value_of(spec, State("sensor.a", "5", {"unit_of_measurement": "var"})) is None
+    assert an.value_of(spec, State("sensor.a", "2", {"unit_of_measurement": "kW"})) == 2000
+
+
+async def test_load_drops_garbage_and_keeps_the_good(hass, ins):
+    d = det(ins, "series")
+    kind = next(iter(an.SPEC))
+    d.load(
+        {
+            "series": {
+                "sensor.bad1": "x",
+                "sensor.bad2": {"k": "no_such_kind"},
+                "sensor.ok": {"k": kind, "b": {"1": [1, "x", 2], "2": [], "3": "nope"}, "bad": "x", "open": {"since": "nan?"}, "tn": 9999, "n": 3, "last": 1.5},
+            }
+        }
+    )
+    assert set(d.series) == {"sensor.ok"}
+    s = d.series["sensor.ok"]
+    assert s["b"] == {"1": [1.0, 2.0]} and s["bad"] == 0 and s["open"] is None and s["tn"] is None and s["n"] == 3 and s["last"] == 1.5
+    assert d.dump() == {"series": d.series}
+
+
+async def test_an_entity_gone_from_ha_is_forgotten_after_the_grace(hass, ins):
+    d = det(ins, "series")
+    kind = next(iter(an.SPEC))
+    d.series["sensor.vanished"] = {"k": kind, "b": {}, "bad": 0, "bb": 0, "open": None, "norm": None, "n": 0, "tn": None, "last": None}
+    d.acc["sensor.vanished"] = {}
+    d._discover(ins.started + 1)
+    assert "sensor.vanished" in d.series  # HA may still be loading
+    d._discover(ins.started + an.GONE_AFTER + 1)
+    assert "sensor.vanished" not in d.series and "sensor.vanished" not in d.acc
+
+
+def _own(kind):
+    return {"k": kind, "b": {}, "bad": 0, "bb": 0, "open": None, "norm": None, "n": 0, "tn": None, "last": None}
+
+
+async def test_a_meter_counts_increases_and_a_reset_from_zero(hass, ins):
+    from homeassistant.core import State
+
+    d = det(ins, "series")
+    eid = "sensor.meter"
+    attrs = {"unit_of_measurement": "kWh"}
+    d.series[eid] = _own("energy")
+    t0 = local(0, 1) + 10
+    hass.states.async_set(eid, "10", attrs)
+    d._new_acc(eid, an.SPEC["energy"], t0)
+    st = lambda v: State(eid, v, attrs)  # noqa: E731
+    d.on_event(st("10"), st("12"), t0 + 60)
+    d.on_event(st("12"), st("unavailable"), t0 + 120)  # no number: nothing counted, last value kept
+    d.on_event(st("unavailable"), st("3"), t0 + 180)  # a fall = a reset: counted from zero
+    assert d.acc[eid]["inc"] == pytest.approx(5)  # +2, then 3 counted from zero
+    assert d.acc[eid]["v"] == 3
+    assert d._value(an.SPEC["energy"], d.acc[eid]) is None  # a partial hour is never judged
+
+
+async def test_motion_counts_only_real_activations_and_generic_is_not_its_own(hass, ins):
+    from homeassistant.core import State
+
+    d = det(ins, "series")
+    d.series["binary_sensor.pir"] = _own("motion")
+    t0 = local(0, 1) + 10
+    d._new_acc("binary_sensor.pir", an.SPEC["motion"], t0)
+    mv = lambda v: State("binary_sensor.pir", v)  # noqa: E731
+    d.on_event(mv("off"), mv("on"), t0 + 1)
+    d.on_event(mv("on"), mv("on"), t0 + 2)  # not a change to on
+    d.on_event(None, mv("on"), t0 + 3)  # no previous state
+    d.on_event(mv("unavailable"), mv("on"), t0 + 4)
+    assert d.acc["binary_sensor.pir"]["n"] == 1
+    a = d.acc["binary_sensor.pir"]
+    a["partial"] = False
+    assert d._value(an.SPEC["motion"], a) == pytest.approx(an.SECONDS_PER_HOUR / an.PERIOD)
+    d.series["sensor.g"] = _own("generic")
+    d.on_event(State("sensor.g", "1"), State("sensor.g", "2"), t0 + 5)
+    assert "sensor.g" not in d.acc
+    d.on_event(State("sensor.zz", "1"), State("sensor.zz", "2"), t0 + 6)  # not in the series at all
+
+
+async def test_a_long_silence_restarts_the_hour_instead_of_replaying_it(hass, ins):
+    d = det(ins, "series")
+    eid = "sensor.p"
+    d.series[eid] = _own("power")
+    t0 = local(0, 1)
+    a = d._new_acc(eid, an.SPEC["power"], t0)
+    d._roll(eid, d.series[eid], an.SPEC["power"], a, t0 + (an.MAX_CATCHUP + 2) * an.PERIOD)
+    assert d.acc[eid] is not a and d.acc[eid]["p"] > a["p"]
+
+
+async def test_loop_reset_and_supply_sensor(hass, ins):
+    d = det(ins, "loops")
+    lt = next(iter(an.LOOP_TYPES))
+    d.reset("climate.none", "x")  # an unknown loop: nothing happens
+    d.loops["sensor.l"] = {"t": lt, "ep": [[1, 1, 1]], "days": {"2027-01-11": [1, 1]}, "open": {}, "log": [{"a": 1}]}
+    rate_kind = an.LOOP_METRICS["rate"]
+    d.reset("sensor.l", rate_kind)
+    assert d.loops["sensor.l"]["ep"] == [] and d.loops["sensor.l"]["log"] == []
+    d.loops["sensor.l"]["days"] = {"x": [1, 1]}
+    d.reset("sensor.l", an.LOOP_METRICS["duty"])
+    assert d.loops["sensor.l"]["days"] == {}
+    d.set_supply("sensor.l", "sensor.sup")
+    assert d.supply["sensor.l"] == "sensor.sup"
+    d.set_supply("sensor.l", "")
+    assert "sensor.l" not in d.supply
+    assert d.episodes("climate.x") == [] and d.episodes("sensor.l") == []

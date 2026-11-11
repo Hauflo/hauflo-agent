@@ -52,12 +52,15 @@ from homeassistant.helpers import area_registry as ar, device_registry as dr, en
 from homeassistant.util import dt as dt_util
 
 from .house import refuse
+from .ownership import entity_room
 from .natural import natural_key
 from .const import DOMAIN, wants_ru
 from .storage import HaufloStore
 from . import recipes
 from .tuning import TUNING
 from . import yamlfile
+from .notify import label
+
 _LOGGER = logging.getLogger(__name__)
 STORE_KEY = "hauflo.automations"
 PREFIX = "hauflo_auto_"
@@ -219,14 +222,7 @@ class Automations:
 
     # --- what may be picked ------------------------------------------------------------------------------------------
     def _area(self, eid: str) -> str | None:
-        ent = er.async_get(self.hass).async_get(eid)
-        if ent is None:
-            return None
-        if ent.area_id:
-            return ent.area_id
-        if ent.device_id and (dev := dr.async_get(self.hass).async_get(ent.device_id)):
-            return dev.area_id
-        return None
+        return entity_room(self.hass, eid)  # Р57: a zone area of Alice's counts as its room
 
     def _pickable(self, eid: Any, depth: int = 0) -> bool:
         """A light / blind / scene / fan / socket / thermostat of any integration that the person sees in HA, and safe:
@@ -513,7 +509,7 @@ class Automations:
                     continue
                 s = self.hass.states.get(eid)
                 area = self._area(eid)
-                item: dict[str, Any] = {"entity_id": eid, "name": s.attributes.get("friendly_name") or eid, "area": area}
+                item: dict[str, Any] = {"entity_id": eid, "name": label(self.hass, eid, s), "area": area}
                 if domain == "cover":
                     item["position"] = bool(int(s.attributes.get("supported_features") or 0) & 4)
                     item["group"] = (e := er.async_get(self.hass).async_get(eid)) is not None and e.platform == "group"
@@ -542,14 +538,14 @@ class Automations:
             if (kind := self._value_kind(eid)) is None:
                 continue
             s = self.hass.states.get(eid)
-            sensors.append({"entity_id": eid, "name": s.attributes.get("friendly_name") or eid, "area": self._area(eid), "kind": kind, "unit": s.attributes.get("unit_of_measurement"), "value": s.state})
+            sensors.append({"entity_id": eid, "name": label(self.hass, eid, s), "area": self._area(eid), "kind": kind, "unit": s.attributes.get("unit_of_measurement"), "value": s.state})
         binaries = []
         for domain in ("binary_sensor", "media_player"):
             for eid in sorted(self.hass.states.async_entity_ids(domain)):
                 if (kind := self._state_kind(eid)) is None:
                     continue
                 s = self.hass.states.get(eid)
-                binaries.append({"entity_id": eid, "name": s.attributes.get("friendly_name") or eid, "area": self._area(eid), "kind": kind, "state": s.state})
+                binaries.append({"entity_id": eid, "name": label(self.hass, eid, s), "area": self._area(eid), "kind": kind, "state": s.state})
         for i in (*sensors, *binaries):
             if i["area"] and i["area"] not in names:
                 names[i["area"]] = area.name if (area := areas.async_get_area(i["area"])) else i["area"]

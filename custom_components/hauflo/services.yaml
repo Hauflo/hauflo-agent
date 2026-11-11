@@ -27,3 +27,31 @@ unprotect:
         text:
           multiple: true
 remove_alarms:
+intercom_answer:
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          integration: hauflo
+          domain: [sensor, event, camera, button]
+intercom_hangup:
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          integration: hauflo
+          domain: [sensor, event, camera, button]
+lock:
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          domain: lock
+    action:
+      required: true
+      selector:
+        select:
+          options: [lock, unlock, open]

@@ -88,7 +88,7 @@ def rig(locked=False, merger=None):
 
 
 async def run(agent, msg, valid=True, fresh=True):
-    await dashmerge.handle(agent, 1, {"id": 7, **msg}, lambda c: valid, lambda: fresh, "locked_by_owner")
+    await dashmerge.handle(agent, 1, {"id": 7, **msg}, lambda c: None if valid else "views[0].cards[0].type: card type custom:x not allowed", lambda: fresh, "locked_by_owner")
 
 
 async def test_reads_are_answered_by_the_agent():
@@ -104,12 +104,18 @@ async def test_reads_are_answered_by_the_agent():
     assert [s["error"]["code"] for s in sent[-2:]] == ["not_allowed", "not_allowed"]
 
 
-async def test_writes_refused_by_url_config_and_the_dashboard_check():
+async def test_writes_refused_by_url_config_and_the_dashboard_check(caplog):
     agent, sent = rig()
     for msg, valid in (({"type": "lovelace/config/save", "url_path": "family", "config": {}}, True), ({"type": "lovelace/config/save", "url_path": "hauflo-x-copy-1", "config": {}}, True),
                        ({"type": "lovelace/config/save", "url_path": "hauflo-x", "config": []}, True), ({"type": "lovelace/config/save", "url_path": "hauflo-x", "config": {}}, False)):
         await run(agent, msg, valid=valid)
         assert sent[-1]["error"]["code"] == "not_allowed"
+    # The dashboard check's reason reaches the cloud (acceptance 0.33 K1): what was refused and where.
+    assert sent[-1]["error"]["message"] == "Hauflo agent: not allowed (views[0].cards[0].type: card type custom:x not allowed)"
+    for kind in ("hauflo/dashboard/plan", "hauflo/dashboard/save"):
+        await run(agent, {"type": kind, "url_path": "hauflo-x", "config": {"views": []}}, valid=False)
+        assert sent[-1]["error"] == {"code": "not_allowed", "message": "Hauflo agent: not allowed (views[0].cards[0].type: card type custom:x not allowed)"}
+        assert f"«{kind}» of hauflo-x isn't allowed through the tunnel — views[0].cards[0].type: card type custom:x not allowed" in caplog.text
     assert agent.dashboards.calls == []
 
 

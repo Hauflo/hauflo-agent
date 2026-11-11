@@ -31,6 +31,12 @@
    "params": {}
   },
   {
+   "file": "billing/haTarget.ts",
+   "kind": "rest",
+   "call": "GET /api/config",
+   "params": {}
+  },
+  {
    "file": "ha/alarmRulesDeploy.ts",
    "kind": "rest",
    "call": "GET /api/hauflo/notify",
@@ -759,6 +765,36 @@
    "params": {
     "integration": "hauflo"
    }
+  },
+  {
+   "file": "ha/integrationInstall.ts",
+   "kind": "rest",
+   "call": "GET /api/hauflo/install",
+   "params": {}
+  },
+  {
+   "file": "ha/integrationInstall.ts",
+   "kind": "rest",
+   "call": "POST /api/hauflo/install",
+   "params": {}
+  },
+  {
+   "file": "ha/integrationInstall.ts",
+   "kind": "rest",
+   "call": "POST /api/hauflo/install/restart",
+   "params": {}
+  },
+  {
+   "file": "ha/intercomRoutes.ts",
+   "kind": "rest",
+   "call": "GET /api/hauflo/intercom",
+   "params": {}
+  },
+  {
+   "file": "ha/intercomRoutes.ts",
+   "kind": "rest",
+   "call": "POST /api/hauflo/intercom",
+   "params": {}
   },
   {
    "file": "ha/lampWrappers.ts",

@@ -553,4 +553,5 @@ async def test_label_prefers_friendly_name_then_registry_then_device_then_raw_id
     hass.states.async_set("binary_sensor.leak_bathroom2", "on", {})
     assert notify.label(hass, "binary_sensor.leak_bathroom2") == "Датчик ванной"
     hass.states.async_set("binary_sensor.leak_other", "on", {})
-    assert notify.label(hass, "binary_sensor.leak_other") == "binary_sensor.leak_other"
+    # Nothing names it: its object id said as words, the way HA names an unnamed entity (acceptance 0.33 п.5), never the raw id.
+    assert notify.label(hass, "binary_sensor.leak_other") == "Leak other"

@@ -54,7 +54,7 @@ from homeassistant.util import dt as dt_util, slugify
 
 from . import derived as dv, issues, quiet, window as win
 from .canon import CANON
-from .const import DOMAIN
+from .const import DOMAIN, site_ru
 from .derived import SECONDS_PER_MINUTE, SETPOINT_GAP, Invalid, num
 from .device import device_info
 from .house import may_edit, refuse
@@ -577,8 +577,11 @@ class Rules:
         season_now: Callable[[], str | None] | None = None,
         season_set: Callable[[str, str | None], Any] | None = None,
         ask: Callable[..., Any] | None = None,
+        notify_of: Callable[[], Any] | None = None,
     ) -> None:
         self.hass = hass
+        # The alarm engine: its config holds the project's language — the house's one language for every push (С3).
+        self.notify_of = notify_of or (lambda: None)
         self.owns, self.own_raw = owns, own_raw
         self.season = season or (lambda: "winter")
         self.tell = tell
@@ -621,7 +624,8 @@ class Rules:
 
     @property
     def ru(self) -> bool:
-        return str(self.hass.config.language or "").startswith(LANGS[0])
+        """The house's one language (const.site_ru): the project's, else HA's — as the alarms' pushes say it."""
+        return site_ru(self.hass.config.language, getattr(self.notify_of(), "config", None))
 
     # --- texts (translations, «exceptions» → rules_…) -------------------------------------------------------------------
 

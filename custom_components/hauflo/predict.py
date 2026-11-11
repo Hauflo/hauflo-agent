@@ -538,6 +538,10 @@ class HeatSlowing(Detector):
                 out.append({"key": f"{kind}|{eid}", "kind": kind, "entityId": eid, **self.ctx.who(eid), "since": _iso(r["open"]), "wasRate": _round(got[0]), "nowRate": _round(got[1])})
         return out
 
+    def inputs(self, kind: str, eid: str) -> list[dict[str, Any]]:
+        """The climate's heating / cooling episodes (ClimateEffect's), its room's windows, the street, the season."""
+        return self.ctx.climate_inputs(eid)
+
     def keys(self) -> list[tuple[str, str]]:
         return [(self.KIND[d], eid) for eid, by in self.recs.items() for d in by]
 

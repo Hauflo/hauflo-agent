@@ -656,6 +656,11 @@ class Correlation(Detector):
                         "role": cfg["series"], "exec": self.ctx.who(link["s"])["name"], "limit": op["was"], "change": op["now"], "flatH": _round(cfg["window_min"] / 60)})
         return out
 
+    def inputs(self, kind: str, eid: str) -> list[dict[str, Any]]:
+        """What is switched on (the trigger) and the reading that should move after it."""
+        link = self.links.get(eid)
+        return [{"role": "trigger", "entityId": eid}, *([{"role": "effect", "entityId": link["s"]}] if link else [])]
+
     def keys(self) -> list[tuple[str, str]]:
         return [(f"corr_{link['c']}", trig) for trig, link in self.links.items()]
 
@@ -958,6 +963,11 @@ class LoopTuning(Detector):
                 kind = LOOP_METRICS[metric]
                 out.append({"key": f"{kind}|{eid}", "kind": kind, "entityId": eid, **self.ctx.who(eid), "since": _iso(op["since"]), "role": lp["t"], **self._fields(metric, op, eid)})
         return out
+
+    def inputs(self, kind: str, eid: str) -> list[dict[str, Any]]:
+        """The loop (its temperature, setpoint, starts) and its supply sensor when the integrator named one; its peers of
+        the same type are the norm."""
+        return [{"role": "self", "entityId": eid}, *([{"role": "supply", "entityId": self.supply[eid]}] if eid in self.supply else []), {"role": "peers"}]
 
     def keys(self) -> list[tuple[str, str]]:
         return [(LOOP_METRICS[m], eid) for eid, lp in self.loops.items() for m in LOOP_TYPES[lp["t"]]["metrics"]]

@@ -134,6 +134,32 @@ async def test_issue_makes_a_non_admin_login_and_shows_only_his_pages(hass: Home
     assert guest.id not in {u["id"] for u in house["users"]}
 
 
+async def test_role_technician_named_and_checked(hass: HomeAssistant, entry, home, person, hass_owner_user, hass_client) -> None:  # noqa: F811
+    """В8 «техник»: a preset of the form (the admins' pages, its term) — the grant named with it, an unknown role refused."""
+    agent = entry.runtime_data
+    c = await _client(hass, hass_client, hass_owner_user)
+    got = await (await c.get(f"{URL}?pages=1")).json()
+    tech = next(r for r in got["pages_roles"] if r["id"] == "technician")
+    assert tech["pick"] == "admin" and tech["hours"] in got["pages_hours"]
+    admin_pages = [v["path"] for d in got["pages_available"] for v in d["views"] if v["admin"]]
+    assert admin_pages == ["service"]
+    body = {"op": "issue_pages", "label": "Иван", "pages": [{"dashboard": HOME, "view": p} for p in [*admin_pages, "room_1"]], "hours": tech["hours"], "role": "technician"}
+    r = await c.post(URL, json=body)
+    assert r.status == 200, await r.text()
+    grant = next(g for g in agent.guest.grants if g.get("kind") == "pages")
+    assert grant["role"] == "technician" and agent.guest.log[0]["role"] == "technician"
+    listed = (await (await c.get(URL)).json())["pages"]
+    assert listed[0]["role"] == "technician" and [x["view"] for x in listed[0]["pages"]] == ["service", "room_1"]
+    # A technician is a guest: restricted — control, never the house's settings.
+    guest = await hass.auth.async_get_user(grant["user_id"])
+    assert guest is not None and not guest.is_admin and await is_restricted(hass, guest)
+    # An unknown role / a role not a string: refused, nothing made.
+    for bad in ("admin", 1):
+        r = await c.post(URL, json={**body, "label": "Пётр", "role": bad})
+        assert r.status == 400
+    assert sum(1 for g in agent.guest.grants if g.get("kind") == "pages") == 1
+
+
 async def test_cloud_sees_its_own_config(hass: HomeAssistant, entry, home, person, hass_owner_user, hass_client) -> None:  # noqa: F811
     agent = entry.runtime_data
     read0 = await agent.dashboards.read(HOME)

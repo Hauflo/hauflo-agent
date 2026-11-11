@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import json
 import logging
 import re
 import time
@@ -34,8 +35,9 @@ from homeassistant.helpers.start import async_at_started
 from homeassistant.util import dt as dt_util, slugify
 
 from .natural import natural_key
+from .ownership import entity_room
 from .storage import HaufloStore
-from .const import ACK_ACTION, DOMAIN, LOCKED_CODE, MONITOR_LABELS, NATIVE_STORE, QUIET_PARENT, RUN_ACTION
+from .const import ACK_ACTION, DOMAIN, LOCKED_CODE, MONITOR_LABELS, NATIVE_STORE, QUIET_PARENT, RUN_ACTION, site_ru
 from . import foreign, signals
 from .tuning import TUNING
 
@@ -169,6 +171,30 @@ LEVEL_ABS_MAX = _T["level_abs_max"]
 # and an event older than `event_recent_s` is a restored state after a restart, not a press.
 RING_WINDOW = _T["ring_window_s"]
 RING_FRESH = TUNING["link"]["event_recent_s"]
+# What a press is (0.33 п.9): kind → (HA device classes, words of its event type / name); the first match wins.
+QUIET_CHANNEL = _T["quiet_channel"]  # Android: a channel made low (no sound) for the quiet hours' pushes
+C_SOS = frozenset(_T["event_critical_kinds"])  # kinds pushed as critical
+EVENT_KINDS = {k: (frozenset(v.get("classes", ())), re.compile(v["words"], re.I)) for k, v in _T["event_kinds"].items() if not k.startswith("_")}
+RING = _T["ring_push"]  # Р55: a doorbell's push — its picture, its tap, «answered» taking it off
+INTERCOM_EVENT = f"{DOMAIN}_intercom"  # the agent's own intercom (intercom/manager.py): its call's moments
+
+
+def event_kind(state: State) -> str:
+    """«doorbell» (a doorbell, an intercom's SIP call), «sos» (a panic button) or «event» (any other press) — one rule for
+    the push here and the bell / Telegram line in the cloud (status `eventClass`)."""
+    dc = str(state.attributes.get("device_class") or "")
+    for kind, (classes, _) in EVENT_KINDS.items():
+        if dc and dc in classes:
+            return kind
+    said = f"{state.attributes.get('event_type') or ''} {state.name or ''} {state.object_id}"
+    return next((kind for kind, (_, words) in EVENT_KINDS.items() if words.search(said)), "event")
+
+
+def watched_press(state: State | None, platform: str | None = None) -> bool:
+    """A press the canon watches by default though HA gives it no doorbell class (acceptance 0.33 M4): an event entity
+    whose kind is one of `event_kinds` — an SOS / panic button, an intercom's SIP call. Any other press stays the
+    integrator's choice (the label / «Уведомлять»)."""
+    return state is not None and state.domain == "event" and platform not in signals.WATCH_SKIP and event_kind(state) in EVENT_KINDS
 
 
 SOURCE_DOMAINS = ("binary_sensor.", "sensor.")
@@ -424,16 +450,27 @@ def narrowing(new: dict[str, Any], old: dict[str, Any]) -> str | None:
     for k, v in na.items():
         if _SCOPE_RANK[v] > _SCOPE_RANK[oa[k]] if k in oa else v != "off":
             return f"audience {k}: more"
+    # «Пуш о звонке»: switched on (or its «off» taken away) is more.
+    nr, or_ = new.get("rings") or {}, old.get("rings") or {}
+    for k, v in or_.items():
+        if v is False and nr.get(k) is not False:
+            return f"rings {k}: more"
+    for k, v in nr.items():
+        if v is True and or_.get(k) is not True:
+            return f"rings {k}: more"
     return None
 
 
-def push_data(os: str | None, *, tag: str, critical: bool = False, quiet: bool = False, actions: list | None = None) -> dict[str, Any]:
-    """The `data` of a push to the HA app — the engine's and the alarm automations' (independent.py) one shape."""
+def push_data(os: str | None, *, tag: str, critical: bool = False, quiet: bool = False, actions: list | None = None, silent: bool = False) -> dict[str, Any]:
+    """The `data` of a push to the HA app — the engine's and the alarm automations' (independent.py) one shape.
+    `silent`: a new message without a sound (the house's quiet hours) — iOS passive, Android its own low channel."""
     data: dict[str, Any] = {"tag": tag}
     if actions:
         data["actions"] = actions
     if quiet:  # an update of a message already there: no sound, no banner
         data.update({"push": {"interruption-level": "passive"}} if os == "ios" else {"alert_once": True})
+    if silent and not critical:
+        data.update({"push": {"interruption-level": "passive"}} if os == "ios" else {"channel": QUIET_CHANNEL, "importance": "low"})
     if critical:
         if os == "ios":
             data["push"] = {"sound": {"name": "default", "critical": 1, "volume": 1.0}, "interruption-level": "critical"}
@@ -474,6 +511,7 @@ _EN_WORDS = {"Принято": "Accept", "Авария": "Alarm"}
 # A rule's title as Hauflo suggests it, in the language of the page it was made on (integrator run 25: «🚨 Авария
 # оборудования» over an English push) — only a title that is exactly one of these.
 _EN_TITLES = {"Протечка": "Water leak", "Дым": "Smoke", "Газ": "Gas", "Авария котла": "Boiler alarm", "Авария оборудования": "Equipment alarm", "Температура": "Temperature", "Батарейка": "Battery", "Двери и окна": "Doors and windows", "Своё": "Custom", "Связь со щитом": "Panel link lost", "Авария": "Alarm"}
+_RU_TITLES = {en: ru for ru, en in _EN_TITLES.items()}
 
 
 def label(hass: HomeAssistant, entity_id: str, state: State | None = None) -> str:
@@ -481,15 +519,34 @@ def label(hass: HomeAssistant, entity_id: str, state: State | None = None) -> st
     object id («leak_bathroom») only when nothing else exists (stage 10 round 3)."""
     state = state or hass.states.get(entity_id)
     if name := (str(state.attributes.get("friendly_name") or "").strip() if state else ""):
-        return name
+        return plain(once(name))
     entry = er.async_get(hass).async_get(entity_id)
     if entry:
         if name := (entry.name or entry.original_name or ""):
-            return str(name)
+            return plain(once(str(name)))
         if entry.device_id and (device := dr.async_get(hass).async_get(entry.device_id)):
             if name := (device.name_by_user or device.name or ""):
-                return str(name)
-    return entity_id
+                return plain(once(str(name)))
+    return plain(entity_id.partition(".")[2] or entity_id)
+
+
+_SNAKE = re.compile(r"\b[a-z0-9]+(?:_[a-z0-9]+)+\b")
+
+
+def plain(name: str) -> str:
+    """A machine id said as words (acceptance 0.33: «climate_living Temperature» — an MQTT device named by its id): the
+    snake_case tokens spaced, as HA itself says an entity without a name («leak_bathroom» → «Leak bathroom»)."""
+    out = _SNAKE.sub(lambda m: m.group(0).replace("_", " "), name.strip())
+    return out[:1].upper() + out[1:] if out != name.strip() else out
+
+
+def once(name: str) -> str:
+    """«Звонок в дверь Звонок в дверь» → «Звонок в дверь»: HA's friendly name is «device + entity», and a device whose
+    one entity is named as the device itself (an MQTT doorbell / SOS button) says it twice (acceptance 0.33)."""
+    half, rest = len(name) // 2, len(name) % 2
+    if rest and name[half] == " " and name[:half] == name[half + 1 :]:
+        return name[:half]
+    return name
 
 
 @callback
@@ -562,6 +619,10 @@ def _clean_rules(raw: Any, hass: HomeAssistant | None = None, owns: Callable[[st
     aud = raw.get("audience")
     if isinstance(aud, dict):
         out["audience"] = {str(k): str(v) for k, v in list(aud.items())[:200] if v in SCOPES and (k == "*" or str(k).startswith("person.") or PHONE_ID.match(str(k)))}
+    # «Пуш о звонке» (0.33 п.9): a person / phone / «*» → on or off; not said — on unless its alarms are «off».
+    # Always said (empty too): the cloud knows by it that this agent keeps them (its resync compares them then).
+    rings = raw.get("rings")
+    out["rings"] = {str(k): v for k, v in list(rings.items())[:200] if isinstance(v, bool) and (k == "*" or str(k).startswith("person.") or PHONE_ID.match(str(k)))} if isinstance(rings, dict) else {}
     for g in raw.get("groups") or []:
         if isinstance(g, dict) and g.get("id") and isinstance(g.get("people"), list):
             out["groups"].append({"id": str(g["id"]), "name": str(g.get("name") or ""), "people": [str(p) for p in g["people"] if str(p).startswith("person.")]})
@@ -624,10 +685,11 @@ def _clean_rules(raw: Any, hass: HomeAssistant | None = None, owns: Callable[[st
                 "hold": own_hold if own_hold is not None else policy_hold(hass, kind, sources, thresholds, holds),
             }
         )
-    lang = out.get("lang") or (str(getattr(getattr(hass, "config", None), "language", "") or "ru") if hass is not None else "ru")
-    if not str(lang).lower().startswith("ru"):
-        for r in out["rules"]:
-            r["title"] = _EN_TITLES.get(r["title"], r["title"])
+    # A canon title in the house's one language both ways (0.33 С3: a rule made on an English page kept «Equipment alarm»
+    # over a Russian push «…: авария в 01:00» — only Russian → English was turned before). A typed title stays as is.
+    titles = _RU_TITLES if site_ru(getattr(getattr(hass, "config", None), "language", None) if hass is not None else None, out) else _EN_TITLES
+    for r in out["rules"]:
+        r["title"] = titles.get(r["title"], r["title"])
     return out
 
 
@@ -665,7 +727,16 @@ class NotifyEngine:
         self._unsub_state = None
         self._unsub_action = None
         self._unsub_events = None
+        self._unsub_intercom: Callable[[], None] | None = None
         self._rang: dict[str, float] = {}  # event entity → monotonic time of its last push
+        # Set by the link to Hauflo: is an entity watched (the status' own rule, so the push, the bell and Telegram
+        # agree — 0.33 п.9); unset — the «Hauflo мониторинг» label alone, as before.
+        self.watches: Callable[[str], bool] | None = None
+        # Set by the link to Hauflo: is it the house's quiet hours now (rules.py) — a press then comes without a sound.
+        self.quiet_now: Callable[[], bool] | None = None
+        # Set by the link to Hauflo: an event entity of a lock's device (locks.py, Р56) — its press is the lock's push
+        # («открыта отпечатком · Мария»), not a «кнопка» ring; a doorbell / SOS of such a device still rings.
+        self.lock_owns: Callable[[str], bool] | None = None
         # incident key (rule id|entity) → {"since", "acked_by", "repeat": cancel, "count", "group"}
         self.active: dict[str, dict[str, Any]] = {}
         # rule id → {"since", "acked_by", "count", "repeat"}: many devices of one rule told as one message
@@ -745,6 +816,7 @@ class NotifyEngine:
         self._watch_helpers()
         self._unsub_automations = self.hass.bus.async_listen(EVENT_STATE_CHANGED, self._on_automation, event_filter=_automation_event)
         self._unsub_events = self.hass.bus.async_listen(EVENT_STATE_CHANGED, self._on_event_entity, event_filter=_event_entity)
+        self._unsub_intercom = self.hass.bus.async_listen(INTERCOM_EVENT, self._on_intercom)
         self._apply()
 
         self._missed_src = {}
@@ -763,6 +835,9 @@ class NotifyEngine:
         if self._unsub_events:
             self._unsub_events()
             self._unsub_events = None
+        if self._unsub_intercom:
+            self._unsub_intercom()
+            self._unsub_intercom = None
         if self._unsub_automations:
             self._unsub_automations()
             self._unsub_automations = None
@@ -944,35 +1019,123 @@ class NotifyEngine:
         if at is None or at.tzinfo is None or abs((dt_util.utcnow() - at).total_seconds()) > RING_FRESH:
             return  # unknown / unavailable / a restored old press
         eid = new.entity_id
+        if self.lock_owns is not None and self.lock_owns(eid) and event_kind(new) == "event":
+            return  # Р56: a lock's own event (unlocked by a fingerprint…) is the locks' push, never a ring
+        said = str(new.attributes.get("event_type") or "").lower()
+        if said in RING["clear_event_types"] or said in RING["skip_event_types"]:
+            # A SIP integration's call answered (taken off every phone) / ended: no push of its own (Р55).
+            if said in RING["clear_event_types"] and eid in self._rang:
+                self.hass.async_create_task(self._clear_ring(eid))
+            return
         now = time.monotonic()
-        if now - self._rang.get(eid, -RING_WINDOW) < RING_WINDOW or not labelled(self.hass, eid):
+        if now - self._rang.get(eid, -RING_WINDOW) < RING_WINDOW or not (self.watches(eid) if self.watches is not None else labelled(self.hass, eid)):
             return
         self._rang[eid] = now
         self.hass.async_create_task(self._send_ring(new))
 
     async def _send_ring(self, state: State) -> None:
+        """«🔔 Звонок в дверь · Прихожая» / «🆘 SOS · Спальня» / «🔔 Кнопка · Холл» — the device's name below; to every phone
+        whose «пуш о звонке» is on (`ring_targets`), no repeats, nothing to accept. An SOS press is critical (through silent
+        mode and quiet hours); any other in quiet hours comes without a sound."""
         name, where = self._name(state.entity_id), self._where(state)
-        kind = "ring" if state.attributes.get("device_class") == "doorbell" else "fired"
+        kind = event_kind(state)
         try:
             got = await translation.async_get_translations(self.hass, "en" if self._english() else "ru", "exceptions", [DOMAIN])
         except Exception:  # noqa: BLE001 — words not loaded: the name alone still tells which
             got = {}
-        text = got.get(f"component.{DOMAIN}.exceptions.alarm_native_{kind}.message") or "{name}"
-        title = got.get(f"component.{DOMAIN}.exceptions.alarm_native_ring_title.message") or "{name}"
-        # Not a rule: every phone that takes the alarms (scope «all»), normal priority, no repeats, nothing to accept.
-        rule = {"id": "event", "title": name, "priority": "normal", "recipients": {"all": True, "people": [], "groups": [], "phones": []}}
-        message = text.format(name=name)
-        head = title.format(name=name) + (f" — {where}" if where else "")
-        await self._send(rule, head, message, tag=self._tag(f"event|{state.entity_id}"), critical=False)
+
+        def word(key: str, fallback: str) -> str:
+            return got.get(f"component.{DOMAIN}.exceptions.{key}.message") or fallback
+
+        what = word(f"event_push_{kind}", "{name}").format(name=name)
+        head = word("event_push_title" if where else "event_push_title_bare", "{what}").format(what=what, where=where)
+        message = word(f"event_push_{kind}_text", "{name}").format(name=name)
+        critical = kind in C_SOS
+        rule = {"id": "event", "title": name, "priority": "critical" if critical else "normal", "recipients": {"all": True, "people": [], "groups": [], "phones": []}}
+        silent = not critical and bool(self.quiet_now and self.quiet_now())
+        extra = await self._ring_extra(state, urgent=not silent) if kind in RING["kinds"] and not critical else None
+        await self._send(rule, head, message, tag=self._tag(f"event|{state.entity_id}"), critical=critical, silent=silent, targets=self.ring_targets(), extra=extra)
+
+    async def _ring_extra(self, state: State, *, urgent: bool) -> Callable[[str | None], dict[str, Any]]:
+        """A doorbell's push (Р55): the door's picture (iOS shows the live camera when expanded), a tap opening the
+        dashboard view with the door, time-sensitive on iOS / high on Android (not in quiet hours) — the canon in
+        tuning.json notify.ring_push."""
+        camera = self._door_camera(state.entity_id)
+        link = await self._door_link({state.entity_id, *([camera] if camera else [])})
+
+        def extra(os: str | None) -> dict[str, Any]:
+            out: dict[str, Any] = {}
+            if camera:
+                out["image"] = f"/api/camera_proxy/{camera}"
+                if os == "ios":
+                    out["entity_id"] = camera
+            if link:
+                out["url" if os == "ios" else "clickAction"] = link
+            if urgent:
+                out.update({"push": dict(RING["ios"])} if os == "ios" else RING["android"])
+            return out
+
+        return extra
+
+    def _door_camera(self, entity_id: str) -> str | None:
+        """A camera of the same device (the panel's video; its talk camera skipped)."""
+        reg = er.async_get(self.hass)
+        entry = reg.async_get(entity_id)
+        if entry is None or not entry.device_id:
+            return None
+        cams = sorted(e.entity_id for e in er.async_entries_for_device(reg, entry.device_id) if e.domain == "camera" and e.translation_key not in RING["skip_camera_keys"])
+        return cams[0] if cams else None
+
+    async def _door_link(self, ids: set[str]) -> str | None:
+        """«/hauflo-…/<view>» — Hauflo's dashboard view showing the door: its room's, else «Главная»."""
+        try:
+            from homeassistant.components.lovelace.const import LOVELACE_DATA  # noqa: PLC0415
+
+            dashboards = list(self.hass.data[LOVELACE_DATA].dashboards.items())
+        except (ImportError, KeyError):
+            return None
+        for url_path, dash in dashboards:
+            if not str(url_path or "").startswith("hauflo-"):
+                continue
+            try:
+                config = await dash.async_load(False)
+            except Exception:  # noqa: BLE001 — not set up yet / a YAML one gone: the next dashboard
+                continue
+            views = config.get("views") if isinstance(config, dict) else None
+            hits = [(i, v) for i, v in enumerate(views or []) if isinstance(v, dict) and any(x in json.dumps(v) for x in ids)]
+            if hits:
+                i, view = hits[1] if len(hits) > 1 else hits[0]  # the room's view before «Главная» (the first)
+                return f"/{url_path}/{view.get('path') or i}"
+        return None
+
+    async def _clear_ring(self, entity_id: str) -> None:
+        """«Ответили» — the ring's push taken off every phone it went to."""
+        self._rang.pop(entity_id, None)
+        rule = {"id": "event", "title": "", "priority": "normal", "recipients": {"all": True, "people": [], "groups": [], "phones": []}}
+        await self._send(rule, "", "clear_notification", tag=self._tag(f"event|{entity_id}"), critical=False, targets=self.ring_targets(), force=True)
+
+    @callback
+    def _on_intercom(self, event: Event) -> None:
+        """The agent's own door answered here or on another phone: its ring's push off every phone."""
+        call = event.data.get("call")
+        if event.data.get("state") in RING["clear_states"] and isinstance(call, str) and call in self._rang:
+            self.hass.async_create_task(self._clear_ring(call))
+
+    def rings_on(self, phone: dict[str, Any], config: dict[str, Any] | None = None) -> bool:
+        """«Пуш о звонке» of a phone: its own, else its person's, else «*»; not said — on unless its alarms are «off»."""
+        rings = (config or self.config).get("rings") or {}
+        for key in (phone["service"], phone.get("person"), "*"):
+            if key and isinstance(rings.get(key), bool):
+                return rings[key]
+        return self.scope(phone, config) != "off"
+
+    def ring_targets(self, config: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        return [p for p in self.phones() if self.rings_on(p, config)]
 
     # --- incidents ------------------------------------------------------------------------------
 
     def _where(self, state: State) -> str:
-        entry = er.async_get(self.hass).async_get(state.entity_id)
-        area_id = entry.area_id if entry else None
-        if not area_id and entry and entry.device_id:
-            device = dr.async_get(self.hass).async_get(entry.device_id)
-            area_id = device.area_id if device else None
+        area_id = entity_room(self.hass, state.entity_id)  # Р57: the room's name, never the zone's
         area = ar.async_get(self.hass).async_get_area(area_id) if area_id else None
         return area.name if area else ""
 
@@ -1852,8 +2015,7 @@ class NotifyEngine:
 
     def _english(self, config: dict[str, Any] | None = None) -> bool:
         """The project's language when Hauflo said it (in ``config`` — rules not saved yet), else Home Assistant's."""
-        lang = (config or self.config).get("lang") or str(getattr(self.hass.config, "language", "") or "ru")
-        return not str(lang).lower().startswith("ru")
+        return not site_ru(getattr(self.hass.config, "language", None), config or self.config)
 
     def _say(self, text: str) -> str:
         return _en(text) if text and self._english() else text
@@ -1863,7 +2025,7 @@ class NotifyEngine:
             return
         persistent_notification.async_create(self.hass, self._say(message), title=self._say(title), notification_id=notification_id)
 
-    async def _send(self, rule: dict[str, Any], title: str, message: str, *, tag: str, critical: bool, actions: list | None = None, targets: list | None = None, quiet: bool = False, results: dict[str, str] | None = None, force: bool = False) -> list[str]:
+    async def _send(self, rule: dict[str, Any], title: str, message: str, *, tag: str, critical: bool, actions: list | None = None, targets: list | None = None, quiet: bool = False, results: dict[str, str] | None = None, force: bool = False, silent: bool = False, extra: Callable[[str | None], dict[str, Any]] | None = None) -> list[str]:
         testing = results is not None
         if not testing and not force and self._in_ha(rule.get("id")):
             # HA's own automation pushes this rule (independent.py): the phones it goes to, nothing sent twice.
@@ -1885,7 +2047,9 @@ class NotifyEngine:
                 return
             self._pushes.setdefault(phone["service"], []).append(time.time())
             self._save()
-            data = push_data(phone["os"], tag=tag, critical=critical, quiet=quiet, actions=actions)
+            data = push_data(phone["os"], tag=tag, critical=critical, quiet=quiet, actions=actions, silent=silent)
+            for k, v in (extra(phone["os"]) if extra is not None else {}).items():
+                data[k] = {**data[k], **v} if isinstance(v, dict) and isinstance(data.get(k), dict) else v
             _PHONE.set(phone["service"])
             try:
                 payload = {"message": message, "data": data, **({"title": title} if title else {})}
@@ -2020,7 +2184,7 @@ class NotifyEngine:
                 entry = er.async_get(self.hass).async_get(s.entity_id)
                 # Whose it is: Hauflo's own (suggested by itself) or another integration's — taken only when the
                 # integrator picks it (owner 27.10: a suggested rule rang about another integration's gas boiler).
-                candidates.append({"entity_id": s.entity_id, "name": s.attributes.get("friendly_name") or s.entity_id, "device_class": dc, "area": self._where(s), "state": s.state, "own": bool(self.owns and self.owns(s.entity_id)), "monitored": labelled(self.hass, s.entity_id), "platform": entry.platform if entry else "", **({"original": entry.original_name} if entry and entry.original_name and entry.original_name != s.attributes.get("friendly_name") else {}), **({"unit": str(s.attributes.get("unit_of_measurement") or "")} if s.domain == "sensor" else {})})
+                candidates.append({"entity_id": s.entity_id, "name": label(self.hass, s.entity_id, s), "device_class": dc, "area": self._where(s), "state": s.state, "own": bool(self.owns and self.owns(s.entity_id)), "monitored": labelled(self.hass, s.entity_id), "platform": entry.platform if entry else "", **({"original": entry.original_name} if entry and entry.original_name and entry.original_name != s.attributes.get("friendly_name") else {}), **({"unit": str(s.attributes.get("unit_of_measurement") or "")} if s.domain == "sensor" else {})})
         valves = [
             {"entity_id": s.entity_id, "name": s.attributes.get("friendly_name") or s.entity_id, "area": self._where(s)}
             for s in self.hass.states.async_all(["valve", "switch"])

@@ -5,6 +5,10 @@
   light / cover groups it set up, its scenes, the family's dashboard automations and the agent's own entities. Kept in
   sync by the agent: put on what becomes Hauflo's, taken off what stops being Hauflo's (or was labelled by hand).
   Only the label changes — never an entity_id, a name or an area. Not while the owner keeps the house closed.
+- Alice's zone rooms (Р57): a merged room's zones are their own HA areas «Кухня-гостиная · Остров» for Yandex to ask
+  «в какой комнате?»; the plan Hauflo tells carries `zones` {zone area → room area}, and everything here that asks an
+  entity's room (`entity_room`: order, voice, presence, scenes, guests, recipes, alarms, insights, the cards through
+  /api/hauflo/house) gets the room, never the zone.
 - «Создано в этом доме» / «Made in this home»: a read-only sensor on the integration's page — how many entities are Hauflo's,
   which of them were changed by hand in HA (renamed, disabled; the ones the last plan keeps as edited) and what the next
   deploy would change, when Hauflo said it (POST /api/hauflo/ownership after each plan; tunnel only, info only).
@@ -21,7 +25,7 @@ from typing import Any
 
 from homeassistant.components.http import KEY_HASS, HomeAssistantView
 from homeassistant.core import Event, HomeAssistant, callback
-from homeassistant.helpers import entity_registry as er, label_registry as lr
+from homeassistant.helpers import device_registry as dr, entity_registry as er, label_registry as lr
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later
 from homeassistant.util import dt as dt_util
@@ -50,6 +54,32 @@ _T = TUNING["ownership"]
 SYNC_DELAY = _T["sync_delay_s"]  # seconds after the last registry change (a deploy writes hundreds in a row)
 MAX_LIST = 50
 _ENTITY = re.compile(r"[a-z_]+\.[a-z0-9_]{1,200}")
+_AREA = re.compile(r"[a-z0-9_]{1,200}")
+ZONES_MAX = _T["zones_max"]
+ZONES_KEY = f"{DOMAIN}_zone_rooms"  # hass.data: {zone area id → room area id}, the last plan's
+
+
+def room_area(hass: HomeAssistant, area_id: str | None) -> str | None:
+    """The room an area belongs to: a zone area of Alice's (Р57) → its room's area; any other area — itself."""
+    if not area_id:
+        return area_id
+    return (hass.data.get(ZONES_KEY) or {}).get(area_id, area_id)
+
+
+def entity_area(hass: HomeAssistant, entity_id: str) -> str | None:
+    """The HA area of an entity as HA has it: its own, else its device's."""
+    entry = er.async_get(hass).async_get(entity_id)
+    if entry is None:
+        return None
+    if entry.area_id:
+        return entry.area_id
+    device = dr.async_get(hass).async_get(entry.device_id) if entry.device_id else None
+    return device.area_id if device else None
+
+
+def entity_room(hass: HomeAssistant, entity_id: str) -> str | None:
+    """The room an entity is in — its area, a zone area taken as its room."""
+    return room_area(hass, entity_area(hass, entity_id))
 _AUTOMATION_PREFIX = "hauflo_auto_"
 
 
@@ -101,6 +131,7 @@ class Ownership:
         data = await self.store.async_load()
         if isinstance(data, dict) and isinstance(data.get("plan"), dict):
             self.plan = data["plan"]
+        self._publish_zones()
         if isinstance(data, dict) and isinstance(data.get("names"), dict):
             self.names = {k: v for k, v in data["names"].items() if isinstance(k, str) and isinstance(v, str)}
         else:
@@ -114,7 +145,13 @@ class Ownership:
         self.async_sync()
 
     @callback
+    def _publish_zones(self) -> None:
+        zones = (self.plan or {}).get("zones")
+        self.hass.data[ZONES_KEY] = dict(zones) if isinstance(zones, dict) else {}
+
+    @callback
     def async_stop(self) -> None:
+        self.hass.data.pop(ZONES_KEY, None)
         for unsub in self._unsub:
             unsub()
         self._unsub.clear()
@@ -255,11 +292,12 @@ class Ownership:
             "renamed": sorted(renamed)[:MAX_LIST],
             "disabled": sorted(disabled)[:MAX_LIST],
             "kept_by_plan": sorted(kept)[:MAX_LIST],
-            "next_deploy": {k: v for k, v in plan.items() if k != "kept"} or None,
+            "next_deploy": {k: v for k, v in plan.items() if k not in ("kept", "zones")} or None,
         }
 
     async def async_set_plan(self, raw: Any) -> dict[str, Any]:
         self.plan = clean_plan(raw)
+        self._publish_zones()
         self._dirty = False
         await self.store.async_save(self._data())
         async_dispatcher_send(self.hass, SIGNAL)
@@ -284,6 +322,12 @@ def clean_plan(raw: Any) -> dict[str, Any]:
         out["project"] = raw["project"][:120]
     kept = raw.get("kept")
     out["kept"] = sorted({k for k in kept if isinstance(k, str) and _ENTITY.fullmatch(k)})[:MAX_LIST] if isinstance(kept, list) else []
+    # Р57: Alice's zone areas → their rooms' areas (area ids only; a zone never maps to itself).
+    zones = raw.get("zones")
+    if isinstance(zones, dict):
+        ok = sorted((k, v) for k, v in zones.items() if isinstance(k, str) and isinstance(v, str) and k != v and _AREA.fullmatch(k) and _AREA.fullmatch(v))
+        if ok:
+            out["zones"] = dict(ok[:ZONES_MAX])
     return out
 
 

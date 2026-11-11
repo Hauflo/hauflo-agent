@@ -51,6 +51,7 @@ from homeassistant.helpers import entity_registry as er
 
 from .daylight import Daylight, Invalid as DayInvalid, SensorRefused
 from .house import refuse
+from .ownership import entity_room
 from .storage import HaufloStore
 from .const import LOCKED_CODE, wants_ru
 from .tuning import TUNING
@@ -371,16 +372,7 @@ class FamilyScenes:
         return None
 
     def _area_of(self, entities: list[str]) -> str | None:
-        from homeassistant.helpers import device_registry as dr  # noqa: PLC0415
-
-        reg = er.async_get(self.hass)
-        areas = set()
-        for eid in entities:
-            ent = reg.async_get(eid)
-            area = ent.area_id if ent else None
-            if ent and not area and ent.device_id and (dev := dr.async_get(self.hass).async_get(ent.device_id)):
-                area = dev.area_id
-            areas.add(area)
+        areas = {entity_room(self.hass, eid) for eid in entities}  # Р57: zones of one room → the room
         return next(iter(areas)) if len(areas) == 1 else None
 
     def _scene_id_of(self, entity_id: Any) -> str:
