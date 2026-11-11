@@ -10,7 +10,8 @@
     "mobile_app",
     "network",
     "person",
-    "recorder"
+    "recorder",
+    "web_rtc"
   ],
   "codeowners": [
     "@Hauflo"

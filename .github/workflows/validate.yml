@@ -30,7 +30,9 @@ jobs:
           python-version: ${{ matrix.py }}
       # A real Home Assistant (pytest-homeassistant-custom-component): config flow, setup/unload, the «Связь»
       # entity, diagnostics — and the tunnel allowlist (what Hauflo may do in a client's HA).
-      - run: pip install "pytest-homeassistant-custom-component${{ matrix.phcc && format('=={0}', matrix.phcc) || '' }}" pytest-cov
+      # PyTurboJPEG: the camera platform (the intercom's door camera) imports HA's camera component, which needs it —
+      # on a site HA installs it with the camera component; the test harness does not.
+      - run: pip install "pytest-homeassistant-custom-component${{ matrix.phcc && format('=={0}', matrix.phcc) || '' }}" pytest-cov PyTurboJPEG
       # Coverage per module, reported (no gate yet: quality scale Silver «test-coverage» wants 95 %). No HA beta in the
       # matrix: pytest-homeassistant-custom-component is released for stable HA only.
       - run: python3 -m pytest -q --cov=custom_components.hauflo --cov-report=term

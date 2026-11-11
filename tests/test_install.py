@@ -82,7 +82,10 @@ def dest(hass: HomeAssistant) -> Path:
 
 
 def test_canon_is_the_backends_byte_for_byte():
-    assert (ROOT / "agent/custom_components/hauflo/integrations.json").read_bytes() == (ROOT / "backend/src/ha/integrations.json").read_bytes()
+    backend = ROOT / "backend/src/ha/integrations.json"
+    if not backend.exists():  # the published agent repository: no backend beside it (the monorepo's CI holds the pair)
+        pytest.skip("monorepo only")
+    assert (Path(__file__).parents[1] / "custom_components/hauflo/integrations.json").read_bytes() == backend.read_bytes()
 
 
 def test_canon_pins_github_only():
