@@ -54,6 +54,48 @@ RECIPE = vol.Schema(
         vol.Optional("source"): str,
     }
 )
+# One entity action (HA entity service of its domain): what it calls, what value it takes, where the value's bounds come
+# from (the entity's own attributes), the slot two rules may not both hold, how its current state is read.
+KINDS = ("percent", "setpoint", "number", "option", "seconds", "text", "time", "date", "datetime")
+ACT = vol.Schema(
+    {
+        vol.Required("service"): vol.Match(r"^[a-z_]+$"),
+        vol.Required("slot"): vol.Match(r"^[a-z_]+$"),
+        vol.Optional("field"): vol.Match(r"^[a-z_]+$"),
+        vol.Optional("value"): vol.In(KINDS),
+        vol.Optional("options"): str,
+        vol.Optional("bounds"): vol.All([str], vol.Length(min=2, max=2)),
+        vol.Optional("step"): str,
+        vol.Optional("read"): str,
+        vol.Optional("want"): vol.Any(str, int, float),
+        vol.Optional("zero"): vol.Match(r"^[a-z_]+$"),
+        vol.Optional("full"): vol.Match(r"^[a-z_]+$"),
+        vol.Optional("opposite"): str,
+        vol.Optional("restore", default=False): bool,
+        vol.Optional("power"): vol.In(["on", "off", "value", "toggle"]),
+        vol.Optional("scale"): vol.Coerce(float),
+        # HA's own required_features of the service (any one of them, each fully): an entity without it never gets the action.
+        vol.Optional("features"): [vol.All(int, vol.Range(min=1))],
+        # A light's brightness: only when its colour modes go beyond «onoff».
+        vol.Optional("beyond"): {vol.Required("attr"): str, vol.Required("not"): [str]},
+        vol.Optional("needs"): [str],
+    }
+)
+_DAY = vol.In(["mon", "tue", "wed", "thu", "fri", "sat", "sun"])
+SCHEDULE_RECIPE = vol.Schema(
+    {
+        vol.Required("id"): str,
+        vol.Required("purpose"): str,
+        vol.Required("at"): {
+            vol.Optional("times"): [vol.Match(r"^([01]\d|2[0-3]):[0-5]\d$")],
+            vol.Optional("sun"): [{vol.Required("event"): str, vol.Required("offset_min"): vol.Coerce(float)}],
+            vol.Required("days"): vol.All([_DAY], vol.Length(min=1)),
+        },
+        vol.Required("actions"): [vol.Schema({vol.Required("do"): str, vol.Required("domain"): str, vol.Optional("value"): vol.Any(int, float, str)})],
+        vol.Optional("only_if"): [dict],
+        vol.Required("source"): str,
+    }
+)
 LINK = vol.Schema({vol.Required("id"): str, vol.Required("to"): str, vol.Required("hints"): [str], vol.Required("source"): str})
 _HHMM = vol.Match(r"^([01]\d|2[0-3]):[0-5]\d$")
 _STATS = ("mean", "min", "max", "sum")
@@ -94,8 +136,32 @@ SCHEMA = vol.Schema(
         vol.Required("thresholds"): {str: _pair},
         vol.Required("suggest"): {vol.Required(k): _pos for k in ("per_day", "snooze_days", "day_s")} | {vol.Required("snooze_bounds"): _pair},
         vol.Required("quiet"): {vol.Required("default"): {vol.Required("on"): bool, vol.Required("from"): _HHMM, vol.Required("to"): _HHMM}, vol.Required("bypass_priorities"): [str]},
+        vol.Required("actions_by_domain"): {vol.Match(r"^[a-z_]+$"): {vol.Match(r"^[a-z_]+$"): ACT}},
+        vol.Required("actions"): {
+            vol.Required("pulse_s"): _pair,
+            vol.Required("pulse_default_s"): _pos,
+            vol.Required("text_len"): _int,
+            vol.Required("client_acts"): [str],
+            vol.Required("client_domains"): [str],
+            vol.Required("source"): str,
+        },
+        vol.Required("schedule"): {
+            **{vol.Required(k): _int for k in ("moments", "catch_up_s", "horizon_days")},
+            vol.Required("sun_offset_min"): _pair,
+            vol.Required("events"): [str],
+            vol.Required("source"): str,
+        },
+        vol.Required("schedule_recipes"): [SCHEDULE_RECIPE],
         vol.Required("recipes"): [RECIPE],
         vol.Required("links"): [LINK],
+        # Р65: «читать после команды» — a write to a trigger GA → knx.read of the status GAs after delay_s.
+        vol.Required("bus_reads"): {
+            **{vol.Required(k): _pos for k in ("delay_s", "rules", "triggers", "reads", "name_len", "reads_per_min", "log_size", "log_out")},
+            vol.Required("delay_bounds_s"): _pair,
+            # The KNX group address notations: parts → bits each (3-level 5/3/8, 2-level 5/11, free 16).
+            vol.Required("ga_bits"): {vol.In(["1", "2", "3"]): vol.All([vol.All(int, vol.Range(min=1))], vol.Length(min=1))},
+            vol.Required("source"): str,
+        },
     }
 )
 
@@ -112,6 +178,35 @@ def load(path: Path = FILE) -> dict[str, Any]:
                 raise vol.Invalid(f"recipe {r['id']}: window out of the canon")
     if set(win["n"]) != set(win["periods"]):
         raise vol.Invalid("window: n bounds for every period")
+    if any(len(b) != int(k) or sum(b) != 16 for k, b in data["bus_reads"]["ga_bits"].items()):  # noqa: PLR2004 — a KNX address is 16 bits
+        raise vol.Invalid("bus_reads: ga_bits — one width per part, 16 bits in all")
+    lo, hi = data["bus_reads"]["delay_bounds_s"]
+    if not lo <= data["bus_reads"]["delay_s"] <= hi:
+        raise vol.Invalid("bus_reads: delay_s out of its bounds")
+    acts = data["actions_by_domain"]
+    for domain, dos in acts.items():
+        for do, a in dos.items():
+            if a.get("value") == "option" and "options" not in a:
+                raise vol.Invalid(f"actions_by_domain {domain}.{do}: an option needs its options attribute")
+            if a.get("opposite") is not None and a["opposite"] not in dos:
+                raise vol.Invalid(f"actions_by_domain {domain}.{do}: opposite {a['opposite']} unknown")
+            if a.get("restore") and "read" not in a:
+                raise vol.Invalid(f"actions_by_domain {domain}.{do}: restore needs read")
+    every = {do for dos in acts.values() for do in dos} | {"season", "notify"}
+    if any(a not in every for a in data["actions"]["client_acts"]) or any(d not in acts for d in data["actions"]["client_domains"]):
+        raise vol.Invalid("actions: a client act / domain out of actions_by_domain")
+    lo, hi = data["actions"]["pulse_s"]
+    if not 0 < lo <= data["actions"]["pulse_default_s"] <= hi:
+        raise vol.Invalid("actions: pulse_default_s out of pulse_s")
+    for r in data["schedule_recipes"]:
+        if r["purpose"] not in data["purposes"]:
+            raise vol.Invalid(f"schedule recipe {r['id']}: unknown purpose {r['purpose']}")
+        if any(a["do"] not in acts.get(a["domain"], {}) for a in r["actions"]):
+            raise vol.Invalid(f"schedule recipe {r['id']}: an action out of actions_by_domain")
+        if any(e["event"] not in data["schedule"]["events"] for e in r["at"].get("sun", [])):
+            raise vol.Invalid(f"schedule recipe {r['id']}: unknown sun event")
+        if len(r["at"].get("times", [])) + len(r["at"].get("sun", [])) not in range(1, data["schedule"]["moments"] + 1):
+            raise vol.Invalid(f"schedule recipe {r['id']}: moments out of the canon")
     for p in data["client_purposes"]:
         if p not in data["purposes"]:
             raise vol.Invalid(f"client purpose {p} unknown")

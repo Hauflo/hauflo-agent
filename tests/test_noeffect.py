@@ -385,3 +385,22 @@ async def test_the_integrators_air_or_floor_beats_the_words_and_survives_a_resta
     d.set_kinds({})
     await run(hass, ins, STEP)
     assert d.pairs[F.format(1)]["target"] == CL and d.pairs[AIR]["kind"] == "air"
+
+
+async def test_switched_on_again_the_pairs_are_there_at_once(hass: HomeAssistant, ins: Insights):
+    """accept3 №5: «Фоновые наблюдения» off → on — the pairs (never saved, the mapping's) listed at once, not after the first
+    tick: the «Анализ» counters never drop for a minute (117/13 → 105/1 → 117/13 on the bench)."""
+    setup(hass)
+    await hass.async_block_till_done()
+    ins._tick()
+    before = {r["key"] for r in ins.states()["items"] if r["detector"] == "noeffect"}
+    assert before
+    state = {"on": True}
+    ins.on = lambda: state["on"]
+    state["on"] = False
+    ins.switch()
+    state["on"] = True
+    ins.switch()
+    assert ins.running
+    assert {r["key"] for r in ins.states()["items"] if r["detector"] == "noeffect"} == before
+    assert said(ins) == []  # nothing judged by the warm-up

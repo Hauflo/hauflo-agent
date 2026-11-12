@@ -156,3 +156,25 @@ async def test_plan_save_lock_backup_and_failures():
     await run(agent, {"type": dashmerge.SAVE, "url_path": "hauflo-x", "config": {}})
     assert sent[-1]["error"]["code"] == "failed" and len(sent[-1]["error"]["message"]) < 260
     assert dashmerge._choice("junk") == [] and dashmerge._choice(True) is True
+
+
+async def test_a_refused_item_is_left_off_and_said_the_rest_saved_accept3b_6(caplog):
+    """Accept3b №6: one scene the agent judges protected refused the whole dashboard («Применено частично», the family's
+    panel never saved). `prune` takes the refused item out; plan and save go on with the rest and say what was left off."""
+    agent, sent = rig()
+    bad = {"views": [{"cards": [{"entity": "scene.ok"}, {"entity": "scene.gate"}]}]}
+
+    def validate(cfg):
+        return "views[0].cards[1].entity: scene.gate — protected, not shown by Hauflo" if "scene.gate" in json.dumps(cfg) else None
+
+    def prune(cfg):
+        return {"views": [{"cards": [{"entity": "scene.ok"}]}]}, [{"entity": "scene.gate", "why": "protected", "detail": validate(cfg)}]
+
+    for kind in (dashmerge.PLAN, dashmerge.SAVE):
+        await dashmerge.handle(agent, 1, {"id": 7, "type": kind, "url_path": "hauflo-x", "config": bad}, validate, lambda: True, "locked_by_owner", prune)
+        assert sent[-1]["success"] is True and sent[-1]["result"]["dropped"] == [{"entity": "scene.gate", "why": "protected"}]
+    assert agent.dashboards.calls[-1][1] == {"views": [{"cards": [{"entity": "scene.ok"}]}]}
+    assert "left off the dashboard: views[0].cards[1].entity: scene.gate — protected" in caplog.text
+    # what prune can't make pass stays refused whole, as before
+    await dashmerge.handle(agent, 1, {"id": 8, "type": dashmerge.SAVE, "url_path": "hauflo-x", "config": bad}, validate, lambda: True, "locked_by_owner", lambda cfg: (cfg, []))
+    assert sent[-1]["error"]["code"] == "not_allowed" and len(agent.dashboards.calls) == 1

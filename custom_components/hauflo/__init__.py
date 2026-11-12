@@ -11,9 +11,11 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable, Mapping
 import contextlib
+import copy
 import ipaddress
 import json
 import logging
+import math
 import random
 import re
 import time
@@ -37,14 +39,14 @@ from homeassistant.util import dt as dt_util
 from . import intercom as intercom_mod
 from . import locks as locks_mod
 from .intercom import setup as intercom_setup
-from . import analysis, automations, backup, dashmerge, daylight, foreign, guest, house, independent, insight, install, issues, keep, noeffect, notify, ownership, presence, protect, quiet, ranges, retired, rules, scenes, season, servers, service, sidebar, signals, stock, theme, timers, titles, voice, watchdog
+from . import alarms_now, analysis, automations, backup, combos, dashmerge, daylight, exposure, foreign, guest, house, independent, insight, install, issues, keep, noeffect, notify, ownership, presence, protect, quiet, ranges, retired, rules, scenes, season, self_update, servers, service, sidebar, signals, stock, theme, timers, titles, voice, watchdog
 from . import derived as dv
 from . import order as block_order
 from . import room_pictures
 from . import habits as habits_mod
 from .issues import DEGRADED, degrade  # noqa: F401 — DEGRADED: diagnostics read it here
 from .storage import HaufloStore
-from .const import ASSET_TAG, DATA_CARDS_LOCAL, CONF_REFRESH_TOKEN_ID, CONF_SECRET, CONF_SERVER, CONF_USER_ID, DATA_NOTIFY_VIEWS, DATA_UNLINKED, DOMAIN, MONITOR_LABEL, MONITOR_LABEL_EN, MONITOR_LABELS, OWNED_STORE, STATUS_EVERY, VERSION, CONF_RANGES, CONF_ALLOW_CHANGES, LOCKED_CODE, CONF_INTERCOM
+from .const import ASSET_TAG, DATA_CARDS_LOCAL, CONF_REFRESH_TOKEN_ID, CONF_SECRET, CONF_SERVER, CONF_USER_ID, DATA_NOTIFY_VIEWS, DATA_UNLINKED, DOMAIN, MONITOR_LABEL, MONITOR_LABEL_EN, MONITOR_LABELS, OWNED_STORE, STATUS_EVERY, VERSION, CONF_RANGES, CONF_ALLOW_CHANGES, LOCKED_CODE, CONF_INTERCOM, site_ru
 from .tuning import TUNING
 from .tunnel import TUNNEL
 
@@ -93,7 +95,7 @@ _READ_SERVICES = {(d, s) for d, s in _TW["read_services"]}
 _CREATES = {"config/area_registry/create": "area", "config/floor_registry/create": "floor", "config/label_registry/create": "label"}
 
 
-_BACKUP_FIRST = {"/api/hauflo/sidebar", "/api/hauflo/install", "/api/hauflo/install/restart"}  # install.py InstallView / RestartView
+_BACKUP_FIRST = {"/api/hauflo/sidebar", "/api/hauflo/install", "/api/hauflo/install/restart", "/api/hauflo/self_update"}  # install.py InstallView / RestartView, self_update.py
 
 
 def _ws_changes(msg: dict[str, Any]) -> bool:
@@ -173,7 +175,7 @@ _MAX_CHANNELS = 8
 # HA's own availability from the agent's — a link that dropped while HA kept running is no HA outage (owner 09.11).
 HA_UP = dt_util.utcnow().isoformat()
 
-FEATURES = [foreign.FEATURE, foreign.PLAN_FEATURE, foreign.WRITE_PLAN_FEATURE, foreign.MEMBERS_FEATURE, foreign.SHOWN_FEATURE, signals.FEATURE, insight.FEATURE, watchdog.FEATURE, install.FEATURE, intercom_setup.FEATURE, locks_mod.FEATURE]
+FEATURES = [foreign.FEATURE, foreign.PLAN_FEATURE, foreign.WRITE_PLAN_FEATURE, foreign.MEMBERS_FEATURE, foreign.SHOWN_FEATURE, signals.FEATURE, signals.MUTE_FEATURE, combos.FEATURE, insight.FEATURE, insight.OBSERVE_FEATURE, watchdog.FEATURE, install.FEATURE, self_update.FEATURE, intercom_setup.FEATURE, locks_mod.FEATURE, exposure.FEATURE]
 
 
 # What a registry edit may touch: Hauflo's own — KNX entities/devices, its light/cover groups and scenes
@@ -513,7 +515,7 @@ def _own_device(hass: HomeAssistant | None, device_id: Any) -> bool:
     device = dr.async_get(hass).async_get(device_id)
     if device is None:
         return False
-    domains = {e.domain for eid in device.config_entries if (e := hass.config_entries.async_get_entry(eid))}
+    domains = {e.domain for eid in foreign.device_entry_ids(device) if (e := hass.config_entries.async_get_entry(eid))}
     return bool(domains) and domains <= _OWN_DEVICE_DOMAINS
 
 
@@ -1619,35 +1621,103 @@ def _named_as(hass: HomeAssistant, eid: str, name: Any) -> bool:
 
 # A Hauflo card's own rows (0.32 п.6, the card editor's «Состав блока»): the integrator's, kept by the merge field by field
 # (dashmerge.USER_KEYS). Whoever writes them, only this form: a list of rows with these keys, a bool, a list of names.
-_ROW_KEYS = {"entity", "name", "secondary", "icon", "icon_type", "hidden", "block", "tap_action", "hold_action", "double_tap_action"}
+_ROW_KEYS = {"entity", "name", "secondary", "icon", "icon_type", "hidden", "block", "tap_action", "hold_action", "double_tap_action", "view", "min", "max", "step"}
+# Р78: a numeric row's regulator — its view (tuning.json cards.regulator.views, the cards' canon) and bounds in numbers.
+_ROW_VIEWS = set(TUNING["cards"]["regulator"]["views"])
+_ROW_NUM_ABS = 1e9
 _ROW_BLOCKS = {"control", "readings", "diagnostics"}
 _ROW_TEXT_MAX = 120
 _ROWS_MAX = 300
 _ORDER_RE = re.compile(r"^(?:[a-z_]+\.[a-z0-9_]+|[a-z][a-z0-9_]{0,39})$")
 
 
-def _rows_ok(card: dict[str, Any]) -> bool:
-    """`items`, `auto` and `order` of a Hauflo card in their form (their entity ids are checked by the walk, like any)."""
+def _rows_why(card: dict[str, Any], hass: HomeAssistant | None = None) -> str | None:
+    """Why `items`, `auto` and `order` of a Hauflo card are not in their form (their entity ids are checked by the walk,
+    like any); None — fine. A row's regulator out of its sense says its code (Р78, accept 4A): `<entity> regulator <code>`."""
+    bad = "rows not in their form"
     if "auto" in card and not isinstance(card["auto"], bool):
-        return False
+        return bad
     order = card.get("order")
     if "order" in card and not (isinstance(order, list) and len(order) <= _ROWS_MAX and all(isinstance(x, str) and _ORDER_RE.fullmatch(x) for x in order)):
-        return False
+        return bad
     items = card.get("items")
     if "items" not in card:
-        return True
+        return None
     if not isinstance(items, list) or len(items) > _ROWS_MAX:
-        return False
+        return bad
     for row in items:
         if not isinstance(row, dict) or set(row) - _ROW_KEYS or not (isinstance(row.get("entity"), str) and _ENTITY_RE.fullmatch(row["entity"])):
-            return False
+            return bad
         if any(k in row and not (isinstance(row[k], str) and len(row[k]) <= _ROW_TEXT_MAX) for k in ("name", "secondary", "icon", "icon_type")):
-            return False
+            return bad
         if "hidden" in row and not isinstance(row["hidden"], bool):
-            return False
+            return bad
         if "block" in row and row["block"] not in _ROW_BLOCKS:
-            return False
-    return True
+            return bad
+        if "view" in row and row["view"] not in _ROW_VIEWS:
+            return bad
+        if any(k in row and not _row_num(row[k]) for k in ("min", "max", "step")):
+            return bad
+        code = _row_reg_why(row, _reg_range(hass, row["entity"]))
+        if code:
+            return f"{row['entity']} regulator {code}"
+    return None
+
+
+# The device's own range of a row's regulator — the cards' canon (tuning.json cards.regulator: `ranges` per domain behind
+# its feature, `range_attrs` — a number's min / max); the same as the cards' regRange.
+_REG_RANGES = TUNING["cards"]["regulator"]["ranges"]
+_REG_RANGE_ATTRS = set(TUNING["cards"]["regulator"]["range_attrs"])
+_REG_FEATURE = {"fan": 1, "cover": 4, "valve": 4, "media_player": 4}
+
+
+def _reg_range(hass: HomeAssistant | None, entity_id: str) -> tuple[float, float] | None:
+    """(lo, hi) of the entity's regulator, None — not known (no state, no regulator)."""
+    state = hass.states.get(entity_id) if hass is not None else None
+    if state is None:
+        return None
+    dom = entity_id.split(".", 1)[0]
+    a = state.attributes or {}
+
+    def n(x: Any) -> float | None:
+        try:
+            v = float(x)
+        except (TypeError, ValueError):
+            return None
+        return v if math.isfinite(v) else None
+
+    if dom in _REG_RANGE_ATTRS:
+        lo, hi = n(a.get("min")), n(a.get("max"))
+        return (lo, hi) if lo is not None and hi is not None and hi > lo else None
+    if dom not in _REG_RANGES:
+        return None
+    if dom == "light":
+        on = any(m != "onoff" for m in (a.get("supported_color_modes") or []))
+    else:
+        on = bool(int(n(a.get("supported_features")) or 0) & _REG_FEATURE.get(dom, 0))
+    return (float(_REG_RANGES[dom][0]), float(_REG_RANGES[dom][1])) if on else None
+
+
+def _row_reg_why(row: dict[str, Any], rng: tuple[float, float] | None) -> str | None:
+    """A row's regulator out of sense — the cards' regProblems codes: a bound outside the device's range, min ≥ max, a step
+    ≤ 0, a step over max − min (an unset bound — the device's own)."""
+    mn, mx, st = row.get("min"), row.get("max"), row.get("step")
+    lo = mn if mn is not None else (rng[0] if rng else None)
+    hi = mx if mx is not None else (rng[1] if rng else None)
+    if rng and any(x is not None and (x < rng[0] or x > rng[1]) for x in (mn, mx)):
+        return "reg_out_of_range"
+    if lo is not None and hi is not None and lo >= hi:
+        return "reg_min_max"
+    if st is not None and st <= 0:
+        return "reg_step"
+    if st is not None and lo is not None and hi is not None and st > hi - lo + 1e-9:
+        return "reg_step_range"
+    return None
+
+
+def _row_num(v: Any) -> bool:
+    """A row's bound / step: a finite number (not a bool), within reason."""
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and abs(v) <= _ROW_NUM_ABS
 
 
 def _lovelace_ok(hass: HomeAssistant | None, config: Any, owned: set[str] | None, owned_entries: set[str] | None) -> bool:
@@ -1661,16 +1731,23 @@ def _lovelace_refusal(hass: HomeAssistant | None, config: Any, owned: set[str] |
     """Why the agent refuses a Hauflo dashboard (None — it passes): the first item refused, where it is and why
     (`views[1].cards[0].type: custom:x — card type not allowed`) — for the agent's log, the cloud's deploy message and its
     journal (acceptance 0.33 K1: a bare «not allowed» left the integrator with nothing to fix)."""
+    got = _lovelace_refusal_at(hass, config, owned, owned_entries)
+    return got[0] if got is not None else None
+
+
+def _lovelace_refusal_at(hass: HomeAssistant | None, config: Any, owned: set[str] | None, owned_entries: set[str] | None) -> tuple[str, list[Any]] | None:
+    """_lovelace_refusal with where it is as keys and list indexes (`["views", 2, "cards", 1]`): what _lovelace_prune
+    takes out (accept3b №6)."""
     if not isinstance(config, dict):
-        return "config: not an object"
+        return "config: not an object", []
     scene_sends: list[dict[str, set[int]]] = []
-    path: list[str] = []
-    why: list[str] = []
+    path: list[Any] = []
+    why: list[tuple[str, list[Any]]] = []
 
     def no(reason: str) -> bool:
         if not why:
-            where = "".join(p if p.startswith("[") else f".{p}" for p in path).lstrip(".") or "config"
-            why.append(f"{where}: {reason}"[:_WHY_MAX])
+            where = "".join(f"[{p}]" if isinstance(p, int) else f".{p}" for p in path).lstrip(".") or "config"
+            why.append((f"{where}: {reason}"[:_WHY_MAX], list(path)))
         return False
 
     def entity_why(eid: str) -> str:
@@ -1756,8 +1833,8 @@ def _lovelace_refusal(hass: HomeAssistant | None, config: Any, owned: set[str] |
             kind = v.get("type")
             if kind is not None and (not isinstance(kind, str) or kind not in _LOVELACE_TYPES):
                 return no(f"card type {kind} not allowed")
-            if (set(v) & {"items", "auto", "order"}) and str(kind).startswith("custom:hauflo-") and not _rows_ok(v):
-                return no(f"{kind}: rows not in their form")
+            if (set(v) & {"items", "auto", "order"}) and str(kind).startswith("custom:hauflo-") and (rows_why := _rows_why(v, hass)):
+                return no(f"{kind}: {rows_why}")
             if "hauflo_id" in v and not (isinstance(v["hauflo_id"], str) and _HAUFLO_ID_RE.match(v["hauflo_id"])):
                 return no("hauflo_id not plain text")
             action = v.get("action")
@@ -1787,7 +1864,7 @@ def _lovelace_refusal(hass: HomeAssistant | None, config: Any, owned: set[str] |
             return True
         if isinstance(v, list):
             for i, x in enumerate(v):
-                path.append(f"[{i}]")
+                path.append(i)
                 ok = walk(x, key, card)
                 path.pop()
                 if not ok:
@@ -1817,7 +1894,64 @@ def _lovelace_refusal(hass: HomeAssistant | None, config: Any, owned: set[str] |
 
     if walk(config):
         return None
-    return why[0] if why else "config: refused"  # fail closed: a refusal is never lost for want of its reason
+    return why[0] if why else ("config: refused", [])  # fail closed: a refusal is never lost for want of its reason
+
+
+# Lists whose item, taken out, would change what the rest means (a condition gone shows a card to everyone, an id gone
+# narrows a button's action): never pruned item by item — the card / row around them goes instead.
+_NO_PRUNE_LISTS = {"conditions", "visibility", "entity_id", "area_id", "device_id", "floor_id", "label_id", "payload", "views"}
+_PRUNE_MAX = 100
+_EID_IN = re.compile(r"\b([a-z_]+\.[a-z0-9_]+)\b")
+
+
+def _prune_at(path: list[Any]) -> int | None:
+    """Where in `path` the item to take out is: the deepest list index inside a page (never a page, never under a
+    list of _NO_PRUNE_LISTS); None — nothing smaller than the dashboard to take out."""
+    for i in range(len(path) - 1, 1, -1):
+        if isinstance(path[i], int) and isinstance(path[i - 1], str) and path[i - 1] not in _NO_PRUNE_LISTS:
+            return i
+    return None
+
+
+def _first_entity(v: Any) -> str | None:
+    if isinstance(v, str):
+        return v if _ENTITY_RE.fullmatch(v) else None
+    if isinstance(v, dict):
+        if isinstance(v.get("entity"), str) and _ENTITY_RE.fullmatch(v["entity"]):
+            return v["entity"]
+        v = list(v.values())
+    if isinstance(v, list):
+        for x in v:
+            if (e := _first_entity(x)) is not None:
+                return e
+    return None
+
+
+def _lovelace_prune(hass: HomeAssistant | None, config: Any, owned: set[str] | None, owned_entries: set[str] | None) -> tuple[Any, list[dict[str, Any]]]:
+    """One refused card / row / scene never refuses the whole dashboard (accept3b №6: a scene judged protected — a
+    gate's cover inside it, the mark sticky — and the family's dashboard wasn't saved at all): what the check refuses is
+    taken out, item by item, the smallest one around it, and said — the entity, a short reason (`protected`,
+    `not_hauflo`, `refused`) and the check's own words for the log. Only taking out: the rest is checked again in full,
+    a refusal with nothing smaller than the dashboard to take out stays the dashboard's (the caller checks again)."""
+    if not isinstance(config, dict):
+        return config, []
+    cfg = copy.deepcopy(config)
+    dropped: list[dict[str, Any]] = []
+    for _ in range(_PRUNE_MAX):
+        got = _lovelace_refusal_at(hass, cfg, owned, owned_entries)
+        at = _prune_at(got[1]) if got is not None else None
+        if got is None or at is None:
+            break
+        holder: Any = cfg
+        for k in got[1][:at]:
+            holder = holder[k]
+        item = holder.pop(got[1][at])
+        why = got[0]
+        named = _EID_IN.findall(why.split(": ", 1)[-1])
+        eid = next((e for e in named if _ENTITY_RE.fullmatch(e) and e not in _CARD_SERVICES), None) or _first_entity(item)
+        kind = "protected" if "protected" in why else "not_hauflo" if "not Hauflo's" in why else "refused"
+        dropped.append({**({"entity": eid} if eid else {}), "why": kind, "detail": why[:_WHY_MAX]})
+    return cfg, dropped
 
 
 def _own_dashboard(hass: HomeAssistant | None, dashboard_id: Any) -> bool:
@@ -2004,7 +2138,7 @@ def _scrub_devices(devices: Any, hass: HomeAssistant | None) -> Any:
     if not isinstance(devices, list):
         return []  # fail closed
     for d in devices:
-        if isinstance(d, dict) and any(_entry_domain(hass, str(e)) == "mobile_app" for e in d.get("config_entries") or []):
+        if isinstance(d, dict) and any(_entry_domain(hass, e) == "mobile_app" for e in foreign.device_dict_entry_ids(d)):
             for k in ("name", "name_by_user", "model", "manufacturer"):
                 if k in d:
                     d[k] = None
@@ -2223,6 +2357,7 @@ class Agent:
         self.daylight: daylight.Daylight | None = None  # «На улице светло» for the adaptive scenes (daylight.py)
         self.season: season.Season | None = None  # «Зима / Лето»: the switch, the resend, the suggestion (season.py)
         self.rules: rules.Rules | None = None  # «Правила по значениям» and the derived values (rules.py, derived.py)
+        self.combos: combos.Combos | None = None  # «Сочетание состояний» (combos.py, 0.34 п.10)
         self.intercom: intercom_mod.Intercom | None = None  # Р55: the doors' intercom (intercom/), set up with the entry
         self.platforms: list[str] = list(PLATFORMS)
         self.guest: guest.GuestAccess | None = None  # «Гостевой доступ» (guest.py), set up with the entry
@@ -2647,6 +2782,9 @@ class Agent:
     def _dashboard_why(self, config: Any) -> str | None:
         return _lovelace_refusal(self.hass, config, self.owned, self.owned_entries)
 
+    def _dashboard_prune(self, config: Any) -> tuple[Any, list[dict[str, Any]]]:
+        return _lovelace_prune(self.hass, config, self.owned, self.owned_entries)
+
     async def _channel_send(self, ch: int, data: str) -> None:
         local = self.channels.get(ch)
         if local is None:
@@ -2673,7 +2811,7 @@ class Agent:
             data = json.dumps({"type": "auth", "access_token": self.token})
         elif msg.get("type") == dashmerge.PLAN or (msg.get("type") == "lovelace/config" and self.dashboards.manages(msg.get("url_path")) and not dashmerge.is_copy(msg.get("url_path"))):
             # Reads only: answered by the agent itself (no foreign card's content leaves the house).
-            await dashmerge.handle(self, ch, msg, self._dashboard_why, backup.fresh, LOCKED_CODE)
+            await dashmerge.handle(self, ch, msg, self._dashboard_why, backup.fresh, LOCKED_CODE, self._dashboard_prune)
             return
         elif self.locked and _ws_locked(msg):
             # Closed by the owner in HA: no write gets through, whatever it is — before any other check asks for more.
@@ -2689,7 +2827,7 @@ class Agent:
             # Hauflo's part merged with what the integrator made in HA — by the agent: the cloud never writes his cards.
             # Every save of a Hauflo dashboard (security re-review 28.10: one the agent had no version of was
             # overwritten with no copy); a copy's is refused there.
-            await dashmerge.handle(self, ch, msg, self._dashboard_why, backup.fresh, LOCKED_CODE)
+            await dashmerge.handle(self, ch, msg, self._dashboard_why, backup.fresh, LOCKED_CODE, self._dashboard_prune)
             return
         elif not _ws_allowed(msg, self.hass, self.owned, self.owned_entries):
             # Only what Hauflo deploys and reads — never backups, add-ons, arbitrary services (security review 25.10).
@@ -2832,22 +2970,47 @@ class Agent:
         chosen = sorted(i for i in ctx["chosen"] if reg.async_get(i) is not None)
         return [i for i in dict.fromkeys([*ids, *by_class, *chosen]) if self._kept(i, ctx)]
 
-    def house(self) -> dict[str, Any]:
+    def house(self, summary: bool = False) -> dict[str, Any]:
         """«Всё хорошо» by the one calculator (signals.py, 0.32) over the watched signals: `_house` alarm (a problem whose
         policy says «авария») > fault («неисправность») > offline (only lost links among them) > ok; `_faults` — those
-        problems; `_shelved` — the «не решено» problems (listed, never moving it)."""
+        problems; `_shelved` — the «не решено» problems (listed, never moving it). `summary`: with `_summary` — the one
+        counter of open alarms (alarms_now.py) over the same faults."""
+        mon = self.monitored()
+        faults, shelved = self._faults(mon)
+        live = [f for f in faults if not f["offline"]]
+        level = "alarm" if any(f["house"] == "alarm" for f in live) else "fault" if live else "offline" if faults else "ok"
+        out = {"_house": level, "_faults": faults, "_shelved": shelved, "_signals": self.signal_verdicts()}
+        if summary:
+            out["_summary"] = self.alarms_now(faults)
+        return out
+
+    def alarms_now(self, faults: list[dict[str, Any]], cap: int | None = None) -> dict[str, Any]:
+        """The one counter (alarms_now.py, 0.34 п.2): the push engine's alarms and the house's problems, one entry per
+        entity — the cards, Hauflo's monitoring and the bot count and list only this."""
+        engine = self.engine
+        where = getattr(engine, "_where", None)
+        items = getattr(engine, "alarm_items", None)
+        rich = []
+        for f in faults:
+            s = self.hass.states.get(f["entity"])
+            rich.append({**f, "area": where(s) if where and s else "", "since": s.last_changed.isoformat() if s else None})
+        # A house problem's «Принято» lasts while it does (alarms_now.HOUSE_KEY): the cleared ones are forgotten here.
+        acks = getattr(engine, "house_acks", None)
+        if acks and (keep := getattr(engine, "house_acks_keep", None)):
+            keep({f["entity"] for f in faults})
+        return alarms_now.summary(items() if items else [], rich, cap, acks)
+
+    def _faults(self, mon: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
         faults: list[dict[str, Any]] = []
         shelved: list[str] = []
-        for m in self.monitored():
+        for m in mon:
             if not m["problem"]:
                 continue
             if m["undetermined"]:
                 shelved.append(m["entityId"])
             elif m["house"] != "none":
                 faults.append({"entity": m["entityId"], "name": m["name"], "house": m["house"], "severity": m["severity"], "offline": m["state"] == "unavailable"})
-        live = [f for f in faults if not f["offline"]]
-        level = "alarm" if any(f["house"] == "alarm" for f in live) else "fault" if live else "offline" if faults else "ok"
-        return {"_house": level, "_faults": faults, "_shelved": shelved, "_signals": self.signal_verdicts()}
+        return faults, shelved
 
     def signal_verdicts(self) -> dict[str, dict[str, Any]]:
         """The cards' answer «is this signal an alarm here» by the one calculator (signals.py with the site's policy, 0.32
@@ -2865,9 +3028,9 @@ class Agent:
         monitored = set(self._monitored_ids())
         sig = signals.store(self.hass)
         off = foreign.notify_off(self.hass) | (sig.watch_off() if sig else set())
-        # An integrator's alarm rule naming a signal still rings whatever its «Авария когда» (notify.policy_overlay: «не
-        # авария» never silences a rule) — the card says so, the editor never reads «не авария» beside a red tile (0.33 M6).
-        ruled = {e for r in (self.engine.config["rules"] if self.engine is not None else []) if r.get("enabled", True) for e in r["sources"]}
+        # An integrator's alarm rule naming a signal rings by it (0.33 M6: the card says so) — unless the site marked it «не
+        # авария»: that silences it in every rule too (0.34, notify.muted), so it is no longer «ruled».
+        ruled = {e for r in (self.engine.config["rules"] if self.engine is not None else []) if r.get("enabled", True) for e in notify.live_sources(r)}
         out: dict[str, dict[str, Any]] = {}
         kinds = signals.device_kinds(self.hass)
         for s in sorted(self.hass.states.async_all(signals.SIGNAL_DOMAINS), key=lambda x: (x.entity_id not in own, x.entity_id)):
@@ -2973,7 +3136,8 @@ class Agent:
         reg = er.async_get(self.hass)
         knx_ids = [e.entity_id for e in reg.entities.values() if e.platform == "knx" and not e.disabled_by]
         unavailable = [i for i in knx_ids if (s := self.hass.states.get(i)) is not None and s.state == "unavailable"]
-        monitored = [{k: v for k, v in m.items() if v is not None and v is not False or k == "problem"} for m in self.monitored()]
+        mon = self.monitored()
+        monitored = [{k: v for k, v in m.items() if v is not None and v is not False or k == "problem"} for m in mon]
         return {
             "haVersion": HA_VERSION,
             "haStarted": HA_UP,
@@ -2986,6 +3150,8 @@ class Agent:
             "monitored": monitored,
             # Alarms the agent's push engine has open now (notify.py) — monitoring shows them too.
             "alarms": engine.active_list() if (engine := self.engine) else [],
+            # The one counter (alarms_now.py, 0.34 п.2): Hauflo's monitoring, the object page and the bot count only this.
+            "alarmsNow": self.alarms_now(self._faults(mon)[0], alarms_now.ITEMS_MAX),
             # Rules not known yet (a re-added agent before Hauflo sends them): its open alarms aren't known yet. A site
             # without rules is ready (notify.NotifyEngine.ready) — the cloud closes its «нет данных» like any other.
             "alarmsReady": bool(engine and engine.ready),
@@ -3105,6 +3271,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
     await protect.async_setup(hass, lambda eid: _protect_marks_of(hass, eid), _ga_key, lambda: _protect_refresh(hass))
     await foreign.async_setup(hass)
     sig = await signals.async_setup(hass)
+    # «Сочетание состояний» (0.34 п.10): before the platforms — binary_sensor.py adds their sensors.
+    agent.combos = combos.Combos(hass, entry.entry_id, lambda: site_ru(hass.config.language, getattr(agent.engine, "config", None)))
     _protect_refresh(hass)
     entry.async_on_unload(hass.bus.async_listen(er.EVENT_ENTITY_REGISTRY_UPDATED, callback(lambda _e: _protect_refresh(hass))))
     owns = lambda eid: _own_entity(hass, eid, agent.owned_entries) and (_platform(hass, eid) != "knx" or _owned_knx(hass, eid, agent.owned))  # noqa: E731
@@ -3155,7 +3323,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
     except Exception as err:  # noqa: BLE001 — never stops the agent
         degrade("value rules", err)
     # The «Hauflo» label on what Hauflo made, and «Создано в этом доме» (ownership.py) — before the sensor is added.
-    agent.ownership = ownership.Ownership(hass, lambda: agent.owned, lambda: agent.owned_entries, lambda: agent.locked)
+    agent.ownership = ownership.Ownership(hass, lambda: agent.owned, lambda: agent.owned_entries, lambda: agent.locked, lambda: set(protected_ids(hass)))
     try:
         await agent.ownership.async_start()
     except Exception as err:  # noqa: BLE001 — never stops the agent
@@ -3264,6 +3432,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
     agent.insights.watched = engine.watched
     agent.insights.finding_of = sig.finding
     agent.insights.addresses = lambda: knx_addresses(hass)
+    # «Фоновые наблюдения» (0.34 п.9): the integrator's switch Hauflo pushes with the site's signals (absent — on).
+    agent.insights.on = lambda: signals.observing(hass)
     try:
         await agent.insights.async_start()
     except Exception as err:  # noqa: BLE001 — never stops the agent
@@ -3290,6 +3460,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
         await install.installer(hass).async_load()
     except Exception as err:  # noqa: BLE001 — never stops the agent
         degrade("install", err)
+    try:
+        # 0.34 п.8: the agent's own update (or the way back) that the restart just loaded — or didn't.
+        await self_update.updater(hass).async_load()
+    except Exception as err:  # noqa: BLE001 — never stops the agent
+        degrade("self_update", err)
     if not hass.data.get(DATA_NOTIFY_VIEWS):
         hass.data[DATA_NOTIFY_VIEWS] = True
         hass.http.register_view(notify.NotifyView(lambda: _engine(hass)))
@@ -3297,10 +3472,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
         hass.http.register_view(backup.BackupView())
         hass.http.register_view(install.InstallView())
         hass.http.register_view(install.RestartView())
+        hass.http.register_view(self_update.SelfUpdateView())
         hass.http.register_view(notify.AlarmsView(lambda: _engine(hass), lambda: _house(hass)))
         hass.http.register_view(signals.SignalsView())
         hass.http.register_view(signals.SignalChooseView())
-        hass.http.register_view(insight.InsightsView(lambda: _insights(hass)))
+        hass.http.register_view(insight.InsightsView(lambda: _insights(hass), lambda: _habits_summary(hass), lambda on: _habits_set(hass, on)))
         hass.http.register_view(OwnedView())
         hass.http.register_view(ownership.OwnershipView(_ownership))
         hass.http.register_view(RangesView())
@@ -3319,6 +3495,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
         hass.http.register_view(stock.StockView())
         hass.http.register_view(protect.ProtectView(_protect_mark, _protect_unmark))
         hass.http.register_view(foreign.ForeignView())
+        hass.http.register_view(exposure.ExposureView(_exposure))
         hass.http.register_view(intercom_setup.IntercomView(lambda: _intercom(hass)))
         hass.http.register_view(noeffect.PairsView(lambda: _pair_effect(hass)))
 
@@ -3453,6 +3630,13 @@ class RangesView(HomeAssistantView):
         return self.json({"allowed": sorted(allowed), **ranges.request(hass, allowed, wanted, project)})
 
 
+def _exposure(hass: HomeAssistant) -> exposure.Exposure | None:
+    """0.34 п.7б: the voice audit with the agent's own protection canon — only while an agent is loaded."""
+    if not hass.config_entries.async_loaded_entries(DOMAIN):
+        return None
+    return exposure.Exposure(hass, lambda: set(protected_ids(hass)), _NEVER_DOMAINS)
+
+
 def _ownership(hass: HomeAssistant) -> ownership.Ownership | None:
     for entry in hass.config_entries.async_loaded_entries(DOMAIN):
         return entry.runtime_data.ownership
@@ -3462,7 +3646,7 @@ def _ownership(hass: HomeAssistant) -> ownership.Ownership | None:
 def _house(hass: HomeAssistant) -> dict[str, Any] | None:
     """The loaded entry's «Всё хорошо» (Agent.house) — for the alarm card's view."""
     for entry in hass.config_entries.async_loaded_entries(DOMAIN):
-        return entry.runtime_data.house()
+        return entry.runtime_data.house(summary=True)
     return None
 
 
@@ -3481,6 +3665,7 @@ def _policy_changed(hass: HomeAssistant, agent: Any) -> None:
     if (engine := agent.engine) is not None and engine.policy_changed() and engine.native:
         hass.async_create_task(independent.async_sync(hass, engine), "hauflo policy resync")
     if (ins := agent.insights) is not None:
+        ins.switch()  # «Фоновые наблюдения» switched in Hauflo: the engine stops / starts at once
         ins.findings_changed()
     agent._watch_signals()  # noqa: SLF001
     _analysis_panel(hass)
@@ -3538,6 +3723,33 @@ def _season(hass: HomeAssistant) -> season.Season | None:
     for entry in hass.config_entries.async_loaded_entries(DOMAIN):
         return entry.runtime_data.season
     return None
+
+
+def _habits(hass: HomeAssistant) -> habits_mod.Habits | None:
+    return next((e.runtime_data.habits for e in hass.config_entries.async_loaded_entries(DOMAIN) if getattr(e.runtime_data, "habits", None) is not None), None)
+
+
+async def _habits_set(hass: HomeAssistant, on: bool) -> bool:
+    """«Предложения по привычкам» switched from Hauflo (0.34 п.9) — the same as the switch on the automations' card: off
+    forgets what was recorded (habits.py set_enabled)."""
+    if (h := _habits(hass)) is None:
+        return False
+    await h.set_enabled(on)
+    return True
+
+
+async def _habits_summary(hass: HomeAssistant) -> dict[str, Any]:
+    """The «Анализ» header's habits part (0.34 п.9): whether the suggestions are on and how many there are now."""
+    auto = _automations(hass)
+    h = _habits(hass)
+    if auto is None or h is None:
+        return {}
+    try:
+        found = len(h.suggestions(auto, await auto._load())) if h.enabled else 0  # noqa: SLF001
+    except Exception:  # noqa: BLE001 — the header goes without the count, never a failed page
+        _LOGGER.debug("Hauflo insights: habits not counted", exc_info=True)
+        return {"habits": {"on": h.enabled}}
+    return {"habits": {"on": h.enabled, "found": found}}
 
 
 def _automations(hass: HomeAssistant) -> automations.Automations | None:
@@ -3615,6 +3827,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> b
     if (sn := entry.runtime_data.season) is not None:
         sn.async_stop()
         await sn.store.async_save(sn.data())  # the last resend kept (a delayed save would be lost)
+    if (cb := entry.runtime_data.combos) is not None:
+        cb.stop()
     if (vr := entry.runtime_data.rules) is not None:
         vr.async_stop()
         await vr.store.async_save(vr.data())  # the state as it is now (a delayed save would be lost)

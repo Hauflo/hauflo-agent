@@ -19,6 +19,7 @@ from custom_components.hauflo import rules as rules_mod
 from custom_components.hauflo.canon import CANON
 from custom_components.hauflo.const import CONF_SECRET, CONF_SERVER, DOMAIN
 from custom_components.hauflo.house import house
+from custom_components.hauflo.notify import label
 
 URL = "/api/hauflo/rules"
 OUT = "input_number.outdoor"
@@ -28,6 +29,9 @@ HEATER2 = "switch.heater2"
 ROOM = "climate.room"
 FLOOR = "climate.floor"
 VENT = "fan.vent"
+CLIMATE_FEATURES = 1 | 16 | 128 | 256  # TARGET_TEMPERATURE, PRESET_MODE, TURN_OFF, TURN_ON
+FAN_FEATURES = 1 | 8 | 16 | 32  # SET_SPEED, PRESET_MODE, TURN_OFF, TURN_ON
+COVER_FEATURES = 1 | 2 | 4 | 8 | 128  # OPEN, CLOSE, SET_POSITION, STOP, SET_TILT_POSITION
 HALL = "light.hall"
 BLIND = "cover.blind"
 VALVE = "valve.water"
@@ -81,11 +85,12 @@ async def entry(hass: HomeAssistant, clock):
     hass.states.async_set(SUPPLY, "on")
     for eid in (HEATER, HEATER2, FOREIGN):
         hass.states.async_set(eid, "off")
-    hass.states.async_set(ROOM, "heat", {"temperature": 21.0, "current_temperature": 20.0, "hvac_modes": ["heat", "off"]})
-    hass.states.async_set(FLOOR, "heat", {"temperature": 27.0, "hvac_modes": ["heat", "off"]})
-    hass.states.async_set(VENT, "off", {"percentage": 0})
-    hass.states.async_set(HALL, "off")
-    hass.states.async_set(BLIND, "open", {"current_position": 100})
+    # As HA reports them: each with its supported_features (the canon's «features»: what its services take).
+    hass.states.async_set(ROOM, "heat", {"temperature": 21.0, "current_temperature": 20.0, "hvac_modes": ["heat", "off"], "supported_features": CLIMATE_FEATURES})
+    hass.states.async_set(FLOOR, "heat", {"temperature": 27.0, "hvac_modes": ["heat", "off"], "supported_features": CLIMATE_FEATURES})
+    hass.states.async_set(VENT, "off", {"percentage": 0, "supported_features": FAN_FEATURES})
+    hass.states.async_set(HALL, "off", {"supported_color_modes": ["brightness"]})
+    hass.states.async_set(BLIND, "open", {"current_position": 100, "supported_features": COVER_FEATURES})
     hass.states.async_set(VALVE, "open")
     hass.states.async_set(LOCK, "locked")
     hass.states.async_set(GARAGE, "closed", {"device_class": "garage"})
@@ -257,7 +262,7 @@ async def test_unavailable_input_safe_state_and_repairs(hass: HomeAssistant, has
     await hass.async_block_till_done()
     assert hass.states.get(HEATER).state == "off" and engine.status("heater") == "fault"
     issue = ir.async_get(hass).async_get_issue(DOMAIN, "rule_fault_heater")
-    assert issue is not None and issue.translation_key == "rule_fault" and issue.translation_placeholders["entity"] == OUT
+    assert issue is not None and issue.translation_key == "rule_fault" and issue.translation_placeholders["entity"] == label(hass, OUT) != OUT  # the device by its name
     assert "safe state" in engine.explain(engine.rules["heater"], False)
     # Unknown / not a number / another unit: the same, never an action on an old value.
     for bad, attrs in (("unknown", {}), ("abc", {}), ("40", {"unit_of_measurement": "%"})):
@@ -791,7 +796,7 @@ async def test_api_shape_entities_logbook_and_delete(hass: HomeAssistant, hass_c
     hass.bus.async_listen("logbook_entry", lambda e: book.append(e.data))
     hass.states.async_set("weather.home", "sunny", {"temperature": -4, "temperature_unit": "°C", "friendly_name": "Дом"})
     got = await (await client.get(URL)).json()
-    assert set(got) == {"rules", "derived", "outdoor", "recipes", "links", "limits", "quiet"}
+    assert set(got) == {"rules", "derived", "outdoor", "recipes", "links", "limits", "quiet", "bus_reads", "schedule_recipes", "targets", "features", "actions_by_domain", "client_actions"}
     assert got["outdoor"]["entity_id"] == "weather.home" and got["outdoor"]["forecast"] is True  # no street sensor of Hauflo's
     titles = {r["id"]: r for r in got["recipes"]}
     assert titles["heater_outdoor"]["title"] == "Калорифер по улице" and titles["heater_outdoor"]["hint_en"]
@@ -807,7 +812,19 @@ async def test_api_shape_entities_logbook_and_delete(hass: HomeAssistant, hass_c
     assert any(b.get("entity_id") == ACTIVE and "since" in b["message"] for b in book)
     # Renamed: the entity's name follows; disabled from HA's switch: the rule goes NORMAL, its action undone.
     clock.advance(400)
-    await _post(client, {"op": "save", "rule": heater(input="outdoor", for_min=0, name="Калорифер по улице")})
+    await _post(client, {"op": "save", "rule": heater(input="outdoor", for_min=0, name="Калорифер зимой")})
+    await hass.async_block_till_done()
+    assert hass.states.get(ACTIVE).attributes["friendly_name"].endswith("Калорифер зимой")
+    # w5 acceptance: the prefix in the house's language (const.site_ru), not HA's — an English HA, a Russian project.
+    hass.config.language = "en"
+    _engine(entry).notify_of().config["lang"] = "ru"
+    _engine(entry).binaries["heater"].refresh()
+    await hass.async_block_till_done()
+    assert hass.states.get(ACTIVE).attributes["friendly_name"] == "Hauflo Сработало · Калорифер зимой"
+    _engine(entry).notify_of().config["lang"] = "en"
+    _engine(entry).binaries["heater"].refresh()
+    await hass.async_block_till_done()
+    assert hass.states.get(ACTIVE).attributes["friendly_name"] == "Hauflo Rule active · Калорифер зимой"
     await hass.services.async_call("switch", "turn_off", {"entity_id": SWITCH}, blocking=True)
     await hass.async_block_till_done()
     assert hass.states.get(SWITCH).state == "off" and hass.states.get(HEATER).state == "off"

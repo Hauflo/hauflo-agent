@@ -1,6 +1,18 @@
 {
  "calls": [
   {
+   "file": "agent/agentWave.ts",
+   "kind": "rest",
+   "call": "GET /api/hauflo/self_update",
+   "params": {}
+  },
+  {
+   "file": "agent/agentWave.ts",
+   "kind": "rest",
+   "call": "POST /api/hauflo/self_update",
+   "params": {}
+  },
+  {
    "file": "agent/alarmRoutes.ts",
    "kind": "rest",
    "call": "GET /api/hauflo/pairs",
@@ -10,6 +22,18 @@
    "file": "agent/alarmRoutes.ts",
    "kind": "rest",
    "call": "POST /api/hauflo/pairs",
+   "params": {}
+  },
+  {
+   "file": "agent/diagRoutes.ts",
+   "kind": "rest",
+   "call": "GET /api/hauflo/insights",
+   "params": {}
+  },
+  {
+   "file": "agent/diagRoutes.ts",
+   "kind": "rest",
+   "call": "POST /api/hauflo/insights",
    "params": {}
   },
   {
@@ -287,13 +311,37 @@
   {
    "file": "ha/commissioning.ts",
    "kind": "ws",
+   "call": "config/device_registry/list",
+   "params": {}
+  },
+  {
+   "file": "ha/commissioning.ts",
+   "kind": "ws",
+   "call": "config/entity_registry/list",
+   "params": {}
+  },
+  {
+   "file": "ha/commissioning.ts",
+   "kind": "ws",
    "call": "get_states",
    "params": {}
   },
   {
    "file": "ha/commissioning.ts",
    "kind": "ws",
+   "call": "homeassistant/expose_entity/list",
+   "params": {}
+  },
+  {
+   "file": "ha/commissioning.ts",
+   "kind": "ws",
    "call": "knx/group_monitor_info",
+   "params": {}
+  },
+  {
+   "file": "ha/commissioning.ts",
+   "kind": "ws",
+   "call": "lovelace/config",
    "params": {}
   },
   {
@@ -363,6 +411,12 @@
    "file": "ha/deploy.ts",
    "kind": "rest",
    "call": "POST /api/hauflo/ranges",
+   "params": {}
+  },
+  {
+   "file": "ha/deploy.ts",
+   "kind": "rest",
+   "call": "POST /api/hauflo/rules",
    "params": {}
   },
   {
@@ -767,6 +821,12 @@
    }
   },
   {
+   "file": "ha/homeReadLive.ts",
+   "kind": "ws",
+   "call": "lovelace/dashboards/list",
+   "params": {}
+  },
+  {
    "file": "ha/integrationInstall.ts",
    "kind": "rest",
    "call": "GET /api/hauflo/install",
@@ -1043,6 +1103,12 @@
   {
    "file": "index.ts",
    "kind": "rest",
+   "call": "GET /api/hauflo/exposure",
+   "params": {}
+  },
+  {
+   "file": "index.ts",
+   "kind": "rest",
    "call": "GET /api/hauflo/foreign",
    "params": {}
   },
@@ -1085,6 +1151,12 @@
    "file": "index.ts",
    "kind": "rest",
    "call": "POST /api/hauflo/alarms",
+   "params": {}
+  },
+  {
+   "file": "index.ts",
+   "kind": "rest",
+   "call": "POST /api/hauflo/exposure",
    "params": {}
   },
   {

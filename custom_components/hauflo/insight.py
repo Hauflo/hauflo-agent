@@ -30,7 +30,7 @@ import re
 import statistics
 import time
 from datetime import timedelta
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
 from homeassistant.components.http import KEY_HASS, HomeAssistantView
 from homeassistant.const import EVENT_STATE_CHANGED, STATE_ON
@@ -117,6 +117,9 @@ SECTION_ORDER = _T["section_order"]
 # The integrator's own «порог ×N» for a finding: within these bounds.
 FACTOR_MIN, FACTOR_MAX = _T["factor_min"], _T["factor_max"]
 FEATURE = "insights"
+# «Фоновые наблюдения» (0.34 п.9): the integrator switches the whole engine off — Hauflo pushes `observe` to agents
+# that say this (an older one refuses an unknown key in the signals' body).
+OBSERVE_FEATURE = "insight_switch"
 DAY_S = timedelta(days=1).total_seconds()
 USED, DROPPED = "used", "dropped:"
 ACTIONS_IN = ("normal", "follow", "reset")
@@ -194,6 +197,11 @@ class Detector:
 
     def tick(self, now: float) -> None:  # pragma: no cover
         raise NotImplementedError
+
+    def warm(self, now: float) -> None:
+        """Switched on again with HA running (accept3 №5): what it derives from HA's states and not from its saved norms
+        (the pairs) found at once — never a minute of a «shorter» list (117 → 105 rows, «Норма известна» 13 → 1) until
+        the first tick. Nothing judged, nothing sampled."""
 
     def items(self, now: float) -> list[dict[str, Any]]:  # pragma: no cover
         raise NotImplementedError
@@ -634,6 +642,11 @@ class Insights:
         self.clock: Callable[[], float] = time.time
         self.detectors: list[Detector] = [cls(self) for cls in DETECTORS]
         self.on_change: Callable[[], None] | None = None
+        # «Фоновые наблюдения» (0.34 п.9): whether the integrator lets the engine run (signals.observing); off — no
+        # listener, no tick, nothing computed or listed. Set by the agent; `off` — switched off now, `running` — subscribed.
+        self.on: Callable[[], bool] = lambda: True
+        self.off = False
+        self.running = False
         self.started = 0.0
         self.not_windows: set[str] = set()  # «opening» sensors that are no windows (valve feedback): ONE list, filled by PairEffect, read by every detector
         # The site's choice per finding (signals.py `findings` {"kind|entity": {normal, factor, resetAt, by, at}}): set by
@@ -658,6 +671,51 @@ class Insights:
 
     async def async_start(self) -> None:
         data = await self.store.async_load() or {}
+        self._load(data if isinstance(data, dict) else {})
+        self.off = not self._wanted()
+        if not self.off:
+            self._subscribe()
+
+    def _wanted(self) -> bool:
+        try:
+            return bool(self.on())
+        except Exception:  # noqa: BLE001 — the policy unreadable: observed as by default
+            _LOGGER.debug("Hauflo insights: switch unreadable — on", exc_info=True)
+            return True
+
+    @callback
+    def switch(self) -> None:
+        """The integrator switched «Фоновые наблюдения» (signals.py `observe`): off — the listener and the tick stop, the
+        norms are saved as they are, the list empties (no finding stays open behind a stopped engine); on — the detectors
+        start from the saved norms like after a restart (what was open then opens anew, the observation gap is no
+        evidence)."""
+        want = self._wanted()
+        if want != self.off:
+            return
+        self.off = not want
+        if want:
+            was = self.data()  # the norms as they were (a choice made in HA meanwhile included)
+            self.detectors = [cls(self) for cls in DETECTORS]
+            self.owner = {k: det for det in self.detectors for k in det.KINDS}
+            self.not_windows = set()
+            self._load(was)
+            now = self.clock()
+            for det in self.detectors:
+                self._run(det.warm, now)
+            self._subscribe()
+        else:
+            self.async_stop()
+            self.store.async_delay_save(self.data, 0)
+            self._listed = frozenset()
+        if self.on_change:
+            self.on_change()
+
+    def _subscribe(self) -> None:
+        self._unsubs.append(self.hass.bus.async_listen(EVENT_STATE_CHANGED, self._on_event))
+        self._unsubs.append(async_track_time_interval(self.hass, self._tick, timedelta(seconds=TICK)))
+        self.running = True
+
+    def _load(self, data: dict[str, Any]) -> None:
         for det in self.detectors:
             try:
                 saved = data.get(det.name) if isinstance(data, dict) else None
@@ -673,14 +731,13 @@ class Insights:
                 self.first.setdefault(f"{det.name}|{eid}", self.started - OBSERVE_H * SECONDS_PER_HOUR)
         # Open before the restart: still open (no new opening counted, no «снова в норме»).
         self._listed = frozenset(i["key"] for i in self._raw(self.started))
-        self._unsubs.append(self.hass.bus.async_listen(EVENT_STATE_CHANGED, self._on_event))
-        self._unsubs.append(async_track_time_interval(self.hass, self._tick, timedelta(seconds=TICK)))
 
     @callback
     def async_stop(self) -> None:
         for unsub in self._unsubs:
             unsub()
         self._unsubs.clear()
+        self.running = False
 
     def _load_meta(self, meta: dict[str, Any]) -> None:
         self.first = {str(k): float(v) for k, v in (meta.get("first") or {}).items() if num(v) is not None}
@@ -790,6 +847,8 @@ class Insights:
 
     @callback
     def _after(self) -> None:
+        if self.off:  # switched off: nothing listed, nothing counted (a choice made meanwhile waits for «on»)
+            return
         now = self.clock()
         keys = frozenset(i["key"] for i in self._shown(now))
         for k in keys - self._listed:
@@ -824,7 +883,13 @@ class Insights:
         return sorted(out, key=lambda i: (is_note(i["kind"]), i["since"], i["key"]))[:LIST_MAX]
 
     def items(self) -> list[dict[str, Any]]:
-        return self._shown(self.clock())
+        return [] if self.off else self._shown(self.clock())
+
+    def summary(self) -> dict[str, Any]:
+        """The «Анализ» header (0.34 п.9): whether the engine runs, how many devices it observes, since when it learns."""
+        eids = {eid for det in self.detectors for _kind, eid in self._keys(det)}
+        since = min(self.first.values(), default=None)
+        return {"on": not self.off, "devices": len(eids), "since": dt_util.utc_from_timestamp(since).isoformat() if since is not None else None}
 
     # --- the integrator's view and choices (0.32: GET / POST /api/hauflo/insights, the site's findings) ---------------
 
@@ -996,14 +1061,23 @@ class InsightsView(HomeAssistantView):
     """The per-entity diagnosis (0.32). GET → Insights.states() (`?entity=` — with its episodes, `?offset=` — the next
     page, `?limit=` its length up to LIMIT_MAX; with the canon's sections and the engine's tick and whether the reader may answer): HA's admins, everyone when the diagnosis is
     shown to all (`diag_visible`). POST (admins only) {entity, kind, action: normal | follow |
-    reset, factor?} — «это норма» / «снова следить» (its own ×N within FACTOR_MIN..FACTOR_MAX) / «сбросить обучение»."""
+    reset, factor?} — «это норма» / «снова следить» (its own ×N within FACTOR_MIN..FACTOR_MAX) / «сбросить обучение»;
+    {habits: bool} — «Предложения по привычкам» on / off (0.34 п.9). The first page carries the «Анализ» header's
+    `summary`; «Фоновые наблюдения» off — no rows, `off: true`."""
 
     url = "/api/hauflo/insights"
     name = "api:hauflo:insights"
     requires_auth = True
 
-    def __init__(self, ins_of: Callable[[], Insights | None]) -> None:
+    def __init__(self, ins_of: Callable[[], Insights | None], extra: Callable[[], Awaitable[dict[str, Any]]] | None = None, habits_set: Callable[[bool], Awaitable[bool]] | None = None) -> None:
         self.ins_of = ins_of
+        self.extra = extra  # the header's other engines (habits: on, found) — set by the agent
+        # «Предложения по привычкам» on / off from Hauflo (0.34 п.9, {habits: bool}): the tunnel's own route, never the
+        # automations' one (that writes rules). False — the habits' engine isn't running.
+        self.habits_set = habits_set
+
+    async def _summary(self, ins: Insights) -> dict[str, Any]:
+        return {**ins.summary(), **((await self.extra()) if self.extra else {})}
 
     async def get(self, request):
         admin = request["hass_user"].is_admin
@@ -1019,7 +1093,10 @@ class InsightsView(HomeAssistantView):
             return self.json_message("entity / offset", 400)
         if not LIMIT_RE.fullmatch(limit) or not 1 <= int(limit) <= LIMIT_MAX:
             return self.json_message(f"limit: 1..{LIMIT_MAX}", 400)
-        out = ins.states(entity, int(offset), int(limit))
+        # Switched off (0.34 п.9): nothing computed — the card says so, the cloud doesn't wait for data.
+        out = ins.states(entity, int(offset), int(limit)) if not ins.off else {"total": 0, "offset": int(offset), "items": [], "off": True}
+        if int(offset) == 0 and entity is None:
+            out["summary"] = await self._summary(ins)
         # The card's grouping and refresh: the canon's sections, the engine's tick; whether this reader may answer.
         return self.json({**out, "sections": SECTIONS, "sectionOrder": SECTION_ORDER, "tickS": TICK, "canEdit": admin})
 
@@ -1034,6 +1111,12 @@ class InsightsView(HomeAssistantView):
         ins = self.ins_of()
         if ins is None:
             return self.json_message("not ready", 409)
+        if isinstance(body, dict) and set(body) == {"habits"}:
+            if not isinstance(body["habits"], bool) or self.habits_set is None:
+                return self.json_message("{habits: true | false} expected", 400)
+            if not await self.habits_set(body["habits"]):
+                return self.json_message("habits not running", 503)
+            return self.json({"summary": await self._summary(ins)})
         if not isinstance(body, dict) or not {"entity", "kind", "action"} <= set(body) <= {"entity", "kind", "action", "factor"}:
             return self.json_message("{entity, kind, action, factor?} expected", 400)
         entity, kind, action, factor = body["entity"], body["kind"], body["action"], body.get("factor")

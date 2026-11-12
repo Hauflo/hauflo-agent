@@ -3,13 +3,14 @@
 import hashlib
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from homeassistant.util.hass_dict import HassKey
 
 from . import servers as _servers
 
 DOMAIN = "hauflo"
-VERSION = "0.33.0"
+VERSION = "0.34.0"
 
 
 def _www_hash() -> str:
@@ -96,6 +97,35 @@ def site_ru(hass_language: str | None, config: object = None) -> bool:
     and devices are the integrator's and stay as written."""
     lang = config.get("lang") if isinstance(config, dict) else None
     return str(lang if isinstance(lang, str) and lang.strip() else hass_language or "ru").lower().startswith("ru")
+
+
+SITE_LANGS = ("ru", "en")
+
+
+async def async_entity_names(hass: Any) -> dict[str, dict[str, str]]:
+    """The agent's entity names with a placeholder in both languages ({lang: {"<platform>.<key>": template}}, from the
+    translations' «entity» section) — for the names a site gives its own sensors (combination, rule): HA words them in
+    its own language («Hauflo Combination · Приток…» on an English HA of a Russian project, w5 acceptance), the house
+    says everything in ONE language (site_ru)."""
+    from homeassistant.helpers import translation  # noqa: PLC0415
+
+    pre, suf = f"component.{DOMAIN}.entity.", ".name"
+    out: dict[str, dict[str, str]] = {}
+    for lang in SITE_LANGS:
+        got = await translation.async_get_translations(hass, lang, "entity", [DOMAIN])
+        out[lang] = {k[len(pre) : -len(suf)]: v for k, v in got.items() if k.startswith(pre) and k.endswith(suf)}
+    return out
+
+
+def site_name(names: dict[str, dict[str, str]], ru: bool, key: str, **ph: str) -> str | None:
+    """`key` («binary_sensor.combo») worded in the house's language; None — no texts (HA's own translation then)."""
+    text = names.get(SITE_LANGS[0] if ru else SITE_LANGS[1], {}).get(key)
+    if not text:
+        return None
+    try:
+        return text.format(**ph)
+    except (KeyError, IndexError, ValueError):
+        return None
 
 
 def wants_ru(body: object, hass_language: str | None) -> bool:

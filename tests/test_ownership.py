@@ -286,3 +286,64 @@ async def test_untouched_onboarding_rooms_may_be_removed(hass: HomeAssistant, en
     client = await hass_client()
     body = await (await client.get("/api/hauflo/owned")).json()
     assert body["stock_areas"] == [stock.id]
+
+
+def _kind_labels(hass: HomeAssistant) -> dict[str, str]:
+    """Kind → label id, by the English names the translations give (the test HA speaks English)."""
+    names = {"Hauflo · protected": "protected", "Hauflo · service": "service", "Hauflo · for the client": "client"}
+    return {names[lb.name]: lb.label_id for lb in lr.async_get(hass).async_list_labels() if lb.name in names}
+
+
+async def test_kind_labels_one_canon_on_haufls_only(hass: HomeAssistant, entry) -> None:
+    """0.34 п.7а: «защищено» / «служебное» / «клиенту» from one canon, on Hauflo's entities only, idempotent; a
+    foreign lock gets none; the family's own labels stay; off when the entity stops being of its kind."""
+    ids = _make(hass, entry)
+    reg = er.async_get(hass)
+    agent = entry.runtime_data
+    agent.owned.update({"u-gate", "u-diag"})
+    gate = reg.async_get_or_create("lock", "knx", "u-gate", suggested_object_id="gate").entity_id
+    diag = reg.async_get_or_create("sensor", "knx", "u-diag", suggested_object_id="diag", entity_category=er.EntityCategory.DIAGNOSTIC).entity_id
+    their_lock = reg.async_get_or_create("lock", "zwave_js", "z-lock", suggested_object_id="front").entity_id
+    for eid in (gate, their_lock):
+        hass.states.async_set(eid, "locked")
+    reg.async_update_entity(ids["ours"], labels={"family_tag"})
+    own = agent.ownership
+    own.async_sync()
+    k = _kind_labels(hass)
+    assert set(k) == {"protected", "service", "client"}
+    hauflo = _label(hass)
+    got = {eid: reg.async_get(eid).labels for eid in (ids["ours"], gate, diag, ids["auto"], their_lock, ids["zigbee"], ids["their_scene"])}
+    assert got[ids["ours"]] == {hauflo, k["client"], "family_tag"}
+    assert got[gate] == {hauflo, k["protected"], k["client"]}
+    assert got[diag] == {hauflo, k["service"]}
+    assert got[ids["auto"]] == {hauflo, k["client"]}
+    assert got[their_lock] == set() and got[ids["zigbee"]] == set() and got[ids["their_scene"]] == set()
+    link = reg.async_get_entity_id("binary_sensor", DOMAIN, f"{entry.entry_id}_link")
+    assert reg.async_get(link).labels == {hauflo, k["service"]}
+    # Idempotent: nothing to do, no second label of a kind.
+    assert own.async_sync() == (0, 0)
+    assert set(_kind_labels(hass)) == {"protected", "service", "client"} and len(lr.async_get(hass).async_list_labels()) == len(set(lr.async_get(hass).async_list_labels()))
+    # Put on a foreign entity by hand: taken off (the label means «Hauflo's, of this kind»); the family's stays.
+    reg.async_update_entity(their_lock, labels={k["protected"], "family_tag"})
+    # No longer Hauflo's: every Hauflo label comes off, the family's stays.
+    agent.owned.discard("u-ours")
+    assert own.async_sync() == (0, 3)
+    assert reg.async_get(ids["ours"]).labels == {"family_tag"}
+    assert reg.async_get(their_lock).labels == {"family_tag"}
+    # A kind label renamed by hand is still the same label (its id kept), never a second one.
+    lr.async_get(hass).async_update(k["client"], name="Клиентское")
+    own.async_sync()
+    assert k["client"] in reg.async_get(gate).labels
+    assert not any(lb.name == "Hauflo · for the client" for lb in lr.async_get(hass).async_list_labels())
+
+
+async def test_kind_labels_not_while_locked(hass: HomeAssistant, entry) -> None:
+    ids = _make(hass, entry)
+    entry.runtime_data.ownership.async_sync()
+    before = er.async_get(hass).async_get(ids["ours"]).labels
+    assert _kind_labels(hass)["client"] in before
+    hass.config_entries.async_update_entry(entry, options={CONF_ALLOW_CHANGES: False})
+    await hass.async_block_till_done()
+    entry.runtime_data.owned.discard("u-ours")
+    assert entry.runtime_data.ownership.async_sync() == (0, 0)
+    assert er.async_get(hass).async_get(ids["ours"]).labels == before  # the owner closed the house: nothing changes

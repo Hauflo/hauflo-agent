@@ -9,7 +9,8 @@
       "level_s": 120,
       "classes": {"moisture": 0, "smoke": 0, "gas": 0, "carbon_monoxide": 0, "safety": 0, "tamper": 0,
                   "door": 60, "garage_door": 60, "window": 60, "opening": 60, "motion": 60, "occupancy": 60, "presence": 60, "connectivity": 60},
-      "kinds": {"leak": 0, "flood": 0, "smoke": 0, "fire": 0, "gas": 0, "co": 0, "carbon_monoxide": 0}
+      "kinds": {"leak": 0, "flood": 0, "smoke": 0, "fire": 0, "gas": 0, "co": 0, "carbon_monoxide": 0},
+      "own": {"combo": 0, "rule": 0}
     },
     "group_window_s": 3,
     "nodata_after_s": 900,
@@ -45,6 +46,7 @@
     "test_per_min": 10,
     "group_min": 3,
     "list_max": 8,
+    "now_items_max": 50,
     "critical_classes": ["moisture", "smoke", "gas", "carbon_monoxide", "heat", "problem", "safety"],
     "alarm_classes": ["connectivity", "moisture", "smoke", "gas", "carbon_monoxide", "problem", "safety", "heat", "cold", "tamper", "door", "window", "opening", "motion", "battery"],
     "heartbeat_words": "heartbeat|hearbeat|связь|связи|link|alive|online|пульс",
@@ -126,7 +128,18 @@
     "device_class": "^[a-z_]{0,30}$",
     "finding_key": "^[a-z_]{1,30}\\|[a-z_]+\\.[a-z0-9_]+$",
     "iso": "^\\d{4}-\\d{2}-\\d{2}T[0-9:.+\\-Z]{1,30}$",
-    "local_max": 200
+    "local_max": 200,
+    "combos": {
+      "_doc": "0.34 п.10 «Сочетание состояний»: N entities in their states at once for holdS → the combo's own problem sensor (combos.py). Limits ≡ backend/src/agent/signalCombos.json limits (signalCombos.test).",
+      "max": 20,
+      "conds_min": 2,
+      "conds_max": 6,
+      "hold_max_s": 86400,
+      "name_max": 80,
+      "id": "^[a-z0-9]{4,16}$",
+      "preset": "^[a-zA-Z]{1,30}$",
+      "idle_states": ["unavailable", "unknown"]
+    }
   },
   "backup": {
     "wait_s": 20,
@@ -255,7 +268,15 @@
     "living_words": "гостин|кухн|столов|зал\\b|living|kitchen|lounge|dining"
   },
   "cards": {
-    "off_in_max_min": 1440
+    "off_in_max_min": 1440,
+    "regulator": {
+      "views": ["auto", "stepper", "slider", "buttons"],
+      "buttons_max": 5,
+      "places_max": 200,
+      "own_sheet": ["fan", "number", "input_number"],
+      "ranges": { "fan": [0, 100], "light": [1, 100], "cover": [0, 100], "valve": [0, 100], "media_player": [0, 100] },
+      "range_attrs": ["number", "input_number"]
+    }
   }
 ,
   "habits": {
@@ -703,5 +724,22 @@
     "off_max": 300,
     "never_domains": ["knx", "mobile_app", "hassio", "cloud", "backup", "homeassistant_alerts"],
     "skip_types": ["helper", "system"]
+  },
+  "labels": {
+    "about": "0.34 п.7а: Hauflo's labels besides «Hauflo» — one canon. Put by the agent on Hauflo's own entities only (ownership.py), names RU/EN in the translations' selector.hauflo_label; room = the HA area and class = the deploy's category labels, never duplicated as labels. A label comes off what stops being of its kind; other labels are never touched.",
+    "kinds": {
+      "protected": { "icon": "mdi:shield-lock-outline", "color": "red" },
+      "service": { "icon": "mdi:account-wrench", "color": "grey" },
+      "client": { "icon": "mdi:account-outline", "color": "green" }
+    },
+    "client_kinds": ["knx", "group", "scene", "automation"],
+    "service_kinds": ["alarm", "agent"]
+  },
+  "exposure": {
+    "about": "0.34 п.7б: what each voice assistant / bridge is given (exposure.py). Dangerous = the agent's protection canon (__init__._protected: locks, the alarm, valves, gates, garage doors) plus these domains.",
+    "dangerous_domains": ["camera"],
+    "assistants": ["conversation", "cloud.alexa", "cloud.google_assistant"],
+    "max_rows": 3000,
+    "homekit_domains": ["alarm_control_panel", "automation", "binary_sensor", "button", "camera", "climate", "cover", "device_tracker", "fan", "humidifier", "input_boolean", "input_button", "input_select", "light", "lock", "media_player", "person", "remote", "scene", "script", "select", "sensor", "switch", "vacuum", "valve", "water_heater"]
   }
 }

@@ -25,6 +25,7 @@ from homeassistant.core import HomeAssistant, State, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 
+from .const import DOMAIN
 from .storage import HaufloStore
 from .tuning import TUNING
 
@@ -32,6 +33,22 @@ _LOGGER = logging.getLogger(__name__)
 CANON = TUNING["signals"]
 _A = TUNING["signals_agent"]
 FEATURE = "signals"
+# 0.34: the site's «не авария» silences the source in the alarm rules too (notify.muted) — the cloud says so in the editor.
+MUTE_FEATURE = "signals_mute"
+# 0.34 п.10: the policy may carry «Сочетание состояний» (`combos`) — sent only to an agent saying this (an older one refuses
+# the whole body for an unknown key).
+COMBOS_FEATURE = "signals_combos"
+
+
+def combo_entity(cid: str) -> str:
+    """The sensor of a combination (combos.ComboActive; backend signalCombos.ts comboEntityId)."""
+    return f"binary_sensor.{DOMAIN}_combo_{cid}"
+
+
+def combo_entities(hass: HomeAssistant | None) -> set[str]:
+    """The sensors of the site's combinations (its policy's `combos`)."""
+    s = store(hass)
+    return {combo_entity(cid) for cid in s.combos()} if s is not None else set()
 STORE_KEY = "hauflo.signals"
 DATA = "hauflo_signals"
 SEVERITIES = list(_A["severities"])
@@ -60,6 +77,11 @@ ISO = re.compile(_A["iso"])
 _JS_DEC = re.compile(r"^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$")
 _JS_RADIX = re.compile(r"^0([xX][0-9a-fA-F]+|[oO][0-7]+|[bB][01]+)$")
 POLICY_KEYS = ("alarm", "holdS", "severity", "house", "watch", "shelvedUntil")
+COMBO = _A["combos"]
+COMBO_ID = re.compile(COMBO["id"])
+COMBO_PRESET = re.compile(COMBO["preset"])
+COMBO_KEYS = ("name", "all", "holdS", "preset")
+COMBO_IDLE = frozenset(COMBO["idle_states"])
 # Who reads the diagnosis in HA, as the integrator chose it (the cloud's model.diag.visible).
 DIAG_VISIBLE = tuple(CANON["diag"]["visible"])
 # «Авария когда» chosen on a card's row in HA (Р9/Р19): the canon's meanings (on / off / none / reading) and «default» —
@@ -189,11 +211,14 @@ def resolve(eid: str, *, platform: str | None = None, device_class: Any = None, 
 
 
 def alarm_of(raw: Any, alarm: dict[str, Any] | None) -> bool:
-    """The state is an alarm by this condition (HA's «unavailable» is always one — the lost-link class)."""
+    """The state is an alarm by this condition (HA's «unavailable» is one — the lost-link class — unless the site said «не
+    авария» for it: 0.34, one choice excludes the entity everywhere; the canon itself never says {none})."""
+    if alarm and "none" in alarm:
+        return False
     state = state_of(raw)
     if state == "unavailable":
         return True
-    if not alarm or "none" in alarm:
+    if not alarm:
         return False
     if "states" in alarm:
         return state in alarm["states"]
@@ -201,6 +226,62 @@ def alarm_of(raw: Any, alarm: dict[str, Any] | None) -> bool:
     if n is None:
         return False
     return ("below" in alarm and n < alarm["below"]) or ("above" in alarm and n > alarm["above"])
+
+
+def cond_holds(raw: Any, alarm: dict[str, Any]) -> bool:
+    """One condition of a «Сочетание» (0.34 п.10) by the same reading as a signal's alarm (`alarm_of`) — but a source that
+    is unavailable / unknown holds nothing: its lost link is its own signal, never half of a combination."""
+    raw = raw.state if isinstance(raw, State) else raw
+    return state_of(raw) not in COMBO_IDLE and alarm_of(raw, alarm)
+
+
+def combo_holds(states: list[Any], combo: dict[str, Any]) -> bool:
+    """Every condition of the combination holds now (`states` — the sources' states, in the order of combo["all"])."""
+    return len(states) == len(combo["all"]) and all(cond_holds(st, c["alarm"]) for st, c in zip(states, combo["all"], strict=True))
+
+
+def combo_in(v: Any) -> dict[str, Any] | None:
+    """One «Сочетание» as the wire carries it: {name, all: [{entityId, alarm}], holdS[, preset]} (unknown keys refused).
+    Only a signal: it never switches anything — the service only warns (owner rule)."""
+    if not isinstance(v, dict) or set(v) - set(COMBO_KEYS) or not {"name", "all", "holdS"} <= set(v):
+        return None
+    name, conds, hold = v["name"], v["all"], v["holdS"]
+    if not isinstance(name, str) or not name.strip() or len(name) > COMBO["name_max"]:
+        return None
+    if isinstance(hold, bool) or not isinstance(hold, int) or not 0 <= hold <= COMBO["hold_max_s"]:
+        return None
+    if not isinstance(conds, list) or not COMBO["conds_min"] <= len(conds) <= COMBO["conds_max"]:
+        return None
+    out = []
+    for c in conds:
+        if not isinstance(c, dict) or set(c) != {"entityId", "alarm"} or not isinstance(c["entityId"], str) or not ENTITY_ID.match(c["entityId"]):
+            return None
+        p = policy_in({"alarm": c["alarm"]})
+        if not p or "none" in p["alarm"]:
+            return None
+        out.append({"entityId": c["entityId"], "alarm": p["alarm"]})
+    if len({c["entityId"] for c in out}) != len(out):
+        return None
+    combo: dict[str, Any] = {"name": name.strip(), "all": out, "holdS": hold}
+    if "preset" in v:
+        if not isinstance(v["preset"], str) or not COMBO_PRESET.match(v["preset"]):
+            return None
+        combo["preset"] = v["preset"]
+    return combo
+
+
+def combos_in(v: Any) -> tuple[dict[str, dict[str, Any]], int] | None:
+    """{id: combo} — None: not a map or over the limit (the whole push refused); a bad combo is dropped alone."""
+    if not isinstance(v, dict) or len(v) > COMBO["max"]:
+        return None
+    out, dropped = {}, 0
+    for cid, x in v.items():
+        c = combo_in(x) if isinstance(cid, str) and COMBO_ID.match(cid) else None
+        if c is None:
+            dropped += 1
+            continue
+        out[cid] = c
+    return out, dropped
 
 
 def affects_house(problem: bool, house: str, undetermined: bool) -> bool:
@@ -406,10 +487,15 @@ def watchdog_in(v: Any) -> dict[str, list[str]] | None:
     return {"off": sorted(set(v["off"]))}
 
 
+def observe_in(v: Any) -> dict[str, bool] | None:
+    """The integrator's «Фоновые наблюдения» (0.34 п.9): {on: false} — the diagnosis engine (insight.py) stands still."""
+    return {"on": v["on"]} if isinstance(v, dict) and set(v) == {"on"} and isinstance(v["on"], bool) else None
+
+
 def signals_in(v: Any) -> tuple[dict[str, Any], int] | None:
-    """({scopes, entities, findings[, diag][, watchdog]}, rows dropped) — None: not the shape at all (the whole body
-    refused)."""
-    if not isinstance(v, dict) or set(v) - {"scopes", "entities", "findings", "diag", "watchdog", "v", "hash"}:
+    """({scopes, entities, findings[, diag][, watchdog][, observe]}, rows dropped) — None: not the shape at all (the
+    whole body refused)."""
+    if not isinstance(v, dict) or set(v) - {"scopes", "entities", "findings", "diag", "watchdog", "observe", "combos", "v", "hash"}:
         return None
     scopes_raw, ents_raw, finds_raw = v.get("scopes") or [], v.get("entities") or {}, v.get("findings") or {}
     if not isinstance(scopes_raw, list) or not isinstance(ents_raw, dict) or not isinstance(finds_raw, dict):
@@ -454,6 +540,19 @@ def signals_in(v: Any) -> tuple[dict[str, Any], int] | None:
             dropped += 1
         else:
             out["watchdog"] = w
+    # The same for the background observations (insight.OBSERVE_FEATURE): absent = on, never kept from an earlier push.
+    if v.get("observe") is not None:
+        if (o := observe_in(v["observe"])) is None:
+            dropped += 1
+        else:
+            out["observe"] = o
+    # «Сочетание состояний» (0.34 п.10, COMBOS_FEATURE): absent = none — never kept from an earlier push.
+    if v.get("combos") is not None:
+        if (cb := combos_in(v["combos"])) is None:
+            dropped += 1
+        else:
+            out["combos"] = cb[0]
+            dropped += cb[1]
     return out, dropped
 
 
@@ -475,7 +574,7 @@ class Signals:
 
     async def async_load(self) -> None:
         data = await self.store.async_load()
-        got = signals_in({k: v for k, v in data.items() if k in ("scopes", "entities", "findings", "diag", "watchdog")}) if isinstance(data, dict) else None
+        got = signals_in({k: v for k, v in data.items() if k in ("scopes", "entities", "findings", "diag", "watchdog", "observe", "combos")}) if isinstance(data, dict) else None
         if got is not None:
             self.cloud = got[0]
             h = data.get("hash")
@@ -585,6 +684,9 @@ class Signals:
     def watch_on(self) -> set[str]:
         return {e for e, p in self.policy["entities"].items() if p.get("watch") is True}
 
+    def combos(self) -> dict[str, dict[str, Any]]:
+        return self.cloud.get("combos") or {}
+
     def watch_off(self) -> set[str]:
         return {e for e, p in self.policy["entities"].items() if p.get("watch") is False}
 
@@ -600,6 +702,12 @@ def watchdog_off(hass: HomeAssistant | None) -> set[str]:
     """The integration domains the integrator switched the watchdog off for (Р58)."""
     s = store(hass)
     return set(((s.cloud.get("watchdog") or {}).get("off") or ())) if s is not None else set()
+
+
+def observing(hass: HomeAssistant | None) -> bool:
+    """«Фоновые наблюдения» (0.34 п.9): on unless the integrator switched them off (absent / no policy yet — on)."""
+    s = store(hass)
+    return not (s is not None and (s.cloud.get("observe") or {}).get("on") is False)
 
 
 def store(hass: HomeAssistant | None) -> Signals | None:

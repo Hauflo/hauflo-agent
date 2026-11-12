@@ -9,6 +9,11 @@
   «в какой комнате?»; the plan Hauflo tells carries `zones` {zone area → room area}, and everything here that asks an
   entity's room (`entity_room`: order, voice, presence, scenes, guests, recipes, alarms, insights, the cards through
   /api/hauflo/house) gets the room, never the zone.
+- Its kind labels (0.34 п.7а, tuning.json `labels`): «Hauflo · защищено» (what opens the house — the agent's own
+  protection canon, __init__._protected), «Hauflo · служебное» (in HA, not on the client's screens: an entity category
+  the deploy set, alarm helpers, the agent's own) and «Hauflo · клиенту» (the rest of Hauflo's). Names RU/EN from the
+  translations (selector.hauflo_label). On Hauflo's entities only, idempotent, off what stops being of its kind; any
+  other label stays. Room = the HA area, class = the deploy's category labels — not duplicated here.
 - «Создано в этом доме» / «Made in this home»: a read-only sensor on the integration's page — how many entities are Hauflo's,
   which of them were changed by hand in HA (renamed, disabled; the ones the last plan keeps as edited) and what the next
   deploy would change, when Hauflo said it (POST /api/hauflo/ownership after each plan; tunnel only, info only).
@@ -25,9 +30,10 @@ from typing import Any
 
 from homeassistant.components.http import KEY_HASS, HomeAssistantView
 from homeassistant.core import Event, HomeAssistant, callback
-from homeassistant.helpers import device_registry as dr, entity_registry as er, label_registry as lr
+from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er, label_registry as lr
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers import translation
 from homeassistant.util import dt as dt_util
 
 from .const import ACK_PREFIX, ALARM_PREFIX, CHATTER_PREFIX, DOMAIN, MONITOR_LABEL, MONITOR_LABEL_EN, MONITOR_LABELS, OPEN_PREFIX
@@ -80,7 +86,43 @@ def entity_area(hass: HomeAssistant, entity_id: str) -> str | None:
 def entity_room(hass: HomeAssistant, entity_id: str) -> str | None:
     """The room an entity is in — its area, a zone area taken as its room."""
     return room_area(hass, entity_area(hass, entity_id))
+
+
+def room_name(hass: HomeAssistant, entity_id: str) -> str | None:
+    """The name of the room an entity is in, as HA's area registry has it (never the area id's slug)."""
+    area_id = entity_room(hass, entity_id)
+    area = ar.async_get(hass).async_get_area(area_id) if area_id else None
+    return area.name if area else None
 _AUTOMATION_PREFIX = "hauflo_auto_"
+_L = TUNING["labels"]
+KINDS: dict[str, dict[str, str]] = _L["kinds"]
+_CLIENT_KINDS = set(_L["client_kinds"])
+_SERVICE_KINDS = set(_L["service_kinds"])
+LANGS = ("ru", "en")
+
+
+def label_kinds(kind: str | None, entry: er.RegistryEntry, protected: bool) -> set[str]:
+    """The kind labels an entity of Hauflo's carries (tuning.json labels): none for anything not Hauflo's."""
+    if kind is None:
+        return set()
+    out = {"protected"} if protected else set()
+    if kind in _SERVICE_KINDS or (kind in _CLIENT_KINDS and (entry.entity_category is not None or entry.hidden_by is er.RegistryEntryHider.INTEGRATION)):
+        out.add("service")
+    elif kind in _CLIENT_KINDS:
+        out.add("client")
+    return out
+
+
+def service_entity(hass: HomeAssistant, entity_id: str) -> bool:
+    """«Служебное» of Hauflo's (the label's rule, label_kinds): the agent's own switches / sensors (a rule's on / off, «Зима /
+    Лето автоматически»), the alarms' helpers, a hidden or config / diagnostic entity — never something a rule, a
+    schedule or a picker changes (HA's own area targets skip the hidden and categorised ones too). Asked of an entity
+    already known to be Hauflo's: its kind is taken as owned."""
+    entry = er.async_get(hass).async_get(entity_id)
+    if entry is None:
+        return False
+    kind = kind_of(entry, {entry.unique_id}, {entry.config_entry_id} if entry.config_entry_id else set())
+    return "service" in label_kinds(kind, entry, False)
 
 
 def kind_of(entry: er.RegistryEntry, owned: set[str], owned_entries: set[str]) -> str | None:
@@ -111,8 +153,13 @@ def _ru(hass: HomeAssistant) -> bool:
 class Ownership:
     """One per config entry: the label kept in sync, the sensor's facts, the last plan Hauflo told."""
 
-    def __init__(self, hass: HomeAssistant, owned: Callable[[], set[str]], owned_entries: Callable[[], set[str]], locked: Callable[[], bool]) -> None:
+    def __init__(self, hass: HomeAssistant, owned: Callable[[], set[str]], owned_entries: Callable[[], set[str]], locked: Callable[[], bool], protected: Callable[[], set[str]] | None = None) -> None:
         self.hass = hass
+        self._protected = protected or set
+        # Kind label → its HA label id (kept: a label renamed by hand is still found); names {lang: {kind: name}}.
+        self.kind_ids: dict[str, str] = {}
+        self.kind_names: dict[str, dict[str, str]] = {}
+        self.kind_texts: dict[str, str] = {}
         self._owned = owned
         self._owned_entries = owned_entries
         self._locked = locked
@@ -132,6 +179,9 @@ class Ownership:
         if isinstance(data, dict) and isinstance(data.get("plan"), dict):
             self.plan = data["plan"]
         self._publish_zones()
+        if isinstance(data, dict) and isinstance(data.get("labels"), dict):
+            self.kind_ids = {k: v for k, v in data["labels"].items() if k in KINDS and isinstance(v, str)}
+        await self._load_kind_names()
         if isinstance(data, dict) and isinstance(data.get("names"), dict):
             self.names = {k: v for k, v in data["names"].items() if isinstance(k, str) and isinstance(v, str)}
         else:
@@ -160,7 +210,22 @@ class Ownership:
             self._timer = None
 
     def _data(self) -> dict[str, Any]:
-        return {"plan": self.plan, "names": self.names}
+        return {"plan": self.plan, "names": self.names, "labels": self.kind_ids}
+
+    async def _load_kind_names(self) -> None:
+        """The kind labels' names in both languages (one found under the other's name is the same label) and their
+        descriptions in the house's. A name the translations lack: that kind isn't put (never a made-up name)."""
+        for lang in LANGS:
+            try:
+                tr = await translation.async_get_translations(self.hass, lang, "selector", [DOMAIN])
+            except Exception as err:  # noqa: BLE001 — no names: no kind labels, the agent goes on
+                _LOGGER.debug("Hauflo: label names (%s) not read: %s", lang, err)
+                continue
+            names = {k: tr.get(f"component.{DOMAIN}.selector.hauflo_label.options.{k}") for k in KINDS}
+            self.kind_names[lang] = {k: v for k, v in names.items() if v}
+            if lang == ("ru" if _ru(self.hass) else "en"):
+                texts = {k: tr.get(f"component.{DOMAIN}.selector.hauflo_label_text.options.{k}") for k in KINDS}
+                self.kind_texts = {k: v for k, v in texts.items() if v}
 
     @callback
     def _save(self) -> None:
@@ -221,6 +286,30 @@ class Ownership:
         return found.label_id
 
     @callback
+    def _ensure_kind_labels(self) -> dict[str, str]:
+        """Kind → label id: the recorded one, else one under its name in either language, else made in the house's."""
+        reg = lr.async_get(self.hass)
+        lang = "ru" if _ru(self.hass) else "en"
+        out: dict[str, str] = {}
+        for kind, style in KINDS.items():
+            known = self.kind_ids.get(kind)
+            if known and reg.async_get_label(known) is not None:
+                out[kind] = known
+                continue
+            names = {n.casefold() for n in (self.kind_names.get(lang2, {}).get(kind) for lang2 in LANGS) if n}
+            name = self.kind_names.get(lang, {}).get(kind)
+            if not names or not name:
+                continue
+            found = next((label for label in reg.async_list_labels() if label.name.casefold() in names), None)
+            if found is None:
+                found = reg.async_create(name, icon=style["icon"], color=style["color"], description=self.kind_texts.get(kind))
+            out[kind] = found.label_id
+        if out != self.kind_ids:
+            self.kind_ids = out
+            self._save()
+        return out
+
+    @callback
     def _clarify_monitor_label(self) -> None:
         """«Hauflo monitoring» is for devices Hauflo didn't make (service review 29.10: an empty label read as broken)."""
         reg = lr.async_get(self.hass)
@@ -231,7 +320,8 @@ class Ownership:
 
     @callback
     def async_sync(self) -> tuple[int, int]:
-        """The label on exactly Hauflo's entities. Returns (put on, taken off)."""
+        """The «Hauflo» label on exactly Hauflo's entities, its kind labels on exactly the ones of their kind. Returns
+        (labels put on, labels taken off)."""
         if not self.loaded or self._locked():
             return 0, 0
         try:
@@ -240,24 +330,37 @@ class Ownership:
         except Exception as err:  # noqa: BLE001 — a changed HA internal never stops the agent
             _LOGGER.warning("Hauflo: label not set up: %s", err)
             return 0, 0
+        try:
+            kinds = self._ensure_kind_labels()
+        except Exception as err:  # noqa: BLE001 — the kind labels never stop the «Hauflo» one
+            _LOGGER.warning("Hauflo: kind labels not set up: %s", err)
+            kinds = {}
+        try:
+            protected = self._protected()
+        except Exception as err:  # noqa: BLE001 — not knowable now: «защищено» stays as it is this round
+            _LOGGER.debug("Hauflo: protected not known: %s", err)
+            protected = None
+        ours = {label_id, *kinds.values()}
         owned, entries = self._owned(), self._owned_entries()
         reg = er.async_get(self.hass)
         added = removed = 0
         for entry in list(reg.entities.values()):
-            own = kind_of(entry, owned, entries) is not None
-            has = label_id in entry.labels
-            if own == has:
+            kind = kind_of(entry, owned, entries)
+            want = {kinds[k] for k in label_kinds(kind, entry, entry.entity_id in (protected or ())) if k in kinds}
+            if kind is not None:
+                want.add(label_id)
+            if protected is None and "protected" in kinds and kinds["protected"] in entry.labels and kind is not None:
+                want.add(kinds["protected"])
+            has = set(entry.labels) & ours
+            if want == has:
                 continue
-            labels = set(entry.labels) | {label_id} if own else set(entry.labels) - {label_id}
             try:
-                reg.async_update_entity(entry.entity_id, labels=labels)
+                reg.async_update_entity(entry.entity_id, labels=(set(entry.labels) - ours) | want)
             except Exception as err:  # noqa: BLE001 — one entity HA refuses never stops the rest
                 _LOGGER.debug("Hauflo: label on %s not changed: %s", entry.entity_id, err)
                 continue
-            if own:
-                added += 1
-            else:
-                removed += 1
+            added += len(want - has)
+            removed += len(has - want)
         if added or removed:
             _LOGGER.debug("Hauflo: label «%s» put on %d, taken off %d", LABEL, added, removed)
         async_dispatcher_send(self.hass, SIGNAL)  # renamed / disabled by hand: the sensor says it too

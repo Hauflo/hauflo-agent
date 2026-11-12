@@ -126,6 +126,9 @@
       },
       "rule": {
         "name": "Сработало · {name}"
+      },
+      "combo": {
+        "name": "Сочетание · {name}"
       }
     },
     "sensor": {
@@ -472,7 +475,7 @@
       "message": "Условие «{kind}» заполнено неверно."
     },
     "rules_bad_action": {
-      "message": "Действие «{do}» не подходит для {entity}."
+      "message": "Действие «{do}» не подходит для «{entity}»."
     },
     "rules_bad_action_value": {
       "message": "Значение «{do}»: {lo}–{hi}."
@@ -484,10 +487,10 @@
       "message": "Текст уведомления — до {n} печатных символов."
     },
     "rules_client_action": {
-      "message": "Можно: свет, шторы, сцена, «уведомить меня»."
+      "message": "Можно: свет, шторы, сцена, кнопки, выбор из списка, число, «уведомить меня»."
     },
     "rules_target_not_allowed": {
-      "message": "{entity}: только устройства Hauflo; замки, охрана, ворота и открытие крана — никогда."
+      "message": "«{entity}»: только устройства Hauflo, не служебные; замки, охрана, ворота и открытие крана — никогда."
     },
     "rules_bad_purpose": {
       "message": "Назначение не подходит."
@@ -515,6 +518,18 @@
     },
     "rules_limit_rules": {
       "message": "Правил на объекте — не больше {n}."
+    },
+    "rules_limit_bus_reads": {
+      "message": "Правил «читать после команды» на объекте — не больше {n}."
+    },
+    "rules_bus_read_gas": {
+      "message": "Групповых адресов — от 1 до {n}."
+    },
+    "rules_bus_read_ga": {
+      "message": "Не групповой адрес KNX: {ga} (1/2/3, 1/234 или число)."
+    },
+    "rules_bus_read_delay": {
+      "message": "Читать через {lo}–{hi} с."
     },
     "rules_limit_derived": {
       "message": "Вычисляемых значений — не больше {n}."
@@ -1097,6 +1112,153 @@
     },
     "intercom_open_no_rights": {
       "message": "Нет прав открывать эту дверь"
+    },
+    "rules_bad_option": {
+      "message": "Для «{do}» выберите одно из: {options}."
+    },
+    "rules_bad_action_format": {
+      "message": "Значение «{do}» в неверном формате."
+    },
+    "rules_bad_schedule": {
+      "message": "Расписание: от 1 до {n} моментов (время или восход/закат) и хотя бы один день."
+    },
+    "rules_bad_sun_offset": {
+      "message": "Сдвиг от восхода/заката: от {lo} до {hi} мин."
+    },
+    "rules_pulse_min_on": {
+      "message": "Импульс не короче {n} с для этого назначения."
+    },
+    "rules_explain_scheduled": {
+      "message": "Ждёт {next}."
+    },
+    "rules_explain_no_next": {
+      "message": "В ближайшие дни запусков нет."
+    },
+    "rules_explain_last_fired": {
+      "message": "Последний раз сработало в {time}."
+    },
+    "rules_explain_last_skipped": {
+      "message": "В {time} не сработало: условие «только если» не выполнено."
+    },
+    "rules_explain_last_missed": {
+      "message": "{time} пропущено: в это время сервис был выключен."
+    },
+    "rules_logbook_fired": {
+      "message": "Сработало по расписанию ({time})."
+    },
+    "rules_preview_schedule": {
+      "message": "Следующий запуск: {next}."
+    },
+    "rules_preview_no_next": {
+      "message": "В ближайшие дни запусков нет — проверьте дни и восход/закат."
+    },
+    "rules_recipe_schedule_ventilation": {
+      "message": "Вентиляция по времени"
+    },
+    "rules_recipe_sunset_light": {
+      "message": "Свет на закате"
+    },
+    "rules_recipe_night_covers": {
+      "message": "Шторы на ночь"
+    },
+    "rules_recipe_morning_heating": {
+      "message": "Утренний прогрев по будням"
+    },
+    "rules_recipe_night_setback": {
+      "message": "Ночное снижение температуры"
+    },
+    "rules_do_brightness": {
+      "message": "Яркость"
+    },
+    "rules_do_close": {
+      "message": "Закрыть"
+    },
+    "rules_do_date": {
+      "message": "Задать дату"
+    },
+    "rules_do_datetime": {
+      "message": "Задать дату и время"
+    },
+    "rules_do_fan_mode": {
+      "message": "Режим вентилятора"
+    },
+    "rules_do_humidity": {
+      "message": "Влажность"
+    },
+    "rules_do_message": {
+      "message": "Отправить сообщение"
+    },
+    "rules_do_mode": {
+      "message": "Режим"
+    },
+    "rules_do_off": {
+      "message": "Выключить"
+    },
+    "rules_do_on": {
+      "message": "Включить"
+    },
+    "rules_do_open": {
+      "message": "Открыть"
+    },
+    "rules_do_operation": {
+      "message": "Режим работы"
+    },
+    "rules_do_option": {
+      "message": "Выбрать в списке"
+    },
+    "rules_do_pause": {
+      "message": "Пауза"
+    },
+    "rules_do_play": {
+      "message": "Воспроизвести"
+    },
+    "rules_do_position": {
+      "message": "Положение"
+    },
+    "rules_do_preset": {
+      "message": "Предустановка"
+    },
+    "rules_do_press": {
+      "message": "Нажать"
+    },
+    "rules_do_pulse": {
+      "message": "Импульс"
+    },
+    "rules_do_run": {
+      "message": "Запустить"
+    },
+    "rules_do_scene": {
+      "message": "Сцена"
+    },
+    "rules_do_setpoint": {
+      "message": "Уставка"
+    },
+    "rules_do_source": {
+      "message": "Источник"
+    },
+    "rules_do_speed": {
+      "message": "Скорость вентилятора"
+    },
+    "rules_do_stop": {
+      "message": "Остановить"
+    },
+    "rules_do_text": {
+      "message": "Задать текст"
+    },
+    "rules_do_tilt": {
+      "message": "Наклон ламелей"
+    },
+    "rules_do_time": {
+      "message": "Задать время"
+    },
+    "rules_do_toggle": {
+      "message": "Переключить"
+    },
+    "rules_do_value": {
+      "message": "Установить число"
+    },
+    "rules_do_volume": {
+      "message": "Громкость"
     }
   },
   "selector": {
@@ -1319,6 +1481,20 @@
         "doorbird": "DoorBird — по документации производителя",
         "grandstream": "Grandstream GDS — по документации производителя",
         "generic": "Другая панель (стандартный SIP)"
+      }
+    },
+    "hauflo_label": {
+      "options": {
+        "protected": "Hauflo · защищено",
+        "service": "Hauflo · служебное",
+        "client": "Hauflo · клиенту"
+      }
+    },
+    "hauflo_label_text": {
+      "options": {
+        "protected": "Открывает дом или снимает защиту (замок, ворота, сигнализация, кран): голосу и сценам не отдаётся. Метку ставит и снимает агент Hauflo.",
+        "service": "Служебное: в доме работает, на экранах клиента его нет. Метку ставит и снимает агент Hauflo.",
+        "client": "На панели клиента. Метку ставит и снимает агент Hauflo."
       }
     }
   },

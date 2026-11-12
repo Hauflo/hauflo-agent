@@ -115,7 +115,7 @@ All of them belong to one service device, **Hauflo**.
 | `sensor.hauflo_made_in_this_home` (**Made at this site**, diagnostic) | How many entities Hauflo made or took over here. Attributes: `by_kind`, `hand_edited` (renamed or disabled in Home Assistant, or kept as a hand edit by the last plan), `next_deploy` (what the next deploy would create, update, offer to remove, and when Hauflo said it). Read only. | Always |
 | `binary_sensor.hauflo_daylight` (**Daylight outside**) | On while it is light outside: by an outdoor lux sensor an administrator chose, otherwise by the sun’s elevation; a change holds 10 minutes. While it is on, a Hauflo scene leaves off the lights the client marked **Leave off in scenes by day** (a niche, a shelf). Attributes: `source`, `value`, `threshold`, `since`. | Always |
 | **Recommended season** / **Current season** (sensors), **Switch automatically** (switch) | Winter / Summer (or Heating / Cooling): the mode in force, what the outdoor temperature suggests, and whether the mode is switched once a day by itself. The switch can be changed only by staff, not by the client. | After Winter / Summer is set up in Hauflo |
-| **Rule · name** (switch), **Rule active · name** (binary sensor) | One on / off switch and one “has fired” sensor for each value rule (for example ventilation by CO₂). | After a deploy with value rules |
+| **Rule · name** (switch), **Rule active · name** (binary sensor) | One on / off switch and one “has fired” sensor for each rule (by a value, for example ventilation by CO₂, or by a schedule). | After a deploy with rules |
 
 **The label “Hauflo”.** Every entity Hauflo made or took over carries the label **Hauflo** (**Settings → Areas, labels & zones → Labels**, or the label filter on the entities page). The agent puts it on and takes it off itself, only on Hauflo’s own; a label set by hand on anything else is taken off. Entity ids never change. While **Allow Hauflo to change this site's setup** is off, the label isn’t touched. **Hauflo monitoring** is a different label: you put it on devices Hauflo didn’t make, to watch them.
 
@@ -143,6 +143,16 @@ Hauflo can ask only for what is on the agent's fixed list, and the agent edits s
 
 **Every minute:** Home Assistant and agent versions, the KNX connection, how many KNX entities are unavailable (up to 10 ids), the name and state of entities labelled **Hauflo monitoring**, open alarms, and whether the owner's switch is off. For the service passport in the handover pack: how KNX is connected (tunnel or routing, the gateway's address and port, the individual address; whether KNX Secure is on — never its keys or passwords), Home Assistant's address and the names of its administrators (no passwords).
 
+**New in 0.34 on request** (still the fixed list, still over the one outgoing connection): commissioning checks after a deploy (the bus, scenes, groups, automations, the dashboard, voice) read only states and the registry; “read after a command” and polling for devices without feedback; **What voice assistants can reach** and **Close the dangerous** change only which entities are exposed to voice; “+ Own signal” turns any entity of the site into an alarm signal; the fleet updates the agent in waves, with a way back to the previous version.
+
+**Every minute, also (0.34):**
+
+- **The one alarm count:** the alarms open now with their sensor name, class and since when, counted once by the agent — Hauflo's monitoring, the cards, the fleet and the Telegram bot show this number.
+- **Observations on the site's own norm** (the “Background observations” and “Habits” of **Analysis**): a zone or sensor clearly off its learned norm — entity name, the finding and its numbers, never an action — and your **This is normal** / **Watch again** choices made on the card in Home Assistant.
+- **Other integrations the agent watches:** which ones it restarted, could not bring back or saw come back.
+- **Alarm signals:** the **Alarm when** choices made on a card's row in Home Assistant and the hash of the signal policy the agent holds.
+- **The integrations Hauflo is installing here,** with the steps of each; the time zone, whether the owner's switch is off, which features this agent version has, and whether its alarm rules are known yet.
+
 **Guest access:** while a guest uses a link, the states of the lights, blinds and climates of the rooms in that link pass through Hauflo to the guest's browser, and the guest's IP address reaches the Hauflo server like any visitor's. Who the guest is is not recorded; the guest log stays in Home Assistant.
 
 **Never:** where people are, camera images or tokens, media, calendars, PIN codes (other than the HomeKit pairing code above), passwords, KNX Secure keys, backups, the history database.
@@ -169,7 +179,7 @@ Hauflo can ask only for what is on the agent's fixed list, and the agent edits s
 - hide Home Assistant's extra sidebar panels (Map, Energy, Logbook…) for everyday users (everyone but Home Assistant administrators — they keep the full menu unless **Administrators too** is on), with the **Clean up the menu** option;
 - copy its card files to `/config/www/hauflo`;
 - set up the KNX connection to an interface in the house, light groups, voice exposure and the Apple Home bridge;
-- set the room, the name and the dashboard block (a `hauflo_role_*` label) of another integration’s devices and entities, only as the integrator chose in **Set up** and only in a deploy plan. What opens the house (locks, alarm panels, valves, gates, garage doors), the KNX bus and phones are never moved to a room or given a block. Every first value is kept, and **Revert** restores it (what you changed yourself afterwards stays);
+- set the room, the name and the dashboard block (a `hauflo_role_*` label) of another integration’s devices and entities, only as the integrator chose in **Check › Devices** and only in a deploy plan. What opens the house (locks, alarm panels, valves, gates, garage doors), the KNX bus and phones are never moved to a room or given a block. Every first value is kept, and **Revert** restores it (what you changed yourself afterwards stays);
 - read states for monitoring and alarms;
 - send KNX commands only to the group address ranges you confirmed.
 
@@ -233,7 +243,7 @@ The home keeps working. It is plain Home Assistant with standard KNX devices. Th
 <details>
 <summary><b>Will Hauflo overwrite what I made by hand?</b></summary>
 
-No. Hauflo keeps a list of what it created and changes only that. The one exception is another integration’s devices that the integrator set up in **Set up** (room, name, block), and **Revert** undoes it. Your own entities, automations and dashboards stay as they are. If you edited something Hauflo made, it notices and keeps your edit.
+No. Hauflo keeps a list of what it created and changes only that. The one exception is another integration’s devices that the integrator set up in **Check › Devices** (room, name, block), and **Revert** undoes it. Your own entities, automations and dashboards stay as they are. If you edited something Hauflo made, it notices and keeps your edit.
 
 </details>
 
@@ -297,7 +307,7 @@ Winter or summer is chosen in the dashboard (**Settings**) or in Hauflo, not by 
 
 - **A Hauflo account is needed.** Without one the integration can't be set up.
 - **One agent per Home Assistant.** One Home Assistant serves one Hauflo project.
-- **The project file import is KNX only** (`.knxproj` or ETS CSV). In a house without KNX the rooms come from Home Assistant's areas (**Import from Home Assistant**). Devices of other integrations are not imported from a file: they are placed on the dashboard, and **Set up** assigns their rooms, names and blocks.
+- **The project file import is KNX only** (`.knxproj` or ETS CSV). In a house without KNX the rooms come from Home Assistant's areas (**Import from Home Assistant**). Devices of other integrations are not imported from a file: they are placed on the dashboard, and **Check › Devices** assigns their rooms, names and blocks.
 - **Home Assistant 2026.9 or newer.** The agent reads parts of Home Assistant’s KNX integration that are not a public API. If a new Home Assistant changes them, the agent switches off only those features and says which in **Repairs**.
 - **Hand-formatted `automations.yaml` / `scenes.yaml`** (comments, `!include`, `!secret`) are never rewritten, so the client’s own automations and scenes can’t be saved there until the file is plain.
 - **Dashboard resources in YAML mode** can’t be added by the agent. On removal (or **Make the site independent**) the cards are copied to `/config/www/hauflo` and Home Assistant shows a notification with the two lines to add to `configuration.yaml`.

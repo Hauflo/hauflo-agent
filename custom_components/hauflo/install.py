@@ -154,9 +154,12 @@ async def _loaded_version(hass: HomeAssistant, domain: str) -> str | None:
 
 async def _download(hass: HomeAssistant, it: dict[str, Any]) -> bytes:
     """The pinned asset, every hop of its redirects on GitHub's own hosts (https only), capped in size."""
-    url = CANON["download"].format(repo=it["repo"], version=it["version"], asset=it["asset"])
+    return await fetch(hass, CANON["download"].format(repo=it["repo"], version=it["version"], asset=it["asset"]), set(CANON["hosts"]))
+
+
+async def fetch(hass: HomeAssistant, url: str, hosts: set[str]) -> bytes:
+    """A file, every hop of its redirects on these hosts (https only), capped in size — install's and self_update's."""
     session = async_get_clientsession(hass)
-    hosts = set(CANON["hosts"])
     for _ in range(_MAX_REDIRECTS + 1):
         u = urlparse(url)
         if u.scheme != "https" or u.hostname not in hosts:

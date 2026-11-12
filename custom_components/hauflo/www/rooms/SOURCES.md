@@ -1,6 +1,6 @@
 # Room pictures
 
-87 files `<type>-<n>.webp`, 800×600, ≤80 KB each, converted (Pillow, WebP q50–80) from Unsplash photos: 10 utility types (shown by the name), 18 living types + the general set (offered, shown when chosen).
+87 files `<type>-<n>.webp`, 800×600, ≤80 KB each, converted (Pillow, WebP q50–80) from Unsplash photos: 10 utility types (shown by the name; Р61: + `technical` — «Сервис», «Техническое помещение», «Service» — reuses boiler-1, electrical-2, server-1, no new files), 18 living types + the general set (offered, shown when chosen).
 Licence: Unsplash License (https://unsplash.com/license) — free for commercial use, no attribution required, no permission needed.
 
 | file | Unsplash image id | KB |
@@ -92,3 +92,5 @@ Licence: Unsplash License (https://unsplash.com/license) — free for commercial
 | generic-1.webp | photo-1593696140826-c58b021acf8b | 34 |
 | generic-2.webp | photo-1649083048337-4aeb6dda80bb | 30 |
 | generic-3.webp | photo-1503174971373-b1f69850bded | 41 |
+
+The app's picker previews (160×120, ≤6 KB, one per file above) are made from these by `scripts/build-room-thumbs.py` into `frontend/public/rooms/`.

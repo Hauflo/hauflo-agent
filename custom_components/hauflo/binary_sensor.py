@@ -29,6 +29,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEnt
         engine.add_binary = add
         engine.binaries.clear()
         engine.sync_entities()
+    # «Сочетание состояний» (combos.py): one problem sensor per combination of the site's policy.
+    if (cb := getattr(entry.runtime_data, "combos", None)) is not None:
+        cb.add_binary = add
+        cb.entities.clear()
+        await cb.async_names()
+        cb.start()
 
 
 class HaufloLink(BinarySensorEntity):

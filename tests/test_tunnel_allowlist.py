@@ -3,13 +3,14 @@ Runs without Home Assistant installed: python3 agent/tests/test_tunnel_allowlist
 import ast, contextlib, glob, ipaddress, json, pathlib, re, sys, types
 src = open(pathlib.Path(__file__).parents[1] / "custom_components/hauflo/__init__.py").read()
 tree = ast.parse(src)
-HELPERS = ("_ws_allowed", "_ga_key", "_knx_listens", "_entry_domain", "_flow_handler", "_http_allowed", "_own_entity", "_own_device", "_owned_knx", "_forbidden", "_lan_host", "_flow_input_ok", "_unused_label", "_device_entities_owned", "_protected", "_sticky", "_class_protected", "_self_protected", "unknown_source", "_helper_links", "_option_refs", "_own_dashboard", "_alice_labels", "_homekit_step_ok", "_hauflo_entity", "_knx_writes", "_foreign_knx_writes", "_knx_config_ok", "_flow_step", "_platform", "_lovelace_ok", "_lovelace_refusal", "_area_lights_owned", "_image_ok", "_svg_ok", "_owned_knx_writes", "_owned_scene_sends", "_protected_writes", "_shown_protected", "_words", "_named_as", "_wrapped_source", "_label_ok", "_scrub_states", "_scrub_devices", "_scrub_entities", "_phone_ids", "_scrub_monitor", "_scrub_notes", "_ws_changes", "_http_changes", "_owns", "_area_floor_empty", "_foreign_holders", "_scrub_diagnostics", "_overlap_kind", "knx_data", "_knx_store", "_route", "_owned_entry", "_template_entities", "_rule_reads_ok", "_template_step_ok", "_switch_as_x_step_ok", "_theme_ok", "_foreign_device_placeable", "_foreign_entity_shown")
+HELPERS = ("_ws_allowed", "_ga_key", "_knx_listens", "_entry_domain", "_flow_handler", "_http_allowed", "_own_entity", "_own_device", "_owned_knx", "_forbidden", "_lan_host", "_flow_input_ok", "_unused_label", "_device_entities_owned", "_protected", "_sticky", "_class_protected", "_self_protected", "unknown_source", "_helper_links", "_option_refs", "_own_dashboard", "_alice_labels", "_homekit_step_ok", "_hauflo_entity", "_knx_writes", "_foreign_knx_writes", "_knx_config_ok", "_flow_step", "_platform", "_lovelace_ok", "_lovelace_refusal", "_lovelace_refusal_at", "_lovelace_prune", "_prune_at", "_first_entity", "_area_lights_owned", "_image_ok", "_svg_ok", "_owned_knx_writes", "_owned_scene_sends", "_protected_writes", "_shown_protected", "_words", "_named_as", "_wrapped_source", "_label_ok", "_scrub_states", "_scrub_devices", "_scrub_entities", "_phone_ids", "_scrub_monitor", "_scrub_notes", "_ws_changes", "_http_changes", "_owns", "_area_floor_empty", "_foreign_holders", "_scrub_diagnostics", "_overlap_kind", "knx_data", "_knx_store", "_route", "_owned_entry", "_template_entities", "_rule_reads_ok", "_template_step_ok", "_switch_as_x_step_ok", "_theme_ok", "_foreign_device_placeable", "_foreign_entity_shown")
 keep = [n for n in tree.body if (isinstance(n, ast.Assign) and any(getattr(t, "id", "").startswith("_") for t in n.targets)) or (isinstance(n, ast.FunctionDef) and n.name in HELPERS)]
 import logging
 sys.path.insert(0, str(pathlib.Path(__file__).parents[1] / "custom_components/hauflo"))
 from tunnel import TUNNEL  # noqa: E402 — plain Python, no HA
 from tuning import TUNING  # noqa: E402
-ns = {"theme": types.SimpleNamespace(names=lambda: {"Hauflo Atelier", "Hauflo Atelier · тёмная"}), "TUNNEL": TUNNEL, "TUNING": TUNING, "json": json, "re": re, "contextlib": contextlib, "ipaddress": ipaddress, "Any": object, "HomeAssistant": object, "logging": logging, "__name__": "agent", "DOMAIN": "hauflo", "degrade": lambda feature, err: None, "foreign": types.SimpleNamespace(wizard_refusal=lambda hass, msg: "no_plan", planned=lambda hass, msg: False, member_ok=lambda hass, eid: False, shown_ok=lambda hass, eid: False, shown_refusal=lambda hass, eid: "domain_not_allowed", MEMBER_DOMAINS=frozenset({"light", "cover"}), UNSAFE_NAME=re.compile("[\x00-\x1f\x7f-\x9f\u200e\u200f\u202a-\u202e\u2066-\u2069]"))}  # foreign.UNSAFE_NAME
+import copy
+ns = {"copy": copy, "theme": types.SimpleNamespace(names=lambda: {"Hauflo Atelier", "Hauflo Atelier · тёмная"}), "TUNNEL": TUNNEL, "TUNING": TUNING, "json": json, "re": re, "contextlib": contextlib, "ipaddress": ipaddress, "Any": object, "HomeAssistant": object, "logging": logging, "__name__": "agent", "DOMAIN": "hauflo", "degrade": lambda feature, err: None, "foreign": types.SimpleNamespace(device_entry_ids=lambda d: set(getattr(d, "config_entries", None) or ()), device_dict_entry_ids=lambda d: [x for x in d.get("config_entries") or [] if isinstance(x, str)], wizard_refusal=lambda hass, msg: "no_plan", planned=lambda hass, msg: False, member_ok=lambda hass, eid: False, shown_ok=lambda hass, eid: False, shown_refusal=lambda hass, eid: "domain_not_allowed", MEMBER_DOMAINS=frozenset({"light", "cover"}), UNSAFE_NAME=re.compile("[\x00-\x1f\x7f-\x9f\u200e\u200f\u202a-\u202e\u2066-\u2069]"))}  # foreign.UNSAFE_NAME
 # Compiled as the module is (`from __future__ import annotations`): annotations stay strings, so a name used only in
 # a signature (Callable, ConfigEntry…) needs no stub here — Python 3.13 evaluated them and the whole file failed to load.
 import __future__
@@ -486,7 +487,38 @@ def test_lovelace_refusal_says_what_and_where_k1():
     assert ns["_lovelace_ok"](hass, {"views": [{"sections": [{"cards": [door]}]}]}, {"u-hauflo"}, OWNED_ENTRIES)
 
 
+def test_one_refused_item_is_left_off_never_the_whole_dashboard_accept3b_6():
+    """Accept3b №6: a scene the agent judges protected (a gate's cover in it, the mark sticky) refused the whole
+    family's dashboard. The smallest item around each refusal is taken out and said; the rest passes the full check."""
+    prune = lambda cfg: ns["_lovelace_prune"](hass, cfg, {"u-hauflo"}, OWNED_ENTRIES)
+    ok = lambda cfg: ns["_lovelace_ok"](hass, cfg, {"u-hauflo"}, OWNED_ENTRIES)
+    room = {"type": "custom:hauflo-room", "rows": [{"scenes": [{"entity": "scene.hauflo_r1_evening"}]}, {"scenes": [{"entity": "lock.front"}, {"entity": "scene.hauflo_r1_evening"}]}]}
+    cfg = {"views": [{"title": "Дом", "sections": [{"cards": [{"type": "tile", "entity": "light.knx_1"}, room]}]}]}
+    assert not ok(cfg)
+    out, dropped = prune(cfg)
+    assert ok(out) and dropped == [{"entity": "lock.front", "why": "protected", "detail": "views[0].sections[0].cards[1].rows[1].scenes[0].entity: lock.front — protected, not shown by Hauflo"}]
+    # only the scene went: the room, its other row, the light — all there; the config sent is never changed
+    assert out["views"][0]["sections"][0]["cards"][1]["rows"] == [{"scenes": [{"entity": "scene.hauflo_r1_evening"}]}, {"scenes": [{"entity": "scene.hauflo_r1_evening"}]}]
+    assert out["views"][0]["sections"][0]["cards"][0] == {"type": "tile", "entity": "light.knx_1"}
+    assert len(cfg["views"][0]["sections"][0]["cards"][1]["rows"][1]["scenes"]) == 2
+    # analogs: another integration's entity, a card type, a service on the family's lamp — each its card, said
+    bad = {"views": [{"cards": [{"type": "tile", "entity": "light.hue_lamp"}, {"type": "custom:hauflo-x", "entity": "light.knx_1"}, {"type": "button", "entity": "light.knx_1", "tap_action": {"action": "perform-action", "perform_action": "light.toggle", "target": {"entity_id": "light.hue_lamp"}}}, {"type": "tile", "entity": "light.knx_1"}]}]}
+    out, dropped = prune(bad)
+    assert ok(out) and out["views"][0]["cards"] == [{"type": "tile", "entity": "light.knx_1"}]
+    assert [(d.get("entity"), d["why"]) for d in dropped] == [("light.hue_lamp", "not_hauflo"), ("light.knx_1", "refused"), ("light.hue_lamp", "refused")]
+    # a condition is never taken out alone (the card would show to everyone): the card around it goes
+    cond = {"views": [{"cards": [{"type": "conditional", "conditions": [{"entity": "lock.front", "state": "locked"}], "card": {"type": "tile", "entity": "light.knx_1"}}]}]}
+    out, dropped = prune(cond)
+    assert ok(out) and out["views"][0]["cards"] == [] and dropped[0]["entity"] == "lock.front"
+    # nothing smaller than the dashboard (a page's own path, the url): stays refused whole
+    for whole in ({"views": [{"path": "/config"}]}, {"views": [], "url_path": "family"}):
+        out, dropped = prune(whole)
+        assert not ok(out) and dropped == []
+    assert ns["_prune_at"](["views", 0, "cards", 2, "tap_action", "target", "entity_id", 0]) == 3
+
+
 if __name__ == "__main__":
+    test_one_refused_item_is_left_off_never_the_whole_dashboard_accept3b_6()
     test_allowlist()
     test_lovelace_service_targets_security_2810()
     test_lovelace_refusal_says_what_and_where_k1()

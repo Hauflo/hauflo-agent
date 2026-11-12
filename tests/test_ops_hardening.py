@@ -2,6 +2,7 @@
 owner must know, stores that survive a version change, a reload that leaves nothing doubled, big frames off the loop."""
 
 import asyncio
+import time
 import json
 from datetime import timedelta
 from types import SimpleNamespace
@@ -120,10 +121,10 @@ async def test_unlinked_in_hauflo_is_a_repairs_issue_and_welcome_clears_it(hass:
     agent = entry.runtime_data
     agent.session = _Session(_WS([], close_code=4003))
     task = hass.async_create_task(RUN(agent))
-    for _ in range(50):
-        await asyncio.sleep(0)
-        if _issue(hass, issues.UNLINKED):
-            break
+    # Up to 2 s, not a fixed number of loop turns: under a loaded CI box 50 turns were not enough (12.11 gate run).
+    deadline = time.monotonic() + 2
+    while not _issue(hass, issues.UNLINKED) and time.monotonic() < deadline:
+        await asyncio.sleep(0.01)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task

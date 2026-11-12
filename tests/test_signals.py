@@ -294,19 +294,74 @@ async def test_meaning_chosen_in_ha_applies_now_and_goes_to_the_site(hass: HomeA
     assert agent.status()["signalChoices"] == {}
 
 
-async def test_a_rule_naming_a_not_an_alarm_signal_is_said(hass: HomeAssistant, entry, hass_client):
-    """0.33 M6: «не авария» never silences an integrator's alarm rule naming the signal (notify.policy_overlay) — its
-    verdict says `rule`, so the card's editor never reads a bare «не авария» beside a red tile."""
+async def test_not_an_alarm_silences_the_rule_too(hass: HomeAssistant, entry, hass_client):
+    """0.34 (owner: «не авария» must silence the rule ringing for the signal, not only the signal): the site's «не авария»
+    excludes the entity everywhere — the rule keeps it as sent (the cloud's list stays whole: adoptKeptNotify would read a
+    dropped source as refused) but never rings, never counts it as watched, its open alarm ends; «по умолчанию» rings again.
+    A signal of a rule it still rings for says `rule` (0.33 M6)."""
     from custom_components.hauflo import notify
 
     agent = entry.runtime_data
     client = await hass_client()
-    _set(hass, "binary_sensor.zont", "on", device_class="problem", friendly_name="Zont")
+    _set(hass, "binary_sensor.zont", "off", device_class="problem", friendly_name="Zont")
     _set(hass, "binary_sensor.other", "off", device_class="problem", friendly_name="Other")
     assert agent.engine is not None
-    rule = {"id": "fault", "kind": "custom", "title": "Fault", "alarm_states": ["on"], "recipients": {"all": True}, "repeat_min": 0, "sources": ["binary_sensor.zont"], "picked": ["binary_sensor.zont"]}
-    agent.engine.config = notify._clean_rules({"lang": "ru", "rules": [rule]}, hass, agent.engine.owns)
-    await client.post("/api/hauflo/signals/choose", json={"entity": "binary_sensor.zont", "meaning": "none"})
+    rule = {"id": "fault", "kind": "custom", "title": "Fault", "alarm_states": ["on"], "recipients": {"all": True}, "repeat_min": 0, "hold_s": 0, "sources": ["binary_sensor.zont", "binary_sensor.other"], "picked": ["binary_sensor.zont", "binary_sensor.other"]}
+    await agent.engine.async_set({"lang": "ru", "rules": [rule]})
+    _set(hass, "binary_sensor.zont", "on", device_class="problem", friendly_name="Zont")
+    await hass.async_block_till_done()
+    assert "fault|binary_sensor.zont" in agent.engine.active
     v = agent.house()["_signals"]
-    assert v["binary_sensor.zont"]["house"] == "none" and v["binary_sensor.zont"]["rule"] is True
-    assert "rule" not in v["binary_sensor.other"]
+    assert v["binary_sensor.zont"]["rule"] is True and v["binary_sensor.other"]["rule"] is True
+    await client.post("/api/hauflo/signals/choose", json={"entity": "binary_sensor.zont", "meaning": "none"})
+    await hass.async_block_till_done()
+    r = agent.engine.config["rules"][0]
+    assert r["sources"] == ["binary_sensor.zont", "binary_sensor.other"] and r["policy"]["binary_sensor.zont"] == {"none": True}
+    assert notify.live_sources(r) == ["binary_sensor.other"]
+    assert "fault|binary_sensor.zont" not in agent.engine.active  # ended quietly
+    assert "binary_sensor.zont" not in agent.engine.watched()
+    assert not notify.in_alarm(r, hass.states.get("binary_sensor.zont"))
+    v = agent.house()["_signals"]
+    assert v["binary_sensor.zont"]["house"] == "none" and "rule" not in v["binary_sensor.zont"] and v["binary_sensor.other"]["rule"] is True
+    # Lost link of a «не авария» signal: no alarm either (not on «Всё хорошо», not in the counter).
+    _set(hass, "binary_sensor.zont", "unavailable", device_class="problem", friendly_name="Zont")
+    await hass.async_block_till_done()
+    assert "binary_sensor.zont" not in [f["entity"] for f in agent.house()["_faults"]]
+    assert not [k for k in agent.engine.active if k.endswith("binary_sensor.zont")]
+    # Back to «по умолчанию»: the rule rings by it again.
+    await client.post("/api/hauflo/signals/choose", json={"entity": "binary_sensor.zont", "meaning": "default"})
+    _set(hass, "binary_sensor.zont", "on", device_class="problem", friendly_name="Zont")
+    await hass.async_block_till_done()
+    assert "binary_sensor.zont" not in (agent.engine.config["rules"][0].get("policy") or {})
+    assert "fault|binary_sensor.zont" in agent.engine.active
+
+
+async def test_one_counter_everywhere(hass: HomeAssistant, entry, hass_client):
+    """0.34 п.2: the cards' GET /api/hauflo/alarms `_summary` and the status' `alarmsNow` (Hauflo's monitoring, the bot) are the
+    one counter — a rule's alarm and a house problem of another sensor, once each; «Не авария» takes one out of both."""
+    agent = entry.runtime_data
+    client = await hass_client()
+    _set(hass, "binary_sensor.leak", "off", device_class="moisture", friendly_name="Leak")
+    _set(hass, "binary_sensor.zont", "off", device_class="problem", friendly_name="Zont")
+    rule = {"id": "leak", "kind": "leak", "title": "Протечка", "priority": "critical", "alarm_states": ["on"], "recipients": {"all": True}, "repeat_min": 0, "hold_s": 0, "sources": ["binary_sensor.leak"], "picked": ["binary_sensor.leak"]}
+    await agent.engine.async_set({"lang": "ru", "rules": [rule]})
+    _set(hass, "binary_sensor.leak", "on", device_class="moisture", friendly_name="Leak")
+    _set(hass, "binary_sensor.zont", "on", device_class="problem", friendly_name="Zont")
+    await hass.async_block_till_done()
+    body = await (await client.get("/api/hauflo/alarms")).json()
+    s = body["_summary"]
+    assert (s["total"], s["critical"], s["normal"], s["acked"]) == (2, 1, 1, 0), s
+    assert [i["entity"] for i in s["items"]] == ["binary_sensor.leak", "binary_sensor.zont"]
+    assert s["items"][0]["keys"] == ["leak|binary_sensor.leak"] and s["items"][1]["source"] == "house"
+    st = agent.status()["alarmsNow"]
+    assert {k: st[k] for k in ("critical", "normal", "acked", "total")} == {k: s[k] for k in ("critical", "normal", "acked", "total")}
+    # Accepted: counted apart, still open.
+    await client.post("/api/hauflo/alarms", json={"ack": "leak|binary_sensor.leak"})
+    s = (await (await client.get("/api/hauflo/alarms")).json())["_summary"]
+    assert (s["total"], s["critical"], s["acked"]) == (2, 0, 1)
+    # «Не авария» for the fault: out of the counter and the house.
+    await client.post("/api/hauflo/signals/choose", json={"entity": "binary_sensor.zont", "meaning": "none"})
+    await hass.async_block_till_done()
+    s = (await (await client.get("/api/hauflo/alarms")).json())["_summary"]
+    assert [i["entity"] for i in s["items"]] == ["binary_sensor.leak"] and s["total"] == 1
+    assert agent.status()["alarmsNow"]["total"] == 1

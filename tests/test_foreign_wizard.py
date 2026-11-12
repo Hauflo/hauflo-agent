@@ -387,5 +387,74 @@ async def test_reads_the_wizard_needs(hass: HomeAssistant, house) -> None:
 
 
 async def test_the_agent_says_it_can(hass: HomeAssistant, house) -> None:
-    assert house["agent"].status()["features"] == ["foreign_wizard", "foreign_plan_id", "foreign_write_plan", "foreign_scene_members", "foreign_shown", "signals", "insights", "integration_watchdog", "install_integration", "intercom_setup", "foreign_locks"]
+    assert house["agent"].status()["features"] == ["foreign_wizard", "foreign_plan_id", "foreign_write_plan", "foreign_scene_members", "foreign_shown", "signals", "signals_mute", "signals_combos", "insights", "insight_switch", "integration_watchdog", "install_integration", "self_update", "intercom_setup", "foreign_locks", "exposure"]
     assert '"features": FEATURES' in inspect.getsource(hauflo.Agent.run)  # in the hello too
+
+
+async def test_device_rename_entities_follow(hass: HomeAssistant, hass_client, house) -> None:
+    """Р74: the device renamed (name_by_user) and an entity's own name dropped (null) in one deploy — the agent lets both
+    through, journals the own name for «Вернуть как было», and HA then composes «<device> <part>» for it and for the
+    entities that never had a name of their own (has_entity_name); a legacy entity is renamed by HA itself."""
+    agent, d, local = house["agent"], house["devices"], house["local"]
+    ents = er.async_get(hass)
+    battery = ents.async_get_or_create("sensor", "zha", "u-leak_batt2", suggested_object_id="leak_batt2", device_id=d["leak"], has_entity_name=True, original_name="Battery").entity_id
+    rssi = ents.async_get_or_create("sensor", "zha", "u-leak_rssi", suggested_object_id="leak_rssi", device_id=d["leak"], has_entity_name=True, original_name="RSSI").entity_id
+    legacy = ents.async_get_or_create("sensor", "zha", "u-leak_old", suggested_object_id="leak_old", device_id=d["leak"], has_entity_name=False, original_name="leak Signal").entity_id
+    ents.async_update_entity(battery, name="Батарейка (своё)")
+    plan = {**house["plan"], "entities": [*house["plan"]["entities"], battery, rssi, legacy]}
+    await _plan(hass, hass_client, plan)
+    send = Send(agent)
+    with Out(agent) as out, patch.object(hauflo.backup, "fresh", return_value=True):
+        await send(type=foreign.DEVICE_UPDATE, device_id=d["leak"], name_by_user="Протечка кухня")
+        await send(type=foreign.ENTITY_UPDATE, entity_id=battery, name=None)
+    assert _errors(out) == []
+    for s in local.sent:
+        _apply(hass, s)
+    full = lambda eid: er.async_get_full_entity_name(hass, ents.async_get(eid))
+    assert full(battery) == "Протечка кухня Battery"
+    assert full(rssi) == "Протечка кухня RSSI"
+    # HA's own rule for a name-less legacy entity: its name written «<new device> <rest>» on the user's rename.
+    assert ents.async_get(legacy).name == "Протечка кухня Signal"
+    j = foreign.flags(hass).journal
+    assert j[f"e:{ents.async_get(battery).id}"]["was"]["name"] == "Батарейка (своё)"
+
+
+async def test_out_of_the_project_room_goes_back_to_before_hauflo(hass: HomeAssistant, hass_client, house) -> None:
+    """Accept 4A Р66: «Без комнаты» (a device's area null) reaches HA — out of a project room only: back to the family's
+    area it stood in before Hauflo's first move (the journal's), else no area; a device in a family area never moves."""
+    agent, d, a, local = house["agent"], house["devices"], house["areas"], house["local"]
+    send = Send(agent)
+    devs = dr.async_get(hass)
+    # leak: in the family's room → Hauflo puts it in Kitchen → «Без комнаты» puts it back in the family's room.
+    await _plan(hass, hass_client, house["plan"])
+    with Out(agent) as out, patch.object(hauflo.backup, "fresh", return_value=True):
+        await send(type=foreign.DEVICE_UPDATE, device_id=d["leak"], area_id=a["Kitchen"])
+    assert _errors(out) == []
+    _apply(hass, local.sent[-1])
+    await _plan(hass, hass_client, house["plan"])
+    with Out(agent) as out, patch.object(hauflo.backup, "fresh", return_value=True):
+        await send(type=foreign.DEVICE_UPDATE, device_id=d["leak"], area_id=None)
+    assert _errors(out) == [] and local.sent[-1]["area_id"] == a["Family room"]
+    _apply(hass, local.sent[-1])
+    # hub: put in Kitchen by hand in HA (no journal) → no area at all.
+    devs.async_update_device(d["hub"], area_id=a["Kitchen"])
+    with Out(agent) as out, patch.object(hauflo.backup, "fresh", return_value=True):
+        await send(type=foreign.DEVICE_UPDATE, device_id=d["hub"], area_id=None)
+    assert _errors(out) == [] and local.sent[-1]["area_id"] is None and "device_id" in local.sent[-1]
+    # hub moved by Hauflo from Kitchen to Hall (both the project's): out of the rooms is no area, not back to Kitchen.
+    devs.async_update_device(d["hub"], area_id=a["Kitchen"])
+    foreign.flags(hass).journal.pop(f"d:{d['hub']}", None)
+    await _plan(hass, hass_client, house["plan"])
+    with Out(agent) as out, patch.object(hauflo.backup, "fresh", return_value=True):
+        await send(type=foreign.DEVICE_UPDATE, device_id=d["hub"], area_id=a["Hall"])
+    _apply(hass, local.sent[-1])
+    await _plan(hass, hass_client, house["plan"])
+    with Out(agent) as out, patch.object(hauflo.backup, "fresh", return_value=True):
+        await send(type=foreign.DEVICE_UPDATE, device_id=d["hub"], area_id=None)
+    assert _errors(out) == [] and local.sent[-1]["area_id"] is None
+    # In the family's room (not the project's): its null is refused — never Hauflo's to take out.
+    n = len(local.sent)
+    await _plan(hass, hass_client, house["plan"])
+    with Out(agent) as out, patch.object(hauflo.backup, "fresh", return_value=True):
+        await send(type=foreign.DEVICE_UPDATE, device_id=d["leak"], area_id=None)
+    assert _errors(out)[0]["message"] == "Hauflo agent: not allowed (area_not_in_plan)" and len(local.sent) == n

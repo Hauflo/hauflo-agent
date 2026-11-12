@@ -89,6 +89,25 @@ _DOOR_ID = re.compile(r"^[a-z0-9_]{1,64}$")
 _USER_KEY = re.compile(r"^[A-Za-z0-9_-]{1,16}$")
 
 
+def device_entry_ids(device: Any) -> set[str]:
+    """The config entries a device belongs to, on every HA the agent supports. HA 2026.x: one `config_entry_id` (the
+    `config_entries` set is a deprecated shim, logged on each read, gone in 2027.10); a restored composite device (an
+    old id of a split one) still answers `config_entries` with the union, unlogged; older HA: only `config_entries`."""
+    one = getattr(device, "config_entry_id", None)
+    if isinstance(one, str) and one and getattr(device, "is_composite_device", False) is not True:
+        return {one}
+    return {x for x in getattr(device, "config_entries", None) or () if isinstance(x, str)}
+
+
+def device_dict_entry_ids(d: dict[str, Any]) -> list[str]:
+    """The same for a device as `config/device_registry/list` sends it: `config_entry_id` first (the `config_entries`
+    list is kept there only until HA 2027.8)."""
+    one = d.get("config_entry_id")
+    if isinstance(one, str) and one:
+        return [one]
+    return [x for x in d.get("config_entries") or [] if isinstance(x, str)]
+
+
 class Flags:
     def __init__(self, hass: HomeAssistant) -> None:
         self.notify: dict[str, bool] = {}
@@ -402,7 +421,7 @@ def _device_refusal(hass: HomeAssistant, device_id: Any) -> str | None:
         return "unknown_device"
     if getattr(device, "entry_type", None) is not None:
         return "service_device"
-    domains = {e.domain for eid in device.config_entries if (e := hass.config_entries.async_get_entry(eid))}
+    domains = {e.domain for eid in device_entry_ids(device) if (e := hass.config_entries.async_get_entry(eid))}
     ents = er.async_entries_for_device(er.async_get(hass), device.id, include_disabled_entities=True)
     if (domains | {e.platform for e in ents}) & NEVER_PLATFORMS:
         return "platform_not_allowed"
@@ -522,7 +541,10 @@ def _refusal(hass: HomeAssistant | None, msg: dict[str, Any], plan: dict[str, An
             return "bad_hidden_by"
         if "name" in msg and not _name_ok(msg["name"]):
             return "bad_name"
-    if "area_id" in msg and (why := _area_refusal(hass, plan, msg["area_id"], _was(hass, msg, "area_id"), allow_none=not device)) is not None:
+    # A device's null: out of the project's room it stands in («Без комнаты», accept 4A Р66) — wizard_prepare puts it back
+    # where it stood before Hauflo; out of a family's area it never moves (that one is not Hauflo's to take).
+    out_of_room = device and msg.get("area_id", "") is None and _current(hass, msg).get("area_id") in plan["areas"]
+    if "area_id" in msg and (why := _area_refusal(hass, plan, msg["area_id"], _was(hass, msg, "area_id"), allow_none=not device or out_of_room)) is not None:
         return why
     if "labels" in msg and (why := _labels_ok(hass, msg["labels"])) is not None:
         return why
@@ -537,6 +559,13 @@ def wizard_prepare(hass: HomeAssistant, msg: dict[str, Any]) -> tuple[dict[str, 
     created: list[str] = []
     _why, pid = decide(hass, msg)
     out = {k: v for k, v in msg.items() if k != PLAN_KEY}  # the agent's own field: HA's schema takes no other
+    if msg.get("type") == DEVICE_UPDATE and "area_id" in msg and msg["area_id"] is None:
+        # «Без комнаты»: back to the family's area it stood in before Hauflo's first move (the journal's), if that area is
+        # still there and not one of the project's rooms; else no area.
+        was = _was(hass, msg, "area_id")
+        rooms = (active_plans(hass).get(pid) or {}).get("areas") or () if pid is not None else ()
+        if isinstance(was, str) and was not in rooms and ar.async_get(hass).async_get_area(was) is not None:
+            out["area_id"] = was
     if "labels" in msg:
         reg = lr.async_get(hass)
         for lid in dict.fromkeys(msg["labels"]):

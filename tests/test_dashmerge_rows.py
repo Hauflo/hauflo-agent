@@ -152,3 +152,86 @@ def test_the_tunnel_check_takes_rows_only_in_their_form():
     with patch.object(agent_mod, "_hauflo_entity", return_value=False), patch.object(agent_mod, "_shown_protected", return_value=False):
         assert not ok(None, cfg(items=[{"entity": "light.foreign"}]), set(), set())
         assert ok(None, cfg(items=[{"entity": "sensor.read_only"}]), set(), set())
+
+
+# Р78: a numeric row's regulator (view / min / max / step) — the integrator's like any key of his rows: kept on a re-apply
+# and under Hauflo's own change, taken by the tunnel only in its form (a view of the canon, finite numbers).
+REG_ROWS = {"items": [{"entity": "fan.supply", "view": "stepper", "min": 10, "max": 30, "step": 5}, {"entity": "number.damper", "view": "slider", "min": 2.5, "max": 7}]}
+
+
+def test_the_regulator_of_a_row_survives_a_re_apply_and_hauflos_change():
+    base = dash(area_card())
+    cur = copy.deepcopy(base)
+    area_of(cur).update(copy.deepcopy(REG_ROWS))
+    merged, plan = plan_and_merge(copy.deepcopy(base), cur, base)
+    assert area_of(merged)["items"] == REG_ROWS["items"]
+    assert plan["conflicts"] == [] and plan["lost"] == 0
+    merged, _ = plan_and_merge(dash(area_card(others=False, block="readings")), cur, base)
+    assert area_of(merged)["items"] == REG_ROWS["items"] and area_of(merged)["block"] == "readings"
+
+
+def test_the_tunnel_takes_the_regulator_only_in_its_form():
+    ok = agent_mod._lovelace_ok
+
+    def cfg(row):
+        return dash({**area_card(), "items": [{"entity": "fan.supply", **row}]})
+
+    with patch.object(agent_mod, "_hauflo_entity", return_value=True):
+        assert ok(None, dash({**area_card(), **REG_ROWS}), set(), set())
+        for view in ("auto", "stepper", "slider", "buttons"):
+            assert ok(None, cfg({"view": view}), set(), set()), view
+        assert ok(None, cfg({"min": 0, "max": 100.0, "step": 0.5}), set(), set())
+        for row in ({"view": "knob"}, {"view": 1}, {"min": "10"}, {"max": True}, {"step": float("nan")}, {"min": float("inf")}, {"max": 1e12}, {"step": None}):
+            assert not ok(None, cfg(row), set(), set()), row
+
+
+class _State:
+    def __init__(self, attributes):
+        self.attributes = attributes
+
+
+class _Hass:
+    """Only `states.get` — the regulator's device range."""
+
+    def __init__(self, states):
+        self.states = self
+        self._s = states
+
+    def get(self, entity_id):
+        return self._s.get(entity_id)
+
+
+def test_the_tunnel_refuses_a_regulator_out_of_sense_with_its_code():
+    """Р78 accept 4A: min ≥ max, a step ≤ 0, a step over max − min, a bound outside the device's range — refused with the
+    code the deploy shows the integrator (`<entity> regulator <code>`), the same rules as the card editor's regProblems."""
+    why = agent_mod._lovelace_refusal
+
+    def cfg(row, eid="fan.supply"):
+        return dash({**area_card(), "items": [{"entity": eid, **row}]})
+
+    hass = _Hass({
+        "fan.supply": _State({"supported_features": 1, "percentage": 20}),
+        "fan.onoff": _State({"supported_features": 0}),
+        "light.l": _State({"supported_color_modes": ["brightness"]}),
+        "number.d": _State({"min": 1, "max": 10, "step": 1}),
+    })
+    with patch.object(agent_mod, "_hauflo_entity", return_value=True):
+        for row, code in (
+            ({"min": 30, "max": 10}, "reg_min_max"),
+            ({"min": 30, "max": 30}, "reg_min_max"),
+            ({"min": 10, "max": 30, "step": 0}, "reg_step"),
+            ({"min": 10, "max": 30, "step": -5}, "reg_step"),
+            ({"min": 10, "max": 30, "step": 25}, "reg_step_range"),
+            ({"min": 10, "max": 300}, "reg_out_of_range"),
+            ({"min": -1}, "reg_out_of_range"),
+            ({"step": 150}, "reg_step_range"),
+        ):
+            got = why(hass, cfg(row), set(), set())
+            assert got and got.endswith(f"fan.supply regulator {code}"), (row, got)
+        assert "light.l regulator reg_out_of_range" in why(hass, cfg({"min": 0}, "light.l"), set(), set())
+        assert "number.d regulator reg_out_of_range" in why(hass, cfg({"max": 11}, "number.d"), set(), set())
+        # In sense — taken; no device range known (no state, no regulator feature) — only min / max / step among themselves.
+        for row, eid in (({"min": 10, "max": 30, "step": 5}, "fan.supply"), ({"min": 2, "max": 5}, "number.d"), ({"min": 500, "max": 900}, "fan.onoff"), ({"min": 500}, "fan.gone"), ({"view": "stepper"}, "fan.supply")):
+            assert why(hass, cfg(row, eid), set(), set()) is None, (row, eid)
+        assert "fan.gone regulator reg_min_max" in why(hass, cfg({"min": 9, "max": 1}, "fan.gone"), set(), set())
+        assert "regulator reg_step" in why(None, cfg({"step": 0}), set(), set()), "no hass: the step still checked"

@@ -361,6 +361,10 @@ class PairEffect(Detector):
 
     # --- the judgement ------------------------------------------------------------------------------------------------
 
+    def warm(self, now: float) -> None:
+        """The pairs are the mapping's, never saved: found at once when switched on again (insight.Detector.warm)."""
+        self._refresh(now)
+
     def tick(self, now: float) -> None:
         self._refresh(now)
         self._sample(now)

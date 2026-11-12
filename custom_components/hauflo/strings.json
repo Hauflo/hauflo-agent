@@ -126,6 +126,9 @@
       },
       "rule": {
         "name": "Rule active · {name}"
+      },
+      "combo": {
+        "name": "Combination · {name}"
       }
     },
     "sensor": {
@@ -472,7 +475,7 @@
       "message": "Condition “{kind}” is not filled in right."
     },
     "rules_bad_action": {
-      "message": "Action “{do}” doesn't fit {entity}."
+      "message": "Action “{do}” doesn't fit “{entity}”."
     },
     "rules_bad_action_value": {
       "message": "Value of “{do}”: {lo}–{hi}."
@@ -484,10 +487,10 @@
       "message": "Notification text: up to {n} printable characters."
     },
     "rules_client_action": {
-      "message": "You can use: lights, blinds, a scene, “notify me”."
+      "message": "Allowed: lights, covers, a scene, buttons, a list choice, a number, “notify me”."
     },
     "rules_target_not_allowed": {
-      "message": "{entity}: Hauflo's devices only; never locks, the alarm, gates or opening a valve."
+      "message": "“{entity}”: Hauflo's devices only, not its service ones; never locks, the alarm, gates or opening a valve."
     },
     "rules_bad_purpose": {
       "message": "This purpose doesn't fit."
@@ -515,6 +518,18 @@
     },
     "rules_limit_rules": {
       "message": "At most {n} rules at a site."
+    },
+    "rules_limit_bus_reads": {
+      "message": "At most {n} “read after a command” rules at a site."
+    },
+    "rules_bus_read_gas": {
+      "message": "Group addresses: 1 to {n}."
+    },
+    "rules_bus_read_ga": {
+      "message": "Not a KNX group address: {ga} (1/2/3, 1/234 or a number)."
+    },
+    "rules_bus_read_delay": {
+      "message": "Read after: {lo} to {hi} s."
     },
     "rules_limit_derived": {
       "message": "At most {n} derived values."
@@ -1097,6 +1112,153 @@
     },
     "intercom_open_no_rights": {
       "message": "No rights to open this door"
+    },
+    "rules_bad_option": {
+      "message": "For “{do}” pick one of: {options}."
+    },
+    "rules_bad_action_format": {
+      "message": "The “{do}” value has a wrong format."
+    },
+    "rules_bad_schedule": {
+      "message": "Schedule: 1 to {n} moments (a time or sunrise/sunset) and at least one day."
+    },
+    "rules_bad_sun_offset": {
+      "message": "Sunrise/sunset offset: {lo} to {hi} min."
+    },
+    "rules_pulse_min_on": {
+      "message": "A pulse can't be shorter than {n} s for this purpose."
+    },
+    "rules_explain_scheduled": {
+      "message": "Waiting for {next}."
+    },
+    "rules_explain_no_next": {
+      "message": "No runs in the coming days."
+    },
+    "rules_explain_last_fired": {
+      "message": "Last fired at {time}."
+    },
+    "rules_explain_last_skipped": {
+      "message": "Did not fire at {time}: the “only if” condition was not met."
+    },
+    "rules_explain_last_missed": {
+      "message": "{time} was missed: the service was off at that time."
+    },
+    "rules_logbook_fired": {
+      "message": "Fired on schedule ({time})."
+    },
+    "rules_preview_schedule": {
+      "message": "Next run: {next}."
+    },
+    "rules_preview_no_next": {
+      "message": "No runs in the coming days — check the days and sunrise/sunset."
+    },
+    "rules_recipe_schedule_ventilation": {
+      "message": "Ventilation on a schedule"
+    },
+    "rules_recipe_sunset_light": {
+      "message": "Light at sunset"
+    },
+    "rules_recipe_night_covers": {
+      "message": "Covers at night"
+    },
+    "rules_recipe_morning_heating": {
+      "message": "Weekday morning warm-up"
+    },
+    "rules_recipe_night_setback": {
+      "message": "Night setback"
+    },
+    "rules_do_brightness": {
+      "message": "Brightness"
+    },
+    "rules_do_close": {
+      "message": "Close"
+    },
+    "rules_do_date": {
+      "message": "Set date"
+    },
+    "rules_do_datetime": {
+      "message": "Set date and time"
+    },
+    "rules_do_fan_mode": {
+      "message": "Fan mode"
+    },
+    "rules_do_humidity": {
+      "message": "Humidity"
+    },
+    "rules_do_message": {
+      "message": "Send a message"
+    },
+    "rules_do_mode": {
+      "message": "Mode"
+    },
+    "rules_do_off": {
+      "message": "Switch off"
+    },
+    "rules_do_on": {
+      "message": "Switch on"
+    },
+    "rules_do_open": {
+      "message": "Open"
+    },
+    "rules_do_operation": {
+      "message": "Operation mode"
+    },
+    "rules_do_option": {
+      "message": "Choose in the list"
+    },
+    "rules_do_pause": {
+      "message": "Pause"
+    },
+    "rules_do_play": {
+      "message": "Play"
+    },
+    "rules_do_position": {
+      "message": "Position"
+    },
+    "rules_do_preset": {
+      "message": "Preset"
+    },
+    "rules_do_press": {
+      "message": "Press"
+    },
+    "rules_do_pulse": {
+      "message": "Pulse"
+    },
+    "rules_do_run": {
+      "message": "Run"
+    },
+    "rules_do_scene": {
+      "message": "Scene"
+    },
+    "rules_do_setpoint": {
+      "message": "Setpoint"
+    },
+    "rules_do_source": {
+      "message": "Source"
+    },
+    "rules_do_speed": {
+      "message": "Fan speed"
+    },
+    "rules_do_stop": {
+      "message": "Stop"
+    },
+    "rules_do_text": {
+      "message": "Set text"
+    },
+    "rules_do_tilt": {
+      "message": "Slat tilt"
+    },
+    "rules_do_time": {
+      "message": "Set time"
+    },
+    "rules_do_toggle": {
+      "message": "Toggle"
+    },
+    "rules_do_value": {
+      "message": "Set a number"
+    },
+    "rules_do_volume": {
+      "message": "Volume"
     }
   },
   "selector": {
@@ -1319,6 +1481,20 @@
         "doorbird": "DoorBird — per the maker's documentation",
         "grandstream": "Grandstream GDS — per the maker's documentation",
         "generic": "Other panel (standard SIP)"
+      }
+    },
+    "hauflo_label": {
+      "options": {
+        "protected": "Hauflo · protected",
+        "service": "Hauflo · service",
+        "client": "Hauflo · for the client"
+      }
+    },
+    "hauflo_label_text": {
+      "options": {
+        "protected": "Opens the house or stops its protection (a lock, a gate, the alarm, a valve): never given to voice or scenes. The Hauflo agent puts this label on and takes it off.",
+        "service": "Service: works in the house, not on the client's screens. The Hauflo agent puts this label on and takes it off.",
+        "client": "On the client's panel. The Hauflo agent puts this label on and takes it off."
       }
     }
   },

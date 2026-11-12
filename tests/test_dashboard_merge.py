@@ -433,10 +433,11 @@ async def test_foreign_card_from_the_cloud_is_refused(hass: HomeAssistant, entry
     t = _Tunnel(agent, dash)
     evil = hauflo()
     cards_of(evil, 0, 0).append({"type": "tile", "entity": "lock.front_door", ID: "v/x"})
-    for typ in (dashmerge.SAVE, dashmerge.PLAN):
+    # accept3b №6: the refused card is left off and said — never on HA's dashboard, never the whole dashboard refused
+    for typ in (dashmerge.PLAN, dashmerge.SAVE):
         r = await t.send({"id": 1, "type": typ, "url_path": "hauflo-home", "config": evil, "replace": True}, owned_ok=False)
-        assert not r["success"] and r["error"]["code"] == "not_allowed", typ
-    assert dash.config == hauflo() and dash.saves == 0
+        assert r["success"] and r["result"]["dropped"] == [{"entity": "lock.front_door", "why": "protected"}], typ
+    assert dash.config == hauflo() and "lock.front_door" not in json.dumps(dash.config)  # the rest is what HA has: nothing to write
     # Not a Hauflo dashboard, a copy, a bad id: refused too.
     for url, cfg in (("lovelace", hauflo()), ("hauflo-home-copy-202610280400", hauflo()), ("hauflo-home", {"views": [{"title": "x", ID: "a\nb"}]})):
         r = await t.send({"id": 1, "type": dashmerge.SAVE, "url_path": url, "config": cfg, "replace": True})

@@ -34,22 +34,40 @@ LIVING = {
 
 
 def test_every_type_has_three_real_small_files() -> None:
-    assert len(rp.TYPES) == 29 and rp.FALLBACK["id"] == "generic" and not rp.FALLBACK["match"]
+    assert len(rp.TYPES) == 30 and rp.FALLBACK["id"] == "generic" and not rp.FALLBACK["match"]
     total = 0
     for kind in rp.TYPES:
         assert len(kind["files"]) == 3 and kind["icon"].startswith("mdi:")
+        assert kind["label"]["ru"] and kind["label"]["en"] and kind["label"]["ru"] != kind["label"]["en"]
         for f in kind["files"]:
             size = (WWW / f).stat().st_size
             assert 0 < size <= 80 * 1024, f
             total += size
     assert total <= 5 * 1024 * 1024
-    assert [t["auto"] for t in rp.TYPES] == [True] * 10 + [False] * 19
+    assert [t["auto"] for t in rp.TYPES] == [True] * 11 + [False] * 19
 
 
 @pytest.mark.parametrize("name,kind", NAMES.items())
 def test_kind_by_name(name: str, kind: str) -> None:
     assert rp.kind_of(name)["id"] == kind
     assert rp.default_picture(name) == f"/hauflo_static/rooms/{kind}-1.webp"
+
+
+# Р61 (owner 12.11, 399): «Сервис» / a technical room — a utility type of its own, shown by itself; a technical *zone* stays
+# none (a zone, not a room: roomIcons TECH_ZONE).
+TECHNICAL = ["Сервис", "Сервисная", "Служебное помещение", "Техническое помещение", "Тех. помещение", "Техпомещение",
+             "Инженерная", "Technical room", "Utility", "Service", "Plant room"]
+
+
+@pytest.mark.parametrize("name", TECHNICAL)
+def test_technical_room(name: str) -> None:
+    assert rp.kind_of(name)["id"] == "technical"
+    assert rp.default_picture(name) == "/hauflo_static/rooms/boiler-1.webp"
+
+
+@pytest.mark.parametrize("name", ["Тех зона 1", "Техническая зона", "Tech zone"])
+def test_technical_zone_is_not_a_room(name: str) -> None:
+    assert rp.kind_of(name) is None
 
 
 @pytest.mark.parametrize("name,kind", LIVING.items())

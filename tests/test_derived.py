@@ -204,12 +204,12 @@ async def test_rule_on_a_derived_value_and_its_safe_state(hass: HomeAssistant, h
     # The chain is checked through the value: a thermostat that is a source of the rule's input is never its target.
     er.async_get(hass).async_get_or_create("climate", "knx", "u-room", suggested_object_id="room")
     entry.runtime_data.owned.add("u-room")
-    hass.states.async_set("climate.room", "heat", {"current_temperature": 21, "temperature": 21})
+    hass.states.async_set("climate.room", "heat", {"current_temperature": 21, "temperature": 21, "supported_features": 1})
     await client.post(URL, json={"op": "derived_save", "derived": {"id": "rm", "kind": "min", "name": "Мин комната", "sources": ["climate.room", T]}})
     assert engine.derived_sources("sensor.hauflo_value_min_komnata") == ["climate.room", T]
     loop = {**rule, "id": "loop", "name": "Петля", "input": {"entity_id": "sensor.hauflo_value_min_komnata"}, "actions": [{"do": "setpoint", "entity_id": "climate.room", "value": 19}]}
     got = await (await client.post(URL, json={"op": "save", "rule": loop})).json()
-    assert got["code"] == "loop" and "climate.room" in got["message"]
+    assert got["code"] == "loop" and "climate.room" not in got["message"] and "room" in got["message"]  # the device by its name
     # A source stops answering: the derived value is unavailable → the rule's input fault (Repairs), never the old value.
     hass.states.async_set(RH, "unavailable")
     await hass.async_block_till_done()

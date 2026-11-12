@@ -56,6 +56,16 @@ def alarm_hold(rule: dict[str, Any]) -> int:
     return max(HOLD, hold)
 
 
+def alarm_groups(rule: dict[str, Any], sources: list[str]) -> list[tuple[list[str], int]]:
+    """The sources by their `for:` — the rule's (alarm_hold); one that holds its time itself (a combination's T —
+    notify.own_holds, the rule's `holds`) its own, never under HOLD. In the rule's order, one trigger per hold."""
+    own = rule.get("holds") or {}
+    by: dict[int, list[str]] = {}
+    for eid in sources:
+        by.setdefault(max(HOLD, int(own[eid])) if eid in own else alarm_hold(rule), []).append(eid)
+    return [(eids, s) for s, eids in by.items()]
+
+
 def back_after(rule: dict[str, Any]) -> int:
     """Seconds a source stays in normal before the rule's «back» (its chatter window, at least HOLD — ISA-18.2 / Nagios
     flap hysteresis on the return; HA's own `for:`). In alarm again sooner (or after a radio blip of no data as short):
@@ -201,7 +211,7 @@ def automation_for(rule: dict[str, Any], phones: list[dict[str, Any]], t: dict[s
     link = rule.get("kind") in LINK_KINDS
     back_s = back_after(rule)
     # A link sensor's «off» means something only after it was seen «on» (never from no data, nor at HA's start).
-    alarm = {"trigger": "state", "entity_id": sources, "to": states, **({"not_from": NO_DATA} if link else {}), "for": {"seconds": alarm_hold(rule)}, "id": "alarm"}
+    alarm = [{"trigger": "state", "entity_id": eids, "to": states, **({"not_from": NO_DATA} if link else {}), "for": {"seconds": s}, "id": "alarm"} for eids, s in alarm_groups(rule, sources)]
     # Normal from alarm or from no data (HA M-5: alarm → unavailable → normal ends it too), held the back window.
     back = {"trigger": "state", "entity_id": sources, "from": states + NO_DATA, "not_to": states + NO_DATA, "for": {"seconds": back_s}, "id": "back"}
     # Told: a new alarm (none open), or — while one is open (another source of the rule, or a «back» HA's restart lost) —
@@ -212,7 +222,7 @@ def automation_for(rule: dict[str, Any], phones: list[dict[str, Any]], t: dict[s
     told = [*([{"condition": "template", "value_template": "{{ trigger.from_state is not none }}"}] if link else []),
             {"condition": "or", "conditions": [_is(opn, "off"), {"condition": "template", "value_template": fresh}]}]
     still = {"condition": "state", "entity_id": sources, "state": states, "match": "any"}
-    return _automation(rule, phones, t, ack, opn, names, triggers=[alarm, back], told=told, still=still, alarmed=_ALARMED, names_tpl=_NAMES,
+    return _automation(rule, phones, t, ack, opn, names, triggers=[*alarm, back], told=told, still=still, alarmed=_ALARMED, names_tpl=_NAMES,
                        variables={"sources": sources, "alarm_states": states, "ack": ack})
 
 
@@ -230,7 +240,7 @@ def level_automation_for(rule: dict[str, Any], phones: list[dict[str, Any]], t: 
     if len(shapes) == 1 and not signals:
         way, value, step = next(iter(shapes))
         other = "above" if way == "below" else "below"
-        alarm = {"trigger": "numeric_state", "entity_id": sources, way: value, "for": held, "id": "alarm"}
+        alarm = [{"trigger": "numeric_state", "entity_id": sources, way: value, "for": held, "id": "alarm"}]
         back = {"trigger": "numeric_state", "entity_id": sources, other: value + step if way == "below" else value - step, "for": hold, "id": "back"}
     else:
         def margin(step: str) -> str:
@@ -238,7 +248,7 @@ def level_automation_for(rule: dict[str, Any], phones: list[dict[str, Any]], t: 
                     "{%- if th -%}{%- if v is none -%}unknown{%- elif th.below is defined -%}{{ v - th.below" + step + " }}{%- else -%}{{ th.above - v" + step + " }}{%- endif -%}"
                     "{%- elif state.state in ['unavailable', 'unknown'] -%}unknown{%- else -%}{{ -1 if state.state in alarm_states else 1 }}{%- endif -%}")
 
-        alarm = {"trigger": "numeric_state", "entity_id": sources, "value_template": margin(""), "below": 0, "for": held, "id": "alarm"}
+        alarm = [{"trigger": "numeric_state", "entity_id": eids, "value_template": margin(""), "below": 0, "for": {"seconds": s}, "id": "alarm"} for eids, s in alarm_groups(rule, sources)]
         back = {"trigger": "numeric_state", "entity_id": sources, "value_template": margin(" - th.step"), "above": 0, "for": hold, "id": "back"}
     back_s = back_after(rule)
     # Told: a new alarm (none open), or — while one is open — a level that was back past its step (a value inside the
@@ -250,7 +260,7 @@ def level_automation_for(rule: dict[str, Any], phones: list[dict[str, Any]], t: 
              "{%- elif th or f.state in " + repr(NO_DATA) + " or f.state not in alarm_states -%}{{ " + _gap(back_s) + " }}{%- else -%}{{ false }}{%- endif -%}")
     told = [{"condition": "or", "conditions": [_is(opn, "off"), {"condition": "template", "value_template": fresh}]}]
     still = {"condition": "template", "value_template": _LEVELS_ON + "{{ ns.o | count > 0 }}"}
-    return _automation(rule, phones, t, ack, opn, names, triggers=[alarm, back], told=told, still=still, alarmed=_LEVELS_ALARMED, names_tpl=_LEVEL_NAMES,
+    return _automation(rule, phones, t, ack, opn, names, triggers=[*alarm, back], told=told, still=still, alarmed=_LEVELS_ALARMED, names_tpl=_LEVEL_NAMES,
                        variables={"sources": sources, "alarm_states": states, "ack": ack, "levels": levels})
 
 

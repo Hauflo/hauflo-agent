@@ -64,6 +64,10 @@ ROOT = "\x00root"
 # A view for HA's administrators (owner 04.11 п.21: the «Сервис» floor): the cloud says this marker, the agent puts the
 # admins' user ids in here, in the house — and a read through the tunnel says the marker again (no user ids leave it).
 ADMINS = "hauflo:admins"
+# One HA user by name (Р77б, owner 13.11: the page «Служебное» for the people the integrator ticks — the client is often an
+# administrator himself): the cloud knows the names only (`haAdmins`), the agent adds those users' ids beside the marker in
+# the house; a read for the cloud drops them again. A name nobody has: the marker alone — a list no user matches.
+USER_MARKER = "hauflo:user:"
 _MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
 
@@ -1367,6 +1371,11 @@ def edited_where(seen: Any, base: Any, limit: int = 5) -> list[dict[str, Any]]:
     return out
 
 
+def _digest(config: Any) -> str:
+    """A dashboard's config as one short string: the same config, the same digest, whatever order its keys come in."""
+    return hashlib.sha256(json.dumps(config, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()
+
+
 def plan_and_merge(new: dict[str, Any], current: Any, base: dict[str, Any] | None, take: Any = (), restore: Any = ()) -> tuple[dict[str, Any], dict[str, Any]]:
     """(the config to save, what the plan says). No base: Hauflo's config as it is, nothing known about HA's."""
     new = ensure_ids(copy.deepcopy(new))
@@ -1437,6 +1446,44 @@ def collapse_admins(cfg: Any, ids: list[str]) -> Any:
         if key == "users" and set(v) == admins and len(v) == len(admins):
             return [ADMINS]
         return v
+
+    return _walk_admins(cfg, fix)
+
+
+def _marked_names(v: list[Any], key: str) -> set[str]:
+    raw = [x.get("user") for x in v if isinstance(x, dict)] if key == "visible" else list(v)
+    return {x[len(USER_MARKER):] for x in raw if isinstance(x, str) and x.startswith(USER_MARKER)}
+
+
+def expand_users(cfg: Any, users: list[tuple[str, str]]) -> Any:
+    """`users` — (id, name) of HA's active people. A list with markers ({user: USER_MARKER + name}, a card's
+    `users: [USER_MARKER + name]`) keeps them and gets the ids of the people of those names (all of them, if two share a
+    name); a name nobody has adds nothing — the list then shows the page to nobody (seen in edit mode only)."""
+
+    def fix(key: str, v: list[Any]) -> list[Any]:
+        names = _marked_names(v, key)
+        if not names:
+            return v
+        have = {x.get("user") for x in v if isinstance(x, dict)} if key == "visible" else set(v)
+        ids = [i for i, n in users if n in names and i not in have]
+        ids = list(dict.fromkeys(ids))
+        return v + ([{"user": i} for i in ids] if key == "visible" else ids)
+
+    return _walk_admins(cfg, fix)
+
+
+def collapse_users(cfg: Any, users: list[tuple[str, str]]) -> Any:
+    """A read for the cloud: a list with markers loses the ids of the people of those names — exactly what expand_users
+    added; a list without markers (the integrator's own choice) is never touched."""
+
+    def fix(key: str, v: list[Any]) -> list[Any]:
+        names = _marked_names(v, key)
+        if not names:
+            return v
+        ids = {i for i, n in users if n in names}
+        if key == "visible":
+            return [x for x in v if not (isinstance(x, dict) and set(x) == {"user"} and x["user"] in ids)]
+        return [x for x in v if x not in ids]
 
     return _walk_admins(cfg, fix)
 
@@ -1566,6 +1613,9 @@ class DashboardMerge:
         # url → the copies of it the agent made itself, oldest first: only these are ever pruned.
         self.copies: dict[str, list[str]] = {}
         self.taken_copies: set[str] = set()  # of those, the ones made before a take-save
+        # url → a digest of the dashboard as the agent last left it in HA (Р33): HA still showing exactly that is no edit
+        # of the integrator's since — no copy kept of it again.
+        self.written: dict[str, str] = {}
         self.key: bytes = b""
         # Who sees which page (guest.py sets it: guests with a login); None — no guest module, nothing expanded.
         self.access_of: Callable[[], Any] | None = None
@@ -1623,7 +1673,8 @@ class DashboardMerge:
                 if not isinstance(v, dict) or not isinstance(v.get("path"), str) or not v["path"] or v.get("visible") is False:
                     continue
                 vis = v.get("visible")
-                users = [x.get("user") for x in vis if isinstance(x, dict)] if isinstance(vis, list) else []
+                # The cloud's markers are no people: a page for ticked administrators is an administrators' page.
+                users = [u for u in (x.get("user") for x in vis if isinstance(x, dict)) if not (isinstance(u, str) and u.startswith("hauflo:"))] if isinstance(vis, list) else []
                 title = v.get("title") if isinstance(v.get("title"), str) and v.get("title") else v["path"]
                 views.append({"path": v["path"], "title": title, "admin": bool(users) and all(u in admins for u in users), "sub": bool(v.get("subview"))})
             if views:
@@ -1640,6 +1691,8 @@ class DashboardMerge:
         self.copies = {k: [x for x in v if isinstance(x, str)] for k, v in copies.items() if isinstance(v, list)} if isinstance(copies, dict) else {}
         taken = meta.get("taken")
         self.taken_copies = {x for x in taken if isinstance(x, str)} if isinstance(taken, list) else set()
+        written = meta.get("written")
+        self.written = {k: v for k, v in written.items() if isinstance(k, str) and isinstance(v, str)} if isinstance(written, dict) else {}
         key = meta.get("key")
         if not (isinstance(key, str) and len(key) == 64):
             key = secrets.token_hex(32)
@@ -1647,7 +1700,11 @@ class DashboardMerge:
         self.key = bytes.fromhex(key)
 
     async def _save_meta(self, key: str | None = None) -> None:
-        await self.meta_store.async_save({"copies": self.copies, "taken": sorted(self.taken_copies), "key": key or self.key.hex()})
+        await self.meta_store.async_save({"copies": self.copies, "taken": sorted(self.taken_copies), "written": self.written, "key": key or self.key.hex()})
+
+    def unchanged(self, url_path: str, raw: Any) -> bool:
+        """HA's dashboard is exactly what the agent left there last (Р33) — nothing edited in HA since."""
+        return raw is not None and self.written.get(url_path) == _digest(raw)
 
     def manages(self, url_path: Any) -> bool:
         return isinstance(url_path, str) and url_path in self.bases
@@ -1677,7 +1734,7 @@ class DashboardMerge:
         if current is None:
             raise MergeError("config_not_found", "no config yet")
         plain = self._plain(current, await self._access())
-        return collapse_admins(redact(plain, self.bases[url_path], self.key), await self._admin_ids())
+        return collapse_users(collapse_admins(redact(plain, self.bases[url_path], self.key), await self._admin_ids()), await self._users())
 
     async def _admin_ids(self) -> list[str]:
         """HA's administrators (active people, not HA's own system users), read here — never sent to the cloud."""
@@ -1687,13 +1744,25 @@ class DashboardMerge:
             return []
         return sorted(u.id for u in users if u.is_admin and u.is_active and not u.system_generated)
 
+    async def _users(self) -> list[tuple[str, str]]:
+        """(id, name) of HA's active people (not HA's own system users) — the names the page «Служебное» is for."""
+        try:
+            users = await self.hass.auth.async_get_users()
+        except Exception:  # noqa: BLE001 — not knowable: the markers stay alone (edit mode only)
+            return []
+        return sorted((u.id, u.name) for u in users if u.is_active and not u.system_generated and isinstance(u.name, str) and u.name)
+
+    async def _expand(self, config: dict[str, Any]) -> Any:
+        """The cloud's markers → this house's people: HA's administrators, the users ticked by name."""
+        return expand_users(expand_admins(ensure_ids(copy.deepcopy(config)), await self._admin_ids()), await self._users())
+
     async def plan(self, url_path: str, config: dict[str, Any]) -> dict[str, Any]:
         exists, current = await self._current(url_path)
         if not exists:
             return {"base": False, "exists": False}
         current = self._plain(current, await self._access())
         base = self.bases.get(url_path) if current is not None else None
-        _, out = plan_and_merge(expand_admins(ensure_ids(copy.deepcopy(config)), await self._admin_ids()), current, base)
+        _, out = plan_and_merge(await self._expand(config), current, base)
         # «Заменить на Hauflo»: the integrator's stock cards here, offered — made only by his ticks (`save` … `stock`).
         offers = stock_cards.offers(current, stock_cards.hass_info(self.hass)) if base is not None and current is not None else []
         # His empty pages named as Hauflo's (п.51): offered, removed only by his tick (`save` … `twins`).
@@ -1713,7 +1782,7 @@ class DashboardMerge:
         access = await self._access()
         current = self._plain(raw, access)
         base = self.bases.get(url_path) if current is not None else None
-        new = expand_admins(ensure_ids(copy.deepcopy(config)), await self._admin_ids())
+        new = await self._expand(config)
         new = rekey(new, unpanel(base, new) if base is not None else None)
         if base is None and current is not None and not replace:
             # Nothing known of what is Hauflo's here: no merge can tell the integrator's cards — refused, the cloud
@@ -1738,7 +1807,9 @@ class DashboardMerge:
             _LOGGER.warning("Hauflo: dashboard %s not saved — %s blocks outside the plan would change", url_path, report["untouched"])
             raise MergeError("merge_untouched_changed", f"{report['untouched']} blocks the plan doesn't change would change; nothing saved")
         copy_url, pruned = None, 0
-        if current is not None and merged != current and (base is None or current != base):
+        # Р33: what differs from the base was kept at the agent's last save and is still all there is — no edit of his
+        # since, no new copy of it (a copy per deploy of the same panel).
+        if current is not None and merged != current and (base is None or current != base) and not self.unchanged(url_path, raw):
             # What the integrator made is in it: kept as a hidden copy before anything is written.
             if title is None:
                 shown = getattr(self._dashboard(url_path), "config", None) or {}
@@ -1752,8 +1823,12 @@ class DashboardMerge:
             report["verify"] = "ok" if back == out else "mismatch"
             if back != out:
                 _LOGGER.warning("Hauflo: dashboard %s reads back other than saved", url_path)
+            self.written[url_path] = _digest(back if back is not None else out)
+        else:
+            self.written[url_path] = _digest(raw)
         self.bases[url_path] = new
         await self.store.async_save(self.bases)
+        await self._save_meta()
         # «upgrade»: no Hauflo version stored yet (first save by this agent) — the copy is only a precaution, nobody is
         # known to have edited the dashboard; «edited»: it differs from what Hauflo saved last.
         # «copies_removed»: the oldest of the agent's own copies pruned with this one (п.8 acceptance A: the backend said nothing of them).
@@ -1843,7 +1918,7 @@ async def local_ws(session: Any, url: str, token: str, cmds: list[dict[str, Any]
         return out
 
 
-async def handle(agent: Any, ch: int, msg: dict[str, Any], validate: Callable[[Any], str | None], fresh_backup: Callable[[], bool], locked_code: str) -> None:
+async def handle(agent: Any, ch: int, msg: dict[str, Any], validate: Callable[[Any], str | None], fresh_backup: Callable[[], bool], locked_code: str, prune: Callable[[Any], tuple[Any, list[dict[str, Any]]]] | None = None) -> None:
     """`hauflo/dashboard/plan` and `lovelace/config` of a dashboard the agent merges (reads), `hauflo/dashboard/save`
     and every plain `lovelace/config/save` of a `hauflo-…` dashboard (writes): answered here, never relayed to HA."""
     t, mid = msg.get("type"), msg.get("id")
@@ -1874,13 +1949,23 @@ async def handle(agent: Any, ch: int, msg: dict[str, Any], validate: Callable[[A
     # `validate`: why the dashboard is refused (None — it passes). The first item refused goes to the log and to the
     # cloud — its deploy message and journal name it (acceptance 0.33 K1: a bare «not allowed» named nothing to fix).
     why = validate(config)
+    dropped: list[dict[str, Any]] = []
+    if why is not None and prune is not None:
+        # One refused card / row / scene never costs the whole dashboard (accept3b №6): `prune` takes out what the check
+        # refuses — only that, the rest checked again in full here — and each one is said (the plan, the save, the log).
+        config, dropped = prune(config)
+        why = validate(config)
     if why is not None:
         _LOGGER.warning("Hauflo: «%s» of %s isn't allowed through the tunnel — %s", t, url, why)
         await reply(code="not_allowed", message=f"not allowed ({why})")
         return
+    for d in dropped:
+        _LOGGER.warning("Hauflo: %s of %s — left off the dashboard: %s", t, url, d.get("detail"))
+    said = [{k: v for k, v in d.items() if k != "detail"} for d in dropped][:100]
     try:
         if t == PLAN:
-            await reply(await merger.plan(url, config))
+            planned = await merger.plan(url, config)
+            await reply({**planned, "dropped": said} if said and isinstance(planned, dict) else planned)
             return
         if agent.locked:
             await reply(code=locked_code, message="changes by Hauflo are switched off in Home Assistant (Hauflo → Configure)")
@@ -1905,7 +1990,7 @@ async def handle(agent: Any, ch: int, msg: dict[str, Any], validate: Callable[[A
             [] if plain else [x for x in (msg.get("stock") if isinstance(msg.get("stock"), list) else [])[:200] if isinstance(x, str) and len(x) <= 64],
             [] if plain else [x for x in (msg.get("twins") if isinstance(msg.get("twins"), list) else [])[:50] if isinstance(x, str) and len(x) <= 128],
         )
-        await reply(None if plain else res)
+        await reply(None if plain else ({**res, "dropped": said} if said and isinstance(res, dict) else res))
     except MergeError as err:
         await reply(code=err.code, message=str(err))
     except Exception as err:  # noqa: BLE001 — said to Hauflo, the link stays

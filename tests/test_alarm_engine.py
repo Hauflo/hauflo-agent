@@ -538,6 +538,22 @@ async def test_alarm_views(hass, rig) -> None:
     eng.active["r1|binary_sensor.k1"]["acked_by"] = None
     await alarms.post(Tunnel(hass, body={"ack": "r1|binary_sensor.k1", "by": "Mallory"}, user=NS(name="Mallory", system_generated=False)))
     assert eng.active["r1|binary_sensor.k1"]["acked_by"] == "Mallory"  # a "by" from anyone else is not trusted: their own name
+    # 0.34 fix п.2: a house problem (no rule's alarm) is accepted by its «_house|<entity>» key — one, or in «Принять все»
+    from custom_components.hauflo import alarms_now as an
+
+    faults = [{"entity": "binary_sensor.zont", "name": "Zont", "house": "fault", "offline": False}]
+    house = lambda: {"_summary": an.summary(eng.alarm_items(), faults, None, eng.house_acks)}  # noqa: E731
+    hv = notify.AlarmsView(lambda: eng, house)
+    hpost = lambda body: hv.post(Req(hass, body=body))  # noqa: E731
+    assert (await hpost({"ack": "_house|binary_sensor.other"})).status == 404  # not a problem now: nothing accepted
+    assert (await hpost({"ack": "_house|binary_sensor.zont"})).status == 200 and eng.house_acks == {"binary_sensor.zont": "Test"}
+    assert house()["_summary"]["acked"] >= 1
+    assert (await hpost({"ack": "_house|binary_sensor.zont"})).status == 404  # accepted already
+    eng.house_acks.clear()
+    eng.active["r1|binary_sensor.k1"]["acked_by"] = None
+    assert json.loads((await hpost({"ack_all": True})).body)["acked"] == 2 and eng.house_acks.get("binary_sensor.zont") == "Test"
+    eng.house_acks_keep(set())  # cleared: its «Принято» forgotten, the next one is a new alarm
+    assert eng.house_acks == {}
     await rig.tick(10)
 
 

@@ -38,7 +38,7 @@ from .natural import natural_key
 from .ownership import entity_room
 from .storage import HaufloStore
 from .const import ACK_ACTION, DOMAIN, LOCKED_CODE, MONITOR_LABELS, NATIVE_STORE, QUIET_PARENT, RUN_ACTION, site_ru
-from . import foreign, signals
+from . import alarms_now, foreign, signals
 from .tuning import TUNING
 
 _LOGGER = logging.getLogger(__name__)
@@ -107,6 +107,38 @@ def default_hold(hass: HomeAssistant | None, kind: str, sources: list[str], thre
     for eid in sources:
         found.append(HOLD_CANON["level_s"] if eid in thresholds else HOLD_CANON["classes"].get(str(_device_class(hass, eid) or ""), HOLD_CANON["default_s"]))
     return int(min(found)) if found else int(HOLD_CANON["default_s"])
+
+
+def source_hold(rule: dict[str, Any], eid: str) -> int:
+    """How long this source's alarm state must hold in this rule: its own (a combination's — `holds`), else the rule's."""
+    return int((rule.get("holds") or {}).get(eid, rule.get("hold") or 0))
+
+
+def own_kind(hass: HomeAssistant | None, eid: str) -> str | None:
+    """A Hauflo signal that holds its time itself — its key in notify.hold.own, else None: a combination of the site's
+    policy (on only once every condition held its «дольше, чем» — that T is its hold, a second one after it would make
+    it T + a minute), or an own sensor of that kind in HA's registry (platform hauflo, its translation key: a rule's
+    «Сработало» is on only after its own «дольше» / periods in a row). By what it is, never by its name."""
+    if hass is None:
+        return None
+    if eid in signals.combo_entities(hass):
+        return "combo"
+    entry = er.async_get(hass).async_get(eid)
+    key = entry.translation_key if entry is not None and entry.platform == DOMAIN and entry.domain == "binary_sensor" else None
+    return key if key in HOLD_CANON["own"] else None
+
+
+def own_holds(hass: HomeAssistant | None, sources: list[str], holds: dict[str, int]) -> dict[str, int]:
+    """{source: its hold} for the rule's sources that hold their time themselves (own_kind): the site's own hold of
+    that very signal if it set one, else the canon's for its kind (notify.hold.own) — never another source's class,
+    nor a scope's (a class's choice, the canon's level): the rule's other sources keep theirs."""
+    pol = signals.policy(hass) or {}
+    out: dict[str, int] = {}
+    for eid in sources:
+        if (kind := own_kind(hass, eid)) is not None:
+            mine = ((pol.get("entities") or {}).get(eid) or {}).get("holdS")
+            out[eid] = int(mine) if isinstance(mine, int) and eid in holds else int(HOLD_CANON["own"][kind])
+    return out
 LINK_KINDS = ("connection", "link", "connectivity")
 # The HA app's push fails quietly — mobile_app logs it and the service call returns (narrow round 25.10, D4: «sent»
 # for a phone that never got it). Which phone a log line is about: the task sending to it.
@@ -360,12 +392,23 @@ def _threshold(rule: dict[str, Any], eid: str) -> dict[str, float] | None:
     return pol if pol is not None and ("below" in pol or "above" in pol) else None
 
 
+def muted(rule: dict[str, Any], eid: str) -> bool:
+    """The site marked this source «не авария» itself (signals.py: a scope or the signal's own `alarm: {none}`): the rule
+    keeps it as sent (the cloud's list stays whole), but never rings, never waits for its data and never counts it."""
+    return bool(((rule.get("policy") or {}).get(eid) or {}).get("none"))
+
+
+def live_sources(rule: dict[str, Any]) -> list[str]:
+    """The rule's sources the engine weighs: all but the muted ones."""
+    return [s for s in rule["sources"] if not muted(rule, s)]
+
+
 def in_alarm(rule: dict[str, Any], state: State | None, open_now: bool = False) -> bool:
     """Is this source in alarm for the rule: a signal — one of its alarm states; a level — past its threshold, and while
     the alarm is open, until it is back past the threshold by its step (the hysteresis). Not a number: not an alarm.
     A rule with no own states / threshold takes the source's from the site's policy (`policy`, signals.py) — its states
     compared by value (any language: an enum «Авария» too)."""
-    if state is None:
+    if state is None or muted(rule, state.entity_id):
         return False
     th = _threshold(rule, state.entity_id)
     if th is None:
@@ -574,7 +617,8 @@ def _en(text: str) -> str:
 def policy_overlay(hass: HomeAssistant | None, sources: list[str], *, own_states: bool, thresholds: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], dict[str, int]]:
     """({source: its alarm condition}, {source: its hold}) from the site's policy (signals.py) — only what the site chose
     itself (a scope or the signal's own), only where the rule has no own condition: the rule's own states / threshold /
-    hold always win (audit 10.11 §3.7). «Не авария» ({none}) never silences a rule: the integrator's rule still rings."""
+    hold always win (audit 10.11 §3.7). «Не авария» ({none}) chosen by the site silences the source in every rule too
+    (0.34: one choice excludes the entity everywhere — signal, rule, counter, «Всё хорошо»): {none: True}, see muted()."""
     pol = signals.policy(hass)
     if hass is None or not pol or not (pol["scopes"] or pol["entities"]):
         return {}, {}
@@ -586,6 +630,9 @@ def policy_overlay(hass: HomeAssistant | None, sources: list[str], *, own_states
         if r["holdS"] is not None:
             holds[eid] = r["holdS"]
         a = r["alarm"]
+        if a and "none" in a and r["from"]["alarm"] != "canon":
+            overlay[eid] = {"none": True}
+            continue
         if r["from"]["alarm"] == "canon" or not a or "none" in a or eid in thresholds:
             continue
         if "states" in a:
@@ -653,6 +700,16 @@ def _clean_rules(raw: Any, hass: HomeAssistant | None = None, owns: Callable[[st
         kind = str(r.get("kind")) if WORD.match(str(r.get("kind") or "")) else "custom"
         own_hold = hold_value(r.get("hold_s"))
         overlay, holds = policy_overlay(hass, sources, own_states=bool(states_raw), thresholds=thresholds)
+        # A source that holds its time itself (a combination's T): its own hold, the rule's others by their classes —
+        # the rule's `hold` is theirs (all of them own — the shortest own). The rule's own hold_s is for every source.
+        selfheld = own_holds(hass, sources, holds) if own_hold is None else {}
+        rest = [e for e in sources if e not in selfheld]
+        if own_hold is not None:
+            hold = own_hold
+        elif rest or not selfheld:
+            hold = policy_hold(hass, kind, rest, thresholds, {e: h for e, h in holds.items() if e not in selfheld})
+        else:
+            hold = min(selfheld.values())
         out["rules"].append(
             {
                 "id": str(r["id"]),
@@ -682,7 +739,9 @@ def _clean_rules(raw: Any, hass: HomeAssistant | None = None, owns: Callable[[st
                 **({"policy": overlay} if overlay else {}),
                 # As sent (None — the canon's; Hauflo sees by the key that this agent knows holds) and the one used.
                 "hold_s": own_hold,
-                "hold": own_hold if own_hold is not None else policy_hold(hass, kind, sources, thresholds, holds),
+                "hold": hold,
+                # A source's own hold where it isn't the rule's (own_holds): HA's `for:` and the engine take it.
+                **({"holds": selfheld} if selfheld else {}),
             }
         )
     # A canon title in the house's one language both ways (0.33 С3: a rule made on an English page kept «Equipment alarm»
@@ -752,6 +811,9 @@ class NotifyEngine:
         # A critical alarm back to normal that nobody accepted stays on the screen until someone does (ISA-18.2
         # «returned, unacknowledged» — SCADA expert 25.10: it vanished, nobody knew the boiler room had flooded).
         self.unacked_rtn: dict[str, dict[str, Any]] = {}
+        # A house problem (a signal in trouble by the site's policy, no rule's alarm) accepted: entity → who (0.34 fix п.2:
+        # «Принять» on it said «принял …» and the counter never moved). Kept while the problem lasts (house_acks_keep).
+        self.house_acks: dict[str, str] = {}
         self._chatter: dict[str, Callable[[], None]] = {}
         # incident key → cancel: in alarm, not yet for the rule's hold (its `for:`) — started only if it stays.
         self._holding: dict[str, Callable[[], None]] = {}
@@ -806,6 +868,7 @@ class NotifyEngine:
         self._seen_ok = {str(x) for x in saved.get("seen_ok") or []}
         self._pushes = {str(k): [float(t) for t in v if isinstance(t, (int, float))] for k, v in (saved.get("pushes") or {}).items() if isinstance(v, list)}
         self.unacked_rtn = {str(k): v for k, v in (saved.get("rtn") or {}).items() if isinstance(v, dict)}
+        self.house_acks = {str(k): str(v)[:80] for k, v in (saved.get("house_acks") or {}).items() if isinstance(v, str) and v}
         self._restored = {k: v for k, v in (saved.get("active") or {}).items() if isinstance(v, dict)}
         for rule_id, g in (saved.get("groups") or {}).items():
             if isinstance(g, dict):
@@ -878,9 +941,9 @@ class NotifyEngine:
     def policy_changed(self) -> bool:
         """The site's policy changed (signals.py): each rule's overlay and hold taken again; True — a rule HA runs as its own
         automation now needs the engine (its automation is written again by the caller)."""
-        before = {r["id"]: (r.get("policy"), r["hold"]) for r in self.config["rules"]}
+        before = {r["id"]: (r.get("policy"), r["hold"], r.get("holds")) for r in self.config["rules"]}
         self.config = _clean_rules(self.config, self.hass, self.owns)
-        after = {r["id"]: (r.get("policy"), r["hold"]) for r in self.config["rules"]}
+        after = {r["id"]: (r.get("policy"), r["hold"], r.get("holds")) for r in self.config["rules"]}
         if before == after:
             return False
         self._apply()
@@ -908,6 +971,7 @@ class NotifyEngine:
             "seen_ok": sorted(self._seen_ok),
             "rtn": self.unacked_rtn,
             "pushes": self._pushes,
+            "house_acks": self.house_acks,
         }
 
     @callback
@@ -921,7 +985,7 @@ class NotifyEngine:
         if self._unsub_state:
             self._unsub_state()
             self._unsub_state = None
-        sources = sorted({s for r in self.config["rules"] if r["enabled"] for s in r["sources"]})
+        sources = sorted({s for r in self.config["rules"] if r["enabled"] for s in live_sources(r)})
         if sources:
             self._unsub_state = async_track_state_change_event(self.hass, sources, self._on_state)
         # The rules (and their holds) may have changed: a held alarm is weighed again below, from its state's own time.
@@ -933,7 +997,7 @@ class NotifyEngine:
         for rule in self.config["rules"]:
             if not rule["enabled"]:
                 continue
-            for entity_id in rule["sources"]:
+            for entity_id in live_sources(rule):
                 key = f"{rule['id']}|{entity_id}"
                 state = self.hass.states.get(entity_id)
                 if not state or state.state in NOT_A_STATE:
@@ -949,7 +1013,7 @@ class NotifyEngine:
                 elif in_alarm(rule, state):
                     self._start_held(rule, state)
         # Incidents of rules or sources no longer there end quietly.
-        keep = {f"{r['id']}|{s}" for r in self.config["rules"] if r["enabled"] for s in r["sources"]}
+        keep = {f"{r['id']}|{s}" for r in self.config["rules"] if r["enabled"] for s in live_sources(r)}
         for key in [k for k in self.active if k not in keep]:
             self._end_quietly(key)
         # Rules not here yet (a re-added agent starts empty until Hauflo sends them — integrator run 25.10:
@@ -973,7 +1037,7 @@ class NotifyEngine:
         if not new:
             return
         for rule in self.config["rules"]:
-            if not rule["enabled"] or new.entity_id not in rule["sources"]:
+            if not rule["enabled"] or new.entity_id not in rule["sources"] or muted(rule, new.entity_id):
                 continue
             key = f"{rule['id']}|{new.entity_id}"
             alarm = in_alarm(rule, new, open_now=key in self.active or key in self._restored)
@@ -1190,7 +1254,7 @@ class NotifyEngine:
     @callback
     def _watch_nodata(self, rule: dict[str, Any], entity_id: str) -> None:
         key = f"{rule['id']}|{entity_id}"
-        if rule["kind"] in LINK_KINDS or key in self._nodata_timers or key in self.active or entity_id not in self._seen_ok:
+        if rule["kind"] in LINK_KINDS or muted(rule, entity_id) or key in self._nodata_timers or key in self.active or entity_id not in self._seen_ok:
             return
 
         @callback
@@ -1236,7 +1300,8 @@ class NotifyEngine:
         key = f"{rule['id']}|{state.entity_id}"
         # A rule HA runs: held as its automation holds (never under NATIVE_HOLD), so the engine's «дребезжит» counts the
         # alarms HA told, not flickers it ignored.
-        hold = max(NATIVE_HOLD, int(rule.get("hold") or 0)) if self._engine_says(rule["id"]) else int(rule.get("hold") or 0)
+        hold = source_hold(rule, state.entity_id)
+        hold = max(NATIVE_HOLD, hold) if self._engine_says(rule["id"]) else hold
         left = hold - (dt_util.utcnow() - state.last_changed).total_seconds()
         if left <= 0:
             if (cancel := self._holding.pop(key, None)) is not None:
@@ -1580,7 +1645,7 @@ class NotifyEngine:
 
     def watched(self) -> set[str]:
         """Every entity an enabled rule watches (its sources and the integrator's picks): monitored (399-18)."""
-        return {e for r in self.config["rules"] if r["enabled"] for e in (*r["sources"], *(r.get("picked") or []))}
+        return {e for r in self.config["rules"] if r["enabled"] for e in (*r["sources"], *(r.get("picked") or [])) if not muted(r, e)}
 
     async def _switch(self, rule_id: str, eids: list[str], when: str, why: str) -> None:
         """An alarm output of a rule (399-15): its service from OUTPUTS for `when` («on_start» / «on_end») on each entity —
@@ -1890,6 +1955,26 @@ class NotifyEngine:
         await self._accept(ACK, key, who, None)
         return True
 
+    @callback
+    def ack_house(self, entity_id: str, who: str) -> bool:
+        """«Принято» for a house problem (alarms_now.HOUSE_KEY): no push or siren is its — only who accepted it, until it
+        clears (house_acks_keep). False — accepted already."""
+        if self.house_acks.get(entity_id):
+            return False
+        self.house_acks[entity_id] = who[:80]
+        self._save()
+        self._changed()
+        return True
+
+    @callback
+    def house_acks_keep(self, problems: set[str]) -> None:
+        """A house problem that cleared forgets its «Принято»: the next one is a new alarm (ISA-18.2)."""
+        gone = [e for e in self.house_acks if e not in problems]
+        for e in gone:
+            del self.house_acks[e]
+        if gone:
+            self._save()
+
     async def _accept(self, kind: str, key: str, who: str, context: Any) -> None:
         rule_id, _, entity_id = key.partition("|")
         rule = next((r for r in self.config["rules"] if r["id"] == rule_id), None)
@@ -2158,6 +2243,19 @@ class NotifyEngine:
             )
         return out
 
+    def alarm_items(self) -> list[dict[str, Any]]:
+        """The alarms the one counter (alarms_now.py) reads: the open ones (active_list) and those back to normal that nobody
+        accepted yet (`returned` — the alert card asks for a look), with their names and rooms."""
+        out = self.active_list()
+        for key, v in self.unacked_rtn.items():
+            if key in self.active:
+                continue
+            rule_id, _, entity_id = key.partition("|")
+            state = self.hass.states.get(entity_id)
+            rule = next((r for r in self.config["rules"] if r["id"] == rule_id), None)
+            out.append({"key": key, "entityId": entity_id, "title": v.get("title") or (rule["title"] if rule else ""), "name": label(self.hass, entity_id, state), "since": v.get("since"), "ackedBy": None, "area": self._where(state) if state else "", "critical": bool(rule and rule["priority"] == "critical"), "returned": True})
+        return out
+
     def status(self) -> dict[str, Any]:
         ents = self.hass.states.async_all(["binary_sensor", "sensor"])
         candidates = []
@@ -2327,7 +2425,8 @@ class AlarmsView(HomeAssistantView):
             if key not in engine.active
         ]
         # «Всё хорошо» by the site's policy (signals.py, 0.32): `_house` ok / fault / alarm / offline, `_faults` — the
-        # problems that move it, `_shelved` — «не решено» ones (listed, never moving it).
+        # problems that move it, `_shelved` — «не решено» ones (listed, never moving it); `_summary` — the one counter of
+        # open alarms (alarms_now.py, 0.34 п.2) every card counts and lists, as Hauflo's monitoring and the bot do.
         if self.house_of is not None and (house := self.house_of()) is not None:
             out.update(house)
         return self.json(out)
@@ -2349,9 +2448,12 @@ class AlarmsView(HomeAssistantView):
                 who = f"{by} (Hauflo)"
         # «Принять все» (family review round 2: 19 faults took 19 taps): every open alarm nobody accepted yet, and those
         # back to normal waiting for a look. Open to every person of the house, as one «Принято» is (safety).
+        # A house problem (no rule's alarm) is one of them too (0.34 fix п.2: «Принять все» skipped it): its key
+        # «_house|<entity>» from the one counter (alarms_now).
         if engine is not None and isinstance(body, dict) and body.get("ack_all") is True:
             keys = [k for k, inc in engine.active.items() if not inc.get("acked_by")] + [k for k in engine.unacked_rtn if k not in engine.active]
-            done = [k for k in keys if await engine.async_ack(k, who)]
+            keys += [k for e in self._house_open() if not e["acked"] for k in e["keys"]]
+            done = [k for k in keys if await self._ack(engine, k, who)]
             return self.json({"ok": True, "acked": len(done)})
         # «Принять все неисправности» (family review round 3): exactly the alarms the card listed — the equipment faults; a
         # leak, smoke or gas shown beside them keeps its own «Принято».
@@ -2359,10 +2461,23 @@ class AlarmsView(HomeAssistantView):
             keys = body["ack_keys"]
             if not isinstance(keys, list) or len(keys) > 200 or not all(isinstance(k, str) and "|" in k and len(k) <= 300 for k in keys):
                 return self.json_message("ack_keys: a list of alarm keys", 400)
-            done = [k for k in dict.fromkeys(keys) if await engine.async_ack(k, who)]
+            done = [k for k in dict.fromkeys(keys) if await self._ack(engine, k, who)]
             return self.json({"ok": True, "acked": len(done)})
         key = body.get("ack") if isinstance(body, dict) else None
         if engine is None or not isinstance(key, str) or "|" not in key or len(key) > 300:
             return self.json_message("ack: a key expected", 400)
-        ok = await engine.async_ack(key, who)
+        ok = await self._ack(engine, key, who)
         return self.json({"ok": ok}, 200 if ok else 404)
+
+    def _house_open(self) -> list[dict[str, Any]]:
+        """The one counter's house problems open now (those a «_house|<entity>» key accepts)."""
+        house = self.house_of() if self.house_of is not None else None
+        items = ((house or {}).get("_summary") or {}).get("items") or []
+        return [e for e in items if e.get("state") == "open" and e.get("source") == "house" and e.get("keys")]
+
+    async def _ack(self, engine: Any, key: str, who: str) -> bool:
+        """A rule's alarm — the engine's accept; a house problem — only while the one counter lists it open."""
+        if key.startswith(alarms_now.HOUSE_KEY + "|"):
+            entity_id = key.partition("|")[2]
+            return any(e["entity"] == entity_id for e in self._house_open()) and engine.ack_house(entity_id, who)
+        return await engine.async_ack(key, who)

@@ -8,12 +8,13 @@ import ast, contextlib, glob, ipaddress, json, logging, pathlib, re, sys, types
 HERE = pathlib.Path(__file__).parent
 src = open(HERE.parent / "custom_components/hauflo/__init__.py").read()
 tree = ast.parse(src)
-FUNCS = {"_lovelace_ok", "_lovelace_refusal", "_area_lights_owned", "_image_ok", "_svg_ok", "_hauflo_entity", "_own_entity", "_protected", "_sticky", "_class_protected", "_self_protected", "unknown_source", "_helper_links", "_option_refs", "_platform", "_owned_knx", "_owned_knx_writes", "_owned_scene_sends", "_protected_writes", "_shown_protected", "_words", "_named_as", "_wrapped_source", "_knx_store", "_knx_writes", "_ga_key"}
+FUNCS = {"_lovelace_ok", "_lovelace_refusal", "_lovelace_refusal_at", "_lovelace_prune", "_prune_at", "_first_entity", "_area_lights_owned", "_image_ok", "_svg_ok", "_hauflo_entity", "_own_entity", "_protected", "_sticky", "_class_protected", "_self_protected", "unknown_source", "_helper_links", "_option_refs", "_platform", "_owned_knx", "_owned_knx_writes", "_owned_scene_sends", "_protected_writes", "_shown_protected", "_words", "_named_as", "_wrapped_source", "_knx_store", "_knx_writes", "_ga_key"}
 keep = [n for n in tree.body if (isinstance(n, ast.Assign) and any(getattr(t, "id", "").startswith("_") for t in n.targets)) or (isinstance(n, ast.FunctionDef) and n.name in FUNCS)]
 sys.path.insert(0, str(HERE.parent / "custom_components/hauflo"))
 from tunnel import TUNNEL  # noqa: E402 — plain Python, no HA
 from tuning import TUNING  # noqa: E402
-ns = {"TUNNEL": TUNNEL, "TUNING": TUNING, "json": json, "re": re, "contextlib": contextlib, "ipaddress": ipaddress, "Any": object, "HomeAssistant": object, "logging": logging, "__name__": "agent", "DOMAIN": "hauflo"}
+import copy
+ns = {"copy": copy, "TUNNEL": TUNNEL, "TUNING": TUNING, "json": json, "re": re, "contextlib": contextlib, "ipaddress": ipaddress, "Any": object, "HomeAssistant": object, "logging": logging, "__name__": "agent", "DOMAIN": "hauflo"}
 # Another integration's entity on a card (foreign.shown_ok, 0.33.0) needs HA's registry: fails closed here, judged with HA in
 # tests/test_foreign_shown.py — these dashboards name Hauflo's own only.
 ns["foreign"] = types.SimpleNamespace(shown_ok=lambda hass, eid: False, shown_refusal=lambda hass, eid: "domain_not_allowed")
