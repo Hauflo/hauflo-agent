@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
@@ -12,6 +12,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .device import device_info
+from .house_state import LEVELS, HouseEntity, facts
 from .intercom.entities import entities as intercom_entities
 from .ownership import SIGNAL
 from .season import SeasonCurrent, SeasonRecommended
@@ -21,7 +22,7 @@ PARALLEL_UPDATES = 0
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEntitiesCallback) -> None:
-    add([HaufloOwnership(entry)])
+    add([HaufloOwnership(entry), HaufloHouseState(entry)])
     # Р55: each door's «Домофон» state with the plate's diagnosis (intercom/entities.py).
     add(intercom_entities(getattr(entry.runtime_data, "intercom", None), "sensor"))
     # «Рекомендуемый сезон» / «Текущий сезон» (season.py), push-updated.
@@ -73,3 +74,25 @@ class HaufloOwnership(SensorEntity):
     def _changed(self) -> None:
         self._refresh()
         self.async_write_ha_state()
+
+
+class HaufloHouseState(HouseEntity, SensorEntity):
+    """«Состояние объекта» (п.12): ok / fault / alarm / offline — not diagnostic: the client's automations read it."""
+
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = LEVELS
+    # The list and the version: shown, not kept in the history database (the counts and since are).
+    _unrecorded_attributes = frozenset({"signals", "version"})
+
+    def __init__(self, entry: ConfigEntry) -> None:
+        super().__init__(entry, "house_state", "sensor")
+
+    @property
+    def native_value(self) -> str | None:
+        st = self._state()
+        return st["level"] if st else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        st = self._state()
+        return facts(st) if st else None

@@ -235,7 +235,7 @@ async def test_foreign_sip_integration(hass: HomeAssistant, setup_doors) -> None
     said("connected", ago=-4)  # already taken off: nothing
     await hass.async_block_till_done()
     assert len(a) == 2
-    assert notify.RING["kinds"] == ["doorbell"]
+    assert notify.RING_KINDS == {"doorbell"}
 
 
 def test_wizard_reads_no_file_on_the_loop() -> None:

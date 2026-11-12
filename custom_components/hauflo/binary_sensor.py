@@ -14,6 +14,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .daylight import HaufloDaylight
 from .device import device_info
+from .house_state import HouseEntity
 from .const import CONF_SERVER, DOMAIN, VERSION
 
 SIGNAL_LINK = f"{DOMAIN}_link"
@@ -23,7 +24,7 @@ PARALLEL_UPDATES = 0
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEntitiesCallback) -> None:
     # «На улице светло» (daylight.py) for the adaptive scenes and the integrator's own automations.
-    add([HaufloLink(entry), HaufloDaylight(entry, lambda: getattr(entry.runtime_data, "daylight", None))])
+    add([HaufloLink(entry), HaufloDaylight(entry, lambda: getattr(entry.runtime_data, "daylight", None)), HaufloHouseProblem(entry)])
     # «Правила по значениям»: one «сработало» sensor per rule (rules.py).
     if (engine := getattr(entry.runtime_data, "rules", None)) is not None:
         engine.add_binary = add
@@ -66,3 +67,17 @@ class HaufloLink(BinarySensorEntity):
     @callback
     def _changed(self) -> None:
         self.async_write_ha_state()
+
+
+class HaufloHouseProblem(HouseEntity, BinarySensorEntity):
+    """«Проблема на объекте» (п.12): on — the house's level is not ok (an alarm, a fault or a lost device)."""
+
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+
+    def __init__(self, entry: ConfigEntry) -> None:
+        super().__init__(entry, "house_problem", "binary_sensor")
+
+    @property
+    def is_on(self) -> bool | None:
+        st = self._state()
+        return st["level"] != "ok" if st else None

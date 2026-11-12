@@ -397,6 +397,8 @@ async def test_a_hand_edited_automation_is_kept(hass: HomeAssistant, house) -> N
     data = load_yaml(str(config / "automations.yaml"))
     data[1]["mode"] = "single"  # the integrator's own change
     assert engine.native_status()["leak"]["edited"] is False  # Hauflo's own write
+    # п.12 «Открыть в HA»: the automation's own id — its editor's address — is the one in automations.yaml.
+    assert engine.native_status()["leak"]["id"] == independent.automation_id("leak") and any(a.get("id") == engine.native_status()["leak"]["id"] for a in data)
     (config / "automations.yaml").write_text(dump(data))
     await hass.services.async_call("automation", "reload", {}, blocking=True)  # HA's editor reloads after its save
     assert engine.native_status()["leak"]["edited"] is True  # Н1: «Переписать» leaves it out

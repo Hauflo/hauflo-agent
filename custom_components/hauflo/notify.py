@@ -199,34 +199,38 @@ ENTITY_ID = re.compile(r"^[a-z_]+\.[a-z0-9_]+$")
 LEVELS: dict[str, dict[str, float]] = _T["levels"]
 LEVEL_STEP_SHARE = _T["level_step_share"]
 LEVEL_ABS_MAX = _T["level_abs_max"]
-# An event entity (a doorbell press) is one push per press: a second press within this many seconds is the same visit,
-# and an event older than `event_recent_s` is a restored state after a restart, not a press.
+# An event entity (a doorbell press) is one push per press: a second press within this many seconds is the same visit
+# (a door's — of any event entity of its device), and an event older than `event_recent_s` is a restored state after a
+# restart, not a press.
 RING_WINDOW = _T["ring_window_s"]
 RING_FRESH = TUNING["link"]["event_recent_s"]
-# What a press is (0.33 п.9): kind → (HA device classes, words of its event type / name); the first match wins.
 QUIET_CHANNEL = _T["quiet_channel"]  # Android: a channel made low (no sound) for the quiet hours' pushes
-C_SOS = frozenset(_T["event_critical_kinds"])  # kinds pushed as critical
-EVENT_KINDS = {k: (frozenset(v.get("classes", ())), re.compile(v["words"], re.I)) for k, v in _T["event_kinds"].items() if not k.startswith("_")}
+# What a press is (0.33 п.9, п.11е): one table, kind → its HA device classes, words of its event type / name and what it
+# does (`does`: watched by default, critical, the door's ring); the first kind of the table that matches wins.
+_KINDS = {k: v for k, v in _T["event_kinds"].items() if not k.startswith("_")}
+EVENT_KINDS = {k: (frozenset(v.get("classes", ())), re.compile(v["words"], re.I)) for k, v in _KINDS.items()}
+C_SOS = frozenset(k for k, v in _KINDS.items() if "critical" in v.get("does", ()))  # kinds pushed as critical
+WATCH_KINDS = frozenset(k for k, v in _KINDS.items() if "watch" in v.get("does", ()))  # watched with no label / «Уведомлять»
+RING_KINDS = frozenset(k for k, v in _KINDS.items() if "ring" in v.get("does", ()))  # a door's push: picture, urgency, «answered»
 RING = _T["ring_push"]  # Р55: a doorbell's push — its picture, its tap, «answered» taking it off
 INTERCOM_EVENT = f"{DOMAIN}_intercom"  # the agent's own intercom (intercom/manager.py): its call's moments
 
 
 def event_kind(state: State) -> str:
-    """«doorbell» (a doorbell, an intercom's SIP call), «sos» (a panic button) or «event» (any other press) — one rule for
-    the push here and the bell / Telegram line in the cloud (status `eventClass`)."""
+    """A kind of `event_kinds` — «sos» (a panic button), «doorbell» (a doorbell, an intercom's SIP call), «button» (a Hue /
+    Aqara / Shelly button), «motion» — or «event» (any other press): the first kind whose class or words match, so an
+    SOS button of the «button» class is an SOS and a button named «Звонок» a doorbell. One rule for the push here and the
+    bell / Telegram line in the cloud (status `eventClass`)."""
     dc = str(state.attributes.get("device_class") or "")
-    for kind, (classes, _) in EVENT_KINDS.items():
-        if dc and dc in classes:
-            return kind
     said = f"{state.attributes.get('event_type') or ''} {state.name or ''} {state.object_id}"
-    return next((kind for kind, (_, words) in EVENT_KINDS.items() if words.search(said)), "event")
+    return next((kind for kind, (classes, words) in EVENT_KINDS.items() if (dc and dc in classes) or words.search(said)), "event")
 
 
 def watched_press(state: State | None, platform: str | None = None) -> bool:
     """A press the canon watches by default though HA gives it no doorbell class (acceptance 0.33 M4): an event entity
-    whose kind is one of `event_kinds` — an SOS / panic button, an intercom's SIP call. Any other press stays the
-    integrator's choice (the label / «Уведомлять»)."""
-    return state is not None and state.domain == "event" and platform not in signals.WATCH_SKIP and event_kind(state) in EVENT_KINDS
+    whose kind `event_kinds` watches — an SOS / panic button, an intercom's SIP call. Any other press (a button, motion)
+    stays the integrator's choice (the label / «Уведомлять»)."""
+    return state is not None and state.domain == "event" and platform not in signals.WATCH_SKIP and event_kind(state) in WATCH_KINDS
 
 
 SOURCE_DOMAINS = ("binary_sensor.", "sensor.")
@@ -788,6 +792,9 @@ class NotifyEngine:
         self._unsub_events = None
         self._unsub_intercom: Callable[[], None] | None = None
         self._rang: dict[str, float] = {}  # event entity → monotonic time of its last push
+        self._visits: dict[str, str] = {}  # event entity pushed → its visit (a door's device + kind, else itself)
+        # event entity → (its last press, the press its visit's push was for): the cloud's line is per visit (ring_said).
+        self._said: dict[str, tuple[str, str]] = {}
         # Set by the link to Hauflo: is an entity watched (the status' own rule, so the push, the bell and Telegram
         # agree — 0.33 п.9); unset — the «Hauflo мониторинг» label alone, as before.
         self.watches: Callable[[str], bool] | None = None
@@ -1086,23 +1093,54 @@ class NotifyEngine:
         if at is None or at.tzinfo is None or abs((dt_util.utcnow() - at).total_seconds()) > RING_FRESH:
             return  # unknown / unavailable / a restored old press
         eid = new.entity_id
-        if self.lock_owns is not None and self.lock_owns(eid) and event_kind(new) == "event":
+        kind = event_kind(new)
+        if self.lock_owns is not None and self.lock_owns(eid) and kind not in WATCH_KINDS:
             return  # Р56: a lock's own event (unlocked by a fingerprint…) is the locks' push, never a ring
         said = str(new.attributes.get("event_type") or "").lower()
         if said in RING["clear_event_types"] or said in RING["skip_event_types"]:
             # A SIP integration's call answered (taken off every phone) / ended: no push of its own (Р55).
-            if said in RING["clear_event_types"] and eid in self._rang:
-                self.hass.async_create_task(self._clear_ring(eid))
+            if said in RING["clear_event_types"]:
+                for pushed in self._pushed_with(eid):
+                    self.hass.async_create_task(self._clear_ring(pushed))
             return
-        now = time.monotonic()
-        if now - self._rang.get(eid, -RING_WINDOW) < RING_WINDOW or not (self.watches(eid) if self.watches is not None else labelled(self.hass, eid)):
+        if not (self.watches(eid) if self.watches is not None else labelled(self.hass, eid)):
             return
-        self._rang[eid] = now
+        now, visit = time.monotonic(), self._visit(eid, kind)
+        first = next((e for e, t in self._rang.items() if now - t < RING_WINDOW and self._visits.get(e) == visit), None)
+        if first is not None:
+            # The same visit (pressed again, or another event entity of the door): no second push, no second line — a
+            # repeat keeps the visit's press, the door's other entity says none.
+            self._said[eid] = (new.state, self._said[first][1] if first == eid and first in self._said else "")
+            return
+        self._rang[eid], self._visits[eid], self._said[eid] = now, visit, (new.state, new.state)
         self.hass.async_create_task(self._send_ring(new))
 
+    def _device(self, eid: str) -> str | None:
+        entry = er.async_get(self.hass).async_get(eid)
+        return entry.device_id if entry is not None and entry.device_id else None
+
+    def _visit(self, eid: str, kind: str) -> str:
+        """A door's visit is its device's (a panel's doorbell and its SIP call entity ring once); any other press — its own
+        entity's (a Hue dimmer's four buttons are four)."""
+        return f"{dev}|{kind}" if kind in RING_KINDS and (dev := self._device(eid)) else eid
+
+    def _pushed_with(self, eid: str) -> list[str]:
+        """The rings' pushes an «answered» of this event entity takes off: its own and its device's door's."""
+        dev = self._device(eid)
+        return [e for e in self._rang if e == eid or (dev and self._visits.get(e, "").startswith(f"{dev}|"))]
+
+    def ring_said(self, state: State) -> str | None:
+        """The press the cloud's bell / Telegram line is about (status `ring`, the same rule as the push): the visit's first
+        press for a repeat within the window (one line per visit as one push); None for a SIP call's answered / ended —
+        no press (Р55: «🔔 звонок в дверь» on a hang-up)."""
+        if str(state.attributes.get("event_type") or "").lower() in (*RING["clear_event_types"], *RING["skip_event_types"]):
+            return None
+        last, visit = self._said.get(state.entity_id, ("", ""))
+        return (visit or None) if last == state.state else state.state
+
     async def _send_ring(self, state: State) -> None:
-        """«🔔 Звонок в дверь · Прихожая» / «🆘 SOS · Спальня» / «🔔 Кнопка · Холл» — the device's name below; to every phone
-        whose «пуш о звонке» is on (`ring_targets`), no repeats, nothing to accept. An SOS press is critical (through silent
+        """«🔔 Звонок в дверь · Прихожая» / «🆘 SOS · Спальня» / «🔘 Пульт · Холл» — its words by kind (event_push_<kind>),
+        the device's name below; to every phone whose «пуш о звонке» is on (`ring_targets`), no repeats, nothing to accept. An SOS press is critical (through silent
         mode and quiet hours); any other in quiet hours comes without a sound."""
         name, where = self._name(state.entity_id), self._where(state)
         kind = event_kind(state)
@@ -1120,7 +1158,7 @@ class NotifyEngine:
         critical = kind in C_SOS
         rule = {"id": "event", "title": name, "priority": "critical" if critical else "normal", "recipients": {"all": True, "people": [], "groups": [], "phones": []}}
         silent = not critical and bool(self.quiet_now and self.quiet_now())
-        extra = await self._ring_extra(state, urgent=not silent) if kind in RING["kinds"] and not critical else None
+        extra = await self._ring_extra(state, urgent=not silent) if kind in RING_KINDS and not critical else None
         await self._send(rule, head, message, tag=self._tag(f"event|{state.entity_id}"), critical=critical, silent=silent, targets=self.ring_targets(), extra=extra)
 
     async def _ring_extra(self, state: State, *, urgent: bool) -> Callable[[str | None], dict[str, Any]]:
@@ -1178,6 +1216,7 @@ class NotifyEngine:
     async def _clear_ring(self, entity_id: str) -> None:
         """«Ответили» — the ring's push taken off every phone it went to."""
         self._rang.pop(entity_id, None)
+        self._visits.pop(entity_id, None)
         rule = {"id": "event", "title": "", "priority": "normal", "recipients": {"all": True, "people": [], "groups": [], "phones": []}}
         await self._send(rule, "", "clear_notification", tag=self._tag(f"event|{entity_id}"), critical=False, targets=self.ring_targets(), force=True)
 
@@ -1985,6 +2024,7 @@ class NotifyEngine:
             last = st.attributes.get("last_triggered") if st else None
             out[rule_id] = {
                 "automation": eid,
+                "id": rec["automation"],  # п.12: its editor in HA — /config/automation/edit/<id> («Открыть в HA»)
                 "helper": rec["helper"],
                 "state": self._ha_state(rec),
                 "on": (st.state == "on") if st else None,

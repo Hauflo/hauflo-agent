@@ -3,14 +3,17 @@ Runs without Home Assistant installed: python3 agent/tests/test_tunnel_allowlist
 import ast, contextlib, glob, ipaddress, json, pathlib, re, sys, types
 src = open(pathlib.Path(__file__).parents[1] / "custom_components/hauflo/__init__.py").read()
 tree = ast.parse(src)
-HELPERS = ("_ws_allowed", "_ga_key", "_knx_listens", "_entry_domain", "_flow_handler", "_http_allowed", "_own_entity", "_own_device", "_owned_knx", "_forbidden", "_lan_host", "_flow_input_ok", "_unused_label", "_device_entities_owned", "_protected", "_sticky", "_class_protected", "_self_protected", "unknown_source", "_helper_links", "_option_refs", "_own_dashboard", "_alice_labels", "_homekit_step_ok", "_hauflo_entity", "_knx_writes", "_foreign_knx_writes", "_knx_config_ok", "_flow_step", "_platform", "_lovelace_ok", "_lovelace_refusal", "_lovelace_refusal_at", "_lovelace_prune", "_prune_at", "_first_entity", "_area_lights_owned", "_image_ok", "_svg_ok", "_owned_knx_writes", "_owned_scene_sends", "_protected_writes", "_shown_protected", "_words", "_named_as", "_wrapped_source", "_label_ok", "_scrub_states", "_scrub_devices", "_scrub_entities", "_phone_ids", "_scrub_monitor", "_scrub_notes", "_ws_changes", "_http_changes", "_owns", "_area_floor_empty", "_foreign_holders", "_scrub_diagnostics", "_overlap_kind", "knx_data", "_knx_store", "_route", "_owned_entry", "_template_entities", "_rule_reads_ok", "_template_step_ok", "_switch_as_x_step_ok", "_theme_ok", "_foreign_device_placeable", "_foreign_entity_shown")
+HELPERS = ("_ws_allowed", "_ga_key", "_knx_listens", "_entry_domain", "_flow_handler", "_http_allowed", "_own_entity", "_own_device", "_owned_knx", "_forbidden", "_lan_host", "_flow_input_ok", "_unused_label", "_device_entities_owned", "_protected", "_sticky", "_class_protected", "_self_protected", "unknown_source", "_helper_links", "_option_refs", "_own_dashboard", "_alice_labels", "_homekit_step_ok", "_hauflo_entity", "_knx_writes", "_foreign_knx_writes", "_knx_config_ok", "_flow_step", "_platform", "_lovelace_ok", "_lovelace_refusal", "_lovelace_refusal_at", "_subs_why", "_lovelace_prune", "_prune_at", "_first_entity", "_area_lights_owned", "_image_ok", "_svg_ok", "_owned_knx_writes", "_owned_scene_sends", "_protected_writes", "_shown_protected", "_words", "_named_as", "_wrapped_source", "_label_ok", "_scrub_states", "_scrub_devices", "_scrub_entities", "_phone_ids", "_scrub_monitor", "_scrub_notes", "_ws_changes", "_http_changes", "_owns", "_area_floor_empty", "_foreign_holders", "_scrub_diagnostics", "_overlap_kind", "knx_data", "_knx_store", "_route", "_owned_entry", "_template_entities", "_rule_reads_ok", "_template_step_ok", "_switch_as_x_step_ok", "_theme_ok", "_foreign_device_placeable", "_foreign_entity_shown")
 keep = [n for n in tree.body if (isinstance(n, ast.Assign) and any(getattr(t, "id", "").startswith("_") for t in n.targets)) or (isinstance(n, ast.FunctionDef) and n.name in HELPERS)]
 import logging
 sys.path.insert(0, str(pathlib.Path(__file__).parents[1] / "custom_components/hauflo"))
 from tunnel import TUNNEL  # noqa: E402 — plain Python, no HA
 from tuning import TUNING  # noqa: E402
 import copy
-ns = {"copy": copy, "theme": types.SimpleNamespace(names=lambda: {"Hauflo Atelier", "Hauflo Atelier · тёмная"}), "TUNNEL": TUNNEL, "TUNING": TUNING, "json": json, "re": re, "contextlib": contextlib, "ipaddress": ipaddress, "Any": object, "HomeAssistant": object, "logging": logging, "__name__": "agent", "DOMAIN": "hauflo", "degrade": lambda feature, err: None, "foreign": types.SimpleNamespace(device_entry_ids=lambda d: set(getattr(d, "config_entries", None) or ()), device_dict_entry_ids=lambda d: [x for x in d.get("config_entries") or [] if isinstance(x, str)], wizard_refusal=lambda hass, msg: "no_plan", planned=lambda hass, msg: False, member_ok=lambda hass, eid: False, shown_ok=lambda hass, eid: False, shown_refusal=lambda hass, eid: "domain_not_allowed", MEMBER_DOMAINS=frozenset({"light", "cover"}), UNSAFE_NAME=re.compile("[\x00-\x1f\x7f-\x9f\u200e\u200f\u202a-\u202e\u2066-\u2069]"))}  # foreign.UNSAFE_NAME
+# п.13: the thermostat parts' keys (dashmerge.SUB_KEYS) — read from dashmerge.py as a literal, the module itself needs HA.
+_dm = ast.parse(open(pathlib.Path(__file__).parents[1] / "custom_components/hauflo/dashmerge.py").read())
+SUB_KEYS = next(ast.literal_eval(n.value) for n in _dm.body if isinstance(n, ast.Assign) and getattr(n.targets[0], "id", "") == "SUB_KEYS")
+ns = {"copy": copy, "theme": types.SimpleNamespace(names=lambda: {"Hauflo Atelier", "Hauflo Atelier · тёмная"}), "TUNNEL": TUNNEL, "TUNING": TUNING, "json": json, "re": re, "contextlib": contextlib, "ipaddress": ipaddress, "Any": object, "HomeAssistant": object, "logging": logging, "__name__": "agent", "DOMAIN": "hauflo", "dashmerge": types.SimpleNamespace(SUB_KEYS=SUB_KEYS), "degrade": lambda feature, err: None, "foreign": types.SimpleNamespace(device_entry_ids=lambda d: set(getattr(d, "config_entries", None) or ()), device_dict_entry_ids=lambda d: [x for x in d.get("config_entries") or [] if isinstance(x, str)], wizard_refusal=lambda hass, msg: "no_plan", planned=lambda hass, msg: False, member_ok=lambda hass, eid: False, shown_ok=lambda hass, eid: False, shown_refusal=lambda hass, eid: "domain_not_allowed", MEMBER_DOMAINS=frozenset({"light", "cover"}), UNSAFE_NAME=re.compile("[\x00-\x1f\x7f-\x9f\u200e\u200f\u202a-\u202e\u2066-\u2069]"))}  # foreign.UNSAFE_NAME
 # Compiled as the module is (`from __future__ import annotations`): annotations stay strings, so a name used only in
 # a signature (Callable, ConfigEntry…) needs no stub here — Python 3.13 evaluated them and the whole file failed to load.
 import __future__
@@ -531,3 +534,15 @@ for f in sorted(glob.glob(str(pathlib.Path(__file__).parent / "fixtures/dashboar
     assert ns["_lovelace_ok"](None, json.load(open(f)), set(), set()), f"generated dashboard refused: {f}"
 ns["_hauflo_entity"] = _real
 print("generated dashboards ok")
+
+
+def test_lovelace_thermostat_parts_form_p13():
+    """п.13: a thermostat card's parts — show_* one of auto / show / hide, *_modes a short list of names; anything else refused by name."""
+    why = lambda cfg: ns["_lovelace_refusal"](hass, cfg, {"u-hauflo"}, OWNED_ENTRIES)
+    clim = {"type": "custom:hauflo-climate", "entity": "light.knx_1"}  # an entity of Hauflo's own in this registry; the form check is per key, not per domain
+    card = lambda extra: {"views": [{"cards": [{**clim, **extra}]}]}
+    assert why(card({"show_fan": "show", "fan_modes": ["1", "2", 3], "show_presets": "hide", "preset_modes": []})) is None
+    assert why(card({"show_fan": True})) == "views[0].cards[0]: custom:hauflo-climate: show_fan not auto / show / hide"
+    assert why(card({"fan_modes": "1,2,3"})) == "views[0].cards[0]: custom:hauflo-climate: fan_modes not a list of modes"
+    assert why(card({"hvac_modes": [True]})) == "views[0].cards[0]: custom:hauflo-climate: hvac_modes not a list of modes"
+    assert why(card({"swing_modes": ["x" * 300]})) == "views[0].cards[0]: custom:hauflo-climate: swing_modes not a list of modes"

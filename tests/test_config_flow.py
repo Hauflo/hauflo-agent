@@ -15,9 +15,13 @@ from custom_components.hauflo.const import CONF_SECRET, CONF_SERVER, DOMAIN
 
 
 @pytest.fixture(autouse=True)
-def _no_setup():
+async def _no_setup(hass: HomeAssistant):
+    # A re-link schedules the entry's reload (config_flow._finish_relink) and the flow returns before it runs: it must
+    # run here, under the patch — after it, the real agent starts, dials the server and fails the teardown (the flake
+    # «2 ERROR in a full run» of 0.28: how far the reload got by the test's end depended on the tests before).
     with patch("custom_components.hauflo.async_setup_entry", return_value=True):
         yield
+        await hass.async_block_till_done(wait_background_tasks=True)
 
 
 async def _start(hass: HomeAssistant, advanced: bool = False):

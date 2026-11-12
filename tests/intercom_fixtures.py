@@ -32,6 +32,12 @@ async def setup_doors(hass: HomeAssistant, socket_enabled, fast, monkeypatch):
 
     monkeypatch.setattr("custom_components.hauflo.Agent.run", idle)  # for the whole test: a reload must not reach the server either
 
+    async def offline(self):
+        raise ConnectionError("no Hauflo in tests")
+
+    # п.12: the region's TURN is never asked of a real server; a test that wants it patches Agent.cloud_ice itself.
+    monkeypatch.setattr("custom_components.hauflo.Agent.cloud_ice", offline)
+
     async def make(doors: list[dict[str, Any]], **block: Any) -> MockConfigEntry:
         options = {CONF_RANGES: ["1/1"], "intercom": {"bind": HOST, "port": 0, **block, "doors": doors}}
         entry = MockConfigEntry(domain=DOMAIN, title="Hauflo", data={CONF_SERVER: "https://app.hauflo.ru", CONF_SECRET: "s"}, options=options)

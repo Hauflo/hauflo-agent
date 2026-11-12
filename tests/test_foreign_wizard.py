@@ -387,7 +387,7 @@ async def test_reads_the_wizard_needs(hass: HomeAssistant, house) -> None:
 
 
 async def test_the_agent_says_it_can(hass: HomeAssistant, house) -> None:
-    assert house["agent"].status()["features"] == ["foreign_wizard", "foreign_plan_id", "foreign_write_plan", "foreign_scene_members", "foreign_shown", "signals", "signals_mute", "signals_combos", "insights", "insight_switch", "integration_watchdog", "install_integration", "self_update", "intercom_setup", "foreign_locks", "exposure"]
+    assert house["agent"].status()["features"] == ["foreign_wizard", "foreign_plan_id", "foreign_write_plan", "foreign_scene_members", "foreign_shown", "signals", "signals_mute", "signals_shelve", "signals_combos", "insights", "insight_switch", "integration_watchdog", "install_integration", "self_update", "intercom_setup", "foreign_locks", "exposure"]
     assert '"features": FEATURES' in inspect.getsource(hauflo.Agent.run)  # in the hello too
 
 

@@ -129,6 +129,9 @@
       },
       "combo": {
         "name": "Combination · {name}"
+      },
+      "house_problem": {
+        "name": "Site problem"
       }
     },
     "sensor": {
@@ -257,6 +260,41 @@
           },
           "error": {
             "name": "The server's answer"
+          }
+        }
+      },
+      "house_state": {
+        "name": "Site status",
+        "state": {
+          "ok": "All good",
+          "fault": "Fault",
+          "alarm": "Alarm",
+          "offline": "Devices offline"
+        },
+        "state_attributes": {
+          "alarm": {
+            "name": "Alarms"
+          },
+          "fault": {
+            "name": "Faults"
+          },
+          "offline": {
+            "name": "Devices offline"
+          },
+          "undetermined": {
+            "name": "Not decided"
+          },
+          "shelved": {
+            "name": "Put off"
+          },
+          "since": {
+            "name": "Since"
+          },
+          "signals": {
+            "name": "Active signals"
+          },
+          "version": {
+            "name": "Version"
           }
         }
       }
@@ -1025,6 +1063,18 @@
     },
     "event_push_event_text": {
       "message": "The event fired"
+    },
+    "event_push_button": {
+      "message": "🔘 {name}"
+    },
+    "event_push_button_text": {
+      "message": "The button was pressed"
+    },
+    "event_push_motion": {
+      "message": "👁 {name}"
+    },
+    "event_push_motion_text": {
+      "message": "Motion"
     },
     "intercom_no_call": {
       "message": "There's no call now"

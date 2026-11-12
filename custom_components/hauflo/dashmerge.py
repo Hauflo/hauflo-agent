@@ -114,7 +114,10 @@ def _own(node: dict[str, Any], level: int) -> dict[str, Any]:
 # The integrator's keys of a Hauflo card (0.32 п.6: the block's own rows — renamed, hidden, reordered, added in the card's
 # editor): his, field by field. The cloud never sends or reads them; a re-apply keeps them, an edit of them alone is no
 # conflict and doesn't freeze the card — Hauflo's new version of its own keys (area, block, others…) still applies.
-USER_KEYS = ("items", "auto", "order")
+# п.13: a thermostat card's parts (show auto / show / hide, HA's thermostat-feature subsets of modes) — set in its editor,
+# his as well; the cloud never sends them.
+SUB_KEYS = ("show_modes", "show_presets", "show_fan", "show_swing", "show_humidity", "hvac_modes", "preset_modes", "fan_modes", "swing_modes")
+USER_KEYS = ("items", "auto", "order", *SUB_KEYS)
 _CARD_PREFIX = "custom:hauflo-"
 
 

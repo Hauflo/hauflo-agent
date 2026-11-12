@@ -35,6 +35,8 @@ _A = TUNING["signals_agent"]
 FEATURE = "signals"
 # 0.34: the site's «не авария» silences the source in the alarm rules too (notify.muted) — the cloud says so in the editor.
 MUTE_FEATURE = "signals_mute"
+# п.12: the site's «Отложить до» (shelvedUntil) holds a signal off «Всё хорошо» here too, back at its end without a restart.
+SHELVE_FEATURE = "signals_shelve"
 # 0.34 п.10: the policy may carry «Сочетание состояний» (`combos`) — sent only to an agent saying this (an older one refuses
 # the whole body for an unknown key).
 COMBOS_FEATURE = "signals_combos"
@@ -289,6 +291,21 @@ def affects_house(problem: bool, house: str, undetermined: bool) -> bool:
     return problem and not undetermined and house != "none"
 
 
+def shelved_now(until: Any, now: Any = None) -> bool:
+    """The site's «Отложить до» (policy shelvedUntil, п.12) still holds: a valid time in the future. Past or not a time —
+    the signal counts again (no restart: Agent.house_now's timer fires at the nearest one)."""
+    t = _when(until)
+    return t is not None and t > (now or dt_util.utcnow())
+
+
+def next_unshelve(pol: dict[str, Any] | None, now: Any = None) -> Any:
+    """The nearest future «Отложить до» of the site's policy (entities and rules) — None: nothing is shelved."""
+    now = now or dt_util.utcnow()
+    times = [_when(p.get("shelvedUntil")) for p in [*((pol or {}).get("entities") or {}).values(), *(x.get("set") or {} for x in (pol or {}).get("scopes") or [])]]
+    ahead = [t for t in times if t is not None and t > now]
+    return min(ahead) if ahead else None
+
+
 def watch_by_class(eid: str, device_class: Any, platform: str | None = None) -> bool:
     """Watched by default by the canon (its watch list of «domain.device_class»), not the agent's own nor a phone's."""
     dc = class_of(device_class)
@@ -333,6 +350,7 @@ def evaluate(state: State | str | None, *, eid: str | None = None, platform: str
         raise ValueError("evaluate: an entity id")
     r = resolve(eid, platform=platform, device_class=device_class, name=name, policy=policy, device_kind=device_kind)
     problem = alarm_of(raw, r["alarm"])
+    shelved = shelved_now(r["shelvedUntil"])
     return {
         "problem": problem,
         "house": r["house"],
@@ -347,8 +365,10 @@ def evaluate(state: State | str | None, *, eid: str | None = None, platform: str
         "alarm": r["alarm"],
         "holdS": r["holdS"],
         "shelvedUntil": r["shelvedUntil"],
+        # «Отложено до» now: the problem stays said, it doesn't move «Всё хорошо» until then.
+        "shelved": shelved,
         "from": r["from"],
-        "affects": affects_house(problem, r["house"], r["undetermined"]),
+        "affects": affects_house(problem, r["house"], r["undetermined"]) and not shelved,
     }
 
 

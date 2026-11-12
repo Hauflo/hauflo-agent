@@ -129,6 +129,9 @@
       },
       "combo": {
         "name": "Сочетание · {name}"
+      },
+      "house_problem": {
+        "name": "Проблема на объекте"
       }
     },
     "sensor": {
@@ -257,6 +260,41 @@
           },
           "error": {
             "name": "Ответ сервера"
+          }
+        }
+      },
+      "house_state": {
+        "name": "Состояние объекта",
+        "state": {
+          "ok": "Всё хорошо",
+          "fault": "Неисправность",
+          "alarm": "Авария",
+          "offline": "Нет связи с устройствами"
+        },
+        "state_attributes": {
+          "alarm": {
+            "name": "Аварии"
+          },
+          "fault": {
+            "name": "Неисправности"
+          },
+          "offline": {
+            "name": "Нет связи"
+          },
+          "undetermined": {
+            "name": "Не решено"
+          },
+          "shelved": {
+            "name": "Отложено"
+          },
+          "since": {
+            "name": "С момента"
+          },
+          "signals": {
+            "name": "Активные сигналы"
+          },
+          "version": {
+            "name": "Версия"
           }
         }
       }
@@ -1025,6 +1063,18 @@
     },
     "event_push_event_text": {
       "message": "Сработало событие"
+    },
+    "event_push_button": {
+      "message": "🔘 {name}"
+    },
+    "event_push_button_text": {
+      "message": "Нажата кнопка"
+    },
+    "event_push_motion": {
+      "message": "👁 {name}"
+    },
+    "event_push_motion_text": {
+      "message": "Движение"
     },
     "intercom_no_call": {
       "message": "Сейчас нет вызова"

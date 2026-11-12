@@ -54,6 +54,7 @@
       { "id": "hauflo", "path": "/api/hauflo/ownership", "methods": ["GET", "POST"] },
       { "id": "hauflo", "path": "/api/hauflo/season/config", "methods": ["GET", "POST"] },
       { "id": "hauflo", "path": "/api/hauflo/rules", "methods": ["GET", "POST"] },
+      { "id": "hauflo", "path": "/api/hauflo/history", "methods": ["GET"] },
       { "id": "homekit_qr", "path": "/api/homekit/pairingqr", "methods": ["GET"] },
       { "id": "scene", "path": "/api/config/scene/config/{scene_id}", "methods": ["GET", "POST", "DELETE"] },
       { "id": "flow_handlers", "path": "/api/config/config_entries/flow_handlers", "methods": ["GET"] },

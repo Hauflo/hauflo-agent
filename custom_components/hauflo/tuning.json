@@ -18,16 +18,16 @@
     "chatter_window_s": 600,
     "chatter_window_life_s": 60,
     "ring_window_s": 30,
-    "event_critical_kinds": ["sos"],
     "quiet_channel": "hauflo_quiet",
     "event_kinds": {
-      "_doc": "0.33 п.9: what a press of a watched event entity is — by its HA device class, else by words of its event type / name (a SIP call of an intercom integration has no doorbell class). One push per press, its words by kind; «sos» is critical (through silent mode and quiet hours).",
-      "sos": {"words": "(?<![a-z])sos(?![a-z])|panic|emergency|паник|тревожн|экстренн"},
-      "doorbell": {"classes": ["doorbell"], "words": "doorbell|(?<![a-z])ring|incoming|(?<![a-z])call|intercom|(?<![a-z])sip(?![a-z])|звон|вызов|домофон"}
+      "_doc": "0.33 п.9 / п.11е: what a press of an event entity (a state-less thing: a doorbell, an intercom's SIP call, an SOS / panic button, a Hue / Aqara / Shelly button, a motion event) is — the first kind of this table whose HA device class or words of its event type / name match (a SIP call of an intercom integration has no doorbell class: it rings by its words). One push per press (ring_window_s; a `ring` kind — per device: two event entities of one door are one visit), its words by kind (event_push_<kind>), the cloud's line the same (status `eventClass`). `does`: «watch» — watched with no label / «Уведомлять» (any other kind only when the integrator turns it on), «critical» — through silent mode and the quiet hours, «ring» — the door's push (ring_push: its camera's picture, time-sensitive, «answered» takes it off).",
+      "sos": {"words": "(?<![a-z])sos(?![a-z])|panic|emergency|паник|тревожн|экстренн", "does": ["watch", "critical"]},
+      "doorbell": {"classes": ["doorbell"], "words": "doorbell|(?<![a-z])ring|incoming|(?<![a-z])call|intercom|(?<![a-z])sip(?![a-z])|звон|вызов|домофон", "does": ["watch", "ring"]},
+      "button": {"classes": ["button"], "words": "button|(?<![a-z])btn|press|push|click|remote|кнопк|пульт|выключател"},
+      "motion": {"classes": ["motion"], "words": "motion|движени"}
     },
     "ring_push": {
-      "_doc": "Р55: a doorbell's push — the door's picture (a camera of the same device, the talk camera skipped), a tap opens the dashboard view with the door, time-sensitive (iOS) / high (Android) unless quiet hours or critical. «Answered» (the agent's intercom state, a SIP integration's event type) takes the push off every phone; a hang-up / an ended or answered call is no push of its own (a missed call keeps the ring's push).",
-      "kinds": ["doorbell"],
+      "_doc": "Р55: a doorbell's push — the door's picture (a camera of the same device, the talk camera skipped), a tap opens the dashboard view with the door, time-sensitive (iOS) / high (Android) unless quiet hours or critical. «Answered» (the agent's intercom state, a SIP integration's event type) takes the push off every phone; a hang-up / an ended or answered call is no push of its own (a missed call keeps the ring's push) — nor a Telegram line of its own (status `ring`: the visit's first press). Which kinds ring — `ring` of event_kinds.",
       "skip_camera_keys": ["intercom_talk"],
       "ios": {"interruption-level": "time-sensitive"},
       "android": {"priority": "high", "ttl": 0, "importance": "high"},
@@ -676,7 +676,14 @@
     "_ice_doc": "ice_servers (the options' intercom block, set by the cloud wizard): STUN / TURN for the talk from outside the home network. A coturn use-auth-secret server — {urls, secret, ttl_s}: time-limited credentials made per request (TURN REST API); else {urls, username, credential}.",
     "ice_schemes": ["stun", "stuns", "turn", "turns"],
     "turn_ttl_s": 86400,
-    "turn_user": "hauflo"
+    "turn_user": "hauflo",
+    "_cloud_ice_doc": "п.12: the region's TURN (Hauflo's coturn, backend ha/turn.ts) when the integrator set no ice_servers of his own — time-limited credentials asked at cloud_ice_path by the agent's secret when the doors start, again after cloud_ice_refresh_share of their TTL and on every ring; handed to HA's WebRTC only while at least cloud_ice_min_left_s remain; no answer — asked again after cloud_ice_retry_s. TTL clamped to cloud_ice_ttl_s.",
+    "cloud_ice_path": "/api/agent/intercom/ice",
+    "cloud_ice_ttl_s": [60, 3600],
+    "cloud_ice_refresh_share": 0.5,
+    "cloud_ice_min_left_s": 300,
+    "cloud_ice_retry_s": 600,
+    "cloud_ice_timeout_s": 10
   },
   "locks": {
     "_doc": "Р56 умные замки любой интеграции (locks.py): что за событие (порядок проверки слов: ignore, затем ops по порядку), чем открыли, кто; когда слать пуш. Слова — регулярки без учёта регистра; замок узнаётся по домену lock и сущностям того же устройства, не по бренду.",
@@ -746,5 +753,12 @@
     "assistants": ["conversation", "cloud.alexa", "cloud.google_assistant"],
     "max_rows": 3000,
     "homekit_domains": ["alarm_control_panel", "automation", "binary_sensor", "button", "camera", "climate", "cover", "device_tracker", "fan", "humidifier", "input_boolean", "input_button", "input_select", "light", "lock", "media_player", "person", "remote", "scene", "script", "select", "sensor", "switch", "vacuum", "valve", "water_heater"]
+  },
+  "history": {
+    "about": "399-42: an incident's value graph on «События» (history.py) — one numeric entity's recorded values over a bounded window, thinned to max_points (min and max of each bucket kept, a spike survives).",
+    "max_points": 300,
+    "max_window_h": 192,
+    "attrs": {"climate": "current_temperature", "water_heater": "current_temperature", "humidifier": "current_humidity"},
+    "domains": ["sensor", "number", "input_number", "climate", "water_heater", "humidifier"]
   }
 }

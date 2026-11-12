@@ -235,3 +235,34 @@ def test_the_tunnel_refuses_a_regulator_out_of_sense_with_its_code():
             assert why(hass, cfg(row, eid), set(), set()) is None, (row, eid)
         assert "fan.gone regulator reg_min_max" in why(hass, cfg({"min": 9, "max": 1}, "fan.gone"), set(), set())
         assert "regulator reg_step" in why(None, cfg({"step": 0}), set(), set()), "no hass: the step still checked"
+
+
+# п.13: a thermostat card's parts (show_* / *_modes, set in its editor) — his like the rows: a re-apply and Hauflo's own
+# change keep them with no conflict, the tunnel takes them only in their form.
+CLIMATE = "v/kitchen/s:other/c:climate"
+SUBS = {"show_fan": "show", "fan_modes": ["1", "2", "3", "4", "5"], "show_swing": "hide", "show_presets": "auto", "preset_modes": ["comfort", "economy"]}
+
+
+def climate_card(label="ПВ установка"):
+    return {"type": "custom:hauflo-climate", "entity": "climate.pv", "label": label, ID: AREA}
+
+
+def test_thermostat_parts_survive_a_re_apply_and_hauflos_change():
+    base = dash(climate_card())
+    cur = copy.deepcopy(base)
+    area_of(cur).update(copy.deepcopy(SUBS))
+    merged, plan = plan_and_merge(copy.deepcopy(base), cur, base)
+    assert {k: area_of(merged)[k] for k in SUBS} == SUBS
+    assert plan["conflicts"] == [] and plan["lost"] == 0 and plan["untouched"] == 0
+    merged, plan = plan_and_merge(dash(climate_card(label="Приточка")), cur, base)
+    got = area_of(merged)
+    assert got["label"] == "Приточка" and {k: got[k] for k in SUBS} == SUBS
+    assert plan["conflicts"] == [] and plan["untouched"] == 0
+
+
+def test_the_tunnel_takes_thermostat_parts_only_in_their_form():
+    ok = agent_mod._lovelace_ok
+    with patch.object(agent_mod, "_hauflo_entity", return_value=True):
+        assert ok(None, dash({**climate_card(), **SUBS}), set(), set())
+        for bad in ({"show_fan": "yes"}, {"show_fan": True}, {"fan_modes": "1"}, {"fan_modes": [None]}, {"fan_modes": [True]}, {"swing_modes": ["x" * 500]}, {"hvac_modes": ["heat"] * 100}):
+            assert not ok(None, dash({**climate_card(), **bad}), set(), set()), bad

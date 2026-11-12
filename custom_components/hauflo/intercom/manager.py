@@ -24,7 +24,7 @@ import voluptuous as vol
 from ..const import DOMAIN
 from ..tuning import TUNING
 from . import sip
-from .door import TALKING, Door, DoorConfig, IntercomError, configs, render
+from .door import RINGING, TALKING, Door, DoorConfig, IntercomError, configs, render
 from .rtsp import AudioHub, RtspServer
 from .ua import Endpoint, Registrar, Registration, Timers
 
@@ -59,6 +59,9 @@ class Intercom:
         self.entities: dict[tuple[str, str], str] = {}  # (door, kind) → entity_id, as each entity is added
         self._tasks: set[asyncio.Task[Any]] = set()
         self._ice_off: Any = None  # HA WebRTC's remover of this house's TURN / STUN servers (setup.register_ice)
+        # п.12: asks Hauflo for its TURN credentials (the agent's Agent.cloud_ice) — set before start(); None: no cloud.
+        self.cloud_fetch: Any = None
+        self.cloud_ice: Any = None  # cloud_ice.CloudIce while the doors run without the integrator's own ice_servers
 
     # --- life ----------------------------------------------------------------------------------------------------
 
@@ -66,9 +69,13 @@ class Intercom:
         """No door — no socket. The SIP socket on the chosen address only; the sound's RTSP on loopback only."""
         if not self.doors:
             return
+        from .cloud_ice import CloudIce  # noqa: PLC0415
         from .setup import register_ice  # noqa: PLC0415 — setup imports the view's HA modules
 
-        self._ice_off = register_ice(self.hass, self.options)
+        if self.cloud_fetch is not None and not self.options.get("ice_servers"):
+            self.cloud_ice = CloudIce(self.hass, self.cloud_fetch)
+            self._spawn(self.cloud_ice.refresh())  # not awaited: the doors don't wait for Hauflo
+        self._ice_off = register_ice(self.hass, self.options, self.cloud_ice)
         self.bind_host = await self._bind_host()
         if not self.bind_host:
             self.listen_error = "no_address"
@@ -97,6 +104,9 @@ class Intercom:
         if self._ice_off is not None:
             self._ice_off()
             self._ice_off = None
+        if self.cloud_ice is not None:
+            self.cloud_ice.stop()
+            self.cloud_ice = None
         for door in self.doors.values():
             door.close()
             if door.registration is not None:
@@ -164,6 +174,15 @@ class Intercom:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         return task
+
+    def ice_state(self) -> dict[str, Any]:
+        """Where a phone outside the home network gets its TURN: the integrator's own servers, Hauflo's, or none."""
+        if self.options.get("ice_servers"):
+            turn = any(str(u).startswith(("turn:", "turns:")) for s in self.options["ice_servers"] for u in (s.get("urls") or []))
+            return {"source": "manual", "turn": turn, "expires_in": 0}
+        if self.cloud_ice is not None:
+            return self.cloud_ice.state()
+        return {"source": "none", "turn": False, "expires_in": 0}
 
     # --- addresses -----------------------------------------------------------------------------------------------
 
@@ -265,7 +284,10 @@ class Intercom:
     # --- the card's events -----------------------------------------------------------------------------------------
 
     def fire(self, door: Door, state: str, user_id: str | None = None, result: str | None = None) -> None:
-        """`hauflo_intercom` on the bus: the card's / an automation's view of the call (the push is the event entity)."""
+        """`hauflo_intercom` on the bus: the card's / an automation's view of the call (the push is the event entity).
+        A ring asks Hauflo for fresh TURN credentials (п.12) — the phone that answers gets them for the whole talk."""
+        if state == RINGING and self.cloud_ice is not None:
+            self._spawn(self.cloud_ice.refresh())
         self.hass.bus.async_fire(EVENT, {"door": door.cfg.id, "state": state, "user_id": user_id, "result": result, "entity_id": self.entity_of(door.cfg.id, "state"), "call": self.entity_of(door.cfg.id, "call")})
 
     # --- the door ------------------------------------------------------------------------------------------------

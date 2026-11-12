@@ -34,6 +34,22 @@ const hfRankSeq = (cells) => {
   slots.forEach((s, k) => (seq[s] = by[k]));
   return seq;
 };
+/** п.3в (0.34 accept A): the page's band — its widest row of card-wide columns (hauflo-section / hauflo-layout `card_w`, in the
+ * middle since Р82), said to the view as `--hf-band`, so the cards across the page (the header with its weather chip, the
+ * house's alarm: HA's grid section, column «full») end at the rows' edges, not the screen's (1440: chip 1428, blocks 1332).
+ * Each row says its columns (`n`; 0 — none: a phone, the edit mode, not card-wide, gone); the widest wins; none — full width. */
+const hfBand = (src, n) => {
+  let view = src.__hfBandView || null;
+  for (let x = src; x && !view; x = x.parentNode || x.host) if (x.localName === "hui-sections-view") view = x;
+  if (!view) return;
+  src.__hfBandView = n > 0 ? view : null;
+  const all = (view.__hfBands ||= new Map());
+  if (n > 0) all.set(src, n);
+  else all.delete(src);
+  const m = Math.max(0, ...all.values());
+  if (m) view.style.setProperty("--hf-band", `calc(${m} * var(--hf-card-w,400px) + ${m - 1} * var(--ha-view-sections-column-gap,32px))`);
+  else view.style.removeProperty("--hf-band");
+};
 (() => {
   if (!HF_FIRST) return;
   // Served by the agent (/hauflo_static) or, after it was removed, from /local/hauflo (keep.py).
@@ -3366,13 +3382,24 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
    * setpoint's, never a cut list. Speeds that aren't one scale (diffuse / focus, auto ↓) keep their words. */
   const FAN_STEPS_MAX = 5;
   const FAN_RANK = { quiet: 0, low: 1, on_low: 1, medium: 2, middle: 2, mid: 2, high: 3, on_high: 3, top: 4, turbo: 5 };
+  const fanRank = (f) => (num(f) !== undefined ? num(f) : FAN_RANK[String(f).toLowerCase()]);
   const fanPlan = (list) => {
     const auto = list.includes("auto") ? "auto" : null;
     const rest = list.filter((f) => f !== auto);
-    const rank = (f) => (num(f) !== undefined ? num(f) : FAN_RANK[String(f).toLowerCase()]);
+    const rank = fanRank;
     const scale = rest.length > 1 && rest.every((f) => rank(f) !== undefined) && new Set(rest.map(rank)).size === rest.length;
     const speeds = scale ? [...rest].sort((a, b) => rank(a) - rank(b)) : rest;
     return { auto, speeds, scale, stepper: scale && speeds.length > FAN_STEPS_MAX };
+  };
+  /** The stepper's next speed from `cur` by `d` (±1), or undefined at the end. A speed outside a picked subset (п.13: set
+   * elsewhere — 7 of 1…10 while the card shows 1…6) steps to the nearest picked one on that side, never a jump to the first. */
+  const fanStep = (speeds, cur, d) => {
+    const i = speeds.indexOf(cur);
+    if (i >= 0) return speeds[i + d];
+    const r = fanRank(cur);
+    if (r === undefined) return d > 0 ? speeds[0] : undefined;
+    const side = speeds.filter((f) => (d > 0 ? fanRank(f) > r : fanRank(f) < r));
+    return d > 0 ? side[0] : side[side.length - 1];
   };
   /** The device's own fan speed settings (number / input_number «Скорость …» on the climate's device, not hidden): they
    * are the unit's real speed control (supply / exhaust, one or two) — the climate's own fan selector is a rough copy
@@ -3392,6 +3419,41 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
     const a = s?.attributes || {};
     const rng = canDo(s, 2);
     return { sp: canDo(s, 1) ? num(a.temperature) : undefined, lo: rng ? num(a.target_temp_low) : undefined, hi: rng ? num(a.target_temp_high) : undefined, presets: canDo(s, 16) ? a.preset_modes || [] : [], fans: canDo(s, 8) ? a.fan_modes || [] : [], swings: canDo(s, 32) ? a.swing_modes || [] : [] };
+  };
+  /** п.13 (owner 12.11, «ПВ установка»): a thermostat card's parts — the HVAC modes, presets, fan, swing, humidity — as
+   * HA's thermostat features have them (climate-hvac-modes / -preset-modes / -fan-modes / -swing-modes, each with its own
+   * subset `hvac_modes` / `preset_modes` / `fan_modes` / `swing_modes`). `show_<part>`: «auto» (none) — by the device, as
+   * before (the fan hides under the device's own speed number, presets stand in for modes); «show» — even then; «hide» —
+   * never. The subset keeps the device's order; one not on the device is no option. A forced fan over the device's own
+   * speed number takes that number's range (numeric speeds) unless the card has its own `fan_modes` — ONE place for the
+   * render, the «− n +» stepper and the editor. */
+  const SUB_SHOW = ["auto", "show", "hide"];
+  const SUB_LIST = { modes: "hvac_modes", presets: "preset_modes", fan: "fan_modes", swing: "swing_modes" };
+  const SUB_PARTS = [...Object.keys(SUB_LIST), "humidity"];
+  /** auto with a picked list reads as show: the integrator chose the speeds / presets — they are drawn (п.13, live 12.11). */
+  const subShow = (cfg, part) => {
+    const v = SUB_SHOW.includes(cfg?.[`show_${part}`]) ? cfg[`show_${part}`] : "auto";
+    return v === "auto" && SUB_LIST[part] && Array.isArray(cfg?.[SUB_LIST[part]]) && cfg[SUB_LIST[part]].length ? "show" : v;
+  };
+  const subPick = (all, pick) => (Array.isArray(pick) && pick.length ? all.filter((m) => pick.some((p) => String(p) === String(m))) : all);
+  const climateSubs = (cfg, s, h) => {
+    const a = s?.attributes || {};
+    const cc = climateCan(s);
+    const show = Object.fromEntries(SUB_PARTS.map((p) => [p, subShow(cfg, p)]));
+    const hvac = show.modes === "hide" ? [] : subPick((a.hvac_modes || []).filter((m) => HVAC[m]), cfg?.hvac_modes);
+    const modes = hvac.length > 1 ? hvac : [];
+    const pre = subPick(cc.presets.filter((p) => p !== "none"), cfg?.preset_modes);
+    const presets = show.presets === "hide" || (show.presets === "auto" && modes.length) ? [] : pre;
+    const own = ownFanSpeeds(h, cfg?.entity);
+    let fans = show.fan === "hide" || (show.fan === "auto" && own.length) ? [] : cc.fans.filter((f) => f !== "off");
+    if (Array.isArray(cfg?.fan_modes) && cfg.fan_modes.length) fans = subPick(fans, cfg.fan_modes);
+    else if (own.length && fans.length) {
+      const r = regRange(h?.states?.[own[0]]);
+      if (r) fans = fans.filter((f) => num(f) === undefined || (num(f) >= r.lo && num(f) <= r.hi));
+    }
+    const sw = show.swing === "hide" ? [] : subPick(cc.swings.filter((m) => m !== "off"), cfg?.swing_modes);
+    const swing = cc.swings.includes("off") ? (sw[0] ?? null) : null;
+    return { modes, presets, fans, swing, humidity: show.humidity !== "hide", show };
   };
   const HVAC = { heat: "Нагрев", cool: "Холод", auto: "Авто", heat_cool: "Диапазон", off: "Выкл", fan_only: "Вент.", dry: "Осушение" };
   const HVAC_ICON = { heat: "mdi:fire", cool: "hauflo:snow", auto: "mdi:thermostat-auto", heat_cool: "mdi:sun-snowflake-variant", off: "hauflo:power", fan_only: "hauflo:fan", dry: "hauflo:humidity" };
@@ -3531,7 +3593,7 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
   EN_RX.push([/^(.+): нет ответа от устройства$/, "$1: no response from the device"]);
   EN_RX.push([/^Авария: (\d+)$/, "Fault: $1"], [/^Неисправность: (.+)$/, "Problem: $1"], [/^Неисправностей: (\d+)$/, "Problems: $1"], [/^неисправность: (\d+)$/, "problem: $1"]);
   // The house's level said by itself (houseHead: the agent's `_house` with nothing of it named here, acceptance 10.11 M-1).
-  Object.assign(EN, { "Неисправность": "Problem", "Нет связи с датчиками": "No link to the sensors" });
+  Object.assign(EN, { "Неисправность": "Problem", "Нет связи с датчиками": "No link to the sensors", "Предустановка": "Preset" });
   Object.assign(EN, { "Включить всё": "Turn all on", "Выключить всё": "Turn all off", "Часы": "Hours", "Минуты": "Minutes", "Защита от замерзания": "Frost protection", "Авария": "Fault" });
   Object.assign(EN, { "Свет у меня": "My light", "Потеплее": "Warmer", "Моя комната ›": "My room ›" });
   EN_RX.push([/^задано (-?[\d.,]+°) · сейчас (-?[\d.,]+°)$/, "set $1 · now $2"], [/^вкл · (\d+) из (\d+)$/, "on · $1 of $2"]);
@@ -3950,12 +4012,16 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
     const hid = [...rowItems(cfg).values()].filter((o) => o.hidden === true).length;
     return [cfg?.auto === false ? LL("авто выключено — только свои строки", "auto is off — own rows only") : "", hid ? LL(`скрыто здесь: ${hid}`, `hidden here: ${hid}`) : ""].filter(Boolean);
   };
+  /** Keys of the shared list names that are ONE entity on a card (the thermostat's «Влажность» sensor, picked in its
+   * editor as one): not a list, never «не настроена» (п.13 sweep — the card emptied itself on a picked humidity). */
+  const ONE_ENT = { "hauflo-climate": ["humidity"] };
+  const oneEnt = (tag, k, v) => typeof v === "string" && (ONE_ENT[String(tag || "").replace(/^custom:/, "")] || []).includes(k);
   /** What is wrong with the card's YAML, said (RU, EN) instead of a blank card or an exception (personas §5 bug 1). */
   const cfgProblems = (cfg) => {
     const out = [];
     for (const k of ["entities", "groups", "lamps", "alarms", "sensors", "valves", "scenes", "lights", "covers", "devices", "temperature", "humidity"]) {
       const v = cfg[k];
-      if (v === undefined || v === null) continue;
+      if (v === undefined || v === null || oneEnt(cfg.type, k, v)) continue;
       if (!Array.isArray(v)) out.push([`«${k}» — не список`, `«${k}» is not a list`]);
       else if (v.some((e) => !(typeof e === "string" ? e.trim() !== "" : !!e && typeof e === "object" && typeof e.entity === "string" && e.entity !== ""))) out.push([`«${k}»: строка без entity пропущена`, `«${k}»: a row with no entity skipped`]);
     }
@@ -3980,6 +4046,9 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
       else if (cfg.rows.some((r) => !r || typeof r !== "object" || Array.isArray(r))) out.push(["«rows»: строка не объект — пропущена", "«rows»: a row that is not an object skipped"]);
     }
     if (cfg.auto !== undefined && typeof cfg.auto !== "boolean") out.push(["«auto» — true или false", "«auto» is true or false"]);
+    // п.13: a thermostat's parts — show_<part> one of SUB_SHOW, <part>_modes a list of the device's mode names.
+    for (const p of SUB_PARTS) if (cfg[`show_${p}`] !== undefined && !SUB_SHOW.includes(cfg[`show_${p}`])) out.push([`«show_${p}» — ${SUB_SHOW.join(" / ")}`, `«show_${p}» is ${SUB_SHOW.join(" / ")}`]);
+    for (const k of Object.values(SUB_LIST)) if (cfg[k] !== undefined && cfg[k] !== null && !(Array.isArray(cfg[k]) && cfg[k].every((m) => typeof m === "string" || typeof m === "number"))) out.push([`«${k}» — список режимов`, `«${k}» is a list of modes`]);
     if (cfg.order !== undefined && cfg.order !== null && !Array.isArray(cfg.order)) out.push(["«order» — не список", "«order» is not a list"]);
     return out;
   };
@@ -4017,6 +4086,7 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
       this._cfgWhy = cfgProblems(this._config);
       for (const k of ["entities", "groups", "lamps", "alarms", "sensors", "valves", "scenes", "lights", "covers", "devices", "temperature", "humidity"]) {
         const v = this._config[k];
+        if (oneEnt(this.localName, k, v)) continue;
         if (v === null) delete this._config[k];
         else if (v !== undefined && !Array.isArray(v)) (this._cfgBad = true), (this._config[k] = []);
         if (!Array.isArray(this._config[k])) continue;
@@ -4279,6 +4349,8 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
     const mine = (id) => (c.alarms || []).includes(id) || (c.devices || []).includes(id) || !!alarmRoom(c, hh, id);
     return [...new Set([...k.alarms, ...k.open, ...(k.other || []).filter(mine), ...k.wet, ...k.problems, ...k.lost])].filter((id) => !!st(hh, id) || k.names?.[id]);
   };
+  /** п.3в: a card across the page (the header, the house's alarm) within the page's band (hfBand) — its edges the rows' edges. */
+  const BAND_CSS = ":host{max-width:var(--hf-band,none);margin-inline:auto}";
   class Hero extends EHCard {
     /** On the page: the alert cards here look again whether this header says their faults (heroCovers). */
     connectedCallback() {
@@ -4357,7 +4429,7 @@ ${err ? `<div class="e">${esc(err)}</div>` : ""}<button class="b go" data-yes>Д
       return `<div class="ft room${light || warm || cover ? " big" : ""}"><button class="rn" data-froom="${esc(room.path)}"><ha-icon icon="mdi:home-heart"></ha-icon><span class="fn" data-own>${esc(room.name)}</span><span class="fs">Моя комната ›</span></button>${light || warm || cover ? `<div class="rbs">${light}${warm}${cover}</div>` : ""}</div>`;
     }
     css() {
-      return `.top{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px 12px}.top .lab{flex:1 1 160px}
+      return `${BAND_CSS}.top{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px 12px}.top .lab{flex:1 1 160px}
 .out{display:inline-flex;align-items:center;gap:8px;max-width:100%;margin-right:calc(-1*var(--hf-head-in));padding:6px 12px 6px 8px;border-radius:var(--hf-r-sm);background:var(--track);font:400 13px Onest,sans-serif;color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}.out>span:last-child{overflow:hidden;text-overflow:ellipsis}
 .out ha-icon{--mdc-icon-size:var(--hf-icon-m);color:var(--amberT)}.out b{font:500 15px Onest,sans-serif;color:var(--ink)}
 .lab{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0}.away{display:inline-flex;align-items:center;gap:6px;padding:4px 10px 4px 8px;border-radius:var(--hf-r-sm);background:color-mix(in srgb,var(--amber) 20%,transparent);color:var(--ink);font:500 12px Onest,sans-serif;white-space:nowrap;cursor:pointer}.away ha-icon{--mdc-icon-size:var(--hf-icon-s);color:var(--amberT)}.away.part{background:transparent;box-shadow:inset 0 0 0 1.5px var(--amber)}
@@ -5125,7 +5197,7 @@ ${SHEET_UX(12)}
   // --- hauflo-climate: the setpoint as the one big number ----------------------------------------
   class Climate extends EHCard {
     watched() {
-      return [this._config.entity, this._config.cool_setpoint, this._config.heat_setpoint, ...(this._config.extra || []), ...readingsOf(this._config).map((r) => r.entity), ...(this._config.zones || []).map((z) => z.entity), ...actIds(this._config.activity), ...(this._config.zones || []).flatMap((z) => actIds(z.activity))].filter(Boolean);
+      return [this._config.entity, this._config.cool_setpoint, this._config.heat_setpoint, typeof this._config.humidity === "string" ? this._config.humidity : null, ...(this._config.extra || []), ...readingsOf(this._config).map((r) => r.entity), ...(this._config.zones || []).map((z) => z.entity), ...actIds(this._config.activity), ...(this._config.zones || []).flatMap((z) => actIds(z.activity))].filter(Boolean);
     }
     set hass(hass) {
       this._hassIn(hass);
@@ -5228,7 +5300,7 @@ ${SHEET_UX(12)}
       const auto = p.auto ? btn(p.auto, FAN[p.auto]) : "";
       if (p.stepper) {
         const i = p.speeds.indexOf(cur);
-        return `<div class="modes fan one fstep hfrow">${auto}<button class="pm" data-fs="-1" aria-label="Медленнее"${i <= 0 ? " disabled" : ""}>−</button><span class="fv" aria-live="polite">${i < 0 ? "—" : i + 1}<small>/${p.speeds.length}</small></span><button class="pm" data-fs="1" aria-label="Быстрее"${i >= p.speeds.length - 1 ? " disabled" : ""}>+</button>${sw}</div>`;
+        return `<div class="modes fan one fstep hfrow">${auto}<button class="pm" data-fs="-1" aria-label="Медленнее"${fanStep(p.speeds, cur, -1) === undefined ? " disabled" : ""}>−</button><span class="fv" aria-live="polite">${i < 0 ? "—" : i + 1}<small>/${p.speeds.length}</small></span><button class="pm" data-fs="1" aria-label="Быстрее"${fanStep(p.speeds, cur, 1) === undefined ? " disabled" : ""}>+</button>${sw}</div>`;
       }
       if (p.scale) return `<div class="modes fan one hfrow">${auto}${p.speeds.map((f, i) => btn(f, String(i + 1), FAN[f] || "")).join("")}${sw}</div>`;
       return `<div class="modes fan hfrow">${fans.map((f) => btn(f, FAN[f] || f)).join("")}${sw}</div>`;
@@ -5284,7 +5356,7 @@ ${SHEET_UX(12)}
 .pr.on{color:var(--ink);background:var(--track);box-shadow:none}.pr.on::before{opacity:1}.pr.act::after{content:"●";font-size:8px;color:var(--ink3);margin-left:2px}
 [data-open],.zs .zr{cursor:pointer}[data-open] .ccn{position:relative}[data-open] .ccn::before,.zs .zr .ccn::before{content:"";position:absolute;inset:min(0px,(100% - var(--hf-hit))/2) 0}[data-open] .ccn .caps::after{content:"›";margin-left:6px;font-size:14px;letter-spacing:0;color:var(--ink3)}
 .pair2{font:400 12px/1.3 Onest,sans-serif;color:var(--ink3)}
-.modes{margin-top:16px}.modes.fan{margin-top:8px;align-items:center}.modes.one{display:flex;flex-wrap:nowrap;gap:6px}.modes.one .sw{flex:1.6}
+.modes{margin-top:16px}.modes.fan{margin-top:8px;align-items:center}.modes.one{display:flex;flex-wrap:nowrap;gap:6px}.modes.one.hfrow>*{flex:1 1 0}.modes.one.hfrow>.sw{flex:1.6 1 0}
 .fstep .fv{flex:1;text-align:center;font:500 17px Onest,sans-serif;font-variant-numeric:tabular-nums}.fstep .fv small{font:400 12px Onest,sans-serif;color:var(--ink3);margin-left:1px}.modes.fan button{white-space:nowrap;padding:0 4px;font-size:12px;min-width:0}.modes button{flex:1;min-height:44px;padding:0 6px;border-radius:var(--hf-r-sm);font:500 13px Onest,sans-serif;color:var(--ink2);box-shadow:inset 0 0 0 1px var(--line)}.modes.fstep button.pm{flex:0 0 44px;width:44px;height:44px;min-height:44px;padding:0;border-radius:22px;display:grid;place-items:center;background:var(--eh-glass,transparent);box-shadow:var(--eh-edge,inset 0 0 0 1px var(--line,var(--hf-track-14)));color:var(--ink);font:300 22px/1 Onest,sans-serif}.modes.fstep button.pm:disabled{opacity:.35;pointer-events:none}:host .toned .modes.fstep button.pm{color:var(--acT)}
 .modes .on{color:var(--ink);background:var(--track);box-shadow:none}.modes .arm{color:var(--alertT);background:color-mix(in srgb,var(--alert) 14%,transparent);box-shadow:inset 0 0 0 1.5px var(--alert)}
 .toned .glow{background:radial-gradient(50% 50% at 20% 10%,var(--acG),transparent 70%);opacity:.6}.toned.calm .glow{opacity:.32}
@@ -5323,7 +5395,8 @@ ${SHEET_UX(12)}
       const hi = undefined;
       const range = false;
       const cur = num(a.current_temperature);
-      const hum = num(a.current_humidity) ?? num(st(this._hass, this._config.humidity)?.state);
+      const subs = climateSubs(this._config, s, this._hass);
+      const hum = subs.humidity ? (num(a.current_humidity) ?? num(st(this._hass, this._config.humidity)?.state)) : undefined;
       const step = Math.max(num(a.target_temp_step) || 0.5, 0.5);
       const min = num(a.min_temp) ?? 5;
       const max = num(a.max_temp) ?? 35;
@@ -5359,17 +5432,17 @@ ${SHEET_UX(12)}
             .map((k) => `<button data-pk="${k}" class="pr ${k}${sel === k ? " on" : ""}${act === k ? " act" : ""}" aria-pressed="${sel === k}">${k === "heat" ? "обогрев до" : "охлаждение от"} ${fmt(pair[k], dg(pair[k]))}°</button>`)
             .join("")}</div>`
         : "";
-      const modes = (a.hvac_modes || []).filter((m) => HVAC[m]);
-      const presets = cc.presets.filter((p) => p !== "none");
-      const useModes = modes.length > 1;
       // An AC's fan speed and swing (persona round 3, Dubai: «no fan speed or swing»): shown when the device has them —
-      // by its FAN_MODE / SWING_MODE bits, not by the lists (climateCan).
-      const fans = ownFanSpeeds(this._hass, this._config.entity).length ? [] : cc.fans.filter((f) => f !== "off");
-      const swing = cc.swings.includes("off") ? (cc.swings.find((m) => m !== "off") ?? null) : null;
+      // by its FAN_MODE / SWING_MODE bits, not by the lists (climateCan); the card's own show / subset over it (п.13, climateSubs).
+      const { modes, presets, fans, swing } = subs;
+      const useModes = modes.length > 1;
       // A mode lit only when the thermostat has said something: HA's default «heat» isn't a fact (integrator run 25.10).
       // «Ожидание» isn't lit over a floor that heats (family review round 3): KNX's operation mode without a state address
       // reads «standby» by default — the action is the fact, the guessed preset isn't.
-      const opts = useModes ? modes.map((m) => [m, HVAC[m], known && s.state === m]) : presets.map((p) => [p, PRESET[p] || p, known && a.preset_mode === p && !(p === "standby" && now === "heat")]);
+      const presetOpts = presets.map((p) => [p, PRESET[p] || p, known && a.preset_mode === p && !(p === "standby" && now === "heat")]);
+      const opts = useModes ? modes.map((m) => [m, HVAC[m], known && s.state === m]) : presetOpts;
+      // Presets shown beside the modes (show_presets: show): their own row under «Предустановка», as HA's preset feature.
+      const presetRow = useModes && presetOpts.length ? `<div class="mh">Предустановка</div><div class="modes hfrow">${presetOpts.map(([k, l, on]) => `<button class="${on ? (tone ? "on mk" : "on") : ""}" data-p="${esc(k)}"${k === "building_protection" ? ` data-ask="Точно? Защита"` : ""} aria-pressed="${!!on}">${esc(l)}</button>`).join("")}</div>` : "";
       const digits = step < 1 && target !== undefined && target % 1 ? 1 : 0;
       const readings = this.readings();
       const chart = `${this.chartPeriods()}${this.chart(this._config.entity, this._config.floor ? "Пол" : "В комнате", tone ? `${tone}${calm ? " calm" : ""}` : "", 96)}${this.chartHistory()}`;
@@ -5389,6 +5462,7 @@ ${SHEET_UX(12)}
 ${chart}
 ${fixed || frost ? "" : `<div class="scale" data-min="${min}" data-max="${max}" data-step="${step}"${pair ? ` data-pair="1"` : ""}><div class="ticks">${ticks}</div><div class="ends"><span>${fmt(min)}°</span><span>проведите, чтобы изменить</span><span>${fmt(max)}°</span></div></div>`}
 ${opts.length ? `<div class="mh">Режим</div><div class="modes hfrow">${opts.map(([k, l, on]) => `<button class="${!on ? "" : useModes ? (climateTone(null, now, k) ? `on mk m-${climateTone(null, now, k)}` : "on") : tone ? "on mk" : "on"}" data-${useModes ? "m" : "p"}="${esc(k)}"${!useModes && k === "building_protection" ? ` data-ask="Точно? Защита"` : ""} aria-pressed="${!!on}">${esc(l)}</button>`).join("")}</div>` : ""}
+${presetRow}
 ${fans.length > 1 || swing ? `<div class="mh">Вентилятор</div>${this.fanRow(fans, swing, known, tone)}` : ""}</div></div>`;
     }
     /** Floor-heating zones of one room in one card: a line each — name, now, setpoint, ± (persona review 25.10). */
@@ -5601,9 +5675,8 @@ ${this.cct(cur, target, step, this._config.entity)}
       this.shadowRoot.querySelectorAll("button[data-f]").forEach((b) => b.addEventListener("click", () => call(this._hass, "climate", "set_fan_mode", { entity_id: id, fan_mode: b.dataset.f })));
       this.shadowRoot.querySelectorAll("button[data-fs]").forEach((b) => b.addEventListener("click", () => {
         const s = st(this._hass, id);
-        const { speeds } = fanPlan(climateCan(s).fans.filter((f) => f !== "off"));
-        const i = speeds.indexOf(s?.attributes?.fan_mode);
-        const to = speeds[Math.max(0, Math.min(speeds.length - 1, i < 0 ? 0 : i + Number(b.dataset.fs)))];
+        const { speeds } = fanPlan(climateSubs(this._config, s, this._hass).fans);
+        const to = fanStep(speeds, s?.attributes?.fan_mode, Number(b.dataset.fs));
         if (to !== undefined) call(this._hass, "climate", "set_fan_mode", { entity_id: id, fan_mode: to });
       }));
       this.shadowRoot.querySelectorAll("button[data-sw]").forEach((b) => b.addEventListener("click", () => call(this._hass, "climate", "set_swing_mode", { entity_id: id, swing_mode: b.dataset.sw })));
@@ -6006,7 +6079,7 @@ ${m.dom === "cover" && !m.dimmable ? `<div class="ud3">${coverButtons(coverKindO
       return [...(this._config.alarms || []), this._config.action?.entity_id].filter(Boolean);
     }
     css() {
-      return `.a{padding:var(--hf-pad-title);display:flex;flex-direction:column}
+      return `${BAND_CSS}.a{padding:var(--hf-pad-title);display:flex;flex-direction:column}
 .a .glow{background:radial-gradient(60% 50% at 20% 0%,var(--alertGlow),transparent 75%);opacity:.9}
 .tag{display:inline-flex;align-items:center;gap:8px;font:500 11px Onest,sans-serif;letter-spacing:var(--hf-caps-ls);text-transform:uppercase;color:var(--alertT)}
 .tag i{width:8px;height:8px;border-radius:4px;background:var(--alert);box-shadow:0 0 14px var(--alert)}
@@ -15453,6 +15526,33 @@ ${line ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;color:${ton
     "hauflo-alert": [],
   };
   for (const t of Object.keys(ROW_EDIT)) FORM[t] = [...FORM[t], BOOL("auto")];
+  /** п.13: the thermostat's parts in its editor — for each part the picked device has (climateCan; humidity when there is
+   * a reading): show auto / always / never and which of its modes the card offers (HA's thermostat features' subset).
+   * Built from the device's own lists when the editor draws (FORM_DYN), the same climateSubs the card draws by. */
+  const SUB_SHOW_OPT = [["auto", "Авто (по устройству)", "Auto (by the device)"], ["show", "Показывать", "Show"], ["hide", "Скрыть", "Hide"]];
+  const MULTI = (name, options) => ({ name, selector: { select: { multiple: true, mode: "list", options } } });
+  const subWord = (part, m) => {
+    const ru = part === "modes" ? HVAC[m] : part === "presets" ? PRESET[m] : part === "fan" ? FAN[m] : undefined;
+    return [m, ru ? `${ru} · ${m}` : String(m), ru && EN[ru] ? `${EN[ru]} · ${m}` : String(m)];
+  };
+  const FORM_DYN = {
+    "hauflo-climate": (h, c) => {
+      const s = h?.states?.[c?.entity];
+      if (!s || !c.entity.startsWith("climate.")) return [];
+      const a = s.attributes || {};
+      const cc = climateCan(s);
+      const lists = { modes: (a.hvac_modes || []).filter((m) => HVAC[m]), presets: cc.presets.filter((p) => p !== "none"), fan: cc.fans.filter((f) => f !== "off"), swing: cc.swings.includes("off") ? cc.swings.filter((m) => m !== "off") : [] };
+      const out = [];
+      for (const [part, key] of Object.entries(SUB_LIST)) {
+        const all = lists[part];
+        if (!all.length || (part === "modes" && all.length < 2)) continue;
+        out.push(SEL(`show_${part}`, SUB_SHOW_OPT));
+        if (all.length > 1 && subShow(c, part) !== "hide") out.push(MULTI(key, all.map((m) => subWord(part, m))));
+      }
+      if (num(a.current_humidity) !== undefined || c.humidity) out.push(SEL("show_humidity", SUB_SHOW_OPT.filter(([k]) => k !== "show")));
+      return out;
+    },
+  };
   /** The «Состав блока» cards whose rows draw a numeric regulator (Р78: its view / min / max / step per row). */
   const REG_CARDS = ["hauflo-area", "hauflo-lights", "hauflo-covers", "hauflo-sliders", "hauflo-devices"];
   const ROW_FIELD = { name: TXT("name"), secondary: TXT("secondary"), icon: ICON(), block: SEL("block", Object.entries(AREA_BLOCK).map(([k, [ru, en]]) => [k, ru, en])), tap_action: ACT("tap_action"), hold_action: ACT("hold_action") };
@@ -15471,6 +15571,8 @@ ${line ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;color:${ton
   PICK["hauflo-insights"] = [["Hauflo · Анализ", "Что Hauflo изучает о приборах: обучение, нормы, отклонения; «Это норма» — администраторам"], ["Hauflo · Analysis", "What Hauflo learns about the devices: learning, norms, deviations; “This is normal” for admins"]];
   FORM["hauflo-insights"] = [TXT("title"), { name: "sections", selector: { select: { multiple: true, mode: "list", options: INSIGHT_SECTION_OPT } } }, G(SEL("stage", INSIGHT_STAGE_OPT), NUM("limit", 1, INSIGHT_PAGE)), G(BOOL("hide_ok"), BOOL("compact"))];
   Object.assign(LABEL.ru, { sections: "Разделы (пусто — все)", stage: "Только стадия", limit: "Не больше строк" });
+  Object.assign(LABEL.ru, { show_modes: "Режимы (нагрев, холод…)", hvac_modes: "Какие режимы (пусто — все)", show_presets: "Предустановки", preset_modes: "Какие предустановки (пусто — все)", show_fan: "Вентилятор", fan_modes: "Какие скорости (пусто — все; есть отдельный регулятор скорости — в его диапазоне)", show_swing: "Обдув", swing_modes: "Какой обдув (первый из выбранных)", show_humidity: "Влажность в строке" });
+  Object.assign(LABEL.en, { show_modes: "Modes (heat, cool…)", hvac_modes: "Which modes (empty — all)", show_presets: "Presets", preset_modes: "Which presets (empty — all)", show_fan: "Fan", fan_modes: "Which speeds (empty — all; with a separate speed regulator — within its range)", show_swing: "Swing", swing_modes: "Which swing (the first picked)", show_humidity: "Humidity in the line" });
   Object.assign(LABEL.en, { sections: "Sections (empty — all)", stage: "Only the stage", limit: "At most rows" });
   const idOf = (x) => (typeof x === "string" ? x : x?.entity);
   /** Per tile (cards with an `entities` list): its name, what its value means (scale) and its own fault sensors — picked by
@@ -15676,7 +15778,7 @@ ${line ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;color:${ton
   // What a card does without the key — shown in the form, written only when changed.
   const DEFAULTS = {
     "hauflo-entity": { icon_type: "icon", layout: "horizontal", show_level: true, primary_info: "name", secondary_info: "state", controls: true },
-    "hauflo-climate": { chart: true, compact: false },
+    "hauflo-climate": { chart: true, compact: false, ...Object.fromEntries(SUB_PARTS.map((p) => [`show_${p}`, "auto"])) },
     "hauflo-scenes": { kind: "light" },
     "hauflo-weather": { days: 5, forecast: "daily" },
     "hauflo-graph": { hours: 24 },
@@ -15725,8 +15827,9 @@ ${line ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;color:${ton
     }
     _render() {
       // Р82: a tile's link to a picture only for one's own photo (the set and «Без фото» are picked below it).
-      const schema = this.tag === "hauflo-room" && this._photoUrl === false ? FORM[this.tag].filter((s) => s.name !== "picture") : FORM[this.tag];
-      if (!this._hass || !this._config || !schema) return;
+      const base = this.tag === "hauflo-room" && this._photoUrl === false ? FORM[this.tag].filter((s) => s.name !== "picture") : FORM[this.tag];
+      if (!this._hass || !this._config || !base) return;
+      const schema = FORM_DYN[this.tag] ? [...base, ...FORM_DYN[this.tag](this._hass, this._config)] : base;
       if (!this._edCss) {
         this._edCss = document.createElement("style");
         this._edCss.textContent = ED_CSS;
@@ -15742,6 +15845,7 @@ ${line ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;color:${ton
         return;
       }
       const fields = flat(schema);
+      this._fields = fields; // the form's listener reads the fields of the latest schema (FORM_DYN changes with the device)
       // On a dashboard Hauflo made: what a change here means (owner 28.10: «не понял, почему карточки не редактируются»).
       if (!this._note && /^\/hauflo-/.test(location.pathname)) {
         this._note = document.createElement("div");
@@ -15770,7 +15874,7 @@ ${line ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;color:${ton
           ev.stopPropagation();
           const v = ev.detail.value;
           const next = { ...this._config };
-          for (const s of fields) {
+          for (const s of this._fields) {
             const val = v[s.name];
             const dflt = DEFAULTS[this.tag]?.[s.name];
             if (val === undefined || val === "" || (Array.isArray(val) && !val.length) || (dflt !== undefined && val === dflt && !(s.name in this._config))) delete next[s.name];
@@ -16502,6 +16606,7 @@ ${line ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;color:${ton
     disconnectedCallback() {
       for (const m of this._mqs) m.removeEventListener?.("change", this._onMq);
       this._stopMeasure();
+      hfBand(this, 0);
       this._wro.disconnect();
       clearTimeout(this._wt);
     }
@@ -16693,6 +16798,7 @@ ${line ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;color:${ton
         if (els.length !== host.children.length || els.some((e, x) => e !== host.children[x])) host.replaceChildren(...els);
       }
       host.classList.toggle("measure", measuring);
+      hfBand(this, this._config.card_w !== true ? 0 : cols && cols.length > 1 ? cols.length : l && Number(l.per_row) > 1 ? Math.min(12, Math.round(Number(l.per_row))) : 0);
     }
     getCardSize() {
       return this._kids.length * 3 || 1;
@@ -16805,6 +16911,7 @@ ${line ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;color:${ton
         this._hfMqs = [];
         this._hfRo.disconnect();
         this._hfWro.disconnect();
+        hfBand(this, 0);
         clearTimeout(this._hfWt);
         clearTimeout(this._hfQuiet);
         this._hfMeasuring = null;
@@ -16839,6 +16946,7 @@ ${line ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;color:${ton
         this.style.setProperty("--hf-w", this._config?.card_w === true ? "var(--hf-card-w,400px)" : "1fr");
         // Р68: rows of a card's width (the zones' tiles on «Главная») stand apart as the room page's columns do.
         this.toggleAttribute("hf-cw", this._config?.card_w === true);
+        hfBand(this, mode && this._config?.card_w === true ? Number(this.style.getPropertyValue("--hf-n")) || 0 : 0);
       }
       /** The rule for the screen: packed columns, N per row, or HA's own layout (none matched, edit mode). */
       _hfPlace() {

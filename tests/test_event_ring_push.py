@@ -82,11 +82,11 @@ async def test_not_watched_old_or_unavailable(hass: HomeAssistant, engine) -> No
     hass.states.async_set(BELL, "unavailable", {"device_class": "doorbell"})
     await hass.async_block_till_done()
     assert calls == []
-    # The integrator turns the button on: it fires as a plain event line.
+    # The integrator turns the button on: it fires as a button's line (its class, п.11е).
     foreign.flags(hass).notify[BUTTON] = True
     _ring(hass, BUTTON, ago=-1)
     await hass.async_block_till_done()
-    assert len(calls) == 1 and calls[0].data["title"] == "🔔 Кнопка" and calls[0].data["message"] == "Сработало событие"
+    assert len(calls) == 1 and calls[0].data["title"] == "🔘 Кнопка" and calls[0].data["message"] == "Нажата кнопка"
 
 
 def _event(hass: HomeAssistant, eid: str, attrs: dict, *, platform: str = "zha", device_class: str | None = None) -> None:
@@ -204,3 +204,118 @@ async def test_sos_and_sip_watched_by_default(hass: HomeAssistant, engine) -> No
 def test_name_said_once() -> None:
     assert notify.once("Звонок в дверь Звонок в дверь") == "Звонок в дверь"
     assert notify.once("Свет Свет 2") == "Свет Свет 2" and notify.once("Ab") == "Ab" and notify.once("") == ""
+
+
+# --- п.11е: every state-less press (a third-party doorbell, a SIP call, an SOS, a Hue / Aqara / Shelly button, motion) ---
+
+
+def _device(hass: HomeAssistant, domain: str, name: str) -> str:
+    """A device of another integration (its config entry, as HA makes it) — its id."""
+    from homeassistant.helpers import device_registry as dr
+
+    owner = MockConfigEntry(domain=domain, title=name)
+    owner.add_to_hass(hass)
+    return dr.async_get(hass).async_get_or_create(config_entry_id=owner.entry_id, identifiers={(domain, name)}, name=name).id
+
+
+def _on_device(hass: HomeAssistant, eid: str, dev: str, attrs: dict, *, platform: str, device_class: str | None = None) -> None:
+    domain, object_id = eid.split(".")
+    er.async_get(hass).async_get_or_create(domain, platform, eid, suggested_object_id=object_id, device_id=dev, original_device_class=device_class)
+    hass.states.async_set(eid, "unknown" if domain == "event" else "idle", attrs)
+
+
+def _said(hass: HomeAssistant, eid: str, event_type: str, ago: float = 0) -> None:
+    hass.states.async_set(eid, (dt_util.utcnow() - timedelta(seconds=ago)).isoformat(), {**hass.states.get(eid).attributes, "event_type": event_type})
+
+
+async def test_third_party_doorbell_picture_urgent_one_visit_answered(hass: HomeAssistant, engine) -> None:
+    """A Reolink / Dahua doorbell (its `event` doorbell + a camera of the same device) and that panel's SIP call entity: one
+    push per visit with the door's picture, urgent; a repeat or the other entity within the window — no second push and
+    no second cloud line (status `ring`); «answered» on the SIP entity takes the doorbell's push off; ended — no line."""
+    eng, calls = engine
+    dev = _device(hass, "reolink", "Калитка")
+    _on_device(hass, "event.kalitka_visitor", dev, {"device_class": "doorbell", "event_types": ["ring"], "friendly_name": "Калитка Звонок"}, platform="reolink", device_class="doorbell")
+    _on_device(hass, "event.kalitka_sip", dev, {"event_types": ["incoming", "connected", "ended"], "friendly_name": "Калитка SIP"}, platform="sip")
+    _on_device(hass, "camera.kalitka", dev, {"friendly_name": "Калитка"}, platform="reolink")
+    foreign.flags(hass).notify["event.kalitka_sip"] = True
+    _said(hass, "event.kalitka_visitor", "ring")
+    await hass.async_block_till_done()
+    assert len(calls) == 1
+    first = calls[0].data
+    assert first["title"] == "🔔 Звонок в дверь" and first["data"]["image"] == "/api/camera_proxy/camera.kalitka"
+    assert first["data"]["priority"] == "high" and first["data"]["ttl"] == 0 and first["data"]["importance"] == "high"
+    ring = hass.states.get("event.kalitka_visitor").state
+    assert eng.ring_said(hass.states.get("event.kalitka_visitor")) == ring
+    # The same visit: pressed again, the SIP entity of the same panel rings — no push, the cloud says the first press only.
+    _said(hass, "event.kalitka_visitor", "ring", ago=-1)
+    _said(hass, "event.kalitka_sip", "incoming", ago=-1)
+    await hass.async_block_till_done()
+    assert len(calls) == 1
+    assert eng.ring_said(hass.states.get("event.kalitka_visitor")) == ring and eng.ring_said(hass.states.get("event.kalitka_sip")) is None
+    mon = {m["entityId"]: m for m in hass.config_entries.async_entries("hauflo")[0].runtime_data.monitored()}
+    assert dt_util.parse_datetime(mon["event.kalitka_visitor"]["ring"]) == dt_util.parse_datetime(ring) and "ring" not in mon["event.kalitka_sip"]
+    # Answered on another phone (the SIP integration says «connected»): the doorbell's push off; the hang-up says nothing.
+    _said(hass, "event.kalitka_sip", "connected", ago=-2)
+    await hass.async_block_till_done()
+    assert len(calls) == 2 and calls[1].data["message"] == "clear_notification" and calls[1].data["data"]["tag"] == first["data"]["tag"]
+    _said(hass, "event.kalitka_sip", "ended", ago=-3)
+    await hass.async_block_till_done()
+    assert len(calls) == 2 and eng.ring_said(hass.states.get("event.kalitka_sip")) is None
+
+
+async def test_buttons_by_class_or_words_each_its_own(hass: HomeAssistant, engine) -> None:
+    """A Hue dimmer's buttons (class `button`, one device) and a Shelly input (no class, its words): not watched by default;
+    turned on — «🔘 name · Нажата кнопка» each (four buttons of one device are four presses, not one visit), EN by the
+    project's language; a motion event — its own words; the cloud's `eventClass` the same kind."""
+    eng, calls = engine
+    dev = _device(hass, "hue", "Диммер")
+    for n in (1, 2):
+        _on_device(hass, f"event.dimmer_button_{n}", dev, {"device_class": "button", "event_types": ["short_release"], "friendly_name": f"Диммер {n}"}, platform="hue", device_class="button")
+    _on_device(hass, "event.shelly_input_0", _device(hass, "shelly", "Shelly"), {"event_types": ["single_push"], "friendly_name": "Shelly вход"}, platform="shelly")
+    _on_device(hass, "event.porch_motion", _device(hass, "unifiprotect", "Крыльцо"), {"device_class": "motion", "event_types": ["motion"], "friendly_name": "Крыльцо"}, platform="unifiprotect", device_class="motion")
+    ids = ("event.dimmer_button_1", "event.dimmer_button_2", "event.shelly_input_0", "event.porch_motion")
+    assert not any(eng.watches(e) for e in ids)
+    for eid in ids:
+        _said(hass, eid, hass.states.get(eid).attributes["event_types"][0])
+    await hass.async_block_till_done()
+    assert calls == []  # nobody turned them on
+    for eid in ids:
+        foreign.flags(hass).notify[eid] = True
+        _said(hass, eid, hass.states.get(eid).attributes["event_types"][0], ago=-1)
+    await hass.async_block_till_done()
+    got = sorted((c.data["title"], c.data["message"]) for c in calls)
+    assert got == [("👁 Крыльцо", "Движение"), ("🔘 Shelly вход", "Нажата кнопка"), ("🔘 Диммер 1", "Нажата кнопка"), ("🔘 Диммер 2", "Нажата кнопка")]
+    assert all("image" not in c.data["data"] and "priority" not in c.data["data"] for c in calls)  # not a door: no picture, no urgency
+    mon = {m["entityId"]: m for m in hass.config_entries.async_entries("hauflo")[0].runtime_data.monitored()}
+    assert mon["event.shelly_input_0"]["eventClass"] == "button" and mon["event.porch_motion"]["eventClass"] == "motion"
+    eng.config["lang"] = "en"
+    eng._rang.clear()
+    _said(hass, "event.shelly_input_0", "single_push", ago=-2)
+    await hass.async_block_till_done()
+    assert (calls[-1].data["title"], calls[-1].data["message"]) == ("🔘 Shelly вход", "The button was pressed")
+
+
+async def test_sos_at_night_critical_on_ios_once(hass: HomeAssistant, engine) -> None:
+    """An SOS press in the quiet hours: critical on iOS (through silent mode), no door urgency or picture over it; pressed
+    again within the window — one push."""
+    eng, calls = engine
+    eng.phones = lambda: [{"service": "mobile_app_p", "os": "ios", "person": "x"}]
+    eng.quiet_now = lambda: True
+    _on_device(hass, "event.panic_bedroom", _device(hass, "zha", "Тревожная кнопка"), {"device_class": "button", "event_types": ["press"], "friendly_name": "Тревожная кнопка"}, platform="zha", device_class="button")
+    assert eng.watches("event.panic_bedroom")  # SOS by its words beats the button class: watched by default
+    _said(hass, "event.panic_bedroom", "press")
+    _said(hass, "event.panic_bedroom", "press", ago=-1)
+    await hass.async_block_till_done()
+    assert len(calls) == 1
+    data = calls[0].data["data"]
+    assert calls[0].data["title"] == "🆘 SOS" and data["push"]["interruption-level"] == "critical" and data["push"]["sound"]["critical"] == 1
+    assert "image" not in data
+
+
+def test_kinds_one_table() -> None:
+    """The kinds and what each does are tuning's one table (no branch per kind in code)."""
+    from custom_components.hauflo.tuning import TUNING
+
+    table = {k: v for k, v in TUNING["notify"]["event_kinds"].items() if not k.startswith("_")}
+    assert list(notify.EVENT_KINDS) == list(table)
+    assert notify.C_SOS == {"sos"} and notify.WATCH_KINDS == {"sos", "doorbell"} and notify.RING_KINDS == {"doorbell"}

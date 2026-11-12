@@ -37,6 +37,12 @@
    "params": {}
   },
   {
+   "file": "agent/eventRoutes.ts",
+   "kind": "rest",
+   "call": "GET /api/hauflo/history",
+   "params": {}
+  },
+  {
    "file": "agent/insightRoutes.ts",
    "kind": "rest",
    "call": "GET /api/hauflo/insights",

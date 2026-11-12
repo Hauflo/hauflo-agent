@@ -183,15 +183,19 @@ def ice_servers(block: dict[str, Any], now: float | None = None) -> list[dict[st
     return out
 
 
-def register_ice(hass: HomeAssistant, block: dict[str, Any]) -> Any:
-    """Hands the servers to HA's WebRTC (camera/webrtc/get_client_config gives them to the card); the remover, or None."""
-    if not block.get("ice_servers"):
+def register_ice(hass: HomeAssistant, block: dict[str, Any], cloud: Any = None) -> Any:
+    """Hands the servers to HA's WebRTC (camera/webrtc/get_client_config gives them to the card, asked anew each time);
+    the remover, or None. The integrator's own `ice_servers` win; else Hauflo's TURN (`cloud`: cloud_ice.CloudIce)."""
+    if not block.get("ice_servers") and cloud is None:
         return None
     try:
         from homeassistant.components.web_rtc import async_register_ice_servers  # noqa: PLC0415
         from webrtc_models import RTCIceServer  # noqa: PLC0415
 
-        return async_register_ice_servers(hass, lambda: [RTCIceServer(**s) for s in ice_servers(block)])
+        def servers() -> list[Any]:
+            return [RTCIceServer(**s) for s in (ice_servers(block) if block.get("ice_servers") else cloud.current())]
+
+        return async_register_ice_servers(hass, servers)
     except (ImportError, KeyError) as err:  # no WebRTC in this HA: the talk stays on the LAN
         _LOGGER.debug("Hauflo intercom: no WebRTC to hand the ICE servers to (%s)", err)
         return None
@@ -210,7 +214,8 @@ async def adapters(hass: HomeAssistant) -> list[str]:
 
 
 class IntercomView(HomeAssistantView):
-    """GET (admin) → {features, presets, config (passwords masked), listen, adapters, doors: {id: state}};
+    """GET (admin) → {features, presets, config (passwords masked), ice (where the phones' TURN comes from), listen,
+    adapters, doors: {id: state}};
     POST (admin) {bind?, port?, public?, doors: [...], ice_servers?} → saved into the options (the entry reloads);
     400 {code, field, door} when something is wrong."""
 
@@ -245,6 +250,7 @@ class IntercomView(HomeAssistantView):
                 "modes": list(MODES),
                 "openers": list(OPENERS),
                 "config": masked(dict(entry.options.get(CONF_INTERCOM) or {})),
+                "ice": mgr.ice_state() if mgr is not None else {"source": "none", "turn": False, "expires_in": 0},
                 "listen": mgr.listen_address() if mgr is not None else None,
                 "adapters": await adapters(hass),
                 "doors": doors,
