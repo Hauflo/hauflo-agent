@@ -20,6 +20,8 @@ dashboards. Revoked / expired → the user is deleted. A convenient view, not a 
 
 from __future__ import annotations
 
+from http import HTTPStatus
+
 import asyncio
 from collections import deque
 from collections.abc import Callable
@@ -38,11 +40,13 @@ from homeassistant.helpers import area_registry as ar, entity_registry as er
 from homeassistant.helpers.event import async_call_later, async_track_time_interval
 from homeassistant.util import dt as dt_util, slugify
 
-from .const import site_ru
+from . import derived
+from .const import site_ru, wants_ru
 from .dashmerge import Access
 from .house import GUEST_USERS, is_guest, may_edit, refuse
 from .natural import natural_key
 from .ownership import entity_room
+from .rules import said
 from .storage import HaufloStore
 from . import qr
 from .tuning import TUNING
@@ -101,6 +105,13 @@ _COVER_FEATURE = {"open": 1, "close": 2, "position": 4, "stop": 8}
 
 class Invalid(ValueError):
     """A request the family's screen sent wrong (400)."""
+
+
+class Refused(Invalid, derived.Refused):
+    """A refusal a person can meet (not a request sent wrong): said in the page's language — translations guest_<code>."""
+
+    def __init__(self, code: str, status: int = HTTPStatus.BAD_REQUEST, **ph: Any) -> None:
+        derived.Refused.__init__(self, code, f"guest_{code}", status, **ph)
 
 
 def route_of(secret: str) -> str:
@@ -296,7 +307,7 @@ class GuestAccess:
 
     async def issue(self, user: Any, body: dict[str, Any]) -> dict[str, Any]:
         if not _issuer_ok(user):
-            raise PermissionError("only a person who controls the house can invite a guest")
+            raise Refused("not_issuer", HTTPStatus.FORBIDDEN)
         label = _clean(body.get("label"), 40)
         rooms = body.get("rooms")
         if not isinstance(rooms, list) or not 1 <= len(rooms) <= MAX_ROOMS or not all(isinstance(r, str) for r in rooms):
@@ -304,7 +315,7 @@ class GuestAccess:
         rooms = list(dict.fromkeys(rooms))
         areas = ar.async_get(self.hass)
         if any(areas.async_get_area(r) is None for r in rooms):
-            raise Invalid("no such room")
+            raise Refused("no_room")
         hours = body.get("hours")
         if isinstance(hours, bool) or not isinstance(hours, int) or not 1 <= hours <= MAX_HOURS:
             raise Invalid(f"hours: 1…{MAX_HOURS}")
@@ -313,11 +324,11 @@ class GuestAccess:
             raise Invalid(f"max_devices: 1…{MAX_DEVICES}")
         entities = [e for r in rooms for e in self.candidates(r) if _may_control(user, e)]
         if not entities:
-            raise Invalid("nothing a guest may control in these rooms")
+            raise Refused("nothing")
         async with self.lock:
             self._prune()
             if sum(1 for g in self.grants if g.get("kind") != PAGES and self._status(g) == "active") >= MAX_ACTIVE:
-                raise Invalid(f"at most {MAX_ACTIVE} guest links at once — close one first")
+                raise Refused("too_many_links", n=MAX_ACTIVE)
             gid, secret = secrets.token_urlsafe(9), secrets.token_urlsafe(24)
             now = dt_util.utcnow()
             grant = {
@@ -348,7 +359,7 @@ class GuestAccess:
             now = _iso(dt_util.utcnow())
             one = next((g for g in self.grants if g["id"] == grant_id), None)
             if grant_id is not None and one is None:
-                raise Invalid("no such guest link")
+                raise Refused("no_link")
             for g in self.grants:
                 if (grant_id is None or g["id"] == grant_id) and self._status(g) == "active":
                     g["revoked"], g["revoked_by"] = now, getattr(user, "name", "") or ""
@@ -421,17 +432,17 @@ class GuestAccess:
 
         # Making a login of HA is HA's administrators' (config/auth is admin-only in HA itself).
         if user is None or not user.is_admin or user.system_generated or not user.is_active or is_guest(self.hass, user):
-            raise PermissionError("only an administrator gives a guest a login")
+            raise Refused("not_admin", HTTPStatus.FORBIDDEN)
         label = _clean(body.get("label"), 40)
         if not label:
-            raise Invalid("label: the guest's name")
+            raise Refused("no_label")
         pages = body.get("pages")
         if not isinstance(pages, list) or not 1 <= len(pages) <= PAGES_MAX or not all(isinstance(x, dict) and set(x) == {"dashboard", "view"} and isinstance(x["dashboard"], str) and isinstance(x["view"], str) for x in pages):
             raise Invalid(f"pages: 1…{PAGES_MAX} of {{dashboard, view}}")
         chosen = list(dict.fromkeys((x["dashboard"], x["view"]) for x in pages))
         offered = {(d["url_path"], v["path"]) for d in await self.available() for v in d["views"]}
         if any(c not in offered for c in chosen):
-            raise Invalid("no such page")
+            raise Refused("no_page")
         hours = body.get("hours")
         if isinstance(hours, bool) or not isinstance(hours, int) or not 1 <= hours <= PAGES_MAX_DAYS * 24:
             raise Invalid(f"hours: 1…{PAGES_MAX_DAYS * 24}")
@@ -444,7 +455,7 @@ class GuestAccess:
         async with self.lock:
             self._prune()
             if sum(1 for g in self.grants if g.get("kind") == PAGES and self._status(g) == "active") >= PAGES_MAX_ACTIVE:
-                raise Invalid(f"at most {PAGES_MAX_ACTIVE} guests with a login at once — close one first")
+                raise Refused("too_many_logins", n=PAGES_MAX_ACTIVE)
             taken = {str(u.get("username", "")) for u in provider.data.users}
             username = self._username(label, taken)
             password = "".join(secrets.choice(_PASSWORD_ABC) for _ in range(PASSWORD_LEN))
@@ -877,7 +888,7 @@ class GuestView(HomeAssistantView):
         user = request["hass_user"]
         if op == "ask":
             note = body.get("note", "")
-            if set(body) - {"op", "note"} or not isinstance(note, str) or len(note) > 60 or _UNSAFE_TEXT.search(note):
+            if set(body) - {"op", "note", "lang"} or not isinstance(note, str) or len(note) > 60 or _UNSAFE_TEXT.search(note):
                 return self.json_message("ask: an optional short note", 400)
             if user is None or user.system_generated:
                 return self.json_message("a person of the house only", 403)
@@ -893,11 +904,11 @@ class GuestView(HomeAssistantView):
             return self.json(await ask_admins(request.app[KEY_HASS], user, " ".join(note.split()), phones, getattr(alarms, "config", None)))
         try:
             if op == "issue":
-                if set(body) - {"op", "label", "rooms", "hours", "max_devices"}:
+                if set(body) - {"op", "label", "rooms", "hours", "max_devices", "lang"}:
                     return self.json_message("only label, rooms, hours, max_devices", 400)
                 return self.json(await engine.issue(user, body))
             if op == "issue_pages":
-                if set(body) - {"op", "label", "pages", "hours", "role"}:
+                if set(body) - {"op", "label", "pages", "hours", "role", "lang"}:
                     return self.json_message("only label, pages, hours, role", 400)
                 return self.json(await engine.issue_pages(user, body))
             if op == "revoke":
@@ -906,6 +917,8 @@ class GuestView(HomeAssistantView):
                 return self.json({"revoked": await engine.revoke(user, body["id"]), **engine.answer(user)})
             if op == "revoke_all":
                 return self.json({"revoked": await engine.revoke(user, None), **engine.answer(user)})
+        except Refused as err:
+            return self.json(await said(engine.hass, err, wants_ru(body, engine.hass.config.language)), err.status)
         except PermissionError as err:
             return self.json_message(str(err), 403)
         except Invalid as err:

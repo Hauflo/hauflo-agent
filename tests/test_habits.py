@@ -62,7 +62,7 @@ async def entry(hass: HomeAssistant, tmp_path: Path):
         (OUTLET, "tuya", {"device_class": "outlet"}, {}),
         (BARE, "mqtt", {}, {}),
         (CLIMATE, "mqtt", {"supported_features": 1, "min_temp": 7, "max_temp": 30, "target_temp_step": 0.5, "temperature": 20, "hvac_modes": ["off", "heat"]}, {"area_id": bed}),
-        (FAN, "mqtt", {}, {}),
+        (FAN, "mqtt", {"supported_features": 48}, {}),
         (HIDDEN, "mqtt", {}, {"hidden_by": er.RegistryEntryHider.USER}),
         (DISABLED, "mqtt", {}, {"disabled_by": er.RegistryEntryDisabler.USER}),
         (CONFIG, "mqtt", {}, {"entity_category": er.EntityCategory.CONFIG}),
@@ -188,7 +188,7 @@ async def test_manual_counted_automation_not(hass: HomeAssistant, entry) -> None
     run = Context()
     hass.bus.async_fire("automation_triggered", {"name": "x", "entity_id": "automation.x"}, context=run)
     await hass.async_block_till_done()
-    hass.states.async_set(FAN, "on", {}, context=run)
+    hass.states.async_set(FAN, "on", {"supported_features": 48}, context=run)
     await hass.async_block_till_done()
     assert f"{CEIL}|on" not in h.data["events"] and f"{FAN}|on" not in h.data["events"]
     assert f"{CEIL}|on" in h.data["auto"] and f"{FAN}|on" in h.data["auto"]
@@ -207,8 +207,8 @@ async def test_manual_counted_automation_not(hass: HomeAssistant, entry) -> None
     await hass.async_block_till_done()
     assert not {k.split("|")[0] for k in h.data["events"]} & {HIDDEN, CONFIG, LOCK, BARE, GARAGE, VALVE}
     # Back from «unavailable» is the device's, not a person's.
-    hass.states.async_set(FAN, "unavailable", {})
-    hass.states.async_set(FAN, "off", {}, context=Context())
+    hass.states.async_set(FAN, "unavailable", {"supported_features": 48})
+    hass.states.async_set(FAN, "off", {"supported_features": 48}, context=Context())
     await hass.async_block_till_done()
     assert f"{FAN}|off" not in h.data["events"]
     # While HA is starting (the first minutes): nothing.
@@ -261,9 +261,9 @@ async def test_workday_clock_habit(hass: HomeAssistant, hass_client, entry) -> N
     assert got["habits_on"] is True
     [s] = got["habits"]
     assert s["key"].startswith("habit_") and s["class"] == "workdays" and s["hits"] == len(_workdays()) and s["of"] - s["hits"] <= 1  # today: watched, not yet
-    assert s["rule"]["when"] == {"event": "time", "at": "06:45"}
+    assert s["rule"]["when"] == {"event": "time", "times": ["06:45"]}  # Р83: the canon form
     assert s["rule"]["days"] == ["mon", "tue", "wed", "thu", "fri"]
-    assert s["rule"]["actions"] == [{"entity_id": ZIG, "do": "on", "value": 60}]
+    assert s["rule"]["actions"] == [{"do": "brightness", "target": {"entity_id": ZIG}, "value": 60}]
     assert s["rule"]["from"] == s["key"] and s["area"] == entry.hall
     # The same habit, mined again / after a restart: the same key (a dismissal sticks).
     await h.async_stop()
@@ -294,8 +294,8 @@ async def test_weekend_apart_from_workdays(hass: HomeAssistant, hass_client, ent
     _seed(h, CURTAIN, "open", 9 * 60 + 30, _weekend())
     got = {s["class"]: s["rule"] for s in (await _got(hass, hass_client, entry))["habits"]}
     assert set(got) == {"workdays", "weekend"}
-    assert got["workdays"]["when"]["at"] == "07:00" and got["weekend"]["when"]["at"] == "09:30"
-    assert got["weekend"]["days"] == ["sat", "sun"] and got["weekend"]["actions"] == [{"entity_id": CURTAIN, "do": "open"}]
+    assert got["workdays"]["when"]["times"] == ["07:00"] and got["weekend"]["when"]["times"] == ["09:30"]
+    assert got["weekend"]["days"] == ["sat", "sun"] and got["weekend"]["actions"] == [{"do": "open", "target": {"entity_id": CURTAIN}}]
 
 
 async def test_every_day_is_one_suggestion(hass: HomeAssistant, hass_client, entry) -> None:
@@ -305,7 +305,7 @@ async def test_every_day_is_one_suggestion(hass: HomeAssistant, hass_client, ent
     got = (await _got(hass, hass_client, entry))["habits"]
     [s] = got
     assert s["class"] == "all" and s["rule"]["days"] == ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
-    assert s["rule"]["when"]["at"] == "23:50"
+    assert s["rule"]["when"]["times"] == ["23:50"]
     # The clock is a circle: 23:58 and 00:02 are one time, not a 23-hour spread.
     center, spread, hits = hb._fit([1438, 2, 1435, 5], True)
     assert min(center, hb.DAY - center) <= 5 and spread <= 5 and hits == 4
@@ -333,7 +333,7 @@ async def test_sun_fit_preferred_when_drifting_with_sunset(hass: HomeAssistant, 
     h.data["events"].clear()
     _seed(h, CURTAIN, "close", 22 * 60, range(1, 14))
     [s] = (await _got(hass, hass_client, entry))["habits"]
-    assert s["rule"]["when"] == {"event": "time", "at": "22:00"}
+    assert s["rule"]["when"] == {"event": "time", "times": ["22:00"]}
 
 
 async def test_room_merge(hass: HomeAssistant, hass_client, entry) -> None:
@@ -344,12 +344,12 @@ async def test_room_merge(hass: HomeAssistant, hass_client, entry) -> None:
     _seed(h, ZIG, "off", 22 * 60 + 30, _workdays())  # another room: its own suggestion
     got = (await _got(hass, hass_client, entry))["habits"]
     room = [s for s in got if s["area"] == entry.bed]
-    assert len(room) == 1 and room[0]["rule"]["actions"] == [{"do": "room_covers", "area_id": entry.bed, "cover": "close"}]
+    assert len(room) == 1 and room[0]["rule"]["actions"] == [{"do": "close", "target": {"domain": "cover", "area_id": entry.bed}}]
     assert room[0]["entities"] == [BLIND1, BLIND2]
     # One of two blinds only: by name.
     h.data["events"].pop(f"{BLIND2}|close")
     got = (await _got(hass, hass_client, entry))["habits"]
-    assert [s["rule"]["actions"] for s in got if s["area"] == entry.bed] == [[{"entity_id": BLIND1, "do": "close"}]]
+    assert [s["rule"]["actions"] for s in got if s["area"] == entry.bed] == [[{"do": "close", "target": {"entity_id": BLIND1}}]]
 
 
 async def test_climate_setpoint_habit_within_bounds(hass: HomeAssistant, hass_client, entry) -> None:
@@ -357,7 +357,7 @@ async def test_climate_setpoint_habit_within_bounds(hass: HomeAssistant, hass_cl
     _observe(h)
     _seed(h, CLIMATE, "temp", 6 * 60 + 30, _workdays(), level=21.5)
     [s] = (await _got(hass, hass_client, entry))["habits"]
-    assert s["rule"]["actions"] == [{"entity_id": CLIMATE, "do": "temp", "value": 21.5}]
+    assert s["rule"]["actions"] == [{"do": "setpoint", "target": {"entity_id": CLIMATE}, "value": 21.5}]
     # A level past the thermostat's own max (its bounds changed since): validate() drops it.
     h.data["events"].clear()
     _seed(h, CLIMATE, "temp", 6 * 60 + 30, _workdays(), level=31)

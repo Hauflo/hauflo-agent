@@ -396,10 +396,13 @@ async def test_a_hand_edited_automation_is_kept(hass: HomeAssistant, house) -> N
     await independent.async_sync(hass, engine)
     data = load_yaml(str(config / "automations.yaml"))
     data[1]["mode"] = "single"  # the integrator's own change
+    assert engine.native_status()["leak"]["edited"] is False  # Hauflo's own write
     (config / "automations.yaml").write_text(dump(data))
+    await hass.services.async_call("automation", "reload", {}, blocking=True)  # HA's editor reloads after its save
+    assert engine.native_status()["leak"]["edited"] is True  # Н1: «Переписать» leaves it out
     engine.config = notify._clean_rules({"lang": "ru", "rules": [{**LEAK_RULE, "title": "Вода"}]}, hass, engine.owns)
     res = await independent.async_sync(hass, engine)
-    assert res["kept_edited"] == ["Вода"] and _ours(config)[0]["mode"] == "single"
+    assert res["kept_edited"] == ["Вода"] and _ours(config)[0]["mode"] == "single" and engine.native_status()["leak"]["edited"] is True
     # Its rule gone from Hauflo: the edited automation stays, said.
     engine.config = notify._clean_rules({"lang": "ru", "rules": []}, hass, engine.owns)
     res = await independent.async_sync(hass, engine)

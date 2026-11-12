@@ -19,6 +19,8 @@ dropped (a threshold out of bounds is clamped) on its own, the rest kept. The en
 
 from __future__ import annotations
 
+from http import HTTPStatus
+
 from collections.abc import Callable
 from datetime import timedelta
 import logging
@@ -65,6 +67,13 @@ _clock = time.time  # the tests move it
 
 class Invalid(ValueError):
     pass
+
+
+class Refused(Invalid, derived.Refused):
+    """A refusal a person can meet (not a request sent wrong): said in the page's language — translations daylight_<code>."""
+
+    def __init__(self, code: str, status: int = HTTPStatus.BAD_REQUEST, **ph: Any) -> None:
+        derived.Refused.__init__(self, code, f"daylight_{code}", status, **ph)
 
 
 class SensorRefused(Invalid):
@@ -169,7 +178,7 @@ class Daylight:
         cfg = await self.config()
         skip = [x for x in cfg["skip"] if x != entity_id] + ([entity_id] if on else [])
         if len(skip) > MAX_SKIP:
-            raise Invalid(f"skip: up to {MAX_SKIP}")
+            raise Refused("skip_full", n=MAX_SKIP)
         await self._save({**cfg, "skip": skip})
         return skip
 

@@ -120,7 +120,7 @@ async def test_sunset_rule_end_to_end(hass: HomeAssistant, hass_client, hass_rea
         {"action": "light.turn_on", "target": {"entity_id": LIGHT}, "data": {"brightness_pct": 30}},
     ]
     # No initial_state: HA keeps a switch a person made in HA over restarts (HA expert 28.10).
-    assert "initial_state" not in mine and mine["alias"] == "Hauflo · Закат −15 мин" and mine["description"] in ("Создано в Hauflo.", "Made in Hauflo.")
+    assert "initial_state" not in mine and mine["alias"] == "Hauflo · Закат −15 мин" and mine["description"] == "15 min before sunset: close — living blind; brightness 30 % — living ceiling. Made in Hauflo."
     assert [a for a in _file(hass) if a.get("id") == THEIRS["id"]] == [THEIRS]  # the integrator's stays as it was
     eid = er.async_get(hass).async_get_entity_id("automation", "automation", rid)
     assert eid and hass.states.get(eid).state == "on"
@@ -162,8 +162,8 @@ async def test_sunset_rule_end_to_end(hass: HomeAssistant, hass_client, hass_rea
         {**SUNSET, "actions": [{"entity_id": GARAGE, "do": "open"}]},  # opens the house
         {**SUNSET, "actions": [{"entity_id": LOCK, "do": "on"}]},
         {**SUNSET, "actions": [{"entity_id": "light.nowhere", "do": "on"}]},
-        {**SUNSET, "actions": [{"entity_id": BLIND, "do": "toggle"}]},  # not a service a rule may do
-        {**SUNSET, "actions": [{"entity_id": BLIND, "do": "stop"}]},
+        {**SUNSET, "actions": [{"entity_id": BLIND, "do": "press"}]},  # not a service a blind has
+        {**SUNSET, "actions": [{"entity_id": BLIND, "do": "speed", "value": 50}]},
         {**SUNSET, "actions": [{"entity_id": SCENE, "do": "off"}]},
         {**SUNSET, "actions": [{"action": "shell_command.x"}]},
         {**SUNSET, "actions": [{"entity_id": BLIND, "do": "position", "value": 101}]},
@@ -676,7 +676,7 @@ async def test_recipes_are_offered_accepted_and_the_alarm_clock_yaml(hass: HomeA
         ("light.bed_lamp", "u-bedlamp", {"supported_color_modes": ["brightness"]}),
         ("cover.bed_blind", "u-bedblind", {"supported_features": 15}),
         ("climate.bed", "u-bedclimate", {"supported_features": 1, "min_temp": 7, "max_temp": 30, "target_temp_step": 0.5, "hvac_modes": ["off", "heat"]}),
-        ("fan.bed", "u-bedfan", {}),
+        ("fan.bed", "u-bedfan", {"supported_features": 48}),
     ):
         domain, obj = eid.split(".")
         reg.async_get_or_create(domain, "knx", uid, suggested_object_id=obj)

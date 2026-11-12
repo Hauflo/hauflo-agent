@@ -10,7 +10,7 @@ from homeassistant.util.hass_dict import HassKey
 from . import servers as _servers
 
 DOMAIN = "hauflo"
-VERSION = "0.34.0"
+VERSION = "0.35.0"
 
 
 def _www_hash() -> str:
@@ -82,6 +82,12 @@ OPEN_PREFIX = "hauflo_open_"  # the input_boolean's id → input_boolean.hauflo_
 CHATTER_PREFIX = "hauflo_chatter_"
 ACK_ACTION = "HAUFLO_ACK_"  # the push's «Принято» button (mobile_app_notification_action)
 RUN_ACTION = "HAUFLO_RUN_"  # the push's rule button («Перекрыть воду»)
+# The same buttons of a rule written in the flat form (Р83, alarm_form.py): one shared automation each takes them — never
+# the old form's own triggers (a rule of both forms in one house is told once).
+OK_ACTION = "HAUFLO_OK_"
+DO_ACTION = "HAUFLO_DO_"
+PUSH_SCRIPT = "hauflo_push"  # script.hauflo_push — the push of every rule of the flat form
+RUN_PREFIX = "hauflo_run_"  # script.hauflo_run_<rule> — a rule's push button
 NATIVE_STORE = f"{DOMAIN}.notify_native"
 # The context parent of a helper the agent sets quietly (the move of an accepted alarm, «Принято» from a card the agent
 # tells itself): the automation then says nothing twice.

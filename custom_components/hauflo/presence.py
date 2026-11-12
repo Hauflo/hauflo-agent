@@ -29,6 +29,8 @@ Plan and limits: docs/automations.md («Нет дома — имитация п�
 
 from __future__ import annotations
 
+from http import HTTPStatus
+
 from bisect import bisect_right
 from collections import deque
 from collections.abc import Callable
@@ -48,8 +50,11 @@ from homeassistant.helpers.event import async_track_point_in_time, async_track_s
 from homeassistant.helpers.start import async_at_started
 from homeassistant.util import dt as dt_util
 
+from . import derived
+from .const import wants_ru
 from .house import refuse
 from .ownership import entity_room
+from .rules import said
 from .storage import HaufloStore
 from .tuning import TUNING
 from .notify import label
@@ -91,6 +96,13 @@ DEFAULT: dict[str, Any] = {"enabled": False, "until": None, "lights": True, "cov
 
 class Invalid(ValueError):
     """A request the agent refuses (400)."""
+
+
+class Refused(Invalid, derived.Refused):
+    """A refusal a person can meet (not a request sent wrong): said in the page's language — translations presence_<code>."""
+
+    def __init__(self, code: str, status: int = HTTPStatus.BAD_REQUEST, **ph: Any) -> None:
+        derived.Refused.__init__(self, code, f"presence_{code}", status, **ph)
 
 
 # --- time on the 04:00 → 04:00 day ------------------------------------------------------------------------------------
@@ -1042,7 +1054,7 @@ class Presence:
                 except ValueError as err:
                     raise Invalid("until: YYYY-MM-DD") from err
                 if not today <= day <= today + dt.timedelta(days=MAX_UNTIL_DAYS):
-                    raise Invalid(f"until: today … {MAX_UNTIL_DAYS} days on")
+                    raise Refused("bad_until", n=MAX_UNTIL_DAYS)
                 new["until"] = v
         elif new["enabled"] and not self.data["enabled"] and new.get("until") and new["until"] < today.isoformat():
             new["until"] = None  # an old «until» doesn't switch a new absence off at once
@@ -1052,7 +1064,7 @@ class Presence:
                 raise Invalid("skip_rooms: a list of room ids")
             new["skip_rooms"] = list(dict.fromkeys(v))
         if not new["lights"] and not new["covers"]:
-            raise Invalid("lights or covers: at least one")
+            raise Refused("lights_or_covers")
         if new["enabled"] and not self.data["enabled"]:
             new["since"], new["by"] = dt_util.now().isoformat(timespec="seconds"), user
         turned = new["enabled"] != self.data["enabled"]
@@ -1138,7 +1150,7 @@ class PresenceView(HomeAssistantView):
             return self.json_message("invalid JSON", 400)
         if not isinstance(body, dict) or body.get("op") != "set":
             return self.json_message("op: set", 400)
-        if set(body) - {"op", "enabled", "until", "lights", "covers", "mode", "skip_rooms"}:
+        if set(body) - {"op", "enabled", "until", "lights", "covers", "mode", "skip_rooms", "lang"}:
             return self.json_message("only enabled, until, lights, covers, mode, skip_rooms", 400)
         if (no := await refuse(request)) is not None:
             return no  # «Кто может менять настройки дома» (house.py): admins and the people an admin allowed
@@ -1146,5 +1158,7 @@ class PresenceView(HomeAssistantView):
         user = request["hass_user"]
         try:
             return self.json(await engine.set(body, user.name if user else None))
+        except Refused as err:
+            return self.json(await said(engine.hass, err, wants_ru(body, engine.hass.config.language)), err.status)
         except Invalid as err:
             return self.json_message(str(err), 400)

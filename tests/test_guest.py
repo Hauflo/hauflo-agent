@@ -415,3 +415,37 @@ async def test_removal_takes_the_guest_log_and_keeps_the_dashboard(hass: HomeAss
     assert G.STORE_KEY not in hass_storage
     assert await G.HaufloStore(hass, G.STORE_KEY).async_load() is None
     kept.assert_awaited_once()
+
+
+def _tr(key: str, lang: str, **ph) -> str:
+    return json.loads((Path(G.__file__).parent / "translations" / f"{lang}.json").read_text())["exceptions"][key]["message"].format(**ph)
+
+
+async def test_refusals_said_in_the_page_language(hass: HomeAssistant, hass_client, entry, person, hass_admin_user) -> None:
+    """Р83 polish: what a person can meet on the guest page is a sentence of the page's language with its code — never
+    «nothing a guest may control in these rooms» to a Russian family."""
+    family = await _client(hass, hass_client, person)
+    admin = await _client(hass, hass_client, hass_admin_user)
+    garage = ar.async_get(hass).async_create("Гараж")
+    er.async_get(hass).async_update_entity(GARAGE, area_id=garage.id)
+    page = [{"dashboard": "nope", "view": "x"}]
+    for lang in ("ru", "en"):
+        for client, body, status, code, ph in (
+            (family, {"op": "issue", "rooms": [garage.id], "hours": 2}, 400, "nothing", {}),
+            (family, {"op": "issue", "rooms": ["nope"], "hours": 2}, 400, "no_room", {}),
+            (family, {"op": "revoke", "id": "nosuchlink0"}, 400, "no_link", {}),
+            (family, {"op": "issue_pages", "label": "x", "pages": page, "hours": 3}, 403, "not_admin", {}),
+            (admin, {"op": "issue_pages", "label": " ", "pages": page, "hours": 3}, 400, "no_label", {}),
+            (admin, {"op": "issue_pages", "label": "x", "pages": page, "hours": 3}, 400, "no_page", {}),
+        ):
+            r = await client.post(URL, json={**body, "lang": lang})
+            assert r.status == status, (body, await r.text())
+            assert await r.json() == {"message": _tr(f"guest_{code}", lang, **ph), "code": code}
+    with patch.object(G, "MAX_ACTIVE", 1):
+        assert (await family.post(URL, json={"op": "issue", "rooms": [entry.living], "hours": 2, "lang": "ru"})).status == 200
+        r = await family.post(URL, json={"op": "issue", "rooms": [entry.living], "hours": 2, "lang": "ru"})
+        assert r.status == 400 and await r.json() == {"message": _tr("guest_too_many_links", "ru", n=1), "code": "too_many_links"}
+    # Without `lang`: HA's language.
+    hass.config.language = "ru"
+    r = await family.post(URL, json={"op": "revoke", "id": "nosuchlink0"})
+    assert (await r.json())["message"] == _tr("guest_no_link", "ru")

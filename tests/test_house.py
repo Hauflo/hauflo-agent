@@ -123,7 +123,7 @@ async def test_a_child_asks_an_admin_for_a_guest_link(hass: HomeAssistant, hass_
         kid = await hass_client(hass_read_only_access_token)
         assert (await kid.post("/api/hauflo/guest", json={"op": "ask", "note": "на вечер", "x": 1})).status == 400
         assert (await kid.post("/api/hauflo/guest", json={"op": "ask", "note": "x" * 61})).status == 400
-        res = await kid.post("/api/hauflo/guest", json={"op": "ask", "note": "на вечер"})
+        res = await kid.post("/api/hauflo/guest", json={"op": "ask", "note": "на вечер", "lang": "ru"})  # the card sends its language
         assert res.status == 200, await res.text()
         await hass.async_block_till_done()
         # Again at once: not a flood of pushes.

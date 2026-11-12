@@ -789,3 +789,20 @@ async def test_states_written_while_ha_starts_are_no_persons_touch(hass: HomeAss
     await again.fire({"entity_id": LIVING, "do": "off", "value": None})
     assert bus[-1][:2] == ("light.turn_on", KITCHEN) and again.data["log"][0]["skip"] == "manual"
     again.async_stop()
+
+
+async def test_refusals_said_in_the_page_language(hass: HomeAssistant, hass_client, hass_admin_user, entry, freezer) -> None:
+    """Р83 polish: «neither lights nor blinds», an end date too far — sentences of the page's language with a code."""
+    import json  # noqa: PLC0415
+
+    freezer.move_to(_now("2026-10-28", "12:00"))
+    refresh = await hass.auth.async_create_refresh_token(hass_admin_user, CLIENT_ID)
+    client = await hass_client(hass.auth.async_create_access_token(refresh))
+    tr = lambda key, lang, **ph: json.loads((Path(P.__file__).parent / "translations" / f"{lang}.json").read_text())["exceptions"][key]["message"].format(**ph)  # noqa: E731
+    for lang in ("ru", "en"):
+        res = await client.post(URL, json={"op": "set", "lights": False, "covers": False, "lang": lang})
+        assert res.status == 400 and await res.json() == {"message": tr("presence_lights_or_covers", lang), "code": "lights_or_covers"}
+        res = await client.post(URL, json={"op": "set", "until": "2030-01-01", "lang": lang})
+        assert res.status == 400 and await res.json() == {"message": tr("presence_bad_until", lang, n=P.MAX_UNTIL_DAYS), "code": "bad_until"}
+    res = await client.post(URL, json={"op": "set", "until": "2026-11-05", "lang": "ru"})  # the card's `lang` is no unknown field
+    assert res.status == 200, await res.text()

@@ -487,7 +487,7 @@
       "message": "Текст уведомления — до {n} печатных символов."
     },
     "rules_client_action": {
-      "message": "Можно: свет, шторы, сцена, кнопки, выбор из списка, число, «уведомить меня»."
+      "message": "Можно: свет, шторы, сцена, скрипт, кнопки, выбор из списка, число, вентиляция, розетка, термостат, «уведомить меня»."
     },
     "rules_target_not_allowed": {
       "message": "«{entity}»: только устройства Hauflo, не служебные; замки, охрана, ворота и открытие крана — никогда."
@@ -1125,6 +1125,9 @@
     "rules_bad_sun_offset": {
       "message": "Сдвиг от восхода/заката: от {lo} до {hi} мин."
     },
+    "rules_bad_repeat": {
+      "message": "Повтор: от {lo} до {hi} раз, через {s_lo}–{s_hi} с; только нажатие, импульс, переключение, сцена или скрипт (импульс — после его окончания)."
+    },
     "rules_pulse_min_on": {
       "message": "Импульс не короче {n} с для этого назначения."
     },
@@ -1259,6 +1262,531 @@
     },
     "rules_do_volume": {
       "message": "Громкость"
+    },
+    "alarm_native_group": {
+      "message": "{title} · все датчики"
+    },
+    "alarm_native_rule_description": {
+      "message": "Создано Hauflo из правила аварии. Следит: {sources}. Авария — датчик в аварии дольше {hold} с. Кому: {phones}. {repeat} Все датчики правила — помощник «{group}», «Принято» — помощник «{helper}» (кнопка в пуше, карточка или переключатель). Дребезг и «нет связи» отслеживает сервис Hauflo. Перезапуск Home Assistant во время открытой аварии даст один повторный пуш."
+    },
+    "alarm_native_repeat_plan": {
+      "message": "Повтор, пока никто не нажал «Принято» и датчик в аварии: ещё {more} раза каждые {every} мин, дальше раз в {slow} мин."
+    },
+    "alarm_native_no_repeat_plan": {
+      "message": "Один пуш, без повторов."
+    },
+    "alarm_native_back_alias": {
+      "message": "Авария: {title} — снова в норме"
+    },
+    "alarm_native_back_description": {
+      "message": "Создано Hauflo из правила аварии «{title}»: все датчики правила в норме {back} с (в том числе после «без связи»), ни один не без связи и авария была сказана — «снова в норме»: {phones}; уведомление в Home Assistant снимается."
+    },
+    "alarm_native_back_all": {
+      "message": "Все датчики снова в норме."
+    },
+    "alarm_native_script_alias": {
+      "message": "Hauflo: пуш аварии"
+    },
+    "alarm_native_script_description": {
+      "message": "Создано Hauflo: пуш аварии на телефоны правила — каждому отдельно, критичный на iOS и Android, с кнопками и именами датчиков в аварии; уведомление в Home Assistant с тем же тегом. Вызывается автоматизациями «Авария: …»."
+    },
+    "alarm_native_accept_alias": {
+      "message": "Hauflo: «Принято» с телефона"
+    },
+    "alarm_native_accept_description": {
+      "message": "Создано Hauflo: «Принято» в пуше любой аварии включает помощник «Принято» её правила — повторы прекращаются."
+    },
+    "alarm_native_button_alias": {
+      "message": "Hauflo: кнопка из пуша"
+    },
+    "alarm_native_button_description": {
+      "message": "Создано Hauflo: кнопка действия в пуше аварии («Закрыть: …», «Выключить: …») запускает скрипт её правила."
+    },
+    "alarm_native_run_alias": {
+      "message": "Hauflo: {title} — {button}"
+    },
+    "alarm_native_run_description": {
+      "message": "Создано Hauflo из правила аварии «{title}»: «{button}», затем «Принято». Не выполнилось — авария остаётся без «Принято» и повторяется."
+    },
+    "alarm_native_category": {
+      "message": "Hauflo · Аварии"
+    },
+    "alarm_native_script_failed": {
+      "message": "Скрипт пуша аварий не загрузился (scripts.yaml подключён в configuration.yaml?) — аварии остаются как были."
+    },
+    "alarm_native_f_rule": {
+      "message": "Правило"
+    },
+    "alarm_native_f_say": {
+      "message": "Что сказать"
+    },
+    "alarm_native_f_round": {
+      "message": "Номер пуша"
+    },
+    "alarm_native_f_critical": {
+      "message": "Критичный"
+    },
+    "alarm_native_f_quiet": {
+      "message": "Тихий"
+    },
+    "alarm_native_f_tag": {
+      "message": "Тег"
+    },
+    "alarm_native_f_targets": {
+      "message": "Получатели"
+    },
+    "alarm_native_f_group": {
+      "message": "Все датчики"
+    },
+    "alarm_native_f_buttons": {
+      "message": "Кнопки"
+    },
+    "alarm_native_f_button": {
+      "message": "Кнопка"
+    },
+    "alarm_native_f_note": {
+      "message": "Уведомление в Home Assistant"
+    },
+    "alarm_native_f_sources": {
+      "message": "Датчики"
+    },
+    "alarm_native_f_states": {
+      "message": "Состояния аварии"
+    },
+    "alarm_native_f_levels": {
+      "message": "Пороги"
+    },
+    "automations_bad_request": {
+      "message": "Запрос не принят — страница устарела. Обновите её и попробуйте ещё раз."
+    },
+    "automations_bad_range": {
+      "message": "{field}: от {lo} до {hi}."
+    },
+    "automations_f_offset": {
+      "message": "Сдвиг, мин"
+    },
+    "automations_f_for_min": {
+      "message": "Сколько минут держится"
+    },
+    "automations_f_brightness": {
+      "message": "Яркость, %"
+    },
+    "automations_f_ramp_minutes": {
+      "message": "Время плавного включения, мин"
+    },
+    "automations_f_x": {
+      "message": "Порог"
+    },
+    "automations_f_latitude": {
+      "message": "Широта"
+    },
+    "automations_f_longitude": {
+      "message": "Долгота"
+    },
+    "automations_f_elevation": {
+      "message": "Высота над уровнем моря, м"
+    },
+    "automations_bad_sensors": {
+      "message": "Выберите от 1 до {n} разных датчиков."
+    },
+    "automations_bad_state_sensor": {
+      "message": "«{entity}» нельзя выбрать: нужен датчик движения, двери, окна или открытия либо медиаплеер."
+    },
+    "automations_bad_sensor_mix": {
+      "message": "Датчики в одном правиле должны быть одного вида."
+    },
+    "automations_bad_media_off": {
+      "message": "«Не играет» следит только за одним плеером — сделайте по правилу на каждый."
+    },
+    "automations_bad_value_sensor": {
+      "message": "«{entity}» нельзя выбрать: нужен датчик температуры, влажности, CO₂ или освещённости."
+    },
+    "automations_bad_value_mix": {
+      "message": "Датчики должны измерять одно и то же в одних единицах."
+    },
+    "automations_never_presence": {
+      "message": "Условие «только если» не выполнится в момент срабатывания: все ушли, но кто-то дома (или наоборот)."
+    },
+    "automations_never_between": {
+      "message": "{at} не попадает в окно «с {a} до {b}» — правило не сработает."
+    },
+    "automations_never_value": {
+      "message": "Условия по показаниям одних и тех же датчиков не выполнятся вместе."
+    },
+    "automations_bad_only_if_count": {
+      "message": "Не больше {n} условий «только если»."
+    },
+    "automations_bad_between": {
+      "message": "«С … до …»: укажите два разных времени."
+    },
+    "automations_never_only_if": {
+      "message": "Условия противоречат друг другу: темно и светло, или кто-то дома и никого нет."
+    },
+    "automations_bad_between_one": {
+      "message": "Окно времени в условиях — только одно."
+    },
+    "automations_bad_times": {
+      "message": "Время: от 1 до {n} разных значений."
+    },
+    "automations_bad_alarm_sensor": {
+      "message": "Выберите будильник телефона из списка."
+    },
+    "automations_bad_days": {
+      "message": "Выберите хотя бы один день."
+    },
+    "automations_bad_actions": {
+      "message": "Добавьте от 1 до {n} действий."
+    },
+    "automations_bad_ramps": {
+      "message": "Не больше {n} плавных включений в одном правиле."
+    },
+    "automations_bad_target_empty": {
+      "message": "Выберите хотя бы одну комнату или устройство."
+    },
+    "automations_bad_target_many": {
+      "message": "Не больше {n} комнат и устройств в одном действии."
+    },
+    "automations_bad_target_kinds": {
+      "message": "В одном действии — устройства одного вида."
+    },
+    "automations_bad_target_group": {
+      "message": "«Вся комната» и «везде» — только для: {kinds}."
+    },
+    "automations_no_device": {
+      "message": "«{entity}» нельзя использовать в правиле."
+    },
+    "automations_bad_ramp": {
+      "message": "Плавное включение — только для выбранных светильников с регулировкой яркости."
+    },
+    "automations_bad_ramp_repeat": {
+      "message": "Плавное включение не повторяется."
+    },
+    "automations_bad_do": {
+      "message": "Это действие недоступно для этих устройств. Можно: {acts}."
+    },
+    "automations_bad_option": {
+      "message": "Выберите значение."
+    },
+    "automations_bad_room_empty": {
+      "message": "В комнате «{room}» нет устройств ({kind}) для действия «{do}»."
+    },
+    "automations_bad_all_empty": {
+      "message": "Нигде нет устройств ({kind}) для действия «{do}»."
+    },
+    "automations_helper_failed": {
+      "message": "Не получилось создать общий датчик по нескольким — попробуйте ещё раз."
+    },
+    "automations_bad_rules_many": {
+      "message": "Не больше {n} правил."
+    },
+    "automations_bad_place": {
+      "message": "Укажите место объекта."
+    },
+    "automations_bad_time_zone": {
+      "message": "Неизвестный часовой пояс."
+    },
+    "automations_no_rule": {
+      "message": "Такого правила уже нет — обновите страницу."
+    },
+    "automations_changed": {
+      "message": "Правило изменили вручную в редакторе автоматизаций — Hauflo не перезаписывает его без подтверждения."
+    },
+    "automations_not_in_ha": {
+      "message": "Автоматизации этого правила нет — сохраните правило ещё раз."
+    },
+    "automations_yaml_location": {
+      "message": "Место объекта задано в файле настроек — его меняет сервис."
+    },
+    "automations_yaml_time_zone": {
+      "message": "Часовой пояс задан в файле настроек — его меняет сервис."
+    },
+    "automations_no_detect": {
+      "message": "Не получилось определить место по интернет-адресу — укажите его вручную."
+    },
+    "automations_name_default": {
+      "message": "Автоматизация"
+    },
+    "automations_d_made": {
+      "message": "Создано в Hauflo."
+    },
+    "automations_d_sentence": {
+      "message": "{head}: {acts}."
+    },
+    "automations_d_only_if": {
+      "message": "Только если {conds}."
+    },
+    "automations_d_and": {
+      "message": "{a} и {b}"
+    },
+    "automations_d_days_at": {
+      "message": "{days} {when}"
+    },
+    "automations_d_days_when": {
+      "message": "{days}, {when}"
+    },
+    "automations_d_days_workdays": {
+      "message": "каждый будний день"
+    },
+    "automations_d_days_weekend": {
+      "message": "по выходным"
+    },
+    "automations_d_days_some": {
+      "message": "по дням {days}"
+    },
+    "automations_d_wd_mon": {
+      "message": "пн"
+    },
+    "automations_d_wd_tue": {
+      "message": "вт"
+    },
+    "automations_d_wd_wed": {
+      "message": "ср"
+    },
+    "automations_d_wd_thu": {
+      "message": "чт"
+    },
+    "automations_d_wd_fri": {
+      "message": "пт"
+    },
+    "automations_d_wd_sat": {
+      "message": "сб"
+    },
+    "automations_d_wd_sun": {
+      "message": "вс"
+    },
+    "automations_d_at": {
+      "message": "в {times}"
+    },
+    "automations_d_sunrise": {
+      "message": "на рассвете"
+    },
+    "automations_d_sunset": {
+      "message": "на закате"
+    },
+    "automations_d_of_sunrise": {
+      "message": "рассвета"
+    },
+    "automations_d_of_sunset": {
+      "message": "заката"
+    },
+    "automations_d_alarm": {
+      "message": "по будильнику «{phone}»"
+    },
+    "automations_d_of_alarm": {
+      "message": "будильника «{phone}»"
+    },
+    "automations_d_before": {
+      "message": "за {d} до {of}"
+    },
+    "automations_d_after": {
+      "message": "через {d} после {of}"
+    },
+    "automations_d_alarm_iphone": {
+      "message": "по будильнику iPhone"
+    },
+    "automations_d_min": {
+      "message": "{n} мин"
+    },
+    "automations_d_h": {
+      "message": "{n} ч"
+    },
+    "automations_d_hmin": {
+      "message": "{h} ч {m} мин"
+    },
+    "automations_d_sec": {
+      "message": "{n} с"
+    },
+    "automations_d_when_value": {
+      "message": "когда {what} {op}"
+    },
+    "automations_d_reading_one": {
+      "message": "{kind} «{sensor}»"
+    },
+    "automations_d_reading_many": {
+      "message": "{kind} ({stat}: {sensors})"
+    },
+    "automations_d_kind_temperature": {
+      "message": "температура"
+    },
+    "automations_d_kind_humidity": {
+      "message": "влажность"
+    },
+    "automations_d_kind_carbon_dioxide": {
+      "message": "CO₂"
+    },
+    "automations_d_kind_illuminance": {
+      "message": "освещённость"
+    },
+    "automations_d_op_above": {
+      "message": "выше {x}"
+    },
+    "automations_d_op_below": {
+      "message": "ниже {x}"
+    },
+    "automations_d_hold": {
+      "message": "{text} в течение {d}"
+    },
+    "automations_d_state_motion_on": {
+      "message": "когда есть движение ({sensors})"
+    },
+    "automations_d_state_motion_off": {
+      "message": "когда нет движения ({sensors})"
+    },
+    "automations_d_state_door_on": {
+      "message": "когда дверь открыта ({sensors})"
+    },
+    "automations_d_state_door_off": {
+      "message": "когда дверь закрыта ({sensors})"
+    },
+    "automations_d_state_window_on": {
+      "message": "когда окно открыто ({sensors})"
+    },
+    "automations_d_state_window_off": {
+      "message": "когда окно закрыто ({sensors})"
+    },
+    "automations_d_state_opening_on": {
+      "message": "когда открыто ({sensors})"
+    },
+    "automations_d_state_opening_off": {
+      "message": "когда закрыто ({sensors})"
+    },
+    "automations_d_state_media_on": {
+      "message": "когда играет ({sensors})"
+    },
+    "automations_d_state_media_off": {
+      "message": "когда не играет ({sensors})"
+    },
+    "automations_d_any_of": {
+      "message": "любой: {names}"
+    },
+    "automations_d_all_of": {
+      "message": "все: {names}"
+    },
+    "automations_d_presence_away": {
+      "message": "когда все ушли"
+    },
+    "automations_d_presence_home": {
+      "message": "когда кто-то пришёл"
+    },
+    "automations_d_if_dark": {
+      "message": "темно"
+    },
+    "automations_d_if_light": {
+      "message": "светло"
+    },
+    "automations_d_if_between": {
+      "message": "с {a} до {b}"
+    },
+    "automations_d_if_home": {
+      "message": "кто-то дома"
+    },
+    "automations_d_if_away": {
+      "message": "никого нет дома"
+    },
+    "automations_d_if_value": {
+      "message": "{what} {op}"
+    },
+    "automations_d_act": {
+      "message": "{do} — {where}"
+    },
+    "automations_d_act_value": {
+      "message": "{do} {value} — {where}"
+    },
+    "automations_d_option": {
+      "message": "«{option}»"
+    },
+    "automations_d_ramp": {
+      "message": "плавно включить до {value} % за {d} — {where}"
+    },
+    "automations_d_repeat": {
+      "message": "{act}, повторить {times} через {every}"
+    },
+    "automations_d_times_one": {
+      "message": "{n} раз"
+    },
+    "automations_d_times_few": {
+      "message": "{n} раза"
+    },
+    "automations_d_times_many": {
+      "message": "{n} раз"
+    },
+    "automations_d_where_kind": {
+      "message": "{kind} ({places})"
+    },
+    "automations_d_everywhere": {
+      "message": "везде"
+    },
+    "automations_d_snapshot": {
+      "message": "{places}; {count} на момент сохранения"
+    },
+    "automations_d_devices_one": {
+      "message": "{n} устройство"
+    },
+    "automations_d_devices_few": {
+      "message": "{n} устройства"
+    },
+    "automations_d_devices_many": {
+      "message": "{n} устройств"
+    },
+    "automations_d_dom_light": {
+      "message": "свет"
+    },
+    "automations_d_dom_cover": {
+      "message": "шторы и жалюзи"
+    },
+    "automations_d_dom_switch": {
+      "message": "розетки"
+    },
+    "automations_d_dom_fan": {
+      "message": "вентиляторы"
+    },
+    "automations_d_dom_climate": {
+      "message": "термостаты"
+    },
+    "scenes_bad_name": {
+      "message": "Название: хотя бы одна буква или цифра."
+    },
+    "scenes_too_many": {
+      "message": "Не больше {n} своих сцен — удалите ненужную."
+    },
+    "scenes_no_scene": {
+      "message": "Такой сцены уже нет — обновите страницу."
+    },
+    "daylight_skip_full": {
+      "message": "Не больше {n} светильников и выключателей с отметкой «Днём не включать в сценах»."
+    },
+    "presence_lights_or_covers": {
+      "message": "Оставьте хотя бы что-то одно: свет или шторы."
+    },
+    "presence_bad_until": {
+      "message": "Дата окончания — от сегодня и не дальше чем через {n} дн."
+    },
+    "guest_not_issuer": {
+      "message": "Гостевые ссылки выдаёт тот, кто управляет домом. Попросите его."
+    },
+    "guest_not_admin": {
+      "message": "Гостевой вход создаёт администратор."
+    },
+    "guest_no_room": {
+      "message": "Такой комнаты уже нет — обновите страницу."
+    },
+    "guest_nothing": {
+      "message": "В этих комнатах нет устройств, которыми может управлять гость."
+    },
+    "guest_too_many_links": {
+      "message": "Не больше {n} гостевых ссылок сразу — закройте одну."
+    },
+    "guest_no_link": {
+      "message": "Такой ссылки уже нет — обновите страницу."
+    },
+    "guest_no_label": {
+      "message": "Укажите имя гостя."
+    },
+    "guest_no_page": {
+      "message": "Такой страницы уже нет — обновите список."
+    },
+    "guest_too_many_logins": {
+      "message": "Не больше {n} гостей со входом сразу — закройте один вход."
     }
   },
   "selector": {

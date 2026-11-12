@@ -34,8 +34,8 @@ from homeassistant.helpers.service import async_register_admin_service
 from homeassistant.setup import async_setup_component
 from homeassistant.util import slugify
 
-from . import automations, keep, yamlfile
-from .const import ACK_ACTION, ACK_PREFIX, ALARM_PREFIX, ASSET_TAG, CHATTER_PREFIX, DOMAIN, NATIVE_STORE, OPEN_PREFIX, RUN_ACTION, site_ru
+from . import alarm_form, automations, keep, yamlfile
+from .const import ACK_ACTION, ACK_PREFIX, ALARM_PREFIX, ASSET_TAG, CHATTER_PREFIX, DO_ACTION, DOMAIN, NATIVE_STORE, OK_ACTION, OPEN_PREFIX, RUN_ACTION, RUN_PREFIX, site_ru
 from .storage import HaufloStore
 from .notify import ACTION_EVENT, LINK_KINDS, NATIVE_HOLD, OUTPUTS, default_hold, hold_value, LIST_MAX, REPEAT_FAST, REPEAT_SLOW, RUN_SERVICES, NotifyEngine, native_back, push_data
 
@@ -404,15 +404,18 @@ async def _drop_ours(hass: HomeAssistant, colls: dict[str, Any], object_id: str)
 def _empty() -> dict[str, Any]:
     # restored — removed in HA by hand, written back by this apply: a change of HA said in the plan (HA review H-1),
     # never a silent «added».
-    return {"rules": 0, "added": [], "updated": [], "restored": [], "unchanged": [], "removed": [], "kept_edited": [], "engine": [], "warnings": [], "error": None, "error_code": None}
+    return {"rules": 0, "added": [], "updated": [], "restored": [], "unchanged": [], "removed": [], "kept_edited": [], "engine": [], "warnings": [], "migrate": [], "error": None, "error_code": None}
 
 
-async def async_sync(hass: HomeAssistant, engine: NotifyEngine, *, dry_run: bool = False, config: dict[str, Any] | None = None) -> dict[str, Any]:
+async def async_sync(hass: HomeAssistant, engine: NotifyEngine, *, dry_run: bool = False, config: dict[str, Any] | None = None, migrate: bool = False) -> dict[str, Any]:
     """The engine's rules as automations + helpers in HA (one write of automations.yaml, then one reload); the engine is
     told which rules HA now runs (``async_set_native`` — open alarms move over). ``dry_run`` — only what would change
     (Hauflo's deploy plan, ``config`` — the rules it would send). Rules are said by their titles; ``engine`` — those left
     to the agent, with the reason. A rule's automation from before 0.31 is written in the new form and its chatter
-    memory (input_text) removed — unless it was edited by hand: then both stay as they are."""
+    memory (input_text) removed — unless it was edited by hand: then both stay as they are.
+    Р83: a new rule is written in the flat form (alarm_form.py) where HA's scripts run; a rule already in HA in the
+    form before stays as it is (``out["migrate"]`` — the ones the owner's «переписать» would rewrite) until ``migrate``
+    (his explicit step on the «Аварии» page: never on an agent update) — one edited by hand never."""
     from homeassistant.components.automation.config import async_validate_config_item  # noqa: PLC0415
 
     english = engine._english(config)
@@ -447,6 +450,18 @@ async def async_sync(hass: HomeAssistant, engine: NotifyEngine, *, dry_run: bool
     names = {r["action"]["entity_id"]: engine._name(r["action"]["entity_id"]) for r in rules if r.get("action")}
     file = automations.Automations(hass, lambda _eid: False)
     digest_of = automations._digest  # noqa: SLF001
+    # The flat form needs HA's scripts (scripts.yaml, as HA's script editor writes it); else every rule the form before.
+    flat = "script" in hass.config.components
+    scripts: dict[str, Any] = {}
+    sbefore: str | None = None
+    if flat:
+        try:
+            scripts, sbefore = await alarm_form.read_scripts(hass)
+        except alarm_form.NotPlainScripts:
+            flat = False
+            out["warnings"].append({"code": "scripts_not_plain", "title": alarm_form.SCRIPTS})
+    shared_store = HaufloStore(hass, alarm_form.SHARED_STORE)
+    shared_rec: dict[str, str] = dict(await shared_store.async_load() or {})
     async with automations._FILE_LOCK:  # noqa: SLF001 — the one lock every writer of automations.yaml takes
         try:
             data, before = await file._read_file()  # noqa: SLF001
@@ -459,25 +474,56 @@ async def async_sync(hass: HomeAssistant, engine: NotifyEngine, *, dry_run: bool
         current = {a.get("id"): a for a in data if isinstance(a, dict)}
         native: dict[str, dict[str, Any]] = {}
         writes: dict[str, dict[str, Any] | None] = {}
+        script_writes: dict[str, dict[str, Any] | None] = {}
         drop: list[str] = []
         made: dict[str, list[str]] = {}  # rule id → its helpers made in this pass (dropped when the rule isn't written, L-3)
+        made_groups: dict[str, str] = {}  # rule id → its «все датчики» helper made in this pass
         rule_of: dict[str, dict[str, Any]] = {}
+        flat_now: list[str] = []  # rule ids written in the flat form in this pass
+
+        def flat_objects(rec: dict[str, Any] | None) -> tuple[Any, Any, Any]:
+            rec = rec or {}
+            return (current.get(rec.get("automation")), current.get(rec.get("back")) if rec.get("back") else None,
+                    scripts.get(rec.get("run_script")) if rec.get("run_script") else None)
+
         for r in rules:
             the = ids(r["id"])
             aid = the["automation"]
+            slug = aid.removeprefix(ALARM_PREFIX)
             cur, rec = current.get(aid), stored.get(r["id"])
             if cur is None and locked:
                 to_engine(r, "locked")
                 continue
             rule_of[aid] = r
             targets = engine._targets(r, config)
-            if cur is not None and not (rec and digest_of(cur) == rec.get("digest")):
+            was_flat = bool(rec and rec.get("form") == alarm_form.FORM)
+            # An automation of the form before (with or without its record): as it is, unless the owner said «переписать».
+            old_form = cur is not None and not was_flat
+            if was_flat and not flat:  # its scripts out of reach now (scripts.yaml not plain): left as it is
+                out["kept_edited"].append(r["title"])
+                native[r["id"]] = dict(rec)
+                continue
+            if was_flat:
+                if cur is not None and alarm_form.digest(*flat_objects(rec)) != rec.get("digest"):
+                    # Changed in HA's own editor (the automation, its «снова в норме» or its button's script): never
+                    # written over — its helpers stay as they are.
+                    out["kept_edited"].append(r["title"])
+                    native[r["id"]] = dict(rec)
+                    continue
+            elif cur is not None and not (rec and digest_of(cur) == rec.get("digest")):
                 # Not Hauflo's last write: changed in HA's own editor (or no record of it) — never written over, its
                 # helpers (a chatter memory of before 0.31 too) stay as they are. The same as Hauflo would write: its own.
                 if digest_of(cur) != digest_of(automation_for(r, targets, t, _ack_entity(hass, the["helper"]), _ack_entity(hass, the["open"]), names=names)):
                     out["kept_edited"].append(r["title"])
                     native[r["id"]] = dict(rec) if rec else {"automation": aid, "helper": _ack_entity(hass, the["helper"]), "digest": "", "ack": the["ack"], "run": the["run"], "lang": lang}
                     continue
+            if old_form and flat and not migrate:
+                out["migrate"].append(r["title"])
+            if flat and (not old_form or migrate):
+                if await _flat_rule(hass, r, targets, t, the, slug, cur, rec, coll, names, engine, lang, out, native, writes, script_writes,
+                                    made, made_groups, current, scripts, drop, to_engine, async_validate_config_item):
+                    flat_now.append(r["id"])
+                continue
             if coll is not None:
                 made[r["id"]] = [o for o in (the["helper"], the["open"]) if o not in coll.data]
             try:
@@ -518,23 +564,103 @@ async def async_sync(hass: HomeAssistant, engine: NotifyEngine, *, dry_run: bool
             drop.append(the["chatter"])  # its memory of before 0.31 (only once the new form is written)
         wanted = {ids(r["id"])["automation"] for r in rules}
         by_aid = {rec.get("automation"): rec for rec in stored.values()}
+        # The flat form's own objects (a rule's «снова в норме», the shared ones) are never taken for a rule's automation.
+        not_rules = {rec["back"] for rec in [*stored.values(), *native.values()] if rec.get("back")} | set(alarm_form.SHARED_IDS)
 
         def helpers_of(aid: str) -> list[str]:
             return [str((by_aid.get(aid) or {}).get("helper") or "").partition(".")[2] or _of(aid, ACK_PREFIX), _of(aid, OPEN_PREFIX), _of(aid, CHATTER_PREFIX)]
 
+        gone_groups: list[str] = []  # the «все датчики» helpers of rules removed
         for aid, cur in current.items():
-            if not isinstance(aid, str) or not aid.startswith(ALARM_PREFIX) or aid in wanted:
+            if not isinstance(aid, str) or not aid.startswith(ALARM_PREFIX) or aid in wanted or aid in not_rules:
                 continue
             rec = by_aid.get(aid)
-            if rec is None or digest_of(cur) != rec.get("digest"):
+            flat_rec = bool(rec and rec.get("form") == alarm_form.FORM)
+            if rec is None or (alarm_form.digest(*flat_objects(rec)) if flat_rec else digest_of(cur)) != rec.get("digest"):
                 out["warnings"].append({"code": "edited_left", "title": str(cur.get("alias") or aid)})
                 continue
             writes[aid] = None
             out["removed"].append(str(cur.get("alias") or aid))
             drop += helpers_of(aid)
+            if flat_rec:
+                if rec.get("back") in current:
+                    writes[rec["back"]] = None
+                if rec.get("run_script") in scripts:
+                    script_writes[rec["run_script"]] = None
+                gone_groups.append(aid)
+        # The shared objects: there while a rule of the flat form is; one edited by hand stays as it is.
+        need = any(rec.get("form") == alarm_form.FORM for rec in native.values())
+        need_button = any(rec.get("run_script") for rec in native.values() if rec.get("form") == alarm_form.FORM)
+        shared_new: dict[str, str] = {}
+        if flat:
+            from homeassistant.components.script.config import async_validate_config_item as script_valid  # noqa: PLC0415
+
+            wanted_shared: list[tuple[str, str, Any]] = [
+                ("script", alarm_form.SCRIPT, alarm_form.push_script(t) if need else None),
+                ("automation", alarm_form.ACCEPT_ID, alarm_form.accept_automation(t) if need else None),
+                ("automation", alarm_form.BUTTON_ID, alarm_form.button_automation(t) if need_button else None),
+            ]
+            for kind, key, cfg in wanted_shared:
+                cur = (scripts if kind == "script" else current).get(key)
+                if cur is not None and alarm_form.digest(cur) not in (shared_rec.get(key), alarm_form.digest(cfg) if cfg else None):
+                    out["warnings"].append({"code": "shared_edited", "title": str(cur.get("alias") or key)})
+                    continue
+                if cfg is None:
+                    if cur is not None:
+                        (script_writes if kind == "script" else writes)[key] = None
+                    continue
+                shared_new[key] = alarm_form.digest(cfg)
+                if cur is not None and alarm_form.digest(cur) == shared_new[key]:
+                    continue
+                try:
+                    await (script_valid if kind == "script" else async_validate_config_item)(hass, key, cfg)
+                except Exception as err:  # noqa: BLE001 — never a broken object in the file
+                    _LOGGER.warning("Hauflo: shared alarm object %s refused by HA: %s", key, err)
+                    out["warnings"].append({"code": "invalid", "title": key})
+                    shared_new.pop(key, None)
+                    continue
+                (script_writes if kind == "script" else writes)[key] = cfg
         # A chatter memory of before 0.31 whose automation is gone (deleted in HA by hand): nothing reads it any more.
         if (memories := colls["input_text"]) is not None:
             drop += [o for o in memories.data if str(o).startswith(CHATTER_PREFIX) and ALARM_PREFIX + str(o).removeprefix(CHATTER_PREFIX) not in current and o not in drop]
+        script_failed = False
+        if script_writes and not dry_run:
+            # The scripts first: an automation never calls a script HA hasn't loaded.
+            new_scripts = {k: v for k, v in {**scripts, **script_writes}.items() if v is not None}
+            kept_scripts: list[str] = []
+            try:
+                await alarm_form.write_scripts(hass, new_scripts, sbefore, alarm_form.rebase_scripts(script_writes, scripts, kept_scripts))
+                await hass.services.async_call("script", "reload", {}, blocking=True)
+            except Exception as err:  # noqa: BLE001 — said in the result, the rules stay as they were
+                _LOGGER.exception("Hauflo: alarm scripts not written: %s", err)
+                script_failed = True
+            if need and not hass.services.has_service("script", alarm_form.SCRIPT):
+                _LOGGER.warning("Hauflo: script.%s not loaded — scripts.yaml isn't the scripts HA loads", alarm_form.SCRIPT)
+                script_failed = True
+            for key in kept_scripts:
+                out["warnings"].append({"code": "edited_left", "title": key})
+        if script_failed:
+            out["error"], out["error_code"] = t["script_failed"], "script"
+            for rule_id in flat_now:
+                r = next(x for x in rules if x["id"] == rule_id)
+                the = ids(rule_id)
+                for key in ("added", "updated", "restored", "unchanged"):
+                    if r["title"] in out[key]:
+                        out[key].remove(r["title"])
+                writes.pop(the["automation"], None)
+                writes.pop(alarm_form.back_id(the["automation"]), None)
+                drop = [o for o in drop if o not in (the["open"], the["chatter"])]
+                if (rec := stored.get(rule_id)) is not None:
+                    native[rule_id] = rec
+                else:
+                    native.pop(rule_id, None)
+                    to_engine(r, "script")
+                    drop.extend(made.get(rule_id, []))
+                    if rule_id in made_groups:
+                        gone_groups.append(made_groups[rule_id])
+            for key in alarm_form.SHARED_IDS:
+                writes.pop(key, None)
+            shared_new = dict(shared_rec)
         if writes and not dry_run:
             kept = [writes[a.get("id")] if isinstance(a, dict) and a.get("id") in writes else a for a in data]
             new = [a for a in kept if a is not None] + [c for a, c in writes.items() if c is not None and a not in current]
@@ -552,16 +678,21 @@ async def async_sync(hass: HomeAssistant, engine: NotifyEngine, *, dry_run: bool
                         native.pop(r["id"], None)
                         for object_id in made.get(r["id"], []):
                             await _drop_ours(hass, colls, object_id)
+                        if r["id"] in made_groups:
+                            await alarm_form.drop_group(hass, made_groups[r["id"]])
                 return out
             for aid in theirs:
                 writes.pop(aid, None)
+                if aid in not_rules or aid.endswith(alarm_form.BACK):
+                    continue
                 if (r := rule_of.get(aid)) is None:  # a removal: the automation and its helpers stay
                     gone = set(helpers_of(aid))
                     drop = [o for o in drop if o not in gone]
+                    gone_groups = [g for g in gone_groups if g != aid]
                     out["removed"] = [x for x in out["removed"] if x != str((current.get(aid) or {}).get("alias") or aid)]
                     out["warnings"].append({"code": "edited_left", "title": str((current.get(aid) or {}).get("alias") or aid)})
                     continue
-                drop = [o for o in drop if o != ids(r["id"])["chatter"]]  # its automation as it is now: its memory too
+                drop = [o for o in drop if o not in (ids(r["id"])["chatter"], ids(r["id"])["open"])]  # its automation as it is now: its memories too
                 for key in ("added", "updated", "restored"):
                     if r["title"] in out[key]:
                         out[key].remove(r["title"])
@@ -572,19 +703,114 @@ async def async_sync(hass: HomeAssistant, engine: NotifyEngine, *, dry_run: bool
                     native.pop(r["id"], None)
                     to_engine(r, "write")
                     drop.extend(made.get(r["id"], []))
+                    if r["id"] in made_groups:
+                        gone_groups.append(made_groups[r["id"]])
     if not dry_run:
+        reg = er.async_get(hass)
         if writes:
             await hass.services.async_call("automation", "reload", {}, blocking=True)
-            reg = er.async_get(hass)
             for aid, cfg in writes.items():
                 if cfg is None and (eid := reg.async_get_entity_id("automation", "automation", aid)):
                     reg.async_remove(eid)
+        if script_writes and not script_failed:
+            for key, cfg in script_writes.items():
+                if cfg is None and (eid := reg.async_get_entity_id("script", "script", key)):
+                    reg.async_remove(eid)
         for object_id in drop:
             await _drop_ours(hass, colls, object_id)
+        for object_id in gone_groups:
+            await alarm_form.drop_group(hass, object_id)
+        if flat and shared_new != shared_rec:
+            await shared_store.async_save(shared_new)
+        if flat_recs := [rec for rec in native.values() if rec.get("form") == alarm_form.FORM]:
+            try:
+                alarm_form.categorize(hass, t["category"], alarm_form.category_members(hass, flat_recs))
+            except Exception:  # noqa: BLE001 — only the lists' grouping
+                _LOGGER.exception("Hauflo: alarm category not set")
         await engine.async_set_native(native)
     if old := [str(a.get("alias") or a.get("id")) for a in data if isinstance(a, dict) and str(a.get("id") or "").startswith(PREFIX)]:
         out["warnings"].append({"code": "double", "title": ", ".join(old)})
     return out
+
+
+async def _flat_rule(hass: HomeAssistant, r: dict[str, Any], targets: list[dict[str, Any]], t: dict[str, str], the: dict[str, str], slug: str, cur: Any,
+                     rec: dict[str, Any] | None, coll: Any, names: dict[str, str], engine: NotifyEngine, lang: str, out: dict[str, Any],
+                     native: dict[str, Any], writes: dict[str, Any], script_writes: dict[str, Any], made: dict[str, list[str]], made_groups: dict[str, str],
+                     current: dict[str, Any], scripts: dict[str, Any], drop: list[str], to_engine: Any, validate: Any) -> bool:
+    """One rule in the flat form (alarm_form.py): its helpers, automation(s) and button script. True — written (or the
+    same already); False — left as it was / to the agent (said in ``out``)."""
+    from homeassistant.components.script.config import async_validate_config_item as script_valid  # noqa: PLC0415
+
+    aid = the["automation"]
+    back_key = alarm_form.back_id(aid)
+    run_key = alarm_form.run_key(slug)
+    was_flat = bool(rec and rec.get("form") == alarm_form.FORM)
+    if coll is not None:
+        made[r["id"]] = [o for o in (the["helper"],) if o not in coll.data]
+    try:
+        if coll is not None:
+            ack = await _ensure_helper(hass, coll, the["helper"], _say(t, "helper", title=r["title"]), ICON)
+            if aid not in alarm_form.our_entries(hass):
+                made_groups[r["id"]] = aid
+            group = await alarm_form.ensure_group(hass, aid, r, _say(t, "group", title=r["title"]))
+        else:
+            ack, group = _ack_entity(hass, the["helper"]), alarm_form.group_entity(hass, aid)
+    except Exception:  # noqa: BLE001 — that rule stays as it was / with the agent, the others go on
+        _LOGGER.exception("Hauflo: helpers for %s not made", r["id"])
+        if cur is not None and rec:
+            native[r["id"]] = rec
+            out["warnings"].append({"code": "helper", "title": r["title"]})
+        else:
+            to_engine(r, "helper")
+            drop.extend(made.pop(r["id"], []))
+            if r["id"] in made_groups:
+                await alarm_form.drop_group(hass, made_groups.pop(r["id"]))
+        return False
+    act = r.get("action") if (r.get("action") or {}).get("service") in RUN_SERVICES else None
+    button_text = button = None
+    if act:
+        # Cut as the person reads it, then made a literal (a cut literal would break the template).
+        button_text = _say(t, "close" if act["service"] == "valve.close_valve" else "off", name=names.get(act["entity_id"]) or act["entity_id"])[:60]
+        button = _lit(button_text)
+    cfgs = alarm_form.rule_configs(
+        r, targets, t, ack, group, slug=slug, aid=aid, hold_groups=alarm_groups(r, list(r["sources"])), hold=alarm_hold(r), back_s=back_after(r),
+        outputs_on=_outputs(r, "on_start"), outputs_off=_outputs(r, "on_end"), button=button, button_text=button_text, act=act,
+        title=_lit(r["title"]), names={e: engine._name(e) for e in r["sources"]},  # noqa: SLF001
+        # «кому: Иван, Мария» — the people of the rule's phones (a phone without its person by its own name).
+        who=", ".join(dict.fromkeys(engine._name(p["person"]) if p.get("person") and hass.states.get(p["person"]) else str(p.get("name") or p["service"]) for p in targets)))  # noqa: SLF001
+    digest = alarm_form.digest(cfgs["automation"], cfgs["back"], cfgs["run"])
+    if was_flat and cur is not None and alarm_form.digest(cur, current.get(back_key), scripts.get(run_key)) == digest:
+        state = "unchanged"
+    else:
+        try:
+            await validate(hass, aid, cfgs["automation"])
+            if cfgs["back"]:
+                await validate(hass, back_key, cfgs["back"])
+            if cfgs["run"]:
+                await script_valid(hass, run_key, cfgs["run"])
+        except Exception as err:  # noqa: BLE001 — HA refuses it: never a broken automation in the file
+            _LOGGER.warning("Hauflo: alarm automation %s refused by HA: %s", aid, err)
+            if cur is not None and rec:
+                native[r["id"]] = rec
+                out["warnings"].append({"code": "invalid", "title": r["title"]})
+            else:
+                to_engine(r, "invalid")
+                drop.extend(made.pop(r["id"], []))
+                if r["id"] in made_groups:
+                    await alarm_form.drop_group(hass, made_groups.pop(r["id"]))
+            return False
+        state = "updated" if cur is not None else "restored" if rec else "added"
+        writes[aid] = cfgs["automation"]
+        if cfgs["back"] is not None or back_key in current:
+            writes[back_key] = cfgs["back"]
+        if cfgs["run"] is not None or run_key in scripts:
+            script_writes[run_key] = cfgs["run"]
+    out[state].append(r["title"])
+    native[r["id"]] = {"automation": aid, "helper": ack, "group": group, "back": back_key if cfgs["back"] else None, "run_script": run_key if cfgs["run"] else None,
+                       "digest": digest, "ack": OK_ACTION + slug.upper(), "run": DO_ACTION + slug.upper(), "lang": lang, "form": alarm_form.FORM}
+    # The form before's memories (its «авария открыта», a chatter memory of before 0.31): nothing reads them any more.
+    drop += [the["open"], the["chatter"]]
+    return True
 
 
 async def async_remove_all(hass: HomeAssistant, engine: NotifyEngine | None) -> list[str]:
@@ -607,13 +833,35 @@ async def async_remove_all(hass: HomeAssistant, engine: NotifyEngine | None) -> 
         for a in ours:
             if eid := reg.async_get_entity_id("automation", "automation", str(a["id"])):
                 reg.async_remove(eid)
+    # The flat form's (Р83): the push / button scripts after the automations calling them, the «все датчики» helpers.
+    gone_scripts: list[str] = []
+    if "script" in hass.config.components:
+
+        def mine(key: Any) -> bool:
+            return key == alarm_form.SCRIPT or str(key).startswith(RUN_PREFIX)
+
+        try:
+            scripts, sbefore = await alarm_form.read_scripts(hass)
+        except alarm_form.NotPlainScripts:
+            _LOGGER.warning("Hauflo: scripts.yaml isn't plain — the alarm scripts stay")
+            scripts, sbefore = {}, None
+        if gone := {k: v for k, v in scripts.items() if mine(k)}:
+            await alarm_form.write_scripts(hass, {k: v for k, v in scripts.items() if not mine(k)}, sbefore, lambda fresh: {k: v for k, v in fresh.items() if not mine(k)})
+            await hass.services.async_call("script", "reload", {}, blocking=True)
+            reg = er.async_get(hass)
+            for key, cfg in gone.items():
+                gone_scripts.append(str((cfg or {}).get("alias") or key))
+                if eid := reg.async_get_entity_id("script", "script", key):
+                    reg.async_remove(eid)
+    await alarm_form.drop_all_groups(hass)
+    await HaufloStore(hass, alarm_form.SHARED_STORE).async_save({})
     for domain, prefix in _KIND:
         coll = _collection(hass, domain)
         for object_id in [k for k in (coll.data if coll is not None else {}) if str(k).startswith(prefix)]:
             await _drop_helper(hass, coll, object_id)
     if engine is not None:
         await engine.async_set_native({})
-    return [str(a.get("alias") or a.get("id")) for a in ours]
+    return [str(a.get("alias") or a.get("id")) for a in ours] + gone_scripts
 
 
 async def written_english(hass: HomeAssistant, engine: NotifyEngine | None) -> bool:

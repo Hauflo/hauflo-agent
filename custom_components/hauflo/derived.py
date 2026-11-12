@@ -14,6 +14,7 @@ Defaults are in rules_canon.json (canon.py); the texts of refusals in translatio
 from __future__ import annotations
 
 from collections import deque
+from http import HTTPStatus
 import math
 import re
 import time
@@ -70,6 +71,15 @@ class Invalid(ValueError):
     def __init__(self, code: str, key: str, **ph: Any) -> None:
         super().__init__(key)
         self.code, self.key, self.ph = code, key, ph
+
+
+class Refused(Invalid):
+    """A refusal a person can meet on a page (not a request sent wrong): its HTTP status and its text by key, said in the
+    page's language by rules.said (Р83 polish: scenes, daylight, presence, guests — as rules and automations)."""
+
+    def __init__(self, code: str, key: str, status: int = HTTPStatus.BAD_REQUEST, **ph: Any) -> None:
+        super().__init__(code, key, **ph)
+        self.status = status
 
 
 def num(v: Any) -> float | None:

@@ -37,7 +37,7 @@ from homeassistant.util import dt as dt_util, slugify
 from .natural import natural_key
 from .ownership import entity_room
 from .storage import HaufloStore
-from .const import ACK_ACTION, DOMAIN, LOCKED_CODE, MONITOR_LABELS, NATIVE_STORE, QUIET_PARENT, RUN_ACTION, site_ru
+from .const import ACK_ACTION, DO_ACTION, DOMAIN, LOCKED_CODE, MONITOR_LABELS, NATIVE_STORE, OK_ACTION, QUIET_PARENT, RUN_ACTION, site_ru
 from . import alarms_now, foreign, signals
 from .tuning import TUNING
 
@@ -818,6 +818,8 @@ class NotifyEngine:
         # incident key → cancel: in alarm, not yet for the rule's hold (its `for:`) — started only if it stays.
         self._holding: dict[str, Callable[[], None]] = {}
         self._flush_unsub = None
+        # rule id → cancel: a flat-form rule's look after its hold (Р83, _handed) — cancelled on stop.
+        self._late_kicks: dict[str, Callable[[], None]] = {}
         self.sent_log: list[dict[str, Any]] = []
         # Set by the link to Hauflo: called when open alarms or the rules change.
         self.on_change = None
@@ -916,8 +918,9 @@ class NotifyEngine:
         if self._flush_unsub:
             self._flush_unsub()
             self._flush_unsub = None
-        for cancel in [*self._nodata_timers.values(), *self._chatter.values(), *self._holding.values(), *self._missed.values()]:
+        for cancel in [*self._nodata_timers.values(), *self._chatter.values(), *self._holding.values(), *self._missed.values(), *self._late_kicks.values()]:
             cancel()
+        self._late_kicks.clear()
         self._nodata_timers.clear()
         self._chatter.clear()
         self._holding.clear()
@@ -1830,6 +1833,23 @@ class NotifyEngine:
         if keys:
 
             async def _go(_hass: HomeAssistant) -> None:
+                if (self.native.get(rule_id) or {}).get("form") == 2:
+                    # HA's own `to: on` trigger tells it after the rule's hold when its sensors come up in alarm: looked
+                    # at only after that, never a second push.
+                    from .independent import alarm_hold  # noqa: PLC0415 — it builds on this module
+
+                    rule = next((r for r in self.config["rules"] if r["id"] == rule_id), None)
+                    later = (alarm_hold(rule) if rule else NATIVE_HOLD) + NATIVE_HOLD
+
+                    @callback
+                    def _late(_now: Any) -> None:
+                        self._late_kicks.pop(rule_id, None)
+                        self.hass.async_create_task(self._kick(rule_id))
+
+                    if cancel := self._late_kicks.pop(rule_id, None):
+                        cancel()
+                    self._late_kicks[rule_id] = async_call_later(self.hass, later, _late)
+                    return
                 await self._kick(rule_id)
 
             async_at_started(self.hass, _go)
@@ -1840,6 +1860,19 @@ class NotifyEngine:
         (HA's own «Выполнить»): no branch of its ``choose`` matches, its loop waits for the repeat / button / «Принято»."""
         rec = self.native.get(rule_id) or {}
         st = self._automation(rec) if rec.get("automation") else None
+        if rec.get("form") == 2:
+            # The flat form (Р83): its run is the alarm itself — started again while its group is on and nobody accepted
+            # it (one more push: said in its description). Not when HA's own trigger already started it (_handed waits
+            # the rule's hold for that).
+            grp, ack = self.hass.states.get(rec.get("group") or ""), self.hass.states.get(rec.get("helper") or "")
+            if st is None or st.state != "on" or st.attributes.get("current") or grp is None or grp.state != "on" or (ack is not None and ack.state == "on"):
+                return
+            try:
+                await self.hass.services.async_call("automation", "trigger", {"entity_id": st.entity_id, "skip_condition": True},
+                                                    blocking=False, context=Context(parent_id=QUIET_PARENT))
+            except Exception as err:  # noqa: BLE001 — the alarm is on the phones and in the list; only its repeat is late
+                _LOGGER.warning("Hauflo: alarm automation %s not started: %s", st.entity_id, err)
+            return
         opn = self.hass.states.get(rec.get("open") or "")
         if st is None or st.state != "on" or st.attributes.get("current") or opn is None or opn.state != "on":
             return
@@ -1875,11 +1908,23 @@ class NotifyEngine:
         recently — looked at again when it has held the back window (HA may still say it itself)."""
         rule = next((r for r in self.config["rules"] if r["id"] == rule_id and r["enabled"]), None)
         rec = self.native.get(rule_id) or {}
-        opn = self.hass.states.get(rec.get("open") or "")
-        if rule is None or opn is None or opn.state != "on" or not self._in_ha(rule_id):
+        flat = rec.get("form") == 2
+        if rule is None or not self._in_ha(rule_id):
             return
+        if flat:
+            # The flat form (Р83): no «авария открыта» helper — the run was the alarm and died with HA; the engine's
+            # saved alarms say it was open. Its group starts off when the sensors are back: no on → off for HA's own
+            # «снова в норме», so the engine says it (a critical rule) or ends it quietly (the note), as the run would.
+            if not self._missed_src.get(rule_id):
+                return
+        else:
+            opn = self.hass.states.get(rec.get("open") or "")
+            if opn is None or opn.state != "on":
+                return
         states = [st for e in rule["sources"] if (st := self.hass.states.get(e)) is not None]
         if any(in_alarm(rule, st, open_now=True) for st in states):
+            if flat:
+                self._missed_src.pop(rule_id, None)  # the alarm goes on in HA's own run (_kick): its «back» is HA's
             return
         told = [e for e in self._missed_src.get(rule_id) or [] if e in rule["sources"]] or rule["sources"]
         normal = [st for st in states if st.entity_id in told and st.state not in NOT_A_STATE]
@@ -1891,6 +1936,25 @@ class NotifyEngine:
             self._watch_missed(rule_id, wait)
             return
         self._missed_src.pop(rule_id, None)
+        if flat:
+            back = self._automation({"automation": rec["back"]}) if rec.get("back") else None
+            if back is not None and back.state == "on":
+                # HA's own «снова в норме» run, with its conditions: said once (the alarm told since its last run — never
+                # after HA said it itself, before the restart or since), the outputs' «on_end» and the notice its own.
+                try:
+                    await self.hass.services.async_call("automation", "trigger", {"entity_id": back.entity_id, "skip_condition": False},
+                                                        blocking=True, context=Context(parent_id=QUIET_PARENT))
+                except Exception as err:  # noqa: BLE001 — said by the engine below then
+                    _LOGGER.warning("Hauflo: automation %s not started: %s", back.entity_id, err)
+                else:
+                    return
+            persistent_notification.async_dismiss(self.hass, rec["automation"])
+            if rule.get("outputs"):
+                await self._switch(rule_id, [o["entity_id"] for o in rule["outputs"] if o["on_end"]], "on_end", "back to normal")
+            if rec.get("back"):
+                t = await self._words()
+                await self._send(rule, t.get("back_title", "✅ {title}").format(title=rule["title"]), t.get("back_all", "OK"), tag=rec["automation"], critical=False, force=True)
+            return
         await self._set_helper(rule_id, False, "open")
         await self._set_helper(rule_id, False)
         persistent_notification.async_dismiss(self.hass, rec["automation"])
@@ -1926,12 +1990,21 @@ class NotifyEngine:
                 "on": (st.state == "on") if st else None,
                 "acked": (hs.state == "on") if hs else None,
                 "last_triggered": last.isoformat() if hasattr(last, "isoformat") else last,
+                "form": rec.get("form", 1),  # Р83: 2 — the flat form (alarm_form.py); 1 — rewritten by the owner's «переписать»
             }
+            if rec.get("form", 1) == 1:
+                # Changed in HA's own editor since Hauflo wrote it (independent.py's kept_edited): never written over,
+                # so «Переписать» doesn't count it (acceptance Н1 — the banner stayed for good).
+                ent = getattr(self.hass.data.get("automation"), "get_entity", lambda _e: None)(eid) if eid else None
+                raw = getattr(ent, "raw_config", None)
+                if isinstance(raw, dict):
+                    from .automations import _digest  # noqa: PLC0415 — automations imports notify
+                    out[rule_id]["edited"] = _digest(raw) != rec.get("digest")
         return out
 
     async def _on_action(self, event: Event) -> None:
         action = str(event.data.get("action") or "")
-        if action.startswith((ACK_ACTION, RUN_ACTION)):
+        if action.startswith((ACK_ACTION, RUN_ACTION, OK_ACTION, DO_ACTION)):
             # A push of HA's own alarm automation: it accepts / runs the button itself; who pressed it is kept for the
             # moment its helper goes on (_on_helper) — the monitoring names that person.
             if rule_id := next((r for r, rec in self.native.items() if action in (rec.get("ack"), rec.get("run"))), None):
@@ -2346,18 +2419,21 @@ class NotifyView(HomeAssistantView):
             return self.json_message("an object expected", 400)
         from . import independent  # noqa: PLC0415 — it builds on this module
 
+        # Р83: the owner's «переписать аварии» (the «Аварии» page, after its dry run): the rules' automations of the form
+        # before rewritten in the flat one — never without it (an agent update changes nothing in HA).
+        migrate = body.pop("migrate_alarms", None) is True
         try:
             if body.get("dry_run") is True:
                 # Hauflo's deploy plan: what the alarm automations in HA would become — nothing saved or written.
                 config = engine.check(body)
-                return self.json({"config": config, "native": await independent.async_sync(engine.hass, engine, dry_run=True, config=config)})
+                return self.json({"config": config, "native": await independent.async_sync(engine.hass, engine, dry_run=True, config=config, migrate=migrate)})
             config = await engine.async_set(body)
         except LockedChange as err:
             # The rules kept as they are; Hauflo says where the owner opens the house (security review 28.10).
             return self.json({"code": LOCKED_CODE, "reason": str(err)}, 423)
         # The rules saved: HA's own automations follow them (independent.py). A failure leaves the engine pushing them.
         try:
-            native = await independent.async_sync(engine.hass, engine)
+            native = await independent.async_sync(engine.hass, engine, migrate=migrate)
         except Exception as err:  # noqa: BLE001 — said to Hauflo, the rules are saved all the same
             _LOGGER.exception("Hauflo: alarm automations not synced")
             native = {"error": str(err)}

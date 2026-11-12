@@ -278,7 +278,7 @@ async def test_client_may_press_not_pulse(hass: HomeAssistant, entry, more) -> N
     engine = _engine(entry)
     got = await engine.save(vent(actions=[{"do": "press", "entity_id": BUTTON}, {"do": "option", "entity_id": MODE, "value": "night"}]), client=True, user_id=None)
     assert got["owner"] == "client"
-    for bad in ({"do": "pulse", "entity_id": HEATER2, "value": 2}, {"do": "on", "entity_id": HEATER2}, {"do": "speed", "entity_id": VENT, "value": 30}):
+    for bad in ({"do": "pulse", "entity_id": HEATER2, "value": 2}, {"do": "on", "entity_id": HEATER2}, {"do": "toggle", "entity_id": HEATER2}):
         with pytest.raises(Invalid) as err:
             await engine.save(vent(id="kid", actions=[bad]), client=True, user_id=None)
         assert err.value.code == "not_allowed"

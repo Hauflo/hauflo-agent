@@ -36,7 +36,7 @@ from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers import translation
 from homeassistant.util import dt as dt_util
 
-from .const import ACK_PREFIX, ALARM_PREFIX, CHATTER_PREFIX, DOMAIN, MONITOR_LABEL, MONITOR_LABEL_EN, MONITOR_LABELS, OPEN_PREFIX
+from .const import ACK_PREFIX, ALARM_PREFIX, CHATTER_PREFIX, DOMAIN, MONITOR_LABEL, MONITOR_LABEL_EN, MONITOR_LABELS, OPEN_PREFIX, PUSH_SCRIPT, RUN_PREFIX
 from .storage import HaufloStore
 from .tuning import TUNING
 
@@ -129,6 +129,10 @@ def kind_of(entry: er.RegistryEntry, owned: set[str], owned_entries: set[str]) -
     """Hauflo's own (and which kind) — the same rule the tunnel uses for what Hauflo may change."""
     if entry.platform == "knx":
         return "knx" if entry.unique_id in owned else None
+    if entry.platform in ("group", "template") and entry.entity_id.startswith(f"binary_sensor.{ALARM_PREFIX}"):
+        return "alarm"  # a rule's «все датчики» helper (alarm_form.py)
+    if entry.platform == "script" and (entry.unique_id == PUSH_SCRIPT or str(entry.unique_id).startswith(RUN_PREFIX)):
+        return "alarm"  # the alarms' push script / a rule's button script (alarm_form.py)
     if entry.platform == "group":
         return "group" if entry.config_entry_id in owned_entries else None
     if entry.platform == "homeassistant" and entry.domain == "scene":

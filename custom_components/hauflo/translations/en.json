@@ -487,7 +487,7 @@
       "message": "Notification text: up to {n} printable characters."
     },
     "rules_client_action": {
-      "message": "Allowed: lights, covers, a scene, buttons, a list choice, a number, “notify me”."
+      "message": "Allowed: lights, covers, a scene, a script, buttons, a list choice, a number, a fan, a socket, a thermostat, “notify me”."
     },
     "rules_target_not_allowed": {
       "message": "“{entity}”: Hauflo's devices only, not its service ones; never locks, the alarm, gates or opening a valve."
@@ -1125,6 +1125,9 @@
     "rules_bad_sun_offset": {
       "message": "Sunrise/sunset offset: {lo} to {hi} min."
     },
+    "rules_bad_repeat": {
+      "message": "Repeat: {lo} to {hi} times, every {s_lo} to {s_hi} s; only a press, a pulse, a toggle, a scene or a script (a pulse repeats after it ends)."
+    },
     "rules_pulse_min_on": {
       "message": "A pulse can't be shorter than {n} s for this purpose."
     },
@@ -1259,6 +1262,531 @@
     },
     "rules_do_volume": {
       "message": "Volume"
+    },
+    "alarm_native_group": {
+      "message": "{title} · all sensors"
+    },
+    "alarm_native_rule_description": {
+      "message": "Made by Hauflo from the alarm rule. Watches: {sources}. Alarm — a sensor in alarm for {hold} s. To: {phones}. {repeat} The rule's sensors — the helper “{group}”, “Accept” — the helper “{helper}” (the push button, a card or the toggle). A chattering sensor and “no data” are watched by the Hauflo service. A Home Assistant restart while the alarm is open gives one more push."
+    },
+    "alarm_native_repeat_plan": {
+      "message": "Repeated while nobody has pressed “Accept” and a sensor is in alarm: {more} more times every {every} min, then every {slow} min."
+    },
+    "alarm_native_no_repeat_plan": {
+      "message": "One push, no repeats."
+    },
+    "alarm_native_back_alias": {
+      "message": "Alarm: {title} — back to normal"
+    },
+    "alarm_native_back_description": {
+      "message": "Made by Hauflo from the alarm rule “{title}”: every sensor of the rule in normal for {back} s (after “no data” too), none without data and the alarm was told — “back to normal” to {phones}, the notification in Home Assistant goes."
+    },
+    "alarm_native_back_all": {
+      "message": "All sensors are back to normal."
+    },
+    "alarm_native_script_alias": {
+      "message": "Hauflo: alarm push"
+    },
+    "alarm_native_script_description": {
+      "message": "Made by Hauflo: an alarm's push to the rule's phones — each phone on its own, critical on iOS and Android, with its buttons and the names of the sensors in alarm; a notification in Home Assistant with the same tag. Run by the automations “Alarm: …”."
+    },
+    "alarm_native_accept_alias": {
+      "message": "Hauflo: “Accept” from a phone"
+    },
+    "alarm_native_accept_description": {
+      "message": "Made by Hauflo: “Accept” in any alarm's push turns its rule's “Accept” helper on — the repeats stop."
+    },
+    "alarm_native_button_alias": {
+      "message": "Hauflo: button from a push"
+    },
+    "alarm_native_button_description": {
+      "message": "Made by Hauflo: an action button in an alarm's push (“Close: …”, “Turn off: …”) runs its rule's script."
+    },
+    "alarm_native_run_alias": {
+      "message": "Hauflo: {title} — {button}"
+    },
+    "alarm_native_run_description": {
+      "message": "Made by Hauflo from the alarm rule “{title}”: “{button}”, then “Accept”. Not done — the alarm stays unaccepted and keeps repeating."
+    },
+    "alarm_native_category": {
+      "message": "Hauflo · Alarms"
+    },
+    "alarm_native_script_failed": {
+      "message": "The alarm push script didn't load (is scripts.yaml included in configuration.yaml?) — the alarms stay as they were."
+    },
+    "alarm_native_f_rule": {
+      "message": "Rule"
+    },
+    "alarm_native_f_say": {
+      "message": "What to say"
+    },
+    "alarm_native_f_round": {
+      "message": "Push number"
+    },
+    "alarm_native_f_critical": {
+      "message": "Critical"
+    },
+    "alarm_native_f_quiet": {
+      "message": "Quiet"
+    },
+    "alarm_native_f_tag": {
+      "message": "Tag"
+    },
+    "alarm_native_f_targets": {
+      "message": "Recipients"
+    },
+    "alarm_native_f_group": {
+      "message": "All sensors"
+    },
+    "alarm_native_f_buttons": {
+      "message": "Buttons"
+    },
+    "alarm_native_f_button": {
+      "message": "Button"
+    },
+    "alarm_native_f_note": {
+      "message": "Notification in Home Assistant"
+    },
+    "alarm_native_f_sources": {
+      "message": "Sensors"
+    },
+    "alarm_native_f_states": {
+      "message": "Alarm states"
+    },
+    "alarm_native_f_levels": {
+      "message": "Thresholds"
+    },
+    "automations_bad_request": {
+      "message": "The request wasn't accepted — the page is out of date. Reload it and try again."
+    },
+    "automations_bad_range": {
+      "message": "{field}: from {lo} to {hi}."
+    },
+    "automations_f_offset": {
+      "message": "Offset, min"
+    },
+    "automations_f_for_min": {
+      "message": "How many minutes it lasts"
+    },
+    "automations_f_brightness": {
+      "message": "Brightness, %"
+    },
+    "automations_f_ramp_minutes": {
+      "message": "Wake-up light time, min"
+    },
+    "automations_f_x": {
+      "message": "Threshold"
+    },
+    "automations_f_latitude": {
+      "message": "Latitude"
+    },
+    "automations_f_longitude": {
+      "message": "Longitude"
+    },
+    "automations_f_elevation": {
+      "message": "Elevation, m"
+    },
+    "automations_bad_sensors": {
+      "message": "Pick 1 to {n} different sensors."
+    },
+    "automations_bad_state_sensor": {
+      "message": "“{entity}” can't be picked: a motion, door, window or opening sensor or a media player is needed."
+    },
+    "automations_bad_sensor_mix": {
+      "message": "The sensors of one rule must be of one kind."
+    },
+    "automations_bad_media_off": {
+      "message": "“Not playing” follows one player only — make a rule for each."
+    },
+    "automations_bad_value_sensor": {
+      "message": "“{entity}” can't be picked: a temperature, humidity, CO₂ or light-level sensor is needed."
+    },
+    "automations_bad_value_mix": {
+      "message": "The sensors must measure the same thing in the same unit."
+    },
+    "automations_never_presence": {
+      "message": "The “only if” condition can't hold when the rule fires: everyone has left, yet someone is home (or the other way round)."
+    },
+    "automations_never_between": {
+      "message": "{at} is outside “between {a} and {b}” — the rule would never run."
+    },
+    "automations_never_value": {
+      "message": "The readings of the same sensors can't meet both conditions at once."
+    },
+    "automations_bad_only_if_count": {
+      "message": "At most {n} “only if” conditions."
+    },
+    "automations_bad_between": {
+      "message": "“Between … and …”: set two different times."
+    },
+    "automations_never_only_if": {
+      "message": "The conditions contradict each other: dark and light, or someone home and nobody home."
+    },
+    "automations_bad_between_one": {
+      "message": "Only one time window in the conditions."
+    },
+    "automations_bad_times": {
+      "message": "Times: 1 to {n} different ones."
+    },
+    "automations_bad_alarm_sensor": {
+      "message": "Pick a phone's alarm from the list."
+    },
+    "automations_bad_days": {
+      "message": "Pick at least one day."
+    },
+    "automations_bad_actions": {
+      "message": "Add 1 to {n} actions."
+    },
+    "automations_bad_ramps": {
+      "message": "At most {n} wake-up lights in one rule."
+    },
+    "automations_bad_target_empty": {
+      "message": "Pick at least one room or device."
+    },
+    "automations_bad_target_many": {
+      "message": "At most {n} rooms and devices in one action."
+    },
+    "automations_bad_target_kinds": {
+      "message": "One action takes devices of one kind."
+    },
+    "automations_bad_target_group": {
+      "message": "“Whole room” and “everywhere” only for: {kinds}."
+    },
+    "automations_no_device": {
+      "message": "“{entity}” can't be used in a rule."
+    },
+    "automations_bad_ramp": {
+      "message": "A wake-up light is only for picked dimmable lights."
+    },
+    "automations_bad_ramp_repeat": {
+      "message": "A wake-up light doesn't repeat."
+    },
+    "automations_bad_do": {
+      "message": "This action isn't available for these devices. Possible: {acts}."
+    },
+    "automations_bad_option": {
+      "message": "Pick a value."
+    },
+    "automations_bad_room_empty": {
+      "message": "“{room}” has no devices ({kind}) for “{do}”."
+    },
+    "automations_bad_all_empty": {
+      "message": "No devices ({kind}) anywhere for “{do}”."
+    },
+    "automations_helper_failed": {
+      "message": "Couldn't make the combined sensor — try again."
+    },
+    "automations_bad_rules_many": {
+      "message": "At most {n} rules."
+    },
+    "automations_bad_place": {
+      "message": "Set the site's location."
+    },
+    "automations_bad_time_zone": {
+      "message": "Unknown time zone."
+    },
+    "automations_no_rule": {
+      "message": "This rule is gone — reload the page."
+    },
+    "automations_changed": {
+      "message": "The rule was changed by hand in the automation editor — Hauflo doesn't overwrite it without confirmation."
+    },
+    "automations_not_in_ha": {
+      "message": "This rule's automation is missing — save the rule again."
+    },
+    "automations_yaml_location": {
+      "message": "The site's location is set in the configuration file — your service changes it."
+    },
+    "automations_yaml_time_zone": {
+      "message": "The time zone is set in the configuration file — your service changes it."
+    },
+    "automations_no_detect": {
+      "message": "Couldn't find the location by the internet address — set it by hand."
+    },
+    "automations_name_default": {
+      "message": "Automation"
+    },
+    "automations_d_made": {
+      "message": "Made in Hauflo."
+    },
+    "automations_d_sentence": {
+      "message": "{head}: {acts}."
+    },
+    "automations_d_only_if": {
+      "message": "Only if {conds}."
+    },
+    "automations_d_and": {
+      "message": "{a} and {b}"
+    },
+    "automations_d_days_at": {
+      "message": "{days} {when}"
+    },
+    "automations_d_days_when": {
+      "message": "{days}, {when}"
+    },
+    "automations_d_days_workdays": {
+      "message": "every weekday"
+    },
+    "automations_d_days_weekend": {
+      "message": "on weekends"
+    },
+    "automations_d_days_some": {
+      "message": "on {days}"
+    },
+    "automations_d_wd_mon": {
+      "message": "Mon"
+    },
+    "automations_d_wd_tue": {
+      "message": "Tue"
+    },
+    "automations_d_wd_wed": {
+      "message": "Wed"
+    },
+    "automations_d_wd_thu": {
+      "message": "Thu"
+    },
+    "automations_d_wd_fri": {
+      "message": "Fri"
+    },
+    "automations_d_wd_sat": {
+      "message": "Sat"
+    },
+    "automations_d_wd_sun": {
+      "message": "Sun"
+    },
+    "automations_d_at": {
+      "message": "at {times}"
+    },
+    "automations_d_sunrise": {
+      "message": "at sunrise"
+    },
+    "automations_d_sunset": {
+      "message": "at sunset"
+    },
+    "automations_d_of_sunrise": {
+      "message": "sunrise"
+    },
+    "automations_d_of_sunset": {
+      "message": "sunset"
+    },
+    "automations_d_alarm": {
+      "message": "at the alarm of “{phone}”"
+    },
+    "automations_d_of_alarm": {
+      "message": "the alarm of “{phone}”"
+    },
+    "automations_d_before": {
+      "message": "{d} before {of}"
+    },
+    "automations_d_after": {
+      "message": "{d} after {of}"
+    },
+    "automations_d_alarm_iphone": {
+      "message": "at the iPhone's alarm"
+    },
+    "automations_d_min": {
+      "message": "{n} min"
+    },
+    "automations_d_h": {
+      "message": "{n} h"
+    },
+    "automations_d_hmin": {
+      "message": "{h} h {m} min"
+    },
+    "automations_d_sec": {
+      "message": "{n} s"
+    },
+    "automations_d_when_value": {
+      "message": "when {what} is {op}"
+    },
+    "automations_d_reading_one": {
+      "message": "{kind} “{sensor}”"
+    },
+    "automations_d_reading_many": {
+      "message": "{kind} ({stat}: {sensors})"
+    },
+    "automations_d_kind_temperature": {
+      "message": "temperature"
+    },
+    "automations_d_kind_humidity": {
+      "message": "humidity"
+    },
+    "automations_d_kind_carbon_dioxide": {
+      "message": "CO₂"
+    },
+    "automations_d_kind_illuminance": {
+      "message": "light level"
+    },
+    "automations_d_op_above": {
+      "message": "above {x}"
+    },
+    "automations_d_op_below": {
+      "message": "below {x}"
+    },
+    "automations_d_hold": {
+      "message": "{text} for {d}"
+    },
+    "automations_d_state_motion_on": {
+      "message": "when there's motion ({sensors})"
+    },
+    "automations_d_state_motion_off": {
+      "message": "when there's no motion ({sensors})"
+    },
+    "automations_d_state_door_on": {
+      "message": "when the door is open ({sensors})"
+    },
+    "automations_d_state_door_off": {
+      "message": "when the door is closed ({sensors})"
+    },
+    "automations_d_state_window_on": {
+      "message": "when the window is open ({sensors})"
+    },
+    "automations_d_state_window_off": {
+      "message": "when the window is closed ({sensors})"
+    },
+    "automations_d_state_opening_on": {
+      "message": "when open ({sensors})"
+    },
+    "automations_d_state_opening_off": {
+      "message": "when closed ({sensors})"
+    },
+    "automations_d_state_media_on": {
+      "message": "when playing ({sensors})"
+    },
+    "automations_d_state_media_off": {
+      "message": "when not playing ({sensors})"
+    },
+    "automations_d_any_of": {
+      "message": "any of: {names}"
+    },
+    "automations_d_all_of": {
+      "message": "all of: {names}"
+    },
+    "automations_d_presence_away": {
+      "message": "when everyone has left"
+    },
+    "automations_d_presence_home": {
+      "message": "when someone comes home"
+    },
+    "automations_d_if_dark": {
+      "message": "it's dark"
+    },
+    "automations_d_if_light": {
+      "message": "it's light"
+    },
+    "automations_d_if_between": {
+      "message": "between {a} and {b}"
+    },
+    "automations_d_if_home": {
+      "message": "someone is home"
+    },
+    "automations_d_if_away": {
+      "message": "nobody is home"
+    },
+    "automations_d_if_value": {
+      "message": "{what} is {op}"
+    },
+    "automations_d_act": {
+      "message": "{do} — {where}"
+    },
+    "automations_d_act_value": {
+      "message": "{do} {value} — {where}"
+    },
+    "automations_d_option": {
+      "message": "“{option}”"
+    },
+    "automations_d_ramp": {
+      "message": "fade up to {value} % over {d} — {where}"
+    },
+    "automations_d_repeat": {
+      "message": "{act}, repeat {times} every {every}"
+    },
+    "automations_d_times_one": {
+      "message": "{n} time"
+    },
+    "automations_d_times_few": {
+      "message": "{n} times"
+    },
+    "automations_d_times_many": {
+      "message": "{n} times"
+    },
+    "automations_d_where_kind": {
+      "message": "{kind} ({places})"
+    },
+    "automations_d_everywhere": {
+      "message": "everywhere"
+    },
+    "automations_d_snapshot": {
+      "message": "{places}; {count} as of saving"
+    },
+    "automations_d_devices_one": {
+      "message": "{n} device"
+    },
+    "automations_d_devices_few": {
+      "message": "{n} devices"
+    },
+    "automations_d_devices_many": {
+      "message": "{n} devices"
+    },
+    "automations_d_dom_light": {
+      "message": "lights"
+    },
+    "automations_d_dom_cover": {
+      "message": "blinds"
+    },
+    "automations_d_dom_switch": {
+      "message": "sockets"
+    },
+    "automations_d_dom_fan": {
+      "message": "fans"
+    },
+    "automations_d_dom_climate": {
+      "message": "thermostats"
+    },
+    "scenes_bad_name": {
+      "message": "Name: at least one letter or digit."
+    },
+    "scenes_too_many": {
+      "message": "No more than {n} scenes of your own — delete one you don't need."
+    },
+    "scenes_no_scene": {
+      "message": "This scene is gone — refresh the page."
+    },
+    "daylight_skip_full": {
+      "message": "No more than {n} lights and switches marked “Not in scenes in daylight”."
+    },
+    "presence_lights_or_covers": {
+      "message": "Keep at least one: the lights or the blinds."
+    },
+    "presence_bad_until": {
+      "message": "The end date: from today, at most {n} days ahead."
+    },
+    "guest_not_issuer": {
+      "message": "Guest links are given by a person who controls the house — ask them."
+    },
+    "guest_not_admin": {
+      "message": "A guest login is made by an administrator."
+    },
+    "guest_no_room": {
+      "message": "This room is gone — refresh the page."
+    },
+    "guest_nothing": {
+      "message": "These rooms have nothing a guest may control."
+    },
+    "guest_too_many_links": {
+      "message": "No more than {n} guest links at once — close one first."
+    },
+    "guest_no_link": {
+      "message": "This guest link is gone — refresh the page."
+    },
+    "guest_no_label": {
+      "message": "Enter the guest's name."
+    },
+    "guest_no_page": {
+      "message": "This page is gone — refresh the list."
+    },
+    "guest_too_many_logins": {
+      "message": "No more than {n} guests with a login at once — close one first."
     }
   },
   "selector": {

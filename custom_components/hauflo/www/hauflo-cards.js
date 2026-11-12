@@ -2942,18 +2942,42 @@ input{height:48px;border-radius:var(--hf-r-sm);border:1px solid var(--divider-co
   // pictures come from the agent (`hauflo/room_picture_options`), the area is set by the agent (`hauflo/area_picture`).
   /** Pictures just set here, by HA area: the tile shows one at once, before HA's area list says it (dropped once it does). */
   const ROOM_PIC = new Map();
-  /** The upload: the photo made smaller on the phone (a 12 MP shot is over HA's 10 MB), HA's thumbnail size it is shown at. */
-  const ROOM_PIC_UP = { side: 1600, quality: 0.86, thumb: "512x512", types: ["image/jpeg", "image/png", "image/gif"], max: 10 * 1024 * 1024 };
-  /** The room's picture now: just set here → HA's area → the one the dashboard was made with. */
+  /** The upload: the photo made smaller on the phone (a 12 MP shot is over HA's 10 MB), HA's thumbnail size it is shown at;
+   * `serve` — where HA's image store gives an uploaded one (one's own photo). */
+  const ROOM_PIC_UP = { side: 1600, quality: 0.86, thumb: "512x512", types: ["image/jpeg", "image/png", "image/gif"], max: 10 * 1024 * 1024, serve: "/api/image/serve/" };
+  /** Without a photo of HA's area: the one the dashboard was made with — the set's picture chosen in Hauflo (Р82: an area with
+   * no picture hid it, 1.0.7–1.0.8), none when that was the area's own photo baked in then and removed since (`picture_from`). */
+  const roomPicOf = (a, c) => (a?.picture ? a.picture : a && c.picture_from === "ha" ? "" : c.picture || "");
+  /** The room's picture now: just set here → HA's area photo → the dashboard's. */
   const roomPic = (h, c) => {
     const a = c.area ? h?.areas?.[c.area] : undefined;
     if (c.area && ROOM_PIC.has(c.area)) {
       const p = ROOM_PIC.get(c.area);
-      if (!a || (a.picture || null) !== p) return p || "";
+      if (!a || (a.picture || null) !== p) return p || roomPicOf({ picture: null }, c);
       ROOM_PIC.delete(c.area);
     }
-    return a && a.picture !== undefined ? a.picture || "" : c.picture || "";
+    return roomPicOf(a, c);
   };
+  /** Where the picture shown comes from (Р82, said under every picker): the set, one's own (uploaded / a link), the room's
+   * settings in HA, or none. `set` — the set's options the agent gave. */
+  const roomPicFrom = (h, c, set) => {
+    const cur = roomPic(h, c);
+    if (!cur) return "none";
+    if (set.some((o) => o.url === cur)) return "set";
+    if (cur.startsWith(ROOM_PIC_UP.serve)) return "own";
+    return c.area && h?.areas?.[c.area]?.picture === cur ? "ha" : "own";
+  };
+  const PIC_FROM = {
+    ru: { set: "Сейчас: из набора Hauflo", own: "Сейчас: своё фото", ha: "Сейчас: фото из настроек комнаты", none: "Сейчас: без фото" },
+    en: { set: "Now: from the Hauflo set", own: "Now: your own photo", ha: "Now: the photo from the room's settings", none: "Now: no photo" },
+  };
+  /** The set's pictures for a room (`{area_id}`) or a zone's / floor's tile (`{name, zone: true}`): the own type's three, then
+   * every other type's (Р82: any picture, as in Hauflo's editor). An agent before 0.35 knows only a room's three — asked so. */
+  const roomPicOptions = (h, q) =>
+    h
+      .callWS({ type: "hauflo/room_picture_options", ...q, all: true })
+      .catch((e) => (e?.code === "invalid_format" && q.area_id ? h.callWS({ type: "hauflo/room_picture_options", ...q }) : Promise.reject(e)))
+      .then((r) => (Array.isArray(r) ? r : Array.isArray(r?.options) ? r.options : []).filter((o) => o && typeof o.url === "string" && o.url && cssUrl(o.url) === o.url && typeof o.label === "string" && o.label));
   const roomPicRedraw = (area) => CARDS.forEach((x) => x._config?.area === area && x.isConnected && x._update());
   /** The photo as JPEG of at most `side` px (EXIF turn applied); the original when the browser can't draw it. */
   const roomPicShrink = async (file) => {
@@ -2975,7 +2999,9 @@ input{height:48px;border-radius:var(--hf-r-sm);border:1px solid var(--divider-co
   /** «Фото комнаты»: upload one, take a ready one, or remove it. `area` — the room's HA area. */
   const openRoomPhoto = (card, area, name) => {
     const h = card._hass;
-    const now = () => roomPic(card._hass, { area, picture: card._config?.picture });
+    const now = () => roomPic(card._hass, { ...card._config, area });
+    /** The area's own photo (what «Убрать» removes; the dashboard's picture of the set stays). */
+    const areaOwn = () => !!(ROOM_PIC.has(area) ? ROOM_PIC.get(area) : card._hass?.areas?.[area]?.picture);
     let opts = null; // null — still asking the agent
     let off = false; // the agent has no such command yet (not updated)
     let busy = "";
@@ -2995,11 +3021,14 @@ input{height:48px;border-radius:var(--hf-r-sm);border:1px solid var(--divider-co
       const fail = (e) => (["unauthorized", "not_allowed"].includes(e?.code) ? LL("Нет прав менять фото комнаты", "No permission to change the room photo") : LL("Не получилось — ещё раз", "That didn't work — try again"));
       const view = () => {
         const cur = now();
-        draw(`<div class="t">${esc(LL("Фото комнаты", "Room photo"))} · ${esc(name)}</div>
+        const from = (PIC_FROM[LANG] || PIC_FROM.en)[roomPicFrom(card._hass, { ...card._config, area }, opts || [])];
+        // The own type's three; another type's chosen in Hauflo — it too, shown as picked.
+        const shown = (opts || []).filter((o, i) => i < 3 || o.url === cur);
+        draw(`<div class="t">${esc(LL("Фото комнаты", "Room photo"))} · ${esc(name)}</div><div class="n">${esc(from)}</div>
 ${off ? `<div class="n">${esc(LL("Смена фото появится после обновления сервиса.", "Changing the photo comes with the next service update."))}</div>` : `<div class="n">${esc(LL("Фото видно на плитке комнаты у всех в доме.", "The photo shows on the room's tile for everyone at home."))}</div>
 <input type="file" accept="image/*" hidden data-file><button class="b" data-up${busy ? " disabled" : ""}>${esc(busy === "up" ? LL("Загружаю…", "Uploading…") : LL("Загрузить фото", "Upload a photo"))}</button>
-${opts === null ? `<div class="n">${esc(LL("Ищу готовые фото…", "Looking for ready photos…"))}</div>` : opts.length ? `<div class="n">${esc(LL("Готовые", "Ready ones"))}</div>${opts.map((o, i) => `<button class="b${o.url === cur ? " go" : ""}" data-opt="${i}" aria-pressed="${o.url === cur}"${busy ? " disabled" : ""}>${esc(o.label)}</button>`).join("")}` : ""}
-${cur ? `<button class="b bad" data-rm${busy ? " disabled" : ""}>${esc(sure ? LL("Точно убрать фото?", "Remove the photo?") : LL("Убрать фото", "Remove the photo"))}</button>` : ""}`}
+${opts === null ? `<div class="n">${esc(LL("Ищу готовые фото…", "Looking for ready photos…"))}</div>` : shown.length ? `<div class="n">${esc(LL("Готовые", "Ready ones"))}</div>${shown.map((o) => `<button class="b${o.url === cur ? " go" : ""}" data-opt="${opts.indexOf(o)}" aria-pressed="${o.url === cur}"${busy ? " disabled" : ""}>${esc(o.label)}</button>`).join("")}` : ""}
+${areaOwn() ? `<button class="b bad" data-rm${busy ? " disabled" : ""}>${esc(sure ? LL("Точно убрать фото?", "Remove the photo?") : LL("Убрать фото", "Remove the photo"))}</button>` : ""}`}
 ${msg ? `<div class="${bad ? "e" : "n"}" role="status">${esc(msg)}</div>` : ""}<button class="b" data-x>${esc(LL("Готово", "Done"))}</button>`);
         sr.querySelector("[data-x]").addEventListener("click", close);
         const file = sr.querySelector("[data-file]");
@@ -3061,11 +3090,8 @@ ${msg ? `<div class="${bad ? "e" : "n"}" role="status">${esc(msg)}</div>` : ""}<
         });
       };
       view();
-      h.callWS({ type: "hauflo/room_picture_options", area_id: area })
-        .then((r) => {
-          const list = Array.isArray(r) ? r : Array.isArray(r?.options) ? r.options : [];
-          opts = list.filter((o) => o && typeof o.url === "string" && cssUrl(o.url) === o.url && o.url && typeof o.label === "string").slice(0, 24);
-        })
+      roomPicOptions(h, { area_id: area })
+        .then((list) => (opts = list))
         .catch((e) => {
           opts = [];
           off = e?.code === "unknown_command";
@@ -11046,6 +11072,22 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
           privacy: "Статистика хранится только здесь, на месте, и никуда не отправляется. Правило появится, только если его сохранить.",
         }, added: "Добавлено и включено. Нажмите на правило, чтобы поправить.",
         newRule: "Новое правило", rule: "Правило", back: "Назад",
+        v2: {
+          seg: { on: "Включить", off: "Выключить", toggle: "Переключить", brightness: "Яркость", ramp: "Плавно", pulse: "Импульс", open: "Открыть", close: "Закрыть", stop: "Стоп", position: "Положение", tilt: "Наклон", scene: "Включить", run: "Запустить", press: "Нажать", option: "Выбрать", value: "Значение", speed: "Скорость", preset: "Предустановка", setpoint: "Температура", mode: "Режим" },
+          dom: { light: "Свет", cover: "Шторы", scene: "Сцены", script: "Сценарии", button: "Кнопки", switch: "Розетки", fan: "Вентиляция", climate: "Климат", select: "Режимы", number: "Уровни" },
+          everywhere: "Везде", whole: (d) => `${d} — вся комната`, wholeAll: (d) => `${d} — везде`, noRoom: "Без комнаты", recent: "Недавние",
+          search: "Найти по названию или комнате", nothing: "Ничего не найдено", done: "Готово", change: "Изменить", addAct: "Добавить действие", pickFor: "Выбор устройств",
+          sensPick: "Выбрать датчики", rep: "Повторить",
+          times: (n) => `${n} ${n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? "раза" : "раз"}`,
+          every: (x) => `через ${x}`,
+          repTxt: (n, x) => `, ${n} ${n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? "раза" : "раз"} через ${x}`,
+          direct: "У этого устройства есть режимы — вместо повторов лучше выставить нужный режим напрямую.",
+          addTime: "время", rmTime: "Убрать время", hours: "Часы", mins: "Минуты", sec: "с",
+          pTo: (x) => `до ${x}`, pOver: (x) => `за ${x}`, pFor: (x) => `на ${x}`,
+          needAct: "Добавьте, что сделать.", needDo: (n) => `Выберите действие для «${n}».`, gone: "Устройство не найдено — уберите его или выберите другое.",
+          noDevices: "Пока нет устройств, которыми можно управлять.",
+          oldAgent: "Чтобы создавать и менять правила, системе нужно обновление — сообщите сервису. Сейчас правила можно только включать и выключать.",
+        },
         when: "Когда", days: "Дни", what: "Что сделать", addAction: "Добавить действие…",
         grp: { covers: "Шторы по одной", coverRooms: "Все шторы комнаты", lights: "Свет", scenes: "Сцены", rooms: "Весь свет в комнате" },
         do: { open: "Открыть", close: "Закрыть", position: "Положение", on: "Включить", off: "Выключить", ramp: "Плавно", sceneOn: "Включить", temp: "Температура", heat: "Обогрев", cool: "Охлаждение" },
@@ -11222,6 +11264,22 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
           privacy: "The statistics stay here, on site, and are sent nowhere. A rule appears only when you save it.",
         }, added: "Added and on. Tap the rule to adjust it.",
         newRule: "New rule", rule: "Rule", back: "Back",
+        v2: {
+          seg: { on: "On", off: "Off", toggle: "Toggle", brightness: "Brightness", ramp: "Slowly", pulse: "Pulse", open: "Open", close: "Close", stop: "Stop", position: "Position", tilt: "Tilt", scene: "Turn on", run: "Run", press: "Press", option: "Choose", value: "Value", speed: "Speed", preset: "Preset", setpoint: "Temperature", mode: "Mode" },
+          dom: { light: "Lights", cover: "Blinds", scene: "Scenes", script: "Scripts", button: "Buttons", switch: "Sockets", fan: "Ventilation", climate: "Climate", select: "Modes", number: "Levels" },
+          everywhere: "Everywhere", whole: (d) => `${d} — whole room`, wholeAll: (d) => `${d} — everywhere`, noRoom: "No room", recent: "Recent",
+          search: "Find by name or room", nothing: "Nothing found", done: "Done", change: "Change", addAct: "Add an action", pickFor: "Choose devices",
+          sensPick: "Choose sensors", rep: "Repeat",
+          times: (n) => `${n} times`,
+          every: (x) => `every ${x}`,
+          repTxt: (n, x) => `, ${n} times every ${x}`,
+          direct: "This device has modes — rather than repeating, set the mode you need directly.",
+          addTime: "time", rmTime: "Remove the time", hours: "Hours", mins: "Minutes", sec: "s",
+          pTo: (x) => `to ${x}`, pOver: (x) => `over ${x}`, pFor: (x) => `for ${x}`,
+          needAct: "Add what to do.", needDo: (n) => `Choose what to do with “${n}”.`, gone: "Device not found — remove it or choose another.",
+          noDevices: "No devices to control yet.",
+          oldAgent: "To create and change rules the system needs an update — tell your service. For now rules can only be switched on and off.",
+        },
         when: "When", days: "Days", what: "What to do", addAction: "Add an action…",
         grp: { covers: "Blinds one by one", coverRooms: "All blinds of a room", lights: "Lights", scenes: "Scenes", rooms: "All lights of a room" },
         do: { open: "Open", close: "Close", position: "Position", on: "On", off: "Off", ramp: "Slowly", sceneOn: "Turn on", temp: "Temperature", heat: "Heat", cool: "Cool" },
@@ -11341,6 +11399,42 @@ ha-tab-group-tab:hover,ha-tab-group-tab:focus-visible{color:var(--eh-ink,var(--p
     const PICK_LIST = { light: "lights", cover: "covers", scene: "scenes", fan: "fans", switch: "switches", climate: "climates" };
     const PICK_DOMAINS = Object.keys(PICK_LIST);
     const SET_DOMAINS = ["light", "cover", "scene"];
+    // Р83 (rules v2): the agent says each device's acts (automations.targets «entities»); the editor draws only those.
+    // Chips of the one picker: HA's helper domains go with the kind people know.
+    const DOM_CHIP = { input_button: "button", input_select: "select", input_number: "number", input_boolean: "switch" };
+    const CHIP_ORDER = ["light", "cover", "scene", "script", "button", "switch", "fan", "climate", "select", "number"];
+    const DOM_ICON = { light: "mdi:lightbulb-outline", cover: "mdi:blinds", scene: "mdi:palette-outline", script: "mdi:script-text-outline", button: "mdi:gesture-tap-button", switch: "mdi:power-socket-eu", fan: "mdi:fan", climate: "mdi:thermostat", select: "mdi:form-dropdown", number: "mdi:numeric" };
+    const ACT_ORDER = ["on", "off", "toggle", "brightness", "ramp", "pulse", "open", "close", "stop", "position", "tilt", "scene", "run", "press", "option", "value", "speed", "preset", "setpoint", "mode"];
+    const PULSE_STEPS = [1, 2, 3, 5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 300, 600];
+    const EVERY_STEPS = [1, 2, 3, 5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 300, 600, 900, 1200, 1800, 2700, 3600];
+    const RAMP_MIN = [1, 2, 3, 5, 10, 15, 20, 30, 45, 60];
+    const ACT_DEF = { brightness: 100, position: 50, tilt: 50, speed: 50, pulse: 3, ramp: 25, minutes: 15 };
+    const RECENT_KEY = "hauflo-rules-recent";
+    const chipOf = (d) => DOM_CHIP[d] || d;
+    const L = (x) => (x == null ? [] : Array.isArray(x) ? x : [x]);
+    const normT = (t) => ({ ...(t || {}), ...(t?.entity_id != null ? { entity_id: L(t.entity_id) } : {}), ...(t?.area_id != null ? { area_id: L(t.area_id) } : {}) });
+    // The kind of an act's parameter: the agent says it; an older answer without it — from the spec itself.
+    const kindOf = (act, s) => (!s ? null : s.kind || (s.options ? "option" : act === "ramp" ? "ramp" : s.unit === "%" ? "percent" : s.unit === "s" ? "seconds" : act === "setpoint" ? "setpoint" : s.min != null ? "number" : null));
+    const ladder = (steps, cur, dir) => (dir > 0 ? steps.find((x) => x > cur) ?? steps.at(-1) : [...steps].reverse().find((x) => x < cur) ?? steps[0]);
+    const clamp = (lo, hi, v) => Math.max(lo, Math.min(hi, v));
+    const legacyDo = (d, cmd, v) => (d === "light" && cmd === "on" && v != null ? "brightness" : d === "scene" && cmd === "on" ? "scene" : d === "climate" && cmd === "temp" ? "setpoint" : cmd);
+    // A rule of the old form (a recipe, a habit, an older agent's answer) in the canon's {do, target}.
+    const toV2 = (a) => {
+      if (!a || a.target) return a ? { ...a, target: normT(a.target) } : a;
+      const val = a.value != null ? { value: a.value } : {};
+      if (a.do === "set") {
+        const t = { domain: a.domain };
+        if (a.all) t.all = true;
+        if (a.rooms?.length) t.area_id = [...a.rooms];
+        if (a.entities?.length) t.entity_id = [...a.entities];
+        return { do: legacyDo(a.domain, a.cmd, a.value), target: t, ...(a.cmd !== "ramp" ? val : {}) };
+      }
+      if (a.do === "room_off") return { do: "off", target: { domain: "light", area_id: L(a.area_id) } };
+      if (a.do === "room_covers") return { do: a.cover, target: { domain: "cover", area_id: L(a.area_id) }, ...(a.cover === "position" ? val : {}) };
+      const d = String(a.entity_id || "").split(".")[0];
+      if (d === "climate" && ["heat", "cool", "off"].includes(a.do)) return { do: "mode", target: { entity_id: [a.entity_id] }, value: a.do };
+      return { do: legacyDo(d, a.do, a.value), target: { entity_id: L(a.entity_id) }, ...val, ...(a.do === "ramp" ? { minutes: a.minutes } : {}), ...(a.repeat ? { repeat: a.repeat } : {}) };
+    };
     const ruOne = (n) => n % 10 === 1 && n % 100 !== 11;  // «из 21 дня», «из 14 дней»
     /** A time zone as people say it («Центральная Европа», «Москва»), not «Europe/Berlin» (final review 28.10). */
     const tzName = (z, l) => {
@@ -11476,6 +11570,23 @@ details.man{margin:12px 0 0}details.man summary{font:500 14px Onest,sans-serif;c
 .pick{padding:12px;border-radius:var(--hf-r-md);margin:0 0 8px;box-shadow:inset 0 0 0 1px var(--hf-hair-35);display:grid;gap:10px}
 .prm .caps{margin:0 0 6px}.chips button:disabled{opacity:.45;cursor:default}.chips button small{font:400 12px Onest,sans-serif;opacity:.75;margin-left:4px}
 .vbox{display:grid;gap:8px;margin:10px 0 0}.fld .chips+.vbox,.act .vbox{margin-top:4px}
+.edh{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:8px;margin:-8px -12px 12px;padding:calc(8px + env(safe-area-inset-top,0px)) 12px 8px;background:var(--hf-page-bg-2)}.edh h2{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:center;font-size:17px;line-height:44px;margin:0}.edh .btn.sm{align-self:center;flex:none}
+.edw .box>.caps:first-child{margin-bottom:8px}.rot{font:400 15px/1.45 Onest,sans-serif;margin:0}
+.edfoot{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:16px}.edfoot .hint{margin:0;flex:1 1 180px}
+.segw{display:flex;flex-wrap:wrap}.segw button{flex:1 1 auto;min-width:88px}
+.pk{padding:10px;border-radius:var(--hf-r-md);margin:0 0 8px;box-shadow:inset 0 0 0 1px var(--hf-hair-35);display:grid;gap:8px;background:var(--hf-card-bg)}
+.pkh{display:flex;align-items:center;gap:6px}.pkh input{flex:1;min-width:0}
+.chips.pkc{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;padding-bottom:2px}.pkc button{flex:none;display:inline-flex;align-items:center;gap:6px}.pkc ha-icon{--mdc-icon-size:var(--hf-icon-s)}
+.pkl{max-height:min(55vh,440px);overflow:auto;display:grid;gap:2px;overscroll-behavior:contain;align-content:start}
+.pkr{display:flex;align-items:center;gap:10px;width:100%;min-height:44px;padding:6px 8px;border:0;border-radius:var(--hf-r-sm);background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}.pkr:hover{background:var(--hf-track-08)}
+.pkr>ha-icon{flex:none;color:var(--eh-ink2,var(--secondary-text-color))}.pkr .ck{margin-left:auto}.pkr[aria-pressed="true"] .ck{color:var(--eh-ink,var(--primary-color))}
+.pkr.fold .pki b{font-weight:600}.pkr.fold .n{margin-left:auto;font:400 13px Onest,sans-serif;color:var(--eh-ink2,var(--secondary-text-color))}
+.pki{display:flex;flex-direction:column;min-width:0;flex:1}.pki b{font:500 14px/1.3 Onest,sans-serif;overflow-wrap:anywhere}.pki small{font:400 12px/1.3 Onest,sans-serif;color:var(--eh-ink2,var(--secondary-text-color))}
+.pkg{padding-left:12px;display:grid;gap:2px}[data-recent]{display:grid;gap:2px;padding-bottom:6px;margin-bottom:4px;border-bottom:1px solid var(--hf-hair)}[data-recent] .caps{margin:4px 8px}
+.tms{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0 0}.tchip{display:inline-flex;align-items:center;gap:4px;padding:2px 2px 2px 6px;border-radius:var(--hf-r-sm);background:var(--hf-track-08)}.tchip select{width:auto;min-width:64px;font:500 18px Onest,sans-serif;text-align:center;padding:6px 8px}.tchip b{font:500 18px Onest,sans-serif}
+.tags{display:flex;flex-wrap:wrap;gap:6px}.tag{display:inline-flex;align-items:center;gap:6px;min-height:36px;padding:0 12px;border-radius:var(--hf-r-sm);background:var(--hf-track);font:500 14px Onest,sans-serif}.tag small{font:400 12px Onest,sans-serif;opacity:.75}
+.rep{display:grid;gap:8px}.rep .opt{justify-self:start}
+.act .top .tg{width:32px;height:32px;border-radius:16px;display:grid;place-items:center;background:var(--hf-track);flex:none}.act .top .tg ha-icon{--mdc-icon-size:var(--hf-icon-s)}.act .top .lnk{font-size:13px;min-height:44px}
 ha-icon{--mdc-icon-size:var(--hf-icon-m)}`;
 
     class Automations extends HTMLElement {
@@ -11636,7 +11747,7 @@ ha-icon{--mdc-icon-size:var(--hf-icon-m)}`;
         this.gMsg = "";
         this.draw();
         try {
-          const r = await this._hass.callApi("POST", "hauflo/guest", body);
+          const r = await this._hass.callApi("POST", "hauflo/guest", { ...body, lang: this.lang || LANG });
           if (body.op === "issue") {
             this.gNew = r;
             this.gForm = false;
@@ -11794,7 +11905,7 @@ ${roles.length ? `<div class="fld"><div class="caps">${esc(g.role)}</div><div cl
         this.pBusy = true;
         this.draw();
         try {
-          this.pres = await this._hass.callApi("POST", "hauflo/presence", { op: "set", ...body });
+          this.pres = await this._hass.callApi("POST", "hauflo/presence", { op: "set", ...body, lang: this.lang || LANG });
           PRES.set(this.pres);
           this.pMsg = "";
         } catch (e) {
@@ -11928,8 +12039,14 @@ ${logHtml}</section>`;
         for (const d of this.data?.days || []) {
           let t;
           if (w.event === "time") {
-            const [h, m] = String(w.at || "").split(":").map(Number);
-            t = Date.parse(d.midnight) + (h * 60 + m) * 60000;
+            // Several times a day (Р83): the nearest one still ahead.
+            t = (w.times || [w.at])
+              .map((x) => {
+                const [h, m] = String(x || "").split(":").map(Number);
+                return Date.parse(d.midnight) + (h * 60 + m) * 60000;
+              })
+              .filter((x) => isFinite(x) && x > now)
+              .sort((a, b) => a - b)[0];
           } else {
             if (!d[w.event]) continue;
             t = Date.parse(d[w.event]) + (w.offset || 0) * 60000;
@@ -11954,7 +12071,7 @@ ${logHtml}</section>`;
       // Everything a rule may do something to: Hauflo's and other integrations' safe devices.
       targetItems() {
         const t = this.data?.targets || {};
-        return PICK_DOMAINS.flatMap((d) => t[PICK_LIST[d]] || []);
+        return [...(t.entities || []), ...PICK_DOMAINS.flatMap((d) => t[PICK_LIST[d]] || [])];
       }
       climSpec(eid) {
         return (this.data?.targets?.climates || []).find((c) => c.entity_id === eid);
@@ -11984,7 +12101,7 @@ ${logHtml}</section>`;
       }
       whenText(w) {
         const t = this.w;
-        if (w.event === "time") return t.atTime(w.at);
+        if (w.event === "time") return t.atTime((w.times || [w.at]).join(", "));
         if (w.event === "alarm_iphone") return t.alarmOf("iPhone");
         if (w.event === "value") return this.valueText(w);
         if (w.event === "presence") return t.presence[w.to] || t.ev.presence;
@@ -12027,6 +12144,7 @@ ${logHtml}</section>`;
         return days.map((d) => t.wd[DAYS.indexOf(d)]).join(", ");
       }
       actText(a) {
+        if (a.target) return this.actTextV2(a);
         const t = this.w.act;
         if (a.do === "room_off") return t.room_off(this.room(a.area_id));
         if (a.do === "room_covers") return this.w.roomCovers[a.cover](this.room(a.area_id), a.value);
@@ -12037,6 +12155,7 @@ ${logHtml}</section>`;
       }
       // Blinds that do the same go as one: «Закрыть Деверь, Штора 1 и ещё 6» — not eight «Закрыть …».
       actsText(r) {
+        if ((r.actions || []).some((a) => a.target)) return r.actions.map((a) => this.actText(toV2(a))).join("; ");
         const groups = new Map();
         const order = [];
         // «Закрыть шторы: Гостиная, Кухня и ещё 4 комнаты» — rooms, not twenty blinds.
@@ -12095,7 +12214,7 @@ ${logHtml}</section>`;
       }
       habWhen(wh) {
         const t = this.w;
-        if (wh.event === "time") return t.hab.at(wh.at);
+        if (wh.event === "time") return t.hab.at((wh.times || [wh.at]).join(", "));
         return wh.offset ? t.offLong(wh.event, wh.offset) : t.hab.sun[wh.event];
       }
       autoName(r) {
@@ -12161,7 +12280,7 @@ ${logHtml}</section>`;
         // The page keeps its height and scroll too (Р42): drawn again on every tap and on the house's settings.
         holdPlace(this, () => keepPlace(sr, () => {
           // Over the dashboard: its «Закрыть» stays at the top while the page scrolls (Р41/Р43: it scrolled away on a phone).
-          sr.innerHTML = `<style>${TZ(CSS3)}</style><div class="pg">${this._config?.overlay ? `<div class="ovh"><button class="btn sm" data-close>${esc(w.close)}</button></div>` : ""}${body}</div>`;
+          sr.innerHTML = `<style>${TZ(CSS3)}</style><div class="pg">${this._config?.overlay && this.view !== "edit" ? `<div class="ovh"><button class="btn sm" data-close>${esc(w.close)}</button></div>` : ""}${body}</div>`;
           sr.querySelector("[data-close]")?.addEventListener("click", () => this.dispatchEvent(new CustomEvent("hauflo-close", { bubbles: true, composed: true })));
           askWrap(sr);
           this.bind();
@@ -12200,7 +12319,7 @@ ${this.tzAsk ? this.tzHtml() : ""}
 ${tl ? `<ul class="tl">${tl}</ul>` : `<p class="muted">${esc(w.nothing)}</p>`}</section>
 ${this.presHtml()}
 ${this.suggHtml(sugg)}
-<section class="box"><div class="hd"><h2>${esc(w.mine)}</h2>${canEdit(this._hass) ? `<button class="btn sm pri" data-new>+ ${esc(w.add)}</button>` : ""}</div>${canEdit(this._hass) ? "" : `<p class="hint" data-ro>${esc(w.ro)}</p>`}
+<section class="box"><div class="hd"><h2>${esc(w.mine)}</h2>${canEdit(this._hass) && !this.oldAgent ? `<button class="btn sm pri" data-new>+ ${esc(w.add)}</button>` : ""}</div>${canEdit(this._hass) ? (this.oldAgent ? `<p class="tn" data-oldagent>${esc(w.v2.oldAgent)}</p>` : "") : `<p class="hint" data-ro>${esc(w.ro)}</p>`}
 ${this.msg ? `<p class="msg ${this.bad ? "bad" : this.warn ? "warn" : ""}" role="status">${esc(this.msg)}</p>` : ""}
 ${d.rules.length || this.gone ? `<ul class="rl">${(() => {
           const rows = d.rules.map((r) => this.ruleRow(r));
@@ -12216,7 +12335,7 @@ ${loc.set && this.isAdmin() ? `<p class="muted">${esc(w.locNow(loc.latitude.toFi
         const hOn = this.data?.habits_on;
         const ready = sugg.filter((s) => !s.habit);
         const habs = sugg.filter((s) => s.habit);
-        if (!canEdit(this._hass) || (!ready.length && hOn === undefined)) return "";
+        if (this.oldAgent || !canEdit(this._hass) || (!ready.length && hOn === undefined)) return "";
         const card = (s) => `<div class="card"><b>${esc(s.title)}</b><span class="muted">${esc(s.sub)}</span><button class="btn sm pri" data-sugg="${esc(s.key)}">+ ${esc(w.addOne)}</button></div>`;
         const lang = this.lang || "ru";
         const groups = this.data?.recipe_groups || {};
@@ -12327,6 +12446,7 @@ ${this.locMsg ? `<p class="msg ${this.locBad ? "bad" : ""}" role="status">${esc(
         return `<div class="map ${this._hass?.themes?.darkMode ? "dk" : ""}" aria-hidden="true">${tiles}<span class="pin"></span><span class="attr">${esc(this.w.mapNote)}</span></div>`;
       }
       editHtml() {
+        if (this.oldAgent) return this.roHtml();
         const w = this.w;
         const r = this.draft;
         const ev = r.when.event.startsWith("alarm") ? "alarm" : r.when.event;
@@ -12335,13 +12455,8 @@ ${this.locMsg ? `<p class="msg ${this.locBad ? "bad" : ""}" role="status">${esc(
         const offRow = (evName) => `<div class="step fld"><button data-off="-5" aria-label="−5">−</button><span data-offtxt>${esc(w.offLong(evName, off))}</span><button data-off="5" aria-label="+5">+</button></div>`;
         let whenBody = "";
         if (ev === "sunrise" || ev === "sunset") whenBody = (this.data.location.set ? "" : `<p class="tn">${esc(w.needLoc)} ${esc(this.isAdmin() ? w.needLocAdmin : w.needLocUser)}</p>`) + offRow(ev);
-        else if (ev === "time") {
-          // 24-hour in every language of the house (family review round 3: «01:00 AM» in a Russian house).
-          const [hh, mm] = String(r.when.at || "07:00").split(":").map(Number);
-          const opt = (n, on) => `<option value="${String(n).padStart(2, "0")}"${n === on ? " selected" : ""}>${String(n).padStart(2, "0")}</option>`;
-          const mins = [...new Set([...Array.from({ length: 12 }, (_, i) => i * 5), mm || 0])].sort((a, b) => a - b);
-          whenBody = `<div class="fld tm"><select data-ath aria-label="${esc(this.lang === "en" ? "Hours" : "Часы")}">${Array.from({ length: 24 }, (_, i) => opt(i, hh || 0)).join("")}</select><b>:</b><select data-atm aria-label="${esc(this.lang === "en" ? "Minutes" : "Минуты")}">${mins.map((m) => opt(m, mm || 0)).join("")}</select></div>`;
-        } else if (ev === "value") whenBody = `<div class="fld">${this.valueHtml("w", r.when)}</div>`;
+        else if (ev === "time") whenBody = this.timesHtml(r);
+        else if (ev === "value") whenBody = `<div class="fld">${this.valueHtml("w", r.when)}</div>`;
         else if (ev === "state") whenBody = `<div class="fld">${this.stateHtml(r.when)}</div>`;
         else if (ev === "presence")
           whenBody = `<div class="fld"><div class="seg" role="group">${["away", "home"].map((x) => `<button data-pres="${x}" aria-pressed="${r.when.to === x}">${esc(w.presence[x])}</button>`).join("")}</div>${t.people ? "" : `<p class="tn">${esc(w.noPeople)}</p>`}</div>`;
@@ -12355,31 +12470,63 @@ ${this.locMsg ? `<p class="msg ${this.locBad ? "bad" : ""}" role="status">${esc(
           }
         }
         const days = r.days || DAYS;
-        const acts = r.actions.map((a, i) => this.actHtml(a, i)).join("");
-        // «Что сделать» as a multi-pick (owner 03.11: «только по одному устройству»): the whole house, whole rooms and single
-        // devices of one kind at once — one action, like the HA editor's target picker and Apple Home's scenes.
-        const picker = this.pick ? this.pickHtml() : this.pickDomains().length ? `<button class="btn sm" data-addact>+ ${esc(w.addAction.replace(/…$/, ""))}</button>` : "";
+        const p = this.pick;
+        // «Что сделать»: one row per action — what (icon, devices) → its actions → parameters; the one picker in place.
+        const acts = r.actions.map((a, i) => this.actHtml(a, i) + (p?.for === "act" && p.idx === i ? this.pkHtml() : "")).join("");
+        const adder = p?.for === "act" && p.idx == null ? this.pkHtml() : this.ents().length ? `<button class="btn sm" data-addact>+ ${esc(w.v2.addAct)}</button>` : `<p class="tn">${esc(w.v2.noDevices)}</p>`;
         const ifs = r.only_if || [];
         const have = new Set(ifs.map((c) => c.if));
         if (r.when.event === "presence") have.add(r.when.to === "away" ? "away" : "home");  // «the last one left» holds «nobody home» itself
         const clash = { dark: "light", light: "dark", home: "away", away: "home", between: "between" };
         const addable = ["dark", "light", "between", "home", "away", "value"].filter((k) => (k === "value" ? (t.sensors || []).length : !have.has(k) && !have.has(clash[k]) && (!["home", "away"].includes(k) || t.people)));
-        const ifBlock = `<div class="fld"><div class="caps">${esc(w.onlyIf)}</div>${ifs.map((c, i) => this.ifHtml(c, i)).join("")}${ifs.length < 5 && addable.length ? `<select data-addif aria-label="${esc(w.addIf)}"><option value="">${esc(w.addIf)}</option>${addable.map((k) => `<option value="${k}">${esc(w.ifs[k])}</option>`).join("")}</select>` : ""}</div>`;
+        const ifBlock = `<section class="box"><div class="caps">${esc(w.onlyIf)}</div>${ifs.map((c, i) => this.ifHtml(c, i)).join("")}${ifs.length < 5 && addable.length ? `<select data-addif aria-label="${esc(w.addIf)}"><option value="">${esc(w.addIf)}</option>${addable.map((k) => `<option value="${k}">${esc(w.ifs[k])}</option>`).join("")}</select>` : ""}</section>`;
         const next = this.nextOf(r);
         const saved = !!r.id;
-        return `<div class="row"><button class="btn sm" data-back>← ${esc(w.back)}</button></div>
-<section class="box"><h2>${esc(saved ? r.name || this.autoName(r) : w.newRule)}</h2>
-<div class="fld"><div class="caps">${esc(w.when)}</div><div class="chips" role="group">${["sunrise", "sunset", "time", "alarm", "value", "presence", "state"].filter((e) => e !== "state" || ev === e || (t.binaries || []).length).map((e) => `<button data-ev="${e}" aria-pressed="${ev === e}">${esc(w.ev[e])}</button>`).join("")}</div>${whenBody}</div>
-<div class="fld"><div class="caps">${esc(w.days)}</div><div class="chips">${DAYS.map((d, i) => `<button data-day="${d}" aria-pressed="${days.includes(d)}">${esc(w.wd[i])}</button>`).join("")}</div></div>
-<div class="fld"><div class="caps">${esc(w.what)}</div>${acts}${picker}</div>
+        // «Сработает: …» — when, then what (the actions chosen so far).
+        const whenSay = r.when.event === "alarm_iphone" ? w.willNot : next ? `${w.willRun(this.when(next))} (${this.rel(next)})` : ["value", "state", "presence"].includes(r.when.event) ? w.willRun(this.whenText(r.when)) : "";
+        const doing = r.actions.filter((a) => a.do);
+        const say = whenSay && doing.length ? `${whenSay} — ${this.actsText({ actions: doing })}` : whenSay;
+        const hint = this.saveHint(r);
+        return `<div class="edw"><div class="edh"><button class="btn sm" data-back>← ${esc(w.back)}</button><h2>${esc(saved ? r.name || this.autoName(r) : w.newRule)}</h2><button class="x" data-x aria-label="${esc(w.close)}"><ha-icon icon="mdi:close"></ha-icon></button></div>
+<section class="box"><div class="caps">${esc(w.when)}</div><div class="chips" role="group">${["sunrise", "sunset", "time", "alarm", "value", "presence", "state"].filter((e) => e !== "state" || ev === e || (t.binaries || []).length).map((e) => `<button data-ev="${e}" aria-pressed="${ev === e}">${esc(w.ev[e])}</button>`).join("")}</div>${whenBody}
+<div class="fld"><div class="caps">${esc(w.days)}</div><div class="chips">${DAYS.map((d, i) => `<button data-day="${d}" aria-pressed="${days.includes(d)}">${esc(w.wd[i])}</button>`).join("")}</div></div></section>
 ${ifBlock}
-<p class="msg" data-next>${esc(r.when.event === "alarm_iphone" ? w.willNot : next ? `${w.willRun(this.when(next))} (${this.rel(next)})` : "")}</p>
+<section class="box"><div class="caps">${esc(w.what)}</div>${acts}${adder}</section>
+<p class="msg" data-next>${esc(say)}</p>
 ${this.msg ? `<p class="msg ${this.bad ? "bad" : this.warn ? "warn" : ""}" role="status">${esc(this.msg)}</p>` : ""}
 ${this.asking === "run" ? `<div class="ask"><p class="msg">${esc(w.runAsk(this.actsText(r)))}${r.actions.some((a) => a.do === "ramp") ? ` ${esc(w.rampNote)}` : ""}</p><div class="row"><button class="btn pri" data-runyes>${esc(w.runYes)}</button><button class="btn" data-no>${esc(w.cancel)}</button></div></div>` : ""}
 ${r.changed ? `<div class="ask"><p class="msg">${esc(w.changedNote)}</p>${this.asking === "restore" ? `<p class="msg">${esc(w.restoreAsk)}</p><div class="row"><button class="btn dan" data-restoreyes>${esc(w.restoreYes)}</button><button class="btn" data-no>${esc(w.cancel)}</button></div>` : `<button class="btn sm" data-restore>${esc(w.restore)}</button>`}</div>` : ""}
 ${this.asking === "del" ? `<div class="ask"><p class="msg">${esc(w.delAsk)}</p><div class="row"><button class="btn dan" data-delyes>${esc(w.delYes)}</button><button class="btn" data-no>${esc(w.cancel)}</button></div></div>` : ""}
-<div class="row fld">${r.changed ? "" : `<button class="btn pri" data-save ${this.busy ? "disabled" : ""}>${esc(w.save)}</button>`}<button class="btn" data-back>${esc(w.cancel)}</button><span class="grow"></span>
-${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.run)}</button><button class="btn dan" data-del>${esc(w.del)}</button>` : ""}</div></section>`;
+<div class="edfoot">${r.changed ? "" : `<button class="btn pri" data-save ${this.busy || hint ? "disabled" : ""}>${esc(w.save)}</button>${hint ? `<p class="hint" data-savehint>${esc(hint)}</p>` : ""}`}<span class="grow"></span>
+${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.run)}</button><button class="btn dan" data-del>${esc(w.del)}</button>` : ""}</div></div>`;
+      }
+      /** An agent without rules v2: the rule as words, nothing to change (its old form would be refused or misread). */
+      roHtml() {
+        const w = this.w;
+        const r = this.draft;
+        return `<div class="edw"><div class="edh"><button class="btn sm" data-back>← ${esc(w.back)}</button><h2>${esc(r.name || this.autoName(r))}</h2><button class="x" data-x aria-label="${esc(w.close)}"><ha-icon icon="mdi:close"></ha-icon></button></div>
+<section class="box"><p class="tn">${esc(w.v2.oldAgent)}</p><div class="fld"><div class="caps">${esc(w.when)}</div><p class="rot">${esc(`${this.whenText(r.when)} · ${this.daysText(r.days)}`)}</p>${(r.only_if || []).length ? `<p class="hint">${esc(this.ifsText(r.only_if))}</p>` : ""}</div>
+<div class="fld"><div class="caps">${esc(w.what)}</div><p class="rot">${esc(this.actsText(r))}</p></div></section></div>`;
+      }
+      /** «07:00 ✕ 19:30 ✕ + время» — 24-hour in every language of the house (family review round 3: «01:00 AM»). */
+      timesHtml(r) {
+        const v = this.w.v2;
+        const list = r.when.times?.length ? r.when.times : ["07:00"];
+        const max = this.data?.limits?.times || 8;
+        const opt = (n, on) => `<option value="${String(n).padStart(2, "0")}"${n === on ? " selected" : ""}>${String(n).padStart(2, "0")}</option>`;
+        return `<div class="tms">${list
+          .map((x, j) => {
+            const [hh, mm] = String(x).split(":").map(Number);
+            const mins = [...new Set([...Array.from({ length: 12 }, (_, i) => i * 5), mm || 0])].sort((a, b) => a - b);
+            return `<span class="tchip"><select data-th="${j}" aria-label="${esc(v.hours)}">${Array.from({ length: 24 }, (_, i) => opt(i, hh || 0)).join("")}</select><b>:</b><select data-tm="${j}" aria-label="${esc(v.mins)}">${mins.map((m) => opt(m, mm || 0)).join("")}</select>${list.length > 1 ? `<button class="x" data-trm="${j}" aria-label="${esc(v.rmTime)}"><ha-icon icon="mdi:close"></ha-icon></button>` : ""}</span>`;
+          })
+          .join("")}${list.length < max ? `<button class="btn sm" data-tadd>+ ${esc(v.addTime)}</button>` : ""}</div>`;
+      }
+      saveHint(r) {
+        const v = this.w.v2;
+        if (!r.actions.length) return v.needAct;
+        const a = r.actions.find((x) => !x.do);
+        return a ? v.needDo(this.tName(a)) : "";
       }
       /** A reading as a trigger (k = "w") or a «только если» (k = "c0"…): the kind, which sensors (several → average /
        * minimum / maximum by HA's own «Мин/макс» helper), above / below a threshold — owner 03.11: «по средней температуре». */
@@ -12402,7 +12549,7 @@ ${saved ? `<button class="btn" data-run ${this.busy ? "disabled" : ""}>${esc(w.r
         const live = (s) => (Number.isFinite(num(s.entity_id)) ? `${fmtNum(num(s.entity_id))}${unit}` : w.noData);
         const seg = (attr, opts, on) => `<div class="seg" role="group">${opts.map(([x, l]) => `<button data-${attr}="${k}:${x}" aria-pressed="${x === on}">${esc(l)}</button>`).join("")}</div>`;
         return `<div class="vbox">${kinds.length > 1 ? seg("vk", kinds.map((x) => [x, w.kind[x]]), kind) : ""}
-<div class="caps">${esc(w.sensors)}</div><div class="chips">${mine.map((s) => `<button data-vs="${k}:${esc(s.entity_id)}" aria-pressed="${sel.has(s.entity_id)}">${esc(label(s))}<small>${esc(live(s))}</small></button>`).join("")}</div>
+<div class="caps">${esc(w.sensors)}</div>${this.sensHtml(k, mine.filter((s) => sel.has(s.entity_id)).map((s) => [label(s), live(s)]))}
 ${sel.size > 1 ? `<div class="caps">${esc(w.how)}</div>${seg("vst", ["mean", "min", "max"].map((x) => [x, w.stat[x]]), stat)}<p class="hint">${esc(w.valueNote)}</p>` : ""}
 ${cur !== null ? `<p class="hint" data-vnow>${esc(w.nowVal(`${fmtNum(cur)}${unit}`))}</p>` : ""}
 <div class="caps">${esc(w.limit)}</div>${seg("vop", ["above", "below"].map((x) => [x, w.op[x]]), v.op)}
@@ -12426,7 +12573,7 @@ ${k === "w" ? `<div class="caps">${esc(w.hold)}</div><div class="step"><button d
         };
         const seg = (attr, opts, on) => `<div class="seg" role="group">${opts.map(([x, l]) => `<button data-${attr}="${x}" aria-pressed="${x === on}">${esc(l)}</button>`).join("")}</div>`;
         return `<div class="vbox">${kinds.length > 1 ? seg("sk", kinds.map((x) => [x, w.stKind[x]]), kind) : ""}
-<div class="caps">${esc(w.sensors)}</div><div class="chips">${mine.map((s) => `<button data-ss="${esc(s.entity_id)}" aria-pressed="${sel.has(s.entity_id)}">${esc(label(s))}<small>${esc(live(s))}</small></button>`).join("")}</div>
+<div class="caps">${esc(w.sensors)}</div>${this.sensHtml("w", mine.filter((s) => sel.has(s.entity_id)).map((s) => [label(s), live(s)]))}
 ${seg("sto", ["on", "off"].map((x) => [x, w.stTo[kind][x]]), v.to)}${kind === "media" && v.to === "off" ? `<p class="hint">${esc(w.stOne)}</p>` : ""}
 <div class="caps">${esc(w.hold)}</div><div class="step"><button data-vf="-1" aria-label="−">−</button><span>${esc(w.holdTxt(v.for_min || 0))}</span><button data-vf="1" aria-label="+">+</button></div><p class="hint">${esc(w.stHow)}</p></div>`;
       }
@@ -12441,55 +12588,380 @@ ${seg("sto", ["on", "off"].map((x) => [x, w.stTo[kind][x]]), v.to)}${kind === "m
         else if (c.if === "value") body = this.valueHtml(`c${i}`, c);
         return `<div class="act"><div class="top"><b>${esc(w.ifs[c.if])}</b><button class="x" data-ifrm="${i}" aria-label="${esc(w.remove)}"><ha-icon icon="mdi:close"></ha-icon></button></div>${body}</div>`;
       }
-      pickItems(domain) {
-        const all = this.data.targets[PICK_LIST[domain]] || [];
-        return domain === "cover" ? all.filter((c) => !c.group) : all;
+      // --- rules v2: the action model ---------------------------------------------------------------------------------
+      get oldAgent() {
+        return !!this.data && !this.data.features?.rules_v2;
       }
-      pickDomains() {
-        return PICK_DOMAINS.filter((d) => this.pickItems(d).length);
+      ents() {
+        return this.data?.targets?.entities || [];
       }
-      pickHtml() {
-        const w = this.w;
-        const t = this.data.targets;
-        const p = this.pick;
-        const tabs = `<div class="seg" role="group">${this.pickDomains().map((d) => `<button data-pdom="${d}" aria-pressed="${p.domain === d}">${esc(w.pick[d])}</button>`).join("")}</div>`;
-        let body;
-        if (p.domain === "scene") body = `<div class="chips">${this.pickItems("scene").map((s) => `<button data-pent="${esc(s.entity_id)}" aria-pressed="${p.entities.includes(s.entity_id)}">${esc(this.name(s.entity_id))}${s.area ? `<small>${esc(this.room(s.area))}</small>` : ""}</button>`).join("")}</div>`;
-        else {
-          const one = !SET_DOMAINS.includes(p.domain);  // a fan / socket / thermostat: by name, each its own action
-          const roomsOk = new Map((one ? [] : (p.domain === "light" ? t.rooms : t.cover_rooms) || []).map((r) => [r.area_id, r.lights ?? r.covers]));
-          const byRoom = new Map();
-          for (const it of this.pickItems(p.domain)) {
-            const a = it.area || "";
-            if (!byRoom.has(a)) byRoom.set(a, []);
-            byRoom.get(a).push(it);
-          }
-          const order = [...byRoom.keys()].sort((a, b) => Number(!a) - Number(!b) || this.room(a).localeCompare(this.room(b), undefined, { numeric: true, sensitivity: "base" }));
-          body = `<p class="hint">${esc(one ? w.pick.hintOne : w.pick.hint)}</p>${one ? "" : `<div class="chips"><button data-xall aria-pressed="${p.all}">${esc(w.pick.house)}</button></div>`}${order
-            .map((a) => {
-              const roomOn = !!a && (p.all || p.rooms.includes(a));
-              const looseOn = !a && p.all;
-              return `<div class="prm"><div class="caps">${esc(a ? this.room(a) : w.pick.noRoom)}</div><div class="chips">${a && roomsOk.has(a) ? `<button data-xroom="${esc(a)}" aria-pressed="${roomOn}" ${p.all ? "disabled" : ""}>${esc(w.pick.room(roomsOk.get(a)))}</button>` : ""}${byRoom
-                .get(a)
-                .map((it) => `<button data-pent="${esc(it.entity_id)}" aria-pressed="${roomOn || looseOn || p.entities.includes(it.entity_id)}" ${roomOn || looseOn ? "disabled" : ""}>${esc(this.name(it.entity_id))}</button>`)
-                .join("")}</div></div>`;
-            })
-            .join("")}`;
+      ent(eid) {
+        return this.ents().find((e) => e.entity_id === eid);
+      }
+      /** Who an action acts on: the named devices and, for a room / «везде», the same kind's devices there. */
+      members(a) {
+        const t = a.target || {};
+        const named = L(t.entity_id).map((e) => this.ent(e)).filter(Boolean);
+        const rooms = L(t.area_id);
+        const grp = t.domain && (t.all || rooms.length) ? this.ents().filter((e) => e.domain === t.domain && !e.group && (t.all || rooms.includes(e.area))) : [];
+        return { named, grp };
+      }
+      /** What every named device takes (a room: what any of its devices takes); «Плавно» only for one named lamp. */
+      actsOf(a) {
+        const { named, grp } = this.members(a);
+        let acts = null;
+        for (const e of named) acts = acts ? acts.filter((x) => e.acts?.[x]) : Object.keys(e.acts || {});
+        const g = [...new Set(grp.flatMap((e) => Object.keys(e.acts || {})))];
+        acts = acts ? (grp.length ? acts.filter((x) => g.includes(x)) : acts) : g;
+        if (named.length !== 1 || grp.length) acts = acts.filter((x) => x !== "ramp");
+        const at = (x) => (ACT_ORDER.indexOf(x) + 1 || 99);
+        return acts.sort((x, y) => at(x) - at(y));
+      }
+      /** An act's parameter over the action's devices: options of any, the range they all take. */
+      specOf(a, act) {
+        const { named, grp } = this.members(a);
+        const all = [...named, ...grp].map((e) => e.acts?.[act]).filter(Boolean);
+        if (!all.length) return null;
+        const s = { ...all[0] };
+        if (all.some((x) => x.options)) s.options = [...new Set(all.flatMap((x) => x.options || []))];
+        if (all.every((x) => x.min != null)) s.min = Math.max(...all.map((x) => Number(x.min)));
+        if (all.every((x) => x.max != null)) s.max = Math.min(...all.map((x) => Number(x.max)));
+        return s;
+      }
+      snap(s, v) {
+        const st = Number(s?.step) || 1;
+        const lo = s?.min != null ? Number(s.min) : -Infinity;
+        const hi = s?.max != null ? Number(s.max) : Infinity;
+        return clamp(lo, hi, Math.round(Math.round(v / st) * st * 1000) / 1000);
+      }
+      /** A segment chosen: its parameter starts from what the device shows now, else the canon's default. */
+      setDo(a, act) {
+        if (a.do === act) return;
+        a.do = act;
+        delete a.value;
+        delete a.minutes;
+        const s = this.specOf(a, act);
+        const k = kindOf(act, s);
+        const one = this.members(a).named[0];
+        const st = one && this._hass?.states[one.entity_id];
+        if (k === "option") {
+          const cur = act === "preset" ? st?.attributes?.preset_mode : st?.state;
+          a.value = (s.options || []).includes(cur) ? cur : (s.options || [])[0];
+        } else if (k === "seconds") a.value = clamp(Number(s.min) || 1, Number(s.max) || 600, ACT_DEF.pulse);
+        else if (k === "ramp") {
+          a.value = ACT_DEF.ramp;
+          a.minutes = clamp(s.minutes?.[0] || 1, s.minutes?.[1] || 60, ACT_DEF.minutes);
+        } else if (k === "setpoint" || k === "number") {
+          const raw = Number(k === "setpoint" ? st?.attributes?.temperature : st?.state);
+          a.value = this.snap(s, Number.isFinite(raw) ? raw : (Number(s.min ?? 0) + Number(s.max ?? 100)) / 2);
+        } else if (k === "percent") a.value = ACT_DEF[act] ?? 50;
+        this.fixRep(a);
+      }
+      /** The devices changed: an action they no longer all take is unset; a lone one is set. */
+      fixDo(a) {
+        const acts = this.actsOf(a);
+        if (a.do && !acts.includes(a.do)) {
+          delete a.do;
+          delete a.value;
+          delete a.minutes;
         }
-        const n = (p.all ? 1 : 0) + p.rooms.length + p.entities.length;
-        return `<div class="pick">${tabs}${body}<div class="row"><button class="btn pri" data-padd ${n ? "" : "disabled"}>${esc(w.pick.add(n))}</button><button class="btn" data-pcancel>${esc(w.cancel)}</button></div></div>`;
+        if (!a.do && acts.length === 1) this.setDo(a, acts[0]);
+        const s = a.do ? this.specOf(a, a.do) : null;
+        if (s?.options && !s.options.includes(a.value)) a.value = s.options[0];
+        else if (a.value != null && typeof a.value === "number" && s && (s.min != null || s.max != null)) a.value = clamp(Number(s.min ?? -Infinity), Number(s.max ?? Infinity), a.value);
+        this.fixRep(a);
       }
-      // Can every blind of the set stop at a position / does any light of it dim — what the action card offers.
-      setCanPos(a) {
-        const t = this.data.targets;
-        const cr = (x) => (t.cover_rooms || []).find((r) => r.area_id === x)?.position;
-        const cv = (e) => (t.covers || []).find((c) => c.entity_id === e)?.position;
-        if (a.all) return (t.cover_rooms || []).some((r) => r.position);
-        return (a.rooms || []).every(cr) && (a.entities || []).every(cv);
+      canRep(a) {
+        return !!a.do && (this.data?.limits?.repeat?.acts || []).includes(a.do);
       }
-      setLights(a) {
-        const lights = this.data.targets.lights || [];
-        return a.all ? lights : lights.filter((l) => (a.rooms || []).includes(l.area) || (a.entities || []).includes(l.entity_id));
+      // The pause between repeats: a pulse's own time and a second more at least (agent: rules.clean_repeat).
+      everySpan(a) {
+        const lim = this.data?.limits?.repeat?.every_s || [1, 3600];
+        return [Math.max(lim[0], a.do === "pulse" ? (Number(a.value) || 1) + 1 : lim[0]), lim[1]];
+      }
+      fixRep(a) {
+        if (!a.repeat) return;
+        if (!this.canRep(a)) return void delete a.repeat;
+        const [lo, hi] = this.everySpan(a);
+        a.repeat.every_s = clamp(lo, hi, a.repeat.every_s);
+      }
+      stepVal(a, field, dir) {
+        const s = this.specOf(a, a.do) || {};
+        const k = kindOf(a.do, s);
+        if (field === "minutes") a.minutes = clamp(s.minutes?.[0] || 1, s.minutes?.[1] || 60, ladder(RAMP_MIN, a.minutes ?? ACT_DEF.minutes, dir));
+        else if (k === "seconds") a.value = clamp(Number(s.min) || 1, Number(s.max) || 600, ladder(PULSE_STEPS, a.value ?? ACT_DEF.pulse, dir));
+        else if (k === "percent" || k === "ramp") {
+          const st = Math.max(5, Number(s.step) || 1);
+          const lo = Math.max(Number(s.min ?? 0), ["brightness", "ramp", "speed"].includes(a.do) ? 1 : 0);
+          a.value = clamp(lo, Number(s.max ?? 100), (Math.round(Number(a.value ?? 50) / st) + dir) * st);
+        } else a.value = this.snap(s, Number(a.value ?? s.min ?? 0) + dir * (Number(s.step) || 1));
+        this.fixRep(a);
+      }
+      // --- rules v2: words ---------------------------------------------------------------------------------------------
+      /** «Линии, основной · Гардеробная», «Свет · Гостиная, Кухня», «Шторы · Везде»; long lists fold. */
+      tName(a) {
+        const v = this.w.v2;
+        const t = a.target || {};
+        const rooms = L(t.area_id);
+        const parts = [...(t.all ? [v.everywhere] : []), ...rooms.map((x) => this.room(x)), ...L(t.entity_id).map((e) => this.nameIn(e))];
+        const list = parts.length > 3 ? `${parts.slice(0, 2).join(", ")}${this.w.more(parts.length - 2)}` : parts.join(", ");
+        return t.all || rooms.length ? `${v.dom[chipOf(t.domain)] || ""} · ${list}` : list;
+      }
+      secs(x) {
+        const v = this.w.v2;
+        const n = Number(x) || 0;
+        return n < 60 ? `${n} ${v.sec}` : `${Math.floor(n / 60)} ${this.w.min}${n % 60 ? ` ${n % 60} ${v.sec}` : ""}`;
+      }
+      /** An option said as HA says it (the house's language): «Обогрев», «Эко»; a select's own option as it is. */
+      optLabel(a, x) {
+        const { named, grp } = this.members(a);
+        const e = named[0] || grp[0];
+        const st = e && this._hass?.states[e.entity_id];
+        try {
+          if (st && a.do === "mode" && this._hass.formatEntityState) return this._hass.formatEntityState(st, x);
+          if (st && a.do === "preset" && this._hass.formatEntityAttributeValue) return this._hass.formatEntityAttributeValue(st, "preset_mode", x);
+        } catch (err) {
+          /* an older HA: the option as it is */
+        }
+        return String(x);
+      }
+      paramText(a) {
+        const v = this.w.v2;
+        if (a.value == null) return "";
+        const s = this.specOf(a, a.do) || {};
+        const k = kindOf(a.do, s);
+        if (k === "option") return this.optLabel(a, a.value);
+        if (k === "seconds") return this.secs(a.value);
+        if (k === "ramp") return `${v.pTo(`${a.value} %`)} ${v.pOver(`${a.minutes ?? ACT_DEF.minutes} ${this.w.min}`)}`;
+        return `${fmtNum(a.value)}${s.unit ? ` ${s.unit}` : ""}`;
+      }
+      actTextV2(a) {
+        const w = this.w;
+        const n = this.tName(a);
+        if (!a.do) return n;
+        const rep = a.repeat ? w.v2.repTxt(a.repeat.count, this.secs(a.repeat.every_s)) : "";
+        if (a.do === "scene") return w.act.scene(n) + rep;
+        const seg = w.v2.seg[a.do] || a.do;
+        const p = this.paramText(a);
+        const k = kindOf(a.do, this.specOf(a, a.do));
+        if (p && ["option", "setpoint", "number"].includes(k)) return `${n}: ${p}${rep}`;
+        // One form for all: «Шторы · Гостиная: закрыть», «Кнопка звонка: нажать, 3 раза через 2 с».
+        return `${n}: ${seg.toLowerCase()}${p ? ` ${p}` : ""}${rep}`;
+      }
+      /** A repeat on a device that has modes (or one of its device's siblings has): setting the mode is the better way. */
+      directOf(a) {
+        const { named, grp } = this.members(a);
+        if (named.length !== 1 || grp.length) return false;
+        const e = named[0];
+        const has = (x) => !!(x.acts?.option || x.acts?.preset);
+        if (has(e)) return true;
+        const reg = this._hass?.entities || {};
+        const dev = reg[e.entity_id]?.device_id;
+        return !!dev && this.ents().some((x) => x.entity_id !== e.entity_id && reg[x.entity_id]?.device_id === dev && has(x));
+      }
+      // --- rules v2: the one picker ------------------------------------------------------------------------------------
+      // Devices for an action («act»: a new one, or idx — more of the same kind), sensors for a trigger («w») or a
+      // «только если» («c0»…). Search by name and room, recent picks, rooms folded, kind chips (HA's target picker, Apple Home).
+      pickOpen(forK, idx = null) {
+        this.pick = { for: forK, idx, q: "", dom: null, open: new Set() };
+      }
+      recentKeys() {
+        if (!Array.isArray(this.recent)) {
+          try {
+            this.recent = JSON.parse(localStorage.getItem(RECENT_KEY) || "[]");
+          } catch (err) {
+            this.recent = [];
+          }
+          if (!Array.isArray(this.recent)) this.recent = [];
+        }
+        return this.recent;
+      }
+      remember(key) {
+        this.recent = [key, ...this.recentKeys().filter((k) => k !== key)].slice(0, 8);
+        try {
+          localStorage.setItem(RECENT_KEY, JSON.stringify(this.recent));
+        } catch (err) {
+          /* private mode: this page only */
+        }
+      }
+      sensSpec(k) {
+        return k === "w" ? this.draft.when : (this.draft.only_if || [])[Number(String(k).slice(1))];
+      }
+      /** The sensors chosen, as tags with their reading now, and the picker (or the button that opens it). */
+      sensHtml(k, picked) {
+        const v = this.w.v2;
+        const tags = picked.length ? `<div class="tags">${picked.map(([l, x]) => `<span class="tag">${esc(l)}<small>${esc(x)}</small></span>`).join("")}</div>` : "";
+        return tags + (this.pick?.for === k ? this.pkHtml() : `<div class="row"><button class="btn sm" data-spick="${k}">${esc(picked.length ? v.change : v.sensPick)}</button></div>`);
+      }
+      pkHtml() {
+        const v = this.w.v2;
+        const p = this.pick;
+        const many = p.for !== "act" || p.idx != null;
+        let chips = "";
+        if (!many) {
+          const have = new Set(this.ents().map((e) => chipOf(e.domain)));
+          const list = CHIP_ORDER.filter((d) => have.has(d));
+          if (list.length > 1) chips = `<div class="chips pkc" role="group">${list.map((d) => `<button data-pdom="${d}" aria-pressed="${p.dom === d}"><ha-icon icon="${DOM_ICON[d]}"></ha-icon>${esc(v.dom[d])}</button>`).join("")}</div>`;
+        }
+        return `<div class="pk" role="group" aria-label="${esc(p.for === "act" ? v.pickFor : v.sensPick)}"><div class="pkh"><input type="search" data-psearch value="${esc(p.q)}" placeholder="${esc(v.search)}" aria-label="${esc(v.search)}" autocomplete="off"><button class="x" data-pclose aria-label="${esc(this.w.close)}"><ha-icon icon="mdi:close"></ha-icon></button></div>${chips}<div class="pkl" data-plist>${this.pkList()}</div>${many ? `<div class="row end"><button class="btn sm pri" data-pclose>${esc(v.done)}</button></div>` : ""}</div>`;
+      }
+      pkList() {
+        const w = this.w;
+        const v = w.v2;
+        const p = this.pick;
+        const q = p.q.trim().toLowerCase();
+        const hit = (x) => !q || String(x || "").toLowerCase().includes(q);
+        const byRoom = (x, y) => (x.area ? this.room(x.area) : "￿").localeCompare(y.area ? this.room(y.area) : "￿", undefined, { numeric: true, sensitivity: "base" }) || this.name(x.entity_id).localeCompare(this.name(y.entity_id), undefined, { numeric: true, sensitivity: "base" });
+        const tick = (on) => `<ha-icon class="ck" icon="${on ? "mdi:checkbox-marked" : "mdi:checkbox-blank-outline"}"></ha-icon>`;
+        const nothing = `<p class="hint">${esc(v.nothing)}</p>`;
+        if (p.for !== "act") {
+          const spec = this.sensSpec(p.for) || {};
+          const bin = p.for === "w" && spec.event === "state";
+          const all = (bin ? this.data.targets.binaries : this.data.targets.sensors) || [];
+          const kind = all.some((x) => x.kind === spec.kind) ? spec.kind : all[0]?.kind;
+          const sel = new Set(spec.sensors || []);
+          const live = (x) => {
+            const raw = this._hass?.states[x.entity_id]?.state ?? x.state ?? x.value;
+            if (raw === "unavailable" || raw === "unknown" || raw == null) return w.noData;
+            if (bin) return w.stTo[kind]?.[STATE_ON.includes(raw) ? "on" : "off"] || "";
+            return Number.isFinite(Number(raw)) ? `${fmtNum(Number(raw))}${x.unit ? ` ${x.unit}` : ""}` : w.noData;
+          };
+          const rows = all
+            .filter((x) => x.kind === kind && (hit(clientName(x.name, x.entity_id)) || hit(x.area ? this.room(x.area) : "")))
+            .sort(byRoom)
+            .map((x) => `<button class="pkr" data-pent="${esc(x.entity_id)}" aria-pressed="${sel.has(x.entity_id)}"><ha-icon icon="${bin ? STATE_ICON[kind] || "mdi:motion-sensor" : KIND_ICON[kind] || "mdi:gauge"}"></ha-icon><span class="pki"><b>${esc(clientName(x.name, x.entity_id))}</b><small>${esc([x.area ? this.room(x.area) : v.noRoom, live(x)].join(" · "))}</small></span>${tick(sel.has(x.entity_id))}</button>`);
+          return rows.join("") || nothing;
+        }
+        const ext = p.idx != null ? this.draft.actions[p.idx] : null;
+        const et = ext?.target || {};
+        const extDom = ext ? et.domain || String(L(et.entity_id)[0] || "").split(".")[0] : null;
+        let pool = this.ents().filter((e) => !ext || e.domain === extDom);
+        if (p.dom) pool = pool.filter((e) => chipOf(e.domain) === p.dom);
+        const gd = this.data.targets.group_domains || [];
+        const cmp = (x, y) => this.room(x).localeCompare(this.room(y), undefined, { numeric: true, sensitivity: "base" });
+        const rooms = [...new Set(pool.filter((e) => e.area).map((e) => e.area))].sort(cmp);
+        const inG = (A, d) => pool.filter((e) => e.domain === d && !e.group && (A === "*" || e.area === A));
+        const groupsIn = (A) => gd.filter((d) => inG(A, d).length);
+        const entRow = (e, sub) => {
+          const on = !!ext && L(et.entity_id).includes(e.entity_id);
+          return `<button class="pkr" data-pent="${esc(e.entity_id)}"${ext ? ` aria-pressed="${on}"` : ""}><ha-icon icon="${DOM_ICON[chipOf(e.domain)] || "mdi:circle-medium"}"></ha-icon><span class="pki"><b>${esc(this.name(e.entity_id))}</b>${sub ? `<small>${esc(sub)}</small>` : ""}</span>${ext ? tick(on) : ""}</button>`;
+        };
+        const grpRow = (A, d) => {
+          const on = !!ext && (A === "*" ? !!et.all : L(et.area_id).includes(A));
+          const n = inG(A, d).length;
+          return `<button class="pkr grp" data-pgroup="${esc(A)}:${d}"${ext ? ` aria-pressed="${on}"` : ""}><ha-icon icon="${DOM_ICON[d]}"></ha-icon><span class="pki"><b>${esc(A === "*" ? v.wholeAll(v.dom[d]) : v.whole(v.dom[d]))}</b><small>${esc(`${A === "*" ? "" : `${this.room(A)} · `}${n}`)}</small></span>${ext ? tick(on) : ""}</button>`;
+        };
+        const roomSub = (e) => (e.area ? this.room(e.area) : v.noRoom);
+        if (q || p.dom) {
+          const groups = ["*", ...rooms].flatMap((A) => groupsIn(A).filter((d) => hit(A === "*" ? v.everywhere : this.room(A)) || hit(v.dom[d])).map((d) => grpRow(A, d)));
+          const list = pool.filter((e) => hit(this.name(e.entity_id)) || hit(e.area ? this.room(e.area) : "")).sort(byRoom).map((e) => entRow(e, roomSub(e)));
+          return [...groups, ...list].join("") || nothing;
+        }
+        let out = "";
+        if (!ext) {
+          const rec = this.recentKeys()
+            .map((key) => {
+              if (key.startsWith("e:")) {
+                const e = pool.find((x) => x.entity_id === key.slice(2));
+                return e ? entRow(e, roomSub(e)) : "";
+              }
+              const i = key.lastIndexOf(":");
+              const A = key.slice(2, i);
+              const d = key.slice(i + 1);
+              return key.startsWith("g:") && (A === "*" || rooms.includes(A)) && groupsIn(A).includes(d) ? grpRow(A, d) : "";
+            })
+            .filter(Boolean)
+            .slice(0, 5);
+          if (rec.length) out += `<div data-recent><div class="caps">${esc(v.recent)}</div>${rec.join("")}</div>`;
+        }
+        const fold = (A, label, body, n) => {
+          const open = p.open.has(A);
+          return `<button class="pkr fold" data-proom="${esc(A)}" aria-expanded="${open}"><span class="pki"><b>${esc(label)}</b></span><small class="n">${n}</small><ha-icon icon="${open ? "mdi:chevron-up" : "mdi:chevron-down"}"></ha-icon></button>${open ? `<div class="pkg">${body()}</div>` : ""}`;
+        };
+        const everywhere = groupsIn("*");
+        if (everywhere.length) out += fold("*", v.everywhere, () => everywhere.map((d) => grpRow("*", d)).join(""), everywhere.length);
+        for (const A of rooms) {
+          const mine = pool.filter((e) => e.area === A).sort(byRoom);
+          out += fold(A, this.room(A), () => groupsIn(A).map((d) => grpRow(A, d)).join("") + mine.map((e) => entRow(e, "")).join(""), mine.length);
+        }
+        const loose = pool.filter((e) => !e.area).sort(byRoom);
+        if (loose.length) out += fold("-", v.noRoom, () => loose.map((e) => entRow(e, "")).join(""), loose.length);
+        return out || nothing;
+      }
+      pickClose() {
+        this.pick = null;
+        this.draw();
+      }
+      /** A row of the picker: a sensor ticked, a device added to the action being extended, or a new action. */
+      pickEnt(eid) {
+        const p = this.pick;
+        const r = this.draft;
+        if (p.for !== "act") {
+          const spec = this.sensSpec(p.for);
+          if (!spec) return this.pickClose();
+          const set = new Set(spec.sensors || []);
+          const one = p.for === "w" && spec.event === "state" && spec.kind === "media" && spec.to === "off";  // the agent's rule: «not playing» — one player
+          if (set.has(eid)) set.delete(eid);
+          else if (one) set.clear(), set.add(eid);
+          else if (set.size < 8) set.add(eid);
+          spec.sensors = [...set];
+          if (!(p.for === "w" && spec.event === "state")) {
+            if (set.size > 1) spec.stat = spec.stat || "mean";
+            else delete spec.stat;
+          }
+          return this.draw();
+        }
+        if (p.idx != null) {
+          const a = r.actions[p.idx];
+          const t = a.target;
+          const list = L(t.entity_id);
+          const next = list.includes(eid) ? list.filter((x) => x !== eid) : [...list, eid];
+          if (!next.length && !t.all && !L(t.area_id).length) return;  // the last one stays: remove the action with ✕
+          if (next.length) t.entity_id = next;
+          else delete t.entity_id;
+          this.fixDo(a);
+          return this.draw();
+        }
+        this.addAct({ target: { entity_id: [eid] } }, `e:${eid}`);
+      }
+      pickGroup(key) {
+        const i = key.lastIndexOf(":");
+        const A = key.slice(0, i);
+        const d = key.slice(i + 1);
+        const p = this.pick;
+        if (p.idx != null) {
+          const a = this.draft.actions[p.idx];
+          const t = a.target;
+          if (A === "*") {
+            if (t.all) {
+              if (!L(t.entity_id).length && !L(t.area_id).length) return;
+              delete t.all;
+            } else {
+              t.all = true;
+              delete t.area_id;
+            }
+          } else {
+            const rs = L(t.area_id);
+            const next = rs.includes(A) ? rs.filter((x) => x !== A) : [...rs, A];
+            if (!next.length && !t.all && !L(t.entity_id).length) return;
+            if (next.length) t.area_id = next;
+            else delete t.area_id;
+            delete t.all;
+          }
+          if (t.all || L(t.area_id).length) t.domain = d;
+          else delete t.domain;
+          this.fixDo(a);
+          return this.draw();
+        }
+        this.addAct({ target: A === "*" ? { domain: d, all: true } : { domain: d, area_id: [A] } }, `g:${key}`);
+      }
+      addAct(a, key) {
+        const acts = this.actsOf(a);
+        if (acts.length === 1) this.setDo(a, acts[0]);
+        this.draft.actions.push(a);
+        this.remember(key);
+        this.pick = null;
+        this.draw();
       }
       /** «Проверить» on an alarm-clock rule: what Hauflo sees right now — the phone's next-alarm sensor (Android) or the
        * last command from Shortcuts (iPhone) — else the step to do (owner 28.10: «не понял, как включить/проверить»). */
@@ -12528,52 +13000,37 @@ ${seg("sto", ["on", "off"].map((x) => [x, w.stTo[kind][x]]), v.to)}${kind === "m
         this.chk = { ok, text };
         this.draw();
       }
+      /** One action: icon · devices («Изменить» adds more of the kind, ✕) → its actions (only what they all take, none
+       * chosen) → the parameter (a stepper / a list) → «Повторить N раз через M с» where the canon allows it. */
       actHtml(a, i) {
         const w = this.w;
-        const seg = (opts) => `<div class="seg" role="group">${opts.map(([v, l]) => `<button data-do="${i}:${v}" aria-pressed="${a.do === v}">${esc(l)}</button>`).join("")}</div>`;
-        const stepper = (field, val, unit, label) => `<div class="step"><button data-val="${i}:${field}:-1" aria-label="−">−</button><span>${esc(`${label} ${val}${unit}`)}</span><button data-val="${i}:${field}:1" aria-label="+">+</button></div>`;
-        let title = "";
-        let body = "";
-        if (a.do === "room_off") title = `${w.grp.rooms}: ${this.room(a.area_id)}`;
-        else if (a.do === "set") {
-          title = `${w.pick[a.domain]}: ${this.setList(a)}`;
-          const sc = (opts) => `<div class="seg" role="group">${opts.map(([v, l]) => `<button data-sc="${i}:${v}" aria-pressed="${a.cmd === v}">${esc(l)}</button>`).join("")}</div>`;
-          if (a.domain === "cover") {
-            body = sc([["open", w.do.open], ["close", w.do.close], ...(this.setCanPos(a) ? [["position", w.do.position]] : [])]);
-            if (a.cmd === "position") body += stepper("value", a.value ?? 50, " %", "");
-          } else if (a.domain === "light") {
-            const lights = this.setLights(a);
-            // One dimmable lamp: a wake-up light («Плавно») is still there.
-            const one = !a.all && !(a.rooms || []).length && (a.entities || []).length === 1 && lights[0]?.dim;
-            body = sc([["on", w.do.on], ["off", w.do.off], ...(one ? [["ramp", w.do.ramp]] : [])]);
-            if (a.cmd === "on" && lights.length && lights.every((l) => l.dim)) body += stepper("value", a.value ?? 100, " %", w.bright);
-          }
-          body += `<button class="lnk" data-pedit="${i}">${esc(w.pick.change)}</button>`;
-        } else if (a.do === "room_covers") {
-          const cr = this.coverRoom(a.area_id);
-          title = `${w.coverRooms(this.room(a.area_id))}${cr ? ` · ${cr.covers}` : ""}`;
-          body = `<div class="seg" role="group">${[["open", w.do.open], ["close", w.do.close], ...(cr?.position ? [["position", w.do.position]] : [])].map(([v, l]) => `<button data-rc="${i}:${v}" aria-pressed="${a.cover === v}">${esc(l)}</button>`).join("")}</div>`;
-          if (a.cover === "position") body += stepper("value", a.value ?? 50, " %", "");
-          if ((cr?.covers || 0) > 1) body += `<button class="lnk" data-split="${i}">${esc(w.split)}</button>`;
-        } else {
-          title = this.nameIn(a.entity_id);
-          const d = a.entity_id.split(".")[0];
-          if (d === "cover") {
-            body = seg([["open", w.do.open], ["close", w.do.close], ["position", w.do.position]]);
-            if (a.do === "position") body += stepper("value", a.value ?? 50, " %", "");
-          } else if (d === "light") {
-            const dim = this.data.targets.lights.find((l) => l.entity_id === a.entity_id)?.dim;
-            body = seg([["on", w.do.on], ["off", w.do.off], ...(dim ? [["ramp", w.do.ramp]] : [])]);
-            if (a.do === "on" && dim) body += stepper("value", a.value ?? 100, " %", w.bright);
-            if (a.do === "ramp") body += stepper("value", a.value ?? 25, " %", w.upTo) + stepper("minutes", a.minutes ?? 15, ` ${w.min}`, w.over);
-          } else if (d === "fan" || d === "switch") body = seg([["on", w.do.on], ["off", w.do.off]]);
-          else if (d === "climate") {
-            const c = this.climSpec(a.entity_id) || { modes: [] };
-            body = seg([...(c.temp ? [["temp", w.do.temp]] : []), ...c.modes.map((m) => [m, w.do[m]])]);
-            if (a.do === "temp") body += `<div class="step"><button data-ct="${i}:-1" aria-label="−">−</button><span>${esc(`${fmtNum(a.value)}\u00a0°C`)}</span><button data-ct="${i}:1" aria-label="+">+</button></div>`;
-          }
+        const v = w.v2;
+        const t = a.target || {};
+        const { named, grp } = this.members(a);
+        const gone = (!named.length && !grp.length) || L(t.entity_id).length > named.length;
+        const dom = chipOf(t.domain || String(L(t.entity_id)[0] || "").split(".")[0]);
+        const acts = this.actsOf(a);
+        const only = acts.length === 1;
+        const segs = acts.length ? `<div class="seg segw" role="group">${acts.map((x) => `<button data-do="${i}:${x}" aria-pressed="${a.do === x}"${only ? " data-only" : ""}>${esc(v.seg[x] || x)}</button>`).join("")}</div>` : "";
+        const s = a.do ? this.specOf(a, a.do) : null;
+        const k = a.do ? kindOf(a.do, s) : null;
+        const stepper = (field, text) => `<div class="step"><button data-val="${i}:${field}:-1" aria-label="−">−</button><span>${esc(text)}</span><button data-val="${i}:${field}:1" aria-label="+">+</button></div>`;
+        let par = "";
+        if (k === "option") par = `<select data-opt="${i}" aria-label="${esc(v.seg[a.do] || "")}">${(s.options || []).map((o) => `<option value="${esc(o)}"${o === a.value ? " selected" : ""}>${esc(this.optLabel(a, o))}</option>`).join("")}</select>`;
+        else if (k === "ramp") par = stepper("value", v.pTo(`${a.value ?? ACT_DEF.ramp} %`)) + stepper("minutes", v.pOver(`${a.minutes ?? ACT_DEF.minutes} ${w.min}`));
+        else if (k === "seconds") par = stepper("value", v.pFor(this.secs(a.value ?? ACT_DEF.pulse)));
+        else if (k) par = stepper("value", this.paramText(a));
+        let rep = "";
+        if (this.canRep(a)) {
+          const on = !!a.repeat;
+          rep = `<div class="rep"><button class="opt" data-rep="${i}" aria-pressed="${on}">${esc(v.rep)}</button>${
+            on
+              ? `<div class="step"><button data-repn="${i}:-1" aria-label="−">−</button><span>${esc(v.times(a.repeat.count))}</span><button data-repn="${i}:1" aria-label="+">+</button></div><div class="step"><button data-reps="${i}:-1" aria-label="−">−</button><span>${esc(v.every(this.secs(a.repeat.every_s)))}</span><button data-reps="${i}:1" aria-label="+">+</button></div>${this.directOf(a) ? `<p class="hint">${esc(v.direct)}</p>` : ""}`
+              : ""
+          }</div>`;
         }
-        return `<div class="act"><div class="top"><b>${esc(title)}</b><button class="x" data-rm="${i}" aria-label="${esc(w.remove)}"><ha-icon icon="mdi:close"></ha-icon></button></div>${body}</div>`;
+        const editing = this.pick?.for === "act" && this.pick.idx === i;
+        return `<div class="act" data-i="${i}"><div class="top"><span class="tg"><ha-icon icon="${DOM_ICON[dom] || "mdi:circle-medium"}"></ha-icon></span><b>${esc(this.tName(a))}</b>${editing ? "" : `<button class="lnk" data-pedit="${i}">${esc(v.change)}</button>`}<button class="x" data-rm="${i}" aria-label="${esc(w.remove)}"><ha-icon icon="mdi:close"></ha-icon></button></div>${gone ? `<p class="hint">${esc(v.gone)}</p>` : ""}${segs}${par}${rep}</div>`;
       }
       // --- events -------------------------------------------------------------------------------------------------------
       bind() {
@@ -12650,7 +13107,7 @@ ${seg("sto", ["on", "off"].map((x) => [x, w.stTo[kind][x]]), v.to)}${kind === "m
           try {
             const k = this.gAskFor ?? "на вечер";
             const note = k ? String(g.askFor[k] || "").toLowerCase() : "";
-            const r = await this._hass.callApi("POST", "hauflo/guest", { op: "ask", ...(note ? { note } : {}) });
+            const r = await this._hass.callApi("POST", "hauflo/guest", { op: "ask", ...(note ? { note } : {}), lang: this.lang || LANG });
             this.gAsked = r?.phones ? g.asked : g.askedNoPhone;
           } catch (e) {
             if (e?.body?.code === "too_soon" || /429/.test(String(e?.status || e?.message || ""))) this.gAsked = g.askSoon;
@@ -12788,6 +13245,7 @@ ${seg("sto", ["on", "off"].map((x) => [x, w.stTo[kind][x]]), v.to)}${kind === "m
         on("[data-pmode]", (el) => this.pres?.mode !== el.dataset.pmode && this.setPres({ mode: el.dataset.pmode }));
         on("[data-puclear]", () => this.pres?.until && this.setPres({ until: null }));
         on("[data-proom]", (el) => {
+          if (el.closest(".pk")) return;  // the rules picker's rooms (handled below)
           const id = el.dataset.proom;
           const skip = new Set(this.pres?.skip_rooms || []);
           skip.has(id) ? skip.delete(id) : skip.add(id);
@@ -12833,9 +13291,15 @@ ${seg("sto", ["on", "off"].map((x) => [x, w.stTo[kind][x]]), v.to)}${kind === "m
         if (this.view !== "edit") return;
         const r = this.draft;
         const redraw = () => this.draw();
+        on("[data-x]", () => {
+          this.pick = null;
+          this.toList({ msg: "" });
+          if (this._config?.overlay) this.dispatchEvent(new CustomEvent("hauflo-close", { bubbles: true, composed: true }));
+        });
         on("[data-ev]", (el) => {
           const e = el.dataset.ev;
           if ((r.when.event.startsWith("alarm") ? "alarm" : r.when.event) === e) return;  // the same again keeps what was set
+          if (this.pick?.for === "w") this.pick = null;
           if (e === "value") {
             const s = this.data.targets.sensors || [];
             const kind = s.some((x) => x.kind === "temperature") ? "temperature" : s[0]?.kind || "temperature";
@@ -12850,7 +13314,7 @@ ${seg("sto", ["on", "off"].map((x) => [x, w.stTo[kind][x]]), v.to)}${kind === "m
           else if (e === "alarm") {
             const a = this.data.targets.alarms?.[0];
             r.when = a ? { event: "alarm_android", sensor: a.entity_id, offset: 0 } : { event: "alarm_iphone" };
-          } else if (e === "time") r.when = { event: "time", at: r.when.at || "07:00" };
+          } else if (e === "time") r.when = { event: "time", times: r.when.times?.length ? r.when.times : [r.when.at || "07:00"] };
           else r.when = { event: e, offset: r.when.offset || 0 };
           redraw();
         });
@@ -12858,12 +13322,26 @@ ${seg("sto", ["on", "off"].map((x) => [x, w.stTo[kind][x]]), v.to)}${kind === "m
           r.when.offset = Math.max(-120, Math.min(120, (r.when.offset || 0) + Number(el.dataset.off)));
           redraw();
         });
-        const atSet = () => {
-          r.when.at = `${sr.querySelector("[data-ath]")?.value || "07"}:${sr.querySelector("[data-atm]")?.value || "00"}`;
+        // Times: a change sorts them (the same one twice is one); «+ время» — 12 h after the last, else the next free hour.
+        const tSet = () => {
+          const out = [...sr.querySelectorAll("[data-th]")].map((h) => `${h.value}:${sr.querySelector(`[data-tm="${h.dataset.th}"]`)?.value || "00"}`);
+          r.when.times = [...new Set(out)].sort();
           redraw();
         };
-        sr.querySelector("[data-ath]")?.addEventListener("change", atSet);
-        sr.querySelector("[data-atm]")?.addEventListener("change", atSet);
+        sr.querySelectorAll("[data-th],[data-tm]").forEach((el) => el.addEventListener("change", tSet));
+        on("[data-trm]", (el) => {
+          r.when.times = (r.when.times || []).filter((_, j) => j !== Number(el.dataset.trm));
+          redraw();
+        });
+        on("[data-tadd]", () => {
+          const ts = r.when.times?.length ? r.when.times : ["07:00"];
+          const mins = (x) => x.split(":").map(Number).reduce((h, m) => h * 60 + m);
+          const fmt = (m) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+          let m = (mins(ts.at(-1)) + 720) % 1440;
+          for (let n = 0; ts.includes(fmt(m)) && n < 24; n++) m = (m + 60) % 1440;
+          r.when.times = [...new Set([...ts, fmt(m)])].sort();
+          redraw();
+        });
         sr.querySelector("[data-phone]")?.addEventListener("change", (e) => {
           const v = e.target.value;
           r.when = v === "iphone" ? { event: "alarm_iphone", code: r.when.code } : { event: "alarm_android", sensor: v, offset: r.when.offset || 0 };
@@ -12888,17 +13366,7 @@ ${seg("sto", ["on", "off"].map((x) => [x, w.stTo[kind][x]]), v.to)}${kind === "m
           const [k, x] = kv(el.dataset.vk);
           Object.assign(spec(k), { kind: x, sensors: [], x: KIND_X[x] });
           delete spec(k).stat;
-          redraw();
-        });
-        on("[data-vs]", (el) => {
-          const [k, e] = kv(el.dataset.vs);
-          const v = spec(k);
-          const set = new Set(v.sensors || []);
-          if (set.has(e)) set.delete(e);
-          else if (set.size < 8) set.add(e);
-          v.sensors = [...set];
-          if (set.size > 1) v.stat = v.stat || "mean";
-          else delete v.stat;
+          if (this.pick?.for === k) this.pick = null;
           redraw();
         });
         on("[data-vst]", (el) => {
@@ -12928,15 +13396,7 @@ ${seg("sto", ["on", "off"].map((x) => [x, w.stTo[kind][x]]), v.to)}${kind === "m
         const oneOnly = () => r.when.kind === "media" && r.when.to === "off";  // the agent's rule: «not playing» — one player
         on("[data-sk]", (el) => {
           Object.assign(r.when, { kind: el.dataset.sk, sensors: [] });
-          redraw();
-        });
-        on("[data-ss]", (el) => {
-          const e = el.dataset.ss;
-          const set = new Set(r.when.sensors || []);
-          if (set.has(e)) set.delete(e);
-          else if (oneOnly()) set.clear(), set.add(e);
-          else if (set.size < 8) set.add(e);
-          r.when.sensors = [...set];
+          if (this.pick?.for === "w") this.pick = null;
           redraw();
         });
         on("[data-sto]", (el) => {
@@ -12954,6 +13414,7 @@ ${seg("sto", ["on", "off"].map((x) => [x, w.stTo[kind][x]]), v.to)}${kind === "m
         });
         on("[data-ifrm]", (el) => {
           r.only_if.splice(Number(el.dataset.ifrm), 1);
+          if (this.pick && this.pick.for !== "act" && this.pick.for !== "w") this.pick = null;  // the indexes moved
           redraw();
         });
         sr.querySelectorAll("[data-ift]").forEach((el) =>
@@ -12963,139 +13424,91 @@ ${seg("sto", ["on", "off"].map((x) => [x, w.stTo[kind][x]]), v.to)}${kind === "m
             redraw();
           }),
         );
-        // The multi-pick of «Что сделать».
+        // The one picker: rows, rooms, chips and the search redraw only its list (the keyboard stays up).
+        const pk = sr.querySelector(".pk");
+        if (pk && this.pick) {
+          const p = this.pick;
+          const list = () => {
+            const l = pk.querySelector("[data-plist]");
+            if (l) l.innerHTML = this.pkList();
+          };
+          pk.addEventListener("click", (ev) => {
+            const b = ev.target.closest("[data-pclose],[data-pdom],[data-proom],[data-pent],[data-pgroup]");
+            if (!b || !pk.contains(b)) return;
+            if (b.dataset.pclose !== undefined) return this.pickClose();
+            if (b.dataset.pdom) {
+              p.dom = p.dom === b.dataset.pdom ? null : b.dataset.pdom;
+              pk.querySelectorAll("[data-pdom]").forEach((x) => x.setAttribute("aria-pressed", String(x.dataset.pdom === p.dom)));
+              return list();
+            }
+            if (b.dataset.proom) {
+              const A = b.dataset.proom;
+              p.open.has(A) ? p.open.delete(A) : p.open.add(A);
+              list();
+              return [...pk.querySelectorAll("[data-proom]")].find((x) => x.dataset.proom === A)?.focus();
+            }
+            if (b.dataset.pent) return this.pickEnt(b.dataset.pent);
+            if (b.dataset.pgroup) return this.pickGroup(b.dataset.pgroup);
+          });
+          const inp = pk.querySelector("[data-psearch]");
+          inp?.addEventListener("input", () => {
+            p.q = inp.value;
+            list();
+          });
+          pk.addEventListener("keydown", (ev) => ev.key === "Escape" && this.pickClose());
+        }
+        on("[data-spick]", (el) => {
+          this.pickOpen(el.dataset.spick);
+          redraw();
+        });
         on("[data-addact]", () => {
-          this.pick = { domain: this.pickDomains()[0], all: false, rooms: [], entities: [], idx: null };
+          this.pickOpen("act");
           redraw();
         });
         on("[data-pedit]", (el) => {
-          const i = Number(el.dataset.pedit);
-          const a = r.actions[i];
-          this.pick = { domain: a.domain, all: !!a.all, rooms: [...(a.rooms || [])], entities: [...(a.entities || [])], idx: i };
+          this.pickOpen("act", Number(el.dataset.pedit));
           redraw();
         });
-        on("[data-pdom]", (el) => {
-          if (this.pick.domain !== el.dataset.pdom) Object.assign(this.pick, { domain: el.dataset.pdom, all: false, rooms: [], entities: [] });
-          redraw();
-        });
-        on("[data-xall]", () => {
-          const p = this.pick;
-          p.all = !p.all;
-          if (p.all) {
-            p.rooms = [];
-            p.entities = [];
-          }
-          redraw();
-        });
-        on("[data-xroom]", (el) => {
-          const p = this.pick;
-          const a = el.dataset.xroom;
-          if (p.rooms.includes(a)) p.rooms = p.rooms.filter((x) => x !== a);
-          else {
-            p.rooms = [...p.rooms, a];
-            // A device of a room now taken whole isn't named twice.
-            p.entities = p.entities.filter((e) => this.pickItems(p.domain).find((it) => it.entity_id === e)?.area !== a);
-          }
-          redraw();
-        });
-        on("[data-pent]", (el) => {
-          const p = this.pick;
-          const e = el.dataset.pent;
-          p.entities = p.entities.includes(e) ? p.entities.filter((x) => x !== e) : [...p.entities, e];
-          redraw();
-        });
-        on("[data-pcancel]", () => {
-          this.pick = null;
-          redraw();
-        });
-        on("[data-padd]", () => {
-          const p = this.pick;
-          if (!SET_DOMAINS.includes(p.domain)) {
-            for (const e of p.entities) {
-              const c = p.domain === "climate" ? this.climSpec(e) : null;
-              r.actions.push(!c ? { entity_id: e, do: "on" } : c.temp ? { entity_id: e, do: "temp", value: this.climVal(e) } : { entity_id: e, do: c.modes[0] });
-            }
-            this.pick = null;
-            return redraw();
-          }
-          const a = { do: "set", domain: p.domain, cmd: p.domain === "cover" ? "close" : "on" };
-          if (p.all) a.all = true;
-          if (p.rooms.length) a.rooms = [...p.rooms];
-          if (p.entities.length) a.entities = [...p.entities];
-          const old = p.idx !== null ? r.actions[p.idx] : null;
-          if (old?.domain === p.domain) {
-            a.cmd = old.cmd;
-            if (old.value != null) a.value = old.value;
-          }
-          if (a.cmd === "position" && !this.setCanPos(a)) {
-            a.cmd = "close";
-            delete a.value;
-          }
-          if (a.domain === "light" && !this.setLights(a).every((l) => l.dim)) delete a.value;
-          if (old) r.actions.splice(p.idx, 1, a);
-          else r.actions.push(a);
-          this.pick = null;
-          redraw();
-        });
-        on("[data-sc]", (el) => {
-          const [i, v] = el.dataset.sc.split(":");
-          const a = r.actions[Number(i)];
-          if (v === "ramp") r.actions.splice(Number(i), 1, { entity_id: a.entities[0], do: "ramp", value: 25, minutes: 15 });
-          else {
-            a.cmd = v;
-            if (v === "position") a.value = a.value ?? 50;
-            else if (v !== "on" || a.domain !== "light") delete a.value;
-          }
-          redraw();
-        });
-        on("[data-rc]", (el) => {
-          const [i, v] = el.dataset.rc.split(":");
-          const a = r.actions[Number(i)];
-          a.cover = v;
-          if (v === "position") a.value = a.value ?? 50;
-          else delete a.value;
-          redraw();
-        });
-        on("[data-split]", (el) => {
-          // «По отдельности»: the room's blinds as their own actions, doing the same.
-          const i = Number(el.dataset.split);
-          const a = r.actions[i];
-          const one = (this.data.targets.covers || []).filter((c) => c.area === a.area_id && !c.group && (a.cover !== "position" || c.position));
-          r.actions.splice(i, 1, ...one.map((c) => ({ entity_id: c.entity_id, do: a.cover, ...(a.cover === "position" ? { value: a.value ?? 50 } : {}) })));
-          redraw();
-        });
+        const actOf = (el, key) => r.actions[Number(String(el.dataset[key]).split(":")[0])];
         on("[data-rm]", (el) => {
           r.actions.splice(Number(el.dataset.rm), 1);
+          if (this.pick?.for === "act" && this.pick.idx != null) this.pick = null;
           redraw();
         });
         on("[data-do]", (el) => {
-          const [i, v] = el.dataset.do.split(":");
-          const a = r.actions[Number(i)];
-          a.do = v;
-          if (v === "position") a.value = a.value ?? 50;
-          else if (v === "ramp") {
-            a.value = Math.min(a.value ?? 25, 100);
-            a.minutes = a.minutes ?? 15;
-          } else if (v === "temp") a.value = this.climVal(a.entity_id, a.value);
-          else if (v !== "on") delete a.value;
-          if (v !== "ramp") delete a.minutes;
+          this.setDo(actOf(el, "do"), el.dataset.do.split(":")[1]);
           redraw();
         });
-        on("[data-ct]", (el) => {
-          const [i, dir] = el.dataset.ct.split(":");
-          const a = r.actions[Number(i)];
-          a.value = this.climVal(a.entity_id, a.value, Number(dir));
-          redraw();
-        });
+        sr.querySelectorAll("[data-opt]").forEach((el) =>
+          el.addEventListener("change", () => {
+            r.actions[Number(el.dataset.opt)].value = el.value;
+            redraw();
+          }),
+        );
         on("[data-val]", (el) => {
-          const [i, field, dir] = el.dataset.val.split(":");
-          const a = r.actions[Number(i)];
-          const step = field === "minutes" ? 5 : 5;
-          const pos = a.do === "position" || a.do === "room_covers" || a.cmd === "position";
-          const lo = field === "minutes" ? 5 : pos ? 0 : 5;
-          const hi = field === "minutes" ? 60 : 100;
-          const cur = a[field] ?? (field === "minutes" ? 15 : pos ? 50 : a.do === "ramp" ? 25 : 100);
-          a[field] = Math.max(lo, Math.min(hi, cur + Number(dir) * step));
+          const [, field, dir] = el.dataset.val.split(":");
+          this.stepVal(actOf(el, "val"), field, Number(dir));
+          redraw();
+        });
+        on("[data-rep]", (el) => {
+          const a = actOf(el, "rep");
+          if (a.repeat) delete a.repeat;
+          else {
+            const lo = this.everySpan(a)[0];
+            a.repeat = { count: this.data?.limits?.repeat?.count?.[0] || 2, every_s: EVERY_STEPS.find((x) => x >= lo) ?? lo };
+          }
+          redraw();
+        });
+        on("[data-repn]", (el) => {
+          const a = actOf(el, "repn");
+          const [lo, hi] = this.data?.limits?.repeat?.count || [2, 10];
+          a.repeat.count = clamp(lo, hi, a.repeat.count + Number(el.dataset.repn.split(":")[1]));
+          redraw();
+        });
+        on("[data-reps]", (el) => {
+          const a = actOf(el, "reps");
+          const [lo, hi] = this.everySpan(a);
+          a.repeat.every_s = clamp(lo, hi, ladder(EVERY_STEPS, a.repeat.every_s, Number(el.dataset.reps.split(":")[1])));
           redraw();
         });
         on("[data-share]", async () => {
@@ -13153,6 +13566,14 @@ ${seg("sto", ["on", "off"].map((x) => [x, w.stTo[kind][x]]), v.to)}${kind === "m
       edit(rule) {
         if (this.view === "list") this._listScroll = this.scrollers();
         this.draft = rule ? JSON.parse(JSON.stringify({ id: rule.id, name: rule.name, when: rule.when, days: rule.days, actions: rule.actions, only_if: rule.only_if || [], enabled: rule.enabled, from: rule.from, changed: rule.changed })) : { when: { event: "sunset", offset: 0 }, days: [...DAYS], actions: [], only_if: [], enabled: true };
+        if (this.draft && rule && !this.oldAgent) {
+          // The canon's form (Р83): times[] and {do, target} — a recipe or a habit comes in the old one.
+          const wh = this.draft.when || {};
+          if (wh.event === "time" && !wh.times) {
+            this.draft.when = { event: "time", times: [wh.at || "07:00"] };
+          }
+          this.draft.actions = (this.draft.actions || []).map(toV2);
+        }
         this.pick = null;
         this.view = "edit";
         this.chk = null;
@@ -13165,6 +13586,7 @@ ${seg("sto", ["on", "off"].map((x) => [x, w.stTo[kind][x]]), v.to)}${kind === "m
         if (r.id) out.id = r.id;
         if (r.from) out.from = r.from;
         if (r.only_if?.length) out.only_if = r.only_if;
+        if (!this.oldAgent) out.actions = (r.actions || []).map((a) => Object.fromEntries(Object.entries(a).filter(([k, x]) => ["do", "target", "value", "minutes", "repeat"].includes(k) && x != null)));
         return out;
       }
       async save(force = false) {
@@ -13173,6 +13595,7 @@ ${seg("sto", ["on", "off"].map((x) => [x, w.stTo[kind][x]]), v.to)}${kind === "m
         this.bad = true;
         this.warn = false;
         if (!r.actions.length) this.msg = w.needAction;
+        else if (!this.oldAgent && this.saveHint(r)) this.msg = this.saveHint(r);
         else if ([r.when, ...(r.only_if || [])].some((x) => (x.event === "value" || x.event === "state" || x.if === "value") && !(x.sensors || []).length)) this.msg = w.needSensor;
         else if (!(r.days || DAYS).length) this.msg = w.needDay;
         else {
@@ -15038,8 +15461,8 @@ ${line ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;color:${ton
     en: { head: "Block rows", hint: "The rows the card shows. Changes are kept on Hauflo's next deploy.", add: "Add a row", up: "Up", down: "Down", hide: "Hide", show: "Show again", drop: "Remove", more: "Row settings", byLabel: "hidden by a label in the home settings", otherRoom: "from another room", renamed: "renamed here", hidden: "hidden here", added: "added here", moved: "in block", empty: "Hidden because there are no rows", errors: "Problems in the card's settings", name: "Name", secondary: "Second line", icon: "Icon", block: "Block", tap_action: "Tap", hold_action: "Hold", entity: "Entity", reg: "regulator" },
   };
   const LABEL = {
-    ru: { intercom: "Домофон (состояние двери)", open: "Чем открыть дверь", call_event: "Или звонок другой интеграции (событие)", hangup_button: "Её кнопка «положить трубку»", registration: "Её состояние регистрации", ring_timeout: "Звонок длится, с", auto: "Подбирать строки сами", sensors: "Датчики протечки", valves: "Кран (клапан)", area: "Комната в Home Assistant", device: "Или устройство целиком", label: "Подпись", name: "Название", title: "Заголовок", subtitle: "Подзаголовок", icon: "Иконка", icon_type: "Что слева", color: "Цвет, когда включено", layout: "Расположение", show_level: "Полоска уровня (яркость, положение)", controls: "Управление под плиткой (яркость, шторы, ±, плеер…)", primary_info: "Первая строка", secondary_info: "Вторая строка", tap_action: "Нажатие", hold_action: "Удержание", double_tap_action: "Двойное нажатие", path: "Открывать по нажатию", picture: "Фото комнаты (URL)", temperature: "Температура (термостаты, датчики)", humidity: "Влажность", lights: "Свет", alarms: "Аварийные датчики", devices: "Устройства (нет связи)", weather: "Погода", climate: "Термостат", covers: "Шторы", kind: "Вид", scenes: "Сцены", entity: "Объект", entities: "Объекты", days: "Дней прогноза", forecast: "Прогноз", pm25: "PM2.5", pm10: "PM10", co2: "CO₂", voc: "Летучие в-ва", hours: "Часов", locks: "Замки", openings: "Двери, окна, движение", refresh: "Обновлять кадр, с", chart: "График за сутки", hide_ok: "Прятать, когда всё в норме", battery_percent: "Заряд батареи в % всегда (не только когда садится)", compact: "Компактно (строкой)", only: "Что показывать", heat_setpoint: "Уставка нагрева (number)", cool_setpoint: "Уставка охлаждения (number)", scene_layout: "Где сцены", block: "Блок комнаты (пусто — всё)" },
-    en: { intercom: "Intercom (the door's state)", open: "What opens the door", call_event: "Or another integration's call (event)", hangup_button: "Its «hang up» button", registration: "Its registration state", ring_timeout: "A ring lasts, s", auto: "Pick the rows itself", sensors: "Leak sensors", valves: "Valve", area: "Home Assistant area", device: "Or a whole device", label: "Label", name: "Name", title: "Title", subtitle: "Subtitle", icon: "Icon", icon_type: "On the left", color: "Color when on", layout: "Layout", show_level: "Level bar (brightness, position)", controls: "Controls under the tile (brightness, blinds, ±, player…)", primary_info: "First line", secondary_info: "Second line", tap_action: "Tap", hold_action: "Hold", double_tap_action: "Double tap", path: "Opens on tap", picture: "Room photo (URL)", temperature: "Temperature (thermostats, sensors)", humidity: "Humidity", lights: "Lights", alarms: "Alarm sensors", devices: "Devices (offline check)", weather: "Weather", climate: "Thermostat", covers: "Blinds", kind: "Kind", scenes: "Scenes", entity: "Entity", entities: "Entities", days: "Forecast days", forecast: "Forecast", pm25: "PM2.5", pm10: "PM10", co2: "CO₂", voc: "VOC", hours: "Hours", locks: "Locks", openings: "Doors, windows, motion", refresh: "Snapshot refresh, s", chart: "24 h chart", hide_ok: "Hide when all is OK", battery_percent: "Battery % always (not only when low)", compact: "Compact (one row)", only: "What to show", heat_setpoint: "Heating setpoint (number)", cool_setpoint: "Cooling setpoint (number)", scene_layout: "Where scenes go", block: "Room block (empty — all)" },
+    ru: { intercom: "Домофон (состояние двери)", open: "Чем открыть дверь", call_event: "Или звонок другой интеграции (событие)", hangup_button: "Её кнопка «положить трубку»", registration: "Её состояние регистрации", ring_timeout: "Звонок длится, с", auto: "Подбирать строки сами", sensors: "Датчики протечки", valves: "Кран (клапан)", area: "Комната в Home Assistant", device: "Или устройство целиком", label: "Подпись", name: "Название", title: "Заголовок", subtitle: "Подзаголовок", icon: "Иконка", icon_type: "Что слева", color: "Цвет, когда включено", layout: "Расположение", show_level: "Полоска уровня (яркость, положение)", controls: "Управление под плиткой (яркость, шторы, ±, плеер…)", primary_info: "Первая строка", secondary_info: "Вторая строка", tap_action: "Нажатие", hold_action: "Удержание", double_tap_action: "Двойное нажатие", path: "Открывать по нажатию", picture: "Фото (URL)", temperature: "Температура (термостаты, датчики)", humidity: "Влажность", lights: "Свет", alarms: "Аварийные датчики", devices: "Устройства (нет связи)", weather: "Погода", climate: "Термостат", covers: "Шторы", kind: "Вид", scenes: "Сцены", entity: "Объект", entities: "Объекты", days: "Дней прогноза", forecast: "Прогноз", pm25: "PM2.5", pm10: "PM10", co2: "CO₂", voc: "Летучие в-ва", hours: "Часов", locks: "Замки", openings: "Двери, окна, движение", refresh: "Обновлять кадр, с", chart: "График за сутки", hide_ok: "Прятать, когда всё в норме", battery_percent: "Заряд батареи в % всегда (не только когда садится)", compact: "Компактно (строкой)", only: "Что показывать", heat_setpoint: "Уставка нагрева (number)", cool_setpoint: "Уставка охлаждения (number)", scene_layout: "Где сцены", block: "Блок комнаты (пусто — всё)" },
+    en: { intercom: "Intercom (the door's state)", open: "What opens the door", call_event: "Or another integration's call (event)", hangup_button: "Its «hang up» button", registration: "Its registration state", ring_timeout: "A ring lasts, s", auto: "Pick the rows itself", sensors: "Leak sensors", valves: "Valve", area: "Home Assistant area", device: "Or a whole device", label: "Label", name: "Name", title: "Title", subtitle: "Subtitle", icon: "Icon", icon_type: "On the left", color: "Color when on", layout: "Layout", show_level: "Level bar (brightness, position)", controls: "Controls under the tile (brightness, blinds, ±, player…)", primary_info: "First line", secondary_info: "Second line", tap_action: "Tap", hold_action: "Hold", double_tap_action: "Double tap", path: "Opens on tap", picture: "Photo (URL)", temperature: "Temperature (thermostats, sensors)", humidity: "Humidity", lights: "Lights", alarms: "Alarm sensors", devices: "Devices (offline check)", weather: "Weather", climate: "Thermostat", covers: "Blinds", kind: "Kind", scenes: "Scenes", entity: "Entity", entities: "Entities", days: "Forecast days", forecast: "Forecast", pm25: "PM2.5", pm10: "PM10", co2: "CO₂", voc: "VOC", hours: "Hours", locks: "Locks", openings: "Doors, windows, motion", refresh: "Snapshot refresh, s", chart: "24 h chart", hide_ok: "Hide when all is OK", battery_percent: "Battery % always (not only when low)", compact: "Compact (one row)", only: "What to show", heat_setpoint: "Heating setpoint (number)", cool_setpoint: "Cooling setpoint (number)", scene_layout: "Where scenes go", block: "Room block (empty — all)" },
   };
   // hauflo-insights (0.32 п.9): no entity — the agent's diagnosis; the editor picks its sections, a stage, how many rows.
   const INSIGHT_SECTION_OPT = [["climate", "Климат", "Climate"], ["energy", "Энергия", "Energy"], ["water", "Вода", "Water"], ["air", "Воздух", "Air"], ["link", "Связь и питание", "Link and power"], ["system", "Система", "System"], ["pairs", "Пары", "Pairs"], ["other", "Прочее", "Other"]];
@@ -15275,9 +15698,10 @@ ${line ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;color:${ton
   // (acceptance 10.11 L-8). A <style> child of the editor reaches its tree wherever HA puts it (its dialog's shadow root).
   // Р54: the room tile's editor — a picture of the service's set for the room (the agent's `hauflo/room_picture_options`),
   // set on HA's area (`hauflo/area_picture`) and in the card; one's own photo goes in HA's area settings.
+  // Р82: the same picker on a zone's / floor's tile of «Главная» (no area: the card's own `picture`; one's own — a link).
   const ROOM_PHOTO_ED = {
-    ru: { label: "Фото из набора", own: "Своё фото…", none: "Без фото", hint: "Своё фото загружается в настройках комнаты Home Assistant: Настройки → Области → карандаш у комнаты → картинка. Карточка подхватит его сама.", fail: "Фото не сохранилось — нет прав или нет связи. Попробуйте ещё раз." },
-    en: { label: "Photo from the set", own: "Own photo…", none: "No photo", hint: "Your own photo is uploaded in the room's Home Assistant settings: Settings → Areas → the room's pencil → picture. The card picks it up by itself.", fail: "The photo wasn't saved — no permission or no connection. Try again." },
+    ru: { label: "Фото", own: "Своё фото…", none: "Без фото", hint: "Своё фото загружается в настройках комнаты Home Assistant: Настройки → Области → карандаш у комнаты → картинка. Карточка подхватит его сама.", hintZone: "Своё фото — ссылкой на картинку в поле «Фото (URL)» выше (например, /local/… — картинка из папки www).", fail: "Фото не сохранилось — нет прав или нет связи. Попробуйте ещё раз." },
+    en: { label: "Photo", own: "Own photo…", none: "No photo", hint: "Your own photo is uploaded in the room's Home Assistant settings: Settings → Areas → the room's pencil → picture. The card picks it up by itself.", hintZone: "Your own photo — a link to the picture in the «Photo (URL)» field above (e.g. /local/… — a picture from the www folder).", fail: "The photo wasn't saved — no permission or no connection. Try again." },
   };
   const ED_CSS = `.hf-ed-note{display:block;margin:0 0 var(--hf-pad);padding:var(--hf-row-gap) var(--hf-r-sm);border-radius:var(--hf-r-sm);background:var(--hf-grey-10);font-size:13px;line-height:1.45;color:var(--secondary-text-color);text-decoration:none}
 .hf-ed-note[data-signals]{margin:var(--hf-pad) 0 0}a.hf-ed-note:hover{color:var(--primary-text-color)}a.hf-ed-note b{color:var(--primary-color);font-weight:500}`;
@@ -15300,7 +15724,8 @@ ${line ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;color:${ton
       this._render();
     }
     _render() {
-      const schema = FORM[this.tag];
+      // Р82: a tile's link to a picture only for one's own photo (the set and «Без фото» are picked below it).
+      const schema = this.tag === "hauflo-room" && this._photoUrl === false ? FORM[this.tag].filter((s) => s.name !== "picture") : FORM[this.tag];
       if (!this._hass || !this._config || !schema) return;
       if (!this._edCss) {
         this._edCss = document.createElement("style");
@@ -15713,28 +16138,37 @@ ${line ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;color:${ton
       this._kind.style.marginTop = "16px";
       this._form.after(this._kind);
     }
-    /** Р54: «Фото из набора» under «Фото комнаты (URL)» — shown only when the agent offers pictures for the room's area
-     * (an old agent, an error or an ordinary room: hidden, the URL field stays). */
+    /** Р54 → Р82: «Фото» — one picker for a room's tile (its HA area) and a zone's / floor's tile on «Главная» (by its name):
+     * the set's pictures (own type first, then any), «Без фото», «Своё фото…», and where the picture shown comes from. Shown
+     * only when the agent offers pictures (an old agent or an error: hidden, the URL field stays). */
     _renderPhoto() {
       const h = this._hass;
       const c = this._config;
       const area = typeof c.area === "string" ? c.area : "";
+      const name = typeof c.name === "string" ? c.name.trim() : "";
       const w = ROOM_PHOTO_ED[userLang(h)] || ROOM_PHOTO_ED.en;
-      if (area && this._photoArea !== area) {
-        this._photoArea = area;
+      const q = area ? { area_id: area } : name ? { name, zone: true } : null;
+      const qKey = q ? JSON.stringify(q) : "";
+      if (q && this._photoQ !== qKey) {
+        this._photoQ = qKey;
         this._photoOpts = null;
         Promise.resolve()
-          .then(() => h.callWS({ type: "hauflo/room_picture_options", area_id: area }))
-          .then((r) => (Array.isArray(r) ? r : []).filter((o) => o && typeof o.label === "string" && o.label && (o.url === null || o.url === "" || (typeof o.url === "string" && cssUrl(o.url) === o.url))))
+          .then(() => roomPicOptions(h, q))
           .catch(() => [])
-          .then((list) => this._photoArea === area && ((this._photoOpts = list), this._renderPhoto()));
+          .then((list) => this._photoQ === qKey && ((this._photoOpts = list), this._renderPhoto()));
       }
-      const opts = area ? this._photoOpts || [] : [];
+      const opts = q ? this._photoOpts || [] : [];
       const cur = roomPic(h, c);
-      // What is set now: one of the set, «Без фото», or one's own (none of the set — the list shows nothing picked).
-      const hit = opts.find((o) => o.url && o.url === cur);
-      const pick = this._photoOwn ? "own" : hit ? hit.url : cur ? "" : "none";
-      const key = opts.length ? JSON.stringify([userLang(h), opts, pick, this._photoErr || ""]) : "";
+      // What is set now: one of the set, «Без фото», or one's own (none of the set).
+      const hit = opts.find((o) => o.url === cur);
+      const pick = this._photoOwn || (cur && !hit) ? "own" : hit ? hit.url : "none";
+      // The link field: one's own photo, or no set offered (then it is the only way).
+      const urlField = !opts.length || pick === "own";
+      if (this._photoUrl !== urlField) {
+        this._photoUrl = urlField;
+        return this._render();
+      }
+      const key = opts.length ? JSON.stringify([userLang(h), opts, pick, cur, this._photoErr || ""]) : "";
       if (this._photoKey === key) return;
       this._photoKey = key;
       this._photo?.remove();
@@ -15743,7 +16177,7 @@ ${line ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;color:${ton
       const box = (this._photo = document.createElement("div"));
       box.style.marginTop = "16px";
       const form = document.createElement("ha-form");
-      const options = [...opts.map((o) => ({ value: o.url || "none", label: o.label })), ...(opts.some((o) => !o.url) ? [] : [{ value: "none", label: w.none }]), { value: "own", label: w.own }];
+      const options = [...opts.map((o) => ({ value: o.url, label: o.label })), { value: "none", label: w.none }, { value: "own", label: w.own }];
       form.hass = h;
       form.computeLabel = () => w.label;
       form.schema = [{ name: "photo_set", selector: { select: { mode: "dropdown", options } } }];
@@ -15755,24 +16189,29 @@ ${line ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;color:${ton
         this._photoOwn = v === "own";
         if (!v || v === "own") return this._renderPhoto();
         const url = v === "none" ? null : v;
-        try {
-          await h.callWS({ type: "hauflo/area_picture", area_id: area, picture: url });
-        } catch (e) {
-          this._photoErr = w.fail;
-          this._photoKey = "";
-          return this._renderPhoto();
+        // A room: on HA's area too (its own page, the tile's sheet); a zone's tile has only the card.
+        if (area) {
+          try {
+            await h.callWS({ type: "hauflo/area_picture", area_id: area, picture: url });
+          } catch (e) {
+            this._photoErr = w.fail;
+            this._photoKey = "";
+            return this._renderPhoto();
+          }
+          ROOM_PIC.set(area, url);
+          roomPicRedraw(area);
         }
-        ROOM_PIC.set(area, url);
-        roomPicRedraw(area);
         const next = { ...this._config };
         if (url) next.picture = url;
         else delete next.picture;
+        delete next.picture_from;
         this._config = next;
         this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: next }, bubbles: true, composed: true }));
         this._render();
       });
       box.appendChild(form);
-      const note = this._photoErr || (this._photoOwn ? w.hint : "");
+      const from = (PIC_FROM[userLang(h)] || PIC_FROM.en)[roomPicFrom(h, c, opts)];
+      const note = this._photoErr || [from, pick === "own" ? (area ? w.hint : w.hintZone) : ""].filter(Boolean).join(" ");
       if (note) {
         const n = document.createElement("div");
         n.className = "hf-ed-note";
@@ -15942,11 +16381,10 @@ ${line ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;color:${ton
   const TAG = "hauflo-layout";
   const css = `:host{display:block}
 .cols{display:grid;gap:var(--ha-view-sections-column-gap,32px);align-items:start;justify-content:center}
-.cols.start{justify-content:start}
 .measure{visibility:hidden}
 .col,.one{display:flex;flex-direction:column;gap:var(--ha-section-grid-row-gap,8px);min-width:0}
 .rows{display:grid;gap:var(--ha-section-grid-row-gap,8px)}
-.rows.cw{column-gap:var(--ha-view-sections-column-gap,32px)}
+.rows.cw{column-gap:var(--ha-view-sections-column-gap,32px);justify-content:center}
 .rows>*,.col>*,.one>*{min-width:0}
 [hidden]{display:none!important}`;
   class HaufloLayout extends HTMLElement {
@@ -16228,8 +16666,9 @@ ${line ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;color:${ton
       const host = this.shadowRoot.lastElementChild;
       const els = this._els();
       if (cols && cols.length > 1) {
-        // accept3b №12: `align: "start"` — from the left edge under a row from the left (the zones' tiles), else in the middle (Р4).
-        host.className = this._config.align === "start" ? "cols start" : "cols";
+        // In the middle (Р4). Р82: `align: "start"` (accept3b №12, 0.34 — under the zones' row then at the left) is no longer
+        // followed: the zones' row is in the middle again (the owner, 12.11: «Главная» pressed to the left at 2000 px).
+        host.className = "cols";
         const w = this._config.card_w === true ? "var(--hf-card-w,400px)" : "1fr";
         host.style.gridTemplateColumns = `repeat(${cols.length},minmax(0,${w}))`;
         const have = [...host.children].filter((c) => c.classList.contains("col"));
@@ -16244,7 +16683,7 @@ ${line ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;color:${ton
         });
       } else if (l && Number(l.per_row) > 1) {
         host.className = this._config.card_w === true ? "rows cw" : "rows";
-        // Р68: `card_w` — a row of cards no wider than a card each, from the left as the hero and the rooms' grid, not stretched over the page.
+        // Р68: `card_w` — a row of cards no wider than a card each, not stretched over the page; Р82: in the middle, as the columns (Р4).
         const w = this._config.card_w === true ? "var(--hf-card-w,400px)" : "1fr";
         host.style.gridTemplateColumns = `repeat(${Math.min(12, Math.round(Number(l.per_row)))},minmax(0,${w}))`;
         if (els.length !== host.children.length || els.some((e, x) => e !== host.children[x])) host.replaceChildren(...els);
@@ -16288,9 +16727,8 @@ ${line ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;color:${ton
     const g = "var(--ha-view-sections-column-gap,32px)";
     let s = `:host([hf-measure]) .container:not(.edit-mode){visibility:hidden}
 :host([hf-cols]) .container:not(.edit-mode){grid-template-columns:repeat(var(--hf-n),minmax(0,var(--hf-w)))!important;grid-auto-rows:1px!important;grid-auto-flow:row!important;row-gap:0!important;column-gap:${g}!important;justify-content:center}
-:host([hf-cols][hf-start]) .container:not(.edit-mode){justify-content:start}
 :host([hf-cols]) .container:not(.edit-mode)>.card{align-self:start}
-:host([hf-rows]) .container:not(.edit-mode){grid-template-columns:repeat(var(--hf-n),minmax(0,var(--hf-w)))!important;justify-content:start}
+:host([hf-rows]) .container:not(.edit-mode){grid-template-columns:repeat(var(--hf-n),minmax(0,var(--hf-w)))!important;justify-content:center}
 :host([hf-rows][hf-cw]) .container:not(.edit-mode){column-gap:${g}!important}
 :host([hf-rows]) .container:not(.edit-mode)>.card{grid-column:auto/span 1!important}`;
     (cols || []).forEach(([c, r, h], i) => {
@@ -16401,8 +16839,6 @@ ${line ? `<div style="margin-top:34px;font:500 20px Onest,sans-serif;color:${ton
         this.style.setProperty("--hf-w", this._config?.card_w === true ? "var(--hf-card-w,400px)" : "1fr");
         // Р68: rows of a card's width (the zones' tiles on «Главная») stand apart as the room page's columns do.
         this.toggleAttribute("hf-cw", this._config?.card_w === true);
-        // accept3b №12: `align: "start"` — the blocks under the zones' tiles from the same left edge, not in the middle (Р4 otherwise).
-        this.toggleAttribute("hf-start", this._config?.align === "start");
       }
       /** The rule for the screen: packed columns, N per row, or HA's own layout (none matched, edit mode). */
       _hfPlace() {

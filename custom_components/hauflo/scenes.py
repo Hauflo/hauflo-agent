@@ -35,6 +35,8 @@ the actuators.
 
 from __future__ import annotations
 
+from http import HTTPStatus
+
 import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -49,9 +51,11 @@ from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
+from . import derived
 from .daylight import Daylight, Invalid as DayInvalid, SensorRefused
 from .house import refuse
 from .ownership import entity_room
+from .rules import said
 from .storage import HaufloStore
 from .const import LOCKED_CODE, wants_ru
 from .tuning import TUNING
@@ -81,6 +85,13 @@ _clock = time.monotonic  # the tests move it
 
 class Invalid(ValueError):
     pass
+
+
+class Refused(Invalid, derived.Refused):
+    """A refusal a person can meet (not a request sent wrong): said in the page's language — translations scenes_<code>."""
+
+    def __init__(self, code: str, status: int = HTTPStatus.BAD_REQUEST, **ph: Any) -> None:
+        derived.Refused.__init__(self, code, f"scenes_{code}", status, **ph)
 
 
 class Locked(RuntimeError):
@@ -122,11 +133,11 @@ class NotPlain(RuntimeError):
 
 def clean_name(value: Any) -> str:
     if not isinstance(value, str):
-        raise Invalid("name")
+        raise Refused("bad_name")
     raw = "".join(ch for ch in value if unicodedata.category(ch) != "Cf")
     text = " ".join(_CONTROL.sub(" ", raw).split())[:MAX_NAME].strip()
     if not any(unicodedata.category(ch)[0] in "LN" for ch in text):
-        raise Invalid("name")
+        raise Refused("bad_name")
     return text
 
 
@@ -350,7 +361,7 @@ class FamilyScenes:
         reg = er.async_get(self.hass)
         mine = [e for e in reg.entities.values() if e.domain == "scene" and e.platform == "homeassistant" and str(e.unique_id).startswith("hauflo_fam_")]
         if len(mine) >= MAX_FAMILY:
-            raise Invalid("too many scenes")
+            raise Refused("too_many", n=MAX_FAMILY)
         # Time first: the cards list a room's scenes in the order they were made.
         scene_id = f"hauflo_fam_{room}_{kind}_{int(time.time()):x}{secrets.token_hex(2)}"
         icon = "mdi:lightbulb-on-outline" if kind == "l" else "mdi:blinds-horizontal"
@@ -379,6 +390,8 @@ class FamilyScenes:
         if not isinstance(entity_id, str) or not entity_id.startswith("scene."):
             raise Invalid("entity_id")
         ent = er.async_get(self.hass).async_get(entity_id)
+        if ent is None and self.hass.states.get(entity_id) is None:
+            raise Refused("no_scene", HTTPStatus.NOT_FOUND)  # deleted meanwhile (another phone): «refresh», not «not Hauflo's»
         uid = str(ent.unique_id) if ent and ent.platform == "homeassistant" else ""
         if not (_FAMILY.fullmatch(uid) or _HAUFLO.fullmatch(uid)):
             raise PermissionError("not a scene of Hauflo's")
@@ -484,6 +497,8 @@ class ScenesView(HomeAssistantView):
                 return self.json(await engine.learn(body.get("entity_id"), user.name if user else None))
         except SensorRefused as err:
             return self.json({"message": await err.text(engine.hass, ru), "code": err.key}, 400)
+        except derived.Refused as err:
+            return self.json(await said(engine.hass, err, ru), err.status)
         except (Invalid, DayInvalid) as err:
             return self.json_message(str(err), 400)
         except NotPlain as err:
@@ -496,7 +511,7 @@ class ScenesView(HomeAssistantView):
         except PermissionError as err:
             return self.json_message(str(err), 403)
         except KeyError:
-            return self.json_message("no such scene", 404)
+            return self.json(await said(engine.hass, Refused("no_scene", HTTPStatus.NOT_FOUND), ru), 404)
         except LookupError as err:
             msg = "Нечего запомнить: свет и шторы комнаты не сообщают своё состояние." if ru else "Nothing to remember: the room's lights and blinds don't report their state."
             return self.json({"message": msg, "code": "nothing"}, 409)

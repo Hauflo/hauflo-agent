@@ -61,6 +61,12 @@
    "params": {}
   },
   {
+   "file": "ha/alarmMigrateRoute.ts",
+   "kind": "rest",
+   "call": "POST /api/hauflo/notify",
+   "params": {}
+  },
+  {
    "file": "ha/alarmRulesDeploy.ts",
    "kind": "rest",
    "call": "GET /api/hauflo/notify",

@@ -152,7 +152,7 @@ class Habits:
     async def dismiss(self, key: Any) -> None:
         """«Не предлагать»: this suggestion never again (the same habit keeps its key across re-mines)."""
         if not isinstance(key, str) or not KEY.fullmatch(key):
-            raise Invalid("key: a habit suggestion's key")
+            raise Invalid("bad_request", what="key")
         if key not in self.data["dismissed"]:
             self.data["dismissed"] = [*self.data["dismissed"], key][-int(T["max_keys"]):]
         await self.store.async_save(self.data)
@@ -516,11 +516,8 @@ class Habits:
         for r in rules:
             w = r.get("when") or {}
             if head["kind"] == "time":
-                at = w.get("at")
-                if w.get("event") != "time" or not isinstance(at, str) or ":" not in at:
-                    continue
-                h, m = at.split(":")
-                if abs(_wrap(int(h) * 60 + int(m) - head["minute"])) > T["rule_near_min"]:
+                times = w.get("times") or [w.get("at")]  # Р83: several a day; v1 one «at»
+                if w.get("event") != "time" or not any(isinstance(at, str) and ":" in at and abs(_wrap(int(at[:2]) * 60 + int(at[3:5]) - head["minute"])) <= T["rule_near_min"] for at in times):
                     continue
             elif w.get("event") != head["kind"]:
                 continue
@@ -531,20 +528,5 @@ class Habits:
 
     @staticmethod
     def _does(auto: Any, a: dict[str, Any]) -> set[tuple[str, str]]:
-        """(entity, action) pairs one rule action covers."""
-        do = a.get("do")
-        if do == "room_off":
-            return {(e, "off") for e in auto._room_lights(a.get("area_id"))}
-        if do == "room_covers":
-            return {(e, a.get("cover")) for e in auto._room_covers(a.get("area_id"))}
-        if do == "set":
-            dom, cmd = a.get("domain"), a.get("cmd")
-            eids = set(a.get("entities") or [])
-            rooms = list(a.get("rooms") or [])
-            if a.get("all") and dom in ("light", "cover"):
-                rooms += auto._all_target(dom, False)[0]
-                eids |= set(auto._all_target(dom, False)[1])
-            for room in rooms:
-                eids |= set(auto._set_members(dom, room))
-            return {(e, "on" if cmd == "ramp" else cmd) for e in eids}
-        return {(a.get("entity_id"), "on" if do == "ramp" else do)}
+        """(entity, action) pairs one rule action covers (automations.covers: the v1 forms and the canon's)."""
+        return auto.covers(a) if isinstance(a, dict) else set()

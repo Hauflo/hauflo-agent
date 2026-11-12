@@ -37,7 +37,8 @@
   "thumbs": {"path": "/rooms/", "width": 160, "height": 120, "max_kb": 6},
   "variant_labels": {"ru": "Вариант {n}", "en": "Option {n}"},
   "zones": {
-    "about": "Р68: pictures of a floor's / zone's tile on «Главная» (the backend and the app read this; the agent only serves the files). The same files as the rooms', no new ones. A zone's type by its name — the first that matches, else `fallback`; every zone shows its type's first picture until another is chosen or «none» (the structure editor, Floor.photo «<type>-<n>»). The order and the patterns follow the floor tile's icon (atelierDashboard.ts floorTileLook): service, outdoors, garage, terrace, else a floor of the house.",
+    "about": "Р68: pictures of a floor's / zone's tile on «Главная» (the backend and the app read this; the agent only serves the files). The same files as the rooms', no new ones. A zone's type by its name — the first that matches, else `fallback`; `auto` false (owner 12.11, Р82): a zone's tile shows NO picture until one is chosen (the structure editor / the tile's editor in HA, Floor.photo «<type>-<n>»); its type only orders the choices. `auto` true — the type's first picture by itself. The order and the patterns follow the floor tile's icon (atelierDashboard.ts floorTileLook): service, outdoors, garage, terrace, else a floor of the house.",
+    "auto": false,
     "fallback": "floor",
     "types": [
       {"id": "service", "label": {"ru": "Сервис, техническое", "en": "Service, technical"}, "match": ["сервис", "служебн", "техн", "щит", "кот[её]л", "service", "technical", "plant", "utility"], "files": ["boiler-1.webp", "electrical-2.webp", "server-1.webp"]},

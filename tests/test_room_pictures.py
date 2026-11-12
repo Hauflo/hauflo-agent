@@ -132,3 +132,29 @@ async def test_restricted_profile_cannot_set(hass: HomeAssistant, hass_ws_client
     with patch("custom_components.hauflo.room_pictures.may_edit", return_value=False):
         await ws.send_json({"id": 1, "type": rp.SET, "area_id": area.id, "picture": None})
         assert (await ws.receive_json())["error"]["code"] == "not_allowed"
+
+
+async def test_zone_and_every_option(hass: HomeAssistant, hass_ws_client, entry) -> None:
+    """Р82: one picker for everything with a picture — a zone's tile (no HA area) by its name and kind, every type on ask."""
+    ws = await hass_ws_client(hass)
+    for n, (name, first) in enumerate({"Сервис": "boiler-1", "Улица": "garden-1", "Гараж": "garage-1", "Дом": "generic-1", "2 этаж": "generic-1"}.items()):
+        await ws.send_json({"id": 1 + n, "type": rp.OPTIONS, "name": name, "zone": True})
+        got = (await ws.receive_json())["result"]
+        assert len(got) == 3 and got[0]["url"] == f"/hauflo_static/rooms/{first}.webp", name
+    await ws.send_json({"id": 10, "type": rp.OPTIONS, "name": "Улица", "zone": True, "all": True})
+    every = (await ws.receive_json())["result"]
+    urls = [o["url"] for o in every]
+    assert urls[:3] == [f"/hauflo_static/rooms/garden-{n}.webp" for n in (1, 2, 3)] and len(urls) == len(set(urls))
+    assert set(urls) == {rp.BASE + f for k in rp.TYPES for f in k["files"]}
+    # Another type's option says its type (a choice among ~90, not a blind «Вариант 2»).
+    assert " · " in every[3]["label"] and " · " not in every[0]["label"]
+    boiler = ar.async_get(hass).async_create("Котельная")
+    await ws.send_json({"id": 11, "type": rp.OPTIONS, "area_id": boiler.id, "all": True})
+    assert [o["url"] for o in (await ws.receive_json())["result"]][:3] == [f"/hauflo_static/rooms/boiler-{n}.webp" for n in (1, 2, 3)]
+    # A room by name only; neither name nor area; both.
+    await ws.send_json({"id": 12, "type": rp.OPTIONS, "name": "Котельная"})
+    assert (await ws.receive_json())["result"][0]["url"] == "/hauflo_static/rooms/boiler-1.webp"
+    await ws.send_json({"id": 13, "type": rp.OPTIONS})
+    assert (await ws.receive_json())["error"]["code"] == "invalid_format"
+    await ws.send_json({"id": 14, "type": rp.OPTIONS, "name": "Дом", "area_id": boiler.id})
+    assert not (await ws.receive_json())["success"]

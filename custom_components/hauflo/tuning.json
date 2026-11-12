@@ -42,6 +42,8 @@
     "push_day_critical": 200,
     "repeat_fast": 12,
     "repeat_slow_min": 60,
+    "native_fast_rounds": 3,
+    "native_form": 2,
     "test_gap_s": 20,
     "test_per_min": 10,
     "group_min": 3,
@@ -314,7 +316,10 @@
     "max_only_if": 5,
     "max_set": 100,
     "state_classes": {"motion": ["motion", "occupancy", "presence"], "door": ["door"], "window": ["window"], "opening": ["opening", "garage_door"]},
-    "state_all_margin_s": 1
+    "state_all_margin_s": 1,
+    "max_ramps": 4,
+    "max_ramp_min": 60,
+    "script_never_domains": ["lock", "alarm_control_panel", "valve", "siren", "water_heater"]
   },
   "insight": {
     "inputs_max": 12,

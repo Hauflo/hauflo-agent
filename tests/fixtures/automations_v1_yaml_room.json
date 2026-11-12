@@ -1,0 +1,831 @@
+{
+ "climate_fan_plug": {
+  "actions": [
+   {
+    "action": "climate.set_temperature",
+    "data": {
+     "temperature": 21.5
+    },
+    "target": {
+     "entity_id": "climate.living"
+    }
+   },
+   {
+    "action": "climate.set_hvac_mode",
+    "data": {
+     "hvac_mode": "heat"
+    },
+    "target": {
+     "entity_id": "climate.living"
+    }
+   },
+   {
+    "action": "climate.set_hvac_mode",
+    "data": {
+     "hvac_mode": "off"
+    },
+    "target": {
+     "entity_id": "climate.living"
+    }
+   },
+   {
+    "action": "fan.turn_on",
+    "target": {
+     "entity_id": "fan.living"
+    }
+   },
+   {
+    "action": "fan.turn_off",
+    "target": {
+     "entity_id": "fan.living"
+    }
+   },
+   {
+    "action": "switch.turn_on",
+    "target": {
+     "entity_id": "switch.living_plug"
+    }
+   },
+   {
+    "action": "switch.turn_off",
+    "target": {
+     "entity_id": "switch.living_plug"
+    }
+   }
+  ],
+  "alias": "Hauflo · Automation",
+  "conditions": [],
+  "description": "At 06:30: setpoint 21.5 °C — living; mode “Heat” — living; mode “Off” — living; switch on — living; switch off — living; switch on — Living plug; switch off — Living plug. Made in Hauflo.",
+  "id": "hauflo_auto_0123456789ab",
+  "mode": "single",
+  "triggers": [
+   {
+    "at": "06:30:00",
+    "trigger": "time"
+   }
+  ]
+ },
+ "iphone_days": {
+  "actions": [
+   {
+    "condition": "or",
+    "conditions": [
+     {
+      "condition": "template",
+      "value_template": "{{ hauflo_check | default(false) }}"
+     },
+     {
+      "condition": "and",
+      "conditions": [
+       {
+        "condition": "time",
+        "weekday": [
+         "mon",
+         "tue"
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "action": "cover.open_cover",
+    "target": {
+     "entity_id": "cover.living_blind"
+    }
+   }
+  ],
+  "alias": "Hauflo · Automation",
+  "conditions": [],
+  "description": "On Mon, Tue at the iPhone's alarm: open — living blind. Made in Hauflo.",
+  "id": "hauflo_auto_0123456789ab",
+  "mode": "single",
+  "triggers": [
+   {
+    "event_type": "CODE",
+    "trigger": "event"
+   }
+  ]
+ },
+ "only_if": {
+  "actions": [
+   {
+    "action": "light.turn_off",
+    "target": {
+     "area_id": [
+      "AREA"
+     ],
+     "entity_id": [
+      "light.bed"
+     ]
+    }
+   }
+  ],
+  "alias": "Hauflo · Automation",
+  "conditions": [
+   {
+    "after": "22:00:00",
+    "before": "06:00:00",
+    "condition": "time"
+   },
+   {
+    "condition": "or",
+    "conditions": [
+     {
+      "after": "sunset",
+      "condition": "sun"
+     },
+     {
+      "before": "sunrise",
+      "condition": "sun"
+     }
+    ]
+   }
+  ],
+  "description": "At 23:00: switch off — lights (everywhere; 3 devices as of saving). Only if between 22:00 and 06:00 and it's dark. Made in Hauflo.",
+  "id": "hauflo_auto_0123456789ab",
+  "mode": "single",
+  "triggers": [
+   {
+    "at": "23:00:00",
+    "trigger": "time"
+   }
+  ]
+ },
+ "per_entity": {
+  "actions": [
+   {
+    "action": "cover.close_cover",
+    "target": {
+     "entity_id": "cover.living_blind"
+    }
+   },
+   {
+    "action": "light.turn_on",
+    "data": {
+     "brightness_pct": 30
+    },
+    "target": {
+     "entity_id": "light.living_ceiling"
+    }
+   },
+   {
+    "action": "light.turn_off",
+    "target": {
+     "entity_id": "light.living_lamp"
+    }
+   },
+   {
+    "action": "cover.open_cover",
+    "target": {
+     "entity_id": "cover.living_blind"
+    }
+   }
+  ],
+  "alias": "Hauflo · Закат",
+  "conditions": [],
+  "description": "15 min before sunset: close — living blind; brightness 30 % — living ceiling; switch off — living lamp; open — living blind. Made in Hauflo.",
+  "id": "hauflo_auto_0123456789ab",
+  "mode": "single",
+  "triggers": [
+   {
+    "event": "sunset",
+    "offset": "-00:15:00",
+    "trigger": "sun"
+   }
+  ]
+ },
+ "position_scene": {
+  "actions": [
+   {
+    "action": "cover.set_cover_position",
+    "data": {
+     "position": 40
+    },
+    "target": {
+     "entity_id": "cover.living_blind"
+    }
+   },
+   {
+    "action": "scene.turn_on",
+    "target": {
+     "entity_id": "scene.living_evening"
+    }
+   }
+  ],
+  "alias": "Hauflo · Automation",
+  "conditions": [
+   {
+    "condition": "time",
+    "weekday": [
+     "mon",
+     "fri"
+    ]
+   }
+  ],
+  "description": "On Mon, Fri 20 min after sunrise: position 40 % — living blind; scene — living evening. Made in Hauflo.",
+  "id": "hauflo_auto_0123456789ab",
+  "mode": "single",
+  "triggers": [
+   {
+    "event": "sunrise",
+    "offset": "00:20:00",
+    "trigger": "sun"
+   }
+  ]
+ },
+ "presence": {
+  "actions": [
+   {
+    "action": "light.turn_off",
+    "target": {
+     "area_id": "AREA"
+    }
+   }
+  ],
+  "alias": "Hauflo · Automation",
+  "conditions": [],
+  "description": "When everyone has left: switch off — lights (Гостиная). Made in Hauflo.",
+  "id": "hauflo_auto_0123456789ab",
+  "mode": "single",
+  "triggers": [
+   {
+    "below": 1,
+    "entity_id": "zone.home",
+    "trigger": "numeric_state"
+   }
+  ]
+ },
+ "ramp_android": {
+  "actions": [
+   {
+    "action": "cover.set_cover_position",
+    "data": {
+     "position": 40
+    },
+    "target": {
+     "entity_id": "cover.living_blind"
+    }
+   },
+   {
+    "action": "light.turn_on",
+    "data": {
+     "brightness_pct": 2
+    },
+    "target": {
+     "entity_id": "light.living_ceiling"
+    }
+   },
+   {
+    "delay": {
+     "seconds": 100
+    }
+   },
+   {
+    "action": "light.turn_on",
+    "data": {
+     "brightness_pct": 4
+    },
+    "target": {
+     "entity_id": "light.living_ceiling"
+    }
+   },
+   {
+    "delay": {
+     "seconds": 100
+    }
+   },
+   {
+    "action": "light.turn_on",
+    "data": {
+     "brightness_pct": 6
+    },
+    "target": {
+     "entity_id": "light.living_ceiling"
+    }
+   },
+   {
+    "delay": {
+     "seconds": 100
+    }
+   },
+   {
+    "action": "light.turn_on",
+    "data": {
+     "brightness_pct": 8
+    },
+    "target": {
+     "entity_id": "light.living_ceiling"
+    }
+   },
+   {
+    "delay": {
+     "seconds": 100
+    }
+   },
+   {
+    "action": "light.turn_on",
+    "data": {
+     "brightness_pct": 10
+    },
+    "target": {
+     "entity_id": "light.living_ceiling"
+    }
+   },
+   {
+    "delay": {
+     "seconds": 100
+    }
+   },
+   {
+    "action": "light.turn_on",
+    "data": {
+     "brightness_pct": 12
+    },
+    "target": {
+     "entity_id": "light.living_ceiling"
+    }
+   },
+   {
+    "delay": {
+     "seconds": 100
+    }
+   },
+   {
+    "action": "light.turn_on",
+    "data": {
+     "brightness_pct": 15
+    },
+    "target": {
+     "entity_id": "light.living_ceiling"
+    }
+   },
+   {
+    "delay": {
+     "seconds": 100
+    }
+   },
+   {
+    "action": "light.turn_on",
+    "data": {
+     "brightness_pct": 17
+    },
+    "target": {
+     "entity_id": "light.living_ceiling"
+    }
+   },
+   {
+    "delay": {
+     "seconds": 100
+    }
+   },
+   {
+    "action": "light.turn_on",
+    "data": {
+     "brightness_pct": 19
+    },
+    "target": {
+     "entity_id": "light.living_ceiling"
+    }
+   },
+   {
+    "delay": {
+     "seconds": 100
+    }
+   },
+   {
+    "action": "light.turn_on",
+    "data": {
+     "brightness_pct": 21
+    },
+    "target": {
+     "entity_id": "light.living_ceiling"
+    }
+   },
+   {
+    "delay": {
+     "seconds": 100
+    }
+   },
+   {
+    "action": "light.turn_on",
+    "data": {
+     "brightness_pct": 23
+    },
+    "target": {
+     "entity_id": "light.living_ceiling"
+    }
+   },
+   {
+    "delay": {
+     "seconds": 100
+    }
+   },
+   {
+    "action": "light.turn_on",
+    "data": {
+     "brightness_pct": 25
+    },
+    "target": {
+     "entity_id": "light.living_ceiling"
+    }
+   }
+  ],
+  "alias": "Hauflo · Automation",
+  "conditions": [],
+  "description": "20 min before the alarm of “Pixel next alarm”: fade up to 25 % over 20 min — living ceiling; position 40 % — living blind. Made in Hauflo.",
+  "id": "hauflo_auto_0123456789ab",
+  "mode": "single",
+  "triggers": [
+   {
+    "at": {
+     "entity_id": "sensor.pixel_next_alarm",
+     "offset": "-00:20:00"
+    },
+    "trigger": "time"
+   }
+  ]
+ },
+ "room_covers": {
+  "actions": [
+   {
+    "action": "cover.set_cover_position",
+    "data": {
+     "position": 30
+    },
+    "target": {
+     "entity_id": [
+      "cover.living_blind"
+     ]
+    }
+   },
+   {
+    "action": "cover.close_cover",
+    "target": {
+     "entity_id": [
+      "cover.living_blind"
+     ]
+    }
+   }
+  ],
+  "alias": "Hauflo · Automation",
+  "conditions": [],
+  "description": "At 21:00: position 30 % — blinds (Гостиная; 1 device as of saving); close — blinds (Гостиная; 1 device as of saving). Made in Hauflo.",
+  "id": "hauflo_auto_0123456789ab",
+  "mode": "single",
+  "triggers": [
+   {
+    "at": "21:00:00",
+    "trigger": "time"
+   }
+  ]
+ },
+ "room_off": {
+  "actions": [
+   {
+    "action": "light.turn_off",
+    "target": {
+     "area_id": "AREA"
+    }
+   },
+   {
+    "action": "scene.turn_on",
+    "target": {
+     "entity_id": "scene.living_evening"
+    }
+   }
+  ],
+  "alias": "Hauflo · Automation",
+  "conditions": [
+   {
+    "condition": "time",
+    "weekday": [
+     "sat",
+     "sun"
+    ]
+   }
+  ],
+  "description": "On weekends at 23:30: switch off — lights (Гостиная); scene — living evening. Made in Hauflo.",
+  "id": "hauflo_auto_0123456789ab",
+  "mode": "single",
+  "triggers": [
+   {
+    "at": "23:30:00",
+    "trigger": "time"
+   }
+  ]
+ },
+ "set": {
+  "actions": [
+   {
+    "action": "light.turn_on",
+    "data": {
+     "brightness_pct": 60
+    },
+    "target": {
+     "area_id": [
+      "AREA"
+     ],
+     "entity_id": [
+      "light.bed"
+     ]
+    }
+   },
+   {
+    "action": "cover.set_cover_position",
+    "data": {
+     "position": 40
+    },
+    "target": {
+     "entity_id": [
+      "cover.living_blind"
+     ]
+    }
+   },
+   {
+    "action": "scene.turn_on",
+    "target": {
+     "entity_id": [
+      "scene.living_evening"
+     ]
+    }
+   },
+   {
+    "action": "light.turn_off",
+    "target": {
+     "area_id": [
+      "AREA"
+     ]
+    }
+   },
+   {
+    "action": "cover.open_cover",
+    "target": {
+     "entity_id": [
+      "cover.living_blind"
+     ]
+    }
+   },
+   {
+    "action": "light.turn_on",
+    "target": {
+     "entity_id": [
+      "light.living_lamp"
+     ]
+    }
+   }
+  ],
+  "alias": "Hauflo · Automation",
+  "conditions": [],
+  "description": "At 07:00: brightness 60 % — lights (everywhere; 3 devices as of saving); position 40 % — blinds (Гостиная; 1 device as of saving); scene — living evening; switch off — lights (Гостиная), living ceiling; open — blinds (everywhere; 1 device as of saving); switch on — living lamp. Made in Hauflo.",
+  "id": "hauflo_auto_0123456789ab",
+  "mode": "single",
+  "triggers": [
+   {
+    "at": "07:00:00",
+    "trigger": "time"
+   }
+  ]
+ },
+ "two_ramps": {
+  "actions": [
+   {
+    "parallel": [
+     {
+      "sequence": [
+       {
+        "action": "light.turn_on",
+        "data": {
+         "brightness_pct": 5
+        },
+        "target": {
+         "entity_id": "light.living_ceiling"
+        }
+       },
+       {
+        "delay": {
+         "seconds": 30
+        }
+       },
+       {
+        "action": "light.turn_on",
+        "data": {
+         "brightness_pct": 10
+        },
+        "target": {
+         "entity_id": "light.living_ceiling"
+        }
+       },
+       {
+        "delay": {
+         "seconds": 30
+        }
+       },
+       {
+        "action": "light.turn_on",
+        "data": {
+         "brightness_pct": 15
+        },
+        "target": {
+         "entity_id": "light.living_ceiling"
+        }
+       },
+       {
+        "delay": {
+         "seconds": 30
+        }
+       },
+       {
+        "action": "light.turn_on",
+        "data": {
+         "brightness_pct": 20
+        },
+        "target": {
+         "entity_id": "light.living_ceiling"
+        }
+       },
+       {
+        "delay": {
+         "seconds": 30
+        }
+       },
+       {
+        "action": "light.turn_on",
+        "data": {
+         "brightness_pct": 25
+        },
+        "target": {
+         "entity_id": "light.living_ceiling"
+        }
+       },
+       {
+        "delay": {
+         "seconds": 30
+        }
+       },
+       {
+        "action": "light.turn_on",
+        "data": {
+         "brightness_pct": 30
+        },
+        "target": {
+         "entity_id": "light.living_ceiling"
+        }
+       },
+       {
+        "delay": {
+         "seconds": 30
+        }
+       },
+       {
+        "action": "light.turn_on",
+        "data": {
+         "brightness_pct": 35
+        },
+        "target": {
+         "entity_id": "light.living_ceiling"
+        }
+       },
+       {
+        "delay": {
+         "seconds": 30
+        }
+       },
+       {
+        "action": "light.turn_on",
+        "data": {
+         "brightness_pct": 40
+        },
+        "target": {
+         "entity_id": "light.living_ceiling"
+        }
+       },
+       {
+        "delay": {
+         "seconds": 30
+        }
+       },
+       {
+        "action": "light.turn_on",
+        "data": {
+         "brightness_pct": 45
+        },
+        "target": {
+         "entity_id": "light.living_ceiling"
+        }
+       },
+       {
+        "delay": {
+         "seconds": 30
+        }
+       },
+       {
+        "action": "light.turn_on",
+        "data": {
+         "brightness_pct": 50
+        },
+        "target": {
+         "entity_id": "light.living_ceiling"
+        }
+       }
+      ]
+     },
+     {
+      "sequence": [
+       {
+        "action": "light.turn_on",
+        "data": {
+         "brightness_pct": 2
+        },
+        "target": {
+         "entity_id": "light.bed"
+        }
+       },
+       {
+        "delay": {
+         "seconds": 30
+        }
+       },
+       {
+        "action": "light.turn_on",
+        "data": {
+         "brightness_pct": 3
+        },
+        "target": {
+         "entity_id": "light.bed"
+        }
+       },
+       {
+        "delay": {
+         "seconds": 30
+        }
+       },
+       {
+        "action": "light.turn_on",
+        "data": {
+         "brightness_pct": 5
+        },
+        "target": {
+         "entity_id": "light.bed"
+        }
+       },
+       {
+        "delay": {
+         "seconds": 30
+        }
+       },
+       {
+        "action": "light.turn_on",
+        "data": {
+         "brightness_pct": 7
+        },
+        "target": {
+         "entity_id": "light.bed"
+        }
+       },
+       {
+        "delay": {
+         "seconds": 30
+        }
+       },
+       {
+        "action": "light.turn_on",
+        "data": {
+         "brightness_pct": 8
+        },
+        "target": {
+         "entity_id": "light.bed"
+        }
+       },
+       {
+        "delay": {
+         "seconds": 30
+        }
+       },
+       {
+        "action": "light.turn_on",
+        "data": {
+         "brightness_pct": 10
+        },
+        "target": {
+         "entity_id": "light.bed"
+        }
+       }
+      ]
+     }
+    ]
+   }
+  ],
+  "alias": "Hauflo · Automation",
+  "conditions": [],
+  "description": "At 06:00: fade up to 50 % over 5 min — living ceiling; fade up to 10 % over 3 min — bed. Made in Hauflo.",
+  "id": "hauflo_auto_0123456789ab",
+  "mode": "single",
+  "triggers": [
+   {
+    "at": "06:00:00",
+    "trigger": "time"
+   }
+  ]
+ }
+}

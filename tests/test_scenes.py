@@ -317,3 +317,29 @@ async def test_scene_editor_saving_meanwhile_is_never_lost(hass: HomeAssistant, 
     with pytest.raises(scenes.NotPlain):
         yamlfile.write(hass.config.path("scenes.yaml"), hass.config.path(scenes.BACKUP), 3, [], dump([THEIRS]), scenes.NotPlain, lambda rows: rows)
     assert Path(hass.config.path("scenes.yaml")).read_text().startswith("# by hand")
+
+
+async def test_refusals_said_in_the_page_language(hass: HomeAssistant, hass_client, entry) -> None:
+    """Р83 polish: a name of dots, a 61st scene, a scene deleted meanwhile, a full «Днём не включать» list — sentences of
+    the page's language with a code, not «name» / «no such scene»."""
+    import json  # noqa: PLC0415
+
+    from custom_components.hauflo import daylight, scenes  # noqa: PLC0415
+
+    client = await hass_client()
+    tr = lambda key, lang, **ph: json.loads((Path(scenes.__file__).parent / "translations" / f"{lang}.json").read_text())["exceptions"][key]["message"].format(**ph)  # noqa: E731
+    for lang in ("ru", "en"):
+        res = await client.post(URL, json={"op": "add", "room": "bed", "kind": "l", "name": "…", "entities": [LIGHT], "lang": lang})
+        assert res.status == 400 and await res.json() == {"message": tr("scenes_bad_name", lang), "code": "bad_name"}
+        for op in ("delete", "rename", "recapture"):  # deleted on another phone meanwhile
+            res = await client.post(URL, json={"op": op, "entity_id": "scene.gone", "name": "A", "entities": [LIGHT], "lang": lang})
+            assert res.status == 404 and await res.json() == {"message": tr("scenes_no_scene", lang), "code": "no_scene"}, op
+        er.async_get(hass).async_get_or_create("scene", "homeassistant", "hauflo_fam_bed_l_abc123", suggested_object_id="left")
+        res = await client.post(URL, json={"op": "rename", "entity_id": "scene.left", "name": "A", "lang": lang})  # not in the file
+        assert res.status == 404 and await res.json() == {"message": tr("scenes_no_scene", lang), "code": "no_scene"}
+        with patch.object(scenes, "MAX_FAMILY", 0):
+            res = await client.post(URL, json={"op": "add", "room": "bed", "kind": "l", "name": "Кино", "entities": [LIGHT], "lang": lang})
+            assert res.status == 400 and await res.json() == {"message": tr("scenes_too_many", lang, n=0), "code": "too_many"}
+        with patch.object(daylight, "MAX_SKIP", 0):
+            res = await client.post(URL, json={"op": "daylight_skip", "entity_id": LAMP, "on": True, "lang": lang})
+            assert res.status == 400 and await res.json() == {"message": tr("daylight_skip_full", lang, n=0), "code": "skip_full"}

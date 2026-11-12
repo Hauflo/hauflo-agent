@@ -16,6 +16,7 @@ FILE = Path(__file__).with_name("rules_canon.json")
 _pos = vol.All(vol.Coerce(float), vol.Range(min=0))
 _int = vol.All(int, vol.Range(min=0))
 _pair = vol.All([vol.Coerce(float)], vol.Length(min=2, max=2))
+_ipair = vol.All([vol.All(int, vol.Range(min=1))], vol.Length(min=2, max=2))
 _SAFE = vol.In(["off", "notify"])
 _PRIORITY = vol.In(["safety", "comfort"])
 
@@ -143,6 +144,9 @@ SCHEMA = vol.Schema(
             vol.Required("text_len"): _int,
             vol.Required("client_acts"): [str],
             vol.Required("client_domains"): [str],
+            vol.Required("client_classes"): {str: [str]},
+            vol.Required("group_domains"): [str],
+            vol.Required("repeat"): {vol.Required("count"): _ipair, vol.Required("every_s"): _ipair, vol.Required("acts"): [str], vol.Required("source"): str},
             vol.Required("source"): str,
         },
         vol.Required("schedule"): {
@@ -198,6 +202,11 @@ def load(path: Path = FILE) -> dict[str, Any]:
     lo, hi = data["actions"]["pulse_s"]
     if not 0 < lo <= data["actions"]["pulse_default_s"] <= hi:
         raise vol.Invalid("actions: pulse_default_s out of pulse_s")
+    client = data["actions"]
+    if any(d not in client["client_domains"] for d in (*client["client_classes"], *client["group_domains"])) or any(a not in client["client_acts"] for a in client["repeat"]["acts"]):
+        raise vol.Invalid("actions: client_classes / group_domains / repeat out of the client's domains and acts")
+    if not 2 <= client["repeat"]["count"][0] <= client["repeat"]["count"][1] or not 0 < client["repeat"]["every_s"][0] <= client["repeat"]["every_s"][1]:  # noqa: PLR2004 — once is no repeat
+        raise vol.Invalid("actions: repeat count from 2, every_s above 0")
     for r in data["schedule_recipes"]:
         if r["purpose"] not in data["purposes"]:
             raise vol.Invalid(f"schedule recipe {r['id']}: unknown purpose {r['purpose']}")

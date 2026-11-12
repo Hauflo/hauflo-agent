@@ -76,7 +76,7 @@ ID_BYTES = 5  # a generated rule id: «r» + 10 hex
 TODO = "_todo"  # the timer of the deferred writes (rule ids never start with «_»)
 LANGS = ("ru", "en")
 AT = "at"  # a schedule rule: moments → actions, no input
-FEATURES = ("schedule", "actions_by_domain")  # the answer's «features»: what this agent's API takes (0.34)
+FEATURES = ("schedule", "actions_by_domain", "repeat")  # the answer's «features»: what this agent's API takes (0.34)
 WHENS = ("below", "above", "outside", "between", "on", "off", AT)
 DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 RANGES = ("below", "above", "outside", "between")
@@ -373,6 +373,36 @@ def supports(st: Any, spec: dict[str, Any]) -> bool:
     return True
 
 
+def classes_of(hass: HomeAssistant, eid: str) -> set[str]:
+    """An entity's device class as HA has it: the state's, the registry's (a person's choice), the integration's."""
+    st, ent = hass.states.get(eid), er.async_get(hass).async_get(eid)
+    return {c for c in ((st.attributes.get("device_class") if st else None), *((ent.device_class, ent.original_device_class) if ent else ())) if c}
+
+
+def client_class_ok(hass: HomeAssistant, eid: str) -> bool:
+    """A client's target of a domain the canon narrows by class (actions.client_classes: a switch only a socket)."""
+    want = C("actions", "client_classes").get(eid.split(".")[0])
+    return want is None or bool(classes_of(hass, eid) & set(want))
+
+
+def clean_repeat(raw: Any, do: str, pulse_s: Any = None) -> dict[str, int] | None:
+    """«Повторить N раз через M с» (canon actions.repeat): only an action that does something each time (a press, a
+    pulse, a toggle, a scene, a script); a pulse's pause longer than the pulse itself."""
+    if raw is None:
+        return None
+    r = C("actions", "repeat")
+    (lo, hi), (s_lo, s_hi) = r["count"], r["every_s"]
+    bad = Invalid("bad_action", "rules_bad_repeat", lo=lo, hi=hi, s_lo=s_lo, s_hi=s_hi)
+    if do not in r["acts"] or not isinstance(raw, dict) or set(raw) - {"count", "every_s"}:
+        raise bad
+    n, every = raw.get("count"), raw.get("every_s")
+    if any(isinstance(v, bool) or not isinstance(v, int) for v in (n, every)) or not lo <= n <= hi or not s_lo <= every <= s_hi:
+        raise bad
+    if isinstance(pulse_s, (int, float)) and every <= pulse_s:
+        raise bad
+    return {"count": n, "every_s": every}
+
+
 def clean_action(raw: Any, env: Env) -> dict[str, Any]:
     lim = C("limits")
     do = raw.get("do") if isinstance(raw, dict) else None
@@ -394,7 +424,7 @@ def clean_action(raw: Any, env: Env) -> dict[str, Any]:
     spec = spec_of(eid, do)
     if spec is None:  # not in the canon table: a lock / the alarm (never there), a valve opening, a do of another domain
         raise Invalid("bad_action", "rules_bad_action", do=do, entity=eid)
-    if env.client and domain not in C("actions", "client_domains"):
+    if env.client and (domain not in C("actions", "client_domains") or not client_class_ok(env.hass, eid)):
         raise Invalid("not_allowed", "rules_client_action")
     # A valve only closes (and only Hauflo's own); everything else: Hauflo's own and never a lock / the alarm / a gate.
     if not env.may_change(eid):
@@ -404,6 +434,8 @@ def clean_action(raw: Any, env: Env) -> dict[str, Any]:
     out: dict[str, Any] = {"do": do, "entity_id": eid}
     if (kind := spec.get("value")) is not None:
         out["value"] = action_value(kind, spec, do, raw.get("value"), env.hass.states.get(eid))
+    if (again := clean_repeat(raw.get("repeat"), do, out["value"] if kind == "seconds" else None)) is not None:
+        out["repeat"] = again
     return out
 
 
@@ -837,7 +869,64 @@ def _redact(out: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-class Rules:
+class Texts:
+    """The agent's texts in both languages: translations («exceptions»), HA's option labels, devices by name.
+
+    One place for every refusal / description a person reads (rules, automations): `say` a key, `words` its placeholders.
+    """
+
+    def __init__(self, hass: HomeAssistant) -> None:
+        self.hass = hass
+        self.texts: dict[str, dict[str, str]] = {lang: {} for lang in LANGS}
+        # HA's own labels of option values (climate «Не дома», water heater «Эко»…) — a refusal lists them in words.
+        self.labels: dict[str, dict[str, str]] = {lang: {} for lang in LANGS}
+
+    async def async_texts(self) -> None:
+        prefix, suffix = f"component.{DOMAIN}.exceptions.", ".message"
+        for lang in LANGS:
+            tr = await translation.async_get_translations(self.hass, lang, "exceptions", [DOMAIN])
+            self.texts[lang] = {k[len(prefix) : -len(suffix)]: v for k, v in tr.items() if k.startswith(prefix) and k.endswith(suffix)}
+            self.labels[lang] = await translation.async_get_translations(self.hass, lang, "entity_component", OPTION_DOMAINS)
+
+    def say(self, key: str, ru: bool, **ph: Any) -> str:
+        text = self.texts[LANGS[0] if ru else LANGS[1]].get(key) or self.texts[LANGS[1]].get(key) or key
+        try:
+            return text.format(**ph)
+        except (KeyError, IndexError, ValueError):
+            return text
+
+    def who(self, eid: Any) -> Any:
+        """A device in a text: what a person calls it (notify.label), never its entity id."""
+        return label(self.hass, eid) if isinstance(eid, str) and _ENTITY_RE.match(eid) else eid
+
+    def option_label(self, ru: bool, domain: Any, field: Any, option: str) -> str:
+        """An option value as HA names it in the language (its state attribute's labels, else the domain's states), else as is."""
+        labels = self.labels[LANGS[0] if ru else LANGS[1]]
+        root = f"component.{domain}.entity_component._."
+        return labels.get(f"{root}state_attributes.{field}.state.{option}") or labels.get(f"{root}state.{option}") or option
+
+    def words(self, ru: bool, ph: dict[str, Any]) -> dict[str, Any]:
+        """A refusal's placeholders in words: an action by its name (rules_do_…), a device by its name, options by HA's labels."""
+        out = {k: self.who(v) if k in ("entity", "other") else v for k, v in ph.items()}
+        for k in ("do", "what"):
+            if isinstance(v := out.get(k), str) and f"rules_do_{v}" in self.texts[LANGS[1]]:
+                out[k] = self.say(f"rules_do_{v}", ru)
+        if isinstance(opts := out.get("options"), (list, tuple)):
+            out["options"] = ", ".join(self.option_label(ru, out.get("domain"), out.get("field"), str(o)) for o in opts) or "—"
+        return out
+
+    def refusal(self, err: Invalid) -> dict[str, Any]:
+        return {"code": err.code, "key": err.key, "message": self.say(err.key, False, **self.words(False, err.ph)), "message_ru": self.say(err.key, True, **self.words(True, err.ph))}
+
+
+async def said(hass: HomeAssistant, err: Invalid, ru: bool) -> dict[str, Any]:
+    """A keyed refusal as a page shows it: its text in the request's language (never a key, an id), its code."""
+    tx = Texts(hass)
+    await tx.async_texts()
+    return {"message": tx.say(err.key, ru, **tx.words(ru, err.ph)), "code": err.code}
+
+
+class Rules(Texts):
     """Every value rule and derived value of the house (one per loaded entry)."""
 
     def __init__(
@@ -882,9 +971,8 @@ class Rules:
         self.todo: list[dict[str, Any]] = []
         self.pulses: dict[str, dict[str, Any]] = {}  # target → {rule, until}: a pulse's «off» due (kept over a restart)
         self._pulse_timers: dict[str, CALLBACK_TYPE] = {}
-        self.texts: dict[str, dict[str, str]] = {lang: {} for lang in LANGS}
-        # HA's own labels of option values (climate «Не дома», water heater «Эко»…) — a refusal lists them in words.
-        self.labels: dict[str, dict[str, str]] = {lang: {} for lang in LANGS}
+        self._repeat_timers: dict[str, list[CALLBACK_TYPE]] = {}  # rule → its «повторить» timers (not kept over a restart)
+        Texts.__init__(self, hass)
         self.names: dict[str, dict[str, str]] = {}  # its sensors' names in the house's language (const.site_name)
         self.entry_id: str | None = None
         self.add_binary: Callable[[list[Any]], None] | None = None
@@ -913,45 +1001,11 @@ class Rules:
         """The house's one language (const.site_ru): the project's, else HA's — as the alarms' pushes say it."""
         return site_ru(self.hass.config.language, getattr(self.notify_of(), "config", None))
 
-    # --- texts (translations, «exceptions» → rules_…) -------------------------------------------------------------------
+    # --- texts (translations, «exceptions» → rules_…): Texts; the rules also load their sensors' names -------------------
 
     async def async_texts(self) -> None:
-        prefix, suffix = f"component.{DOMAIN}.exceptions.", ".message"
-        for lang in LANGS:
-            tr = await translation.async_get_translations(self.hass, lang, "exceptions", [DOMAIN])
-            self.texts[lang] = {k[len(prefix) : -len(suffix)]: v for k, v in tr.items() if k.startswith(prefix) and k.endswith(suffix)}
-            self.labels[lang] = await translation.async_get_translations(self.hass, lang, "entity_component", OPTION_DOMAINS)
+        await super().async_texts()
         self.names = await async_entity_names(self.hass)
-
-    def say(self, key: str, ru: bool, **ph: Any) -> str:
-        text = self.texts[LANGS[0] if ru else LANGS[1]].get(key) or self.texts[LANGS[1]].get(key) or key
-        try:
-            return text.format(**ph)
-        except (KeyError, IndexError, ValueError):
-            return text
-
-    def who(self, eid: Any) -> Any:
-        """A device in a text: what a person calls it (notify.label), never its entity id."""
-        return label(self.hass, eid) if isinstance(eid, str) and _ENTITY_RE.match(eid) else eid
-
-    def option_label(self, ru: bool, domain: Any, field: Any, option: str) -> str:
-        """An option value as HA names it in the language (its state attribute's labels, else the domain's states), else as is."""
-        labels = self.labels[LANGS[0] if ru else LANGS[1]]
-        root = f"component.{domain}.entity_component._."
-        return labels.get(f"{root}state_attributes.{field}.state.{option}") or labels.get(f"{root}state.{option}") or option
-
-    def words(self, ru: bool, ph: dict[str, Any]) -> dict[str, Any]:
-        """A refusal's placeholders in words: an action by its name (rules_do_…), a device by its name, options by HA's labels."""
-        out = {k: self.who(v) if k in ("entity", "other") else v for k, v in ph.items()}
-        for k in ("do", "what"):
-            if isinstance(v := out.get(k), str) and f"rules_do_{v}" in self.texts[LANGS[1]]:
-                out[k] = self.say(f"rules_do_{v}", ru)
-        if isinstance(opts := out.get("options"), (list, tuple)):
-            out["options"] = ", ".join(self.option_label(ru, out.get("domain"), out.get("field"), str(o)) for o in opts) or "—"
-        return out
-
-    def refusal(self, err: Invalid) -> dict[str, Any]:
-        return {"code": err.code, "key": err.key, "message": self.say(err.key, False, **self.words(False, err.ph)), "message_ru": self.say(err.key, True, **self.words(True, err.ph))}
 
     # --- storage ------------------------------------------------------------------------------------------------------
 
@@ -1071,12 +1125,13 @@ class Rules:
 
     @callback
     def async_stop(self) -> None:
-        for u in [*self._unsubs, *self._timers.values(), *self._win_timers.values(), *self._pulse_timers.values(), *([self._unsub_tick] if self._unsub_tick else []), *([self._unsub_action] if getattr(self, "_unsub_action", None) else [])]:
+        for u in [*self._unsubs, *self._timers.values(), *self._win_timers.values(), *self._pulse_timers.values(), *(u for us in self._repeat_timers.values() for u in us), *([self._unsub_tick] if self._unsub_tick else []), *([self._unsub_action] if getattr(self, "_unsub_action", None) else [])]:
             u()
         self._unsubs.clear()
         self._timers.clear()
         self._win_timers.clear()
         self._pulse_timers.clear()
+        self._repeat_timers.clear()
         self._unsub_tick = None
         self._unsub_action = None
         for u, _ in self._br_timers.values():
@@ -1771,7 +1826,34 @@ class Rules:
             if not back and self._interlock_off(rule) and powering(a):
                 await self._interlocked(rule, a)
                 continue
-            await self._write(rule, a, why=why, back=back)
+            if await self._write(rule, a, why=why, back=back) and a.get("repeat"):
+                self._repeat_arm(rule["id"], a, back, why, a["repeat"]["count"] - 1)
+
+    @callback
+    def _repeat_arm(self, rid: str, a: dict[str, Any], back: bool, why: str, left: int) -> None:
+        """«Повторить N раз через M с»: the same action again after its pause — while the rule is there, on and
+        unchanged (an edit / delete / switch-off stops what's left, _repeat_stop); each time through _write (its checks)."""
+        if left <= 0:
+            return
+        timers = self._repeat_timers.setdefault(rid, [])
+        me: list[CALLBACK_TYPE] = []
+
+        async def _again(_now: Any) -> None:
+            if me and me[0] in timers:
+                timers.remove(me[0])
+            rule = self.rules.get(rid)
+            if rule is None or not rule["enabled"] or a not in [*rule["actions"], *(rule["back"] if isinstance(rule["back"], list) else [])]:
+                return
+            if await self._write(rule, a, why=why, back=back):
+                self._repeat_arm(rid, a, back, why, left - 1)
+
+        me.append(async_call_later(self.hass, a["repeat"]["every_s"], _again))
+        timers.append(me[0])
+
+    @callback
+    def _repeat_stop(self, rid: str) -> None:
+        for u in self._repeat_timers.pop(rid, []):
+            u()
 
     async def _interlocked(self, rule: dict[str, Any], a: dict[str, Any]) -> None:
         """A heater's «on» held back while its supply fan is off: said, and done once the fan is back (level-based)."""
@@ -2414,7 +2496,7 @@ class Rules:
         out: list[dict[str, Any]] = []
         for s in self.hass.states.async_all(domains):
             eid, domain = s.entity_id, s.domain
-            if not may_change(self.hass, eid, self.owns, self.own_raw):
+            if not may_change(self.hass, eid, self.owns, self.own_raw) or (client and not client_class_ok(self.hass, eid)):
                 continue
             dos = [do for do, spec in table[domain].items() if supports(s, spec) and (acts is None or do in acts)]
             if not dos:
@@ -2464,6 +2546,7 @@ class Rules:
                 "schedule": C("schedule"),
                 "pulse_s": C("actions", "pulse_s"),
                 "text_len": C("actions", "text_len"),
+                "repeat": {k: C("actions", "repeat", k) for k in ("count", "every_s", "acts")},
             },
             "actions_by_domain": C("actions_by_domain"),
             "client_actions": {"acts": C("actions", "client_acts"), "domains": C("actions", "client_domains")},
@@ -2525,6 +2608,7 @@ class Rules:
         if self.st(rid)["sug"] is not None:
             self._dismiss(rule)
         self.rules.pop(rid)
+        self._repeat_stop(rid)
         self.state.pop(rid, None)
         self.win.pop(rid, None)
         self._cancel_todo(rid)
