@@ -7,7 +7,9 @@ part (checked by the tunnel's `_lovelace_ok` like any dashboard); the merge happ
 
 - what has no `hauflo_id`, or one the base doesn't know (the integrator's cards, sections, views) is kept and put back
   next to the Hauflo item it followed — anchor gone: at the end of the same parent; whole local views in place;
-- a Hauflo item edited in HA (≠ base) is a conflict: the integrator's version stays unless he takes Hauflo's;
+- a Hauflo item edited in HA (≠ base) is merged key by key (п.16, 399 13.11): his edit of a key stays where Hauflo
+  left that key as it was or sends the same value, Hauflo's new value goes where he didn't touch the key; one key both
+  changed differently is a conflict — the integrator's version of the item stays unless he takes Hauflo's;
 - a Hauflo item removed in HA stays removed unless he asks to bring it back; one moved stays where he put it;
 - the rest becomes Hauflo's new version.
 
@@ -119,6 +121,7 @@ def _own(node: dict[str, Any], level: int) -> dict[str, Any]:
 SUB_KEYS = ("show_modes", "show_presets", "show_fan", "show_swing", "show_humidity", "hvac_modes", "preset_modes", "fan_modes", "swing_modes")
 USER_KEYS = ("items", "auto", "order", *SUB_KEYS)
 _CARD_PREFIX = "custom:hauflo-"
+_NONE = object()  # a key absent from a node, told from any value
 
 
 def _user_keyed(node: dict[str, Any], level: int) -> bool:
@@ -352,10 +355,31 @@ class Merge:
         lvl = self.B.level[h]
         return _own(self.C.node[h], lvl) != _own(self.B.node[h], lvl)
 
-    def _cloud_edited(self, h: str) -> bool:
-        """Hauflo's own keys edited by the integrator (his rows aside): Hauflo's new version of them is a conflict."""
+    def _merge_own(self, h: str) -> tuple[dict[str, Any], bool]:
+        """Hauflo's own keys of an item in HA (his rows aside), three ways (п.16, 399 13.11: a picture picked in HA and
+        the same picture + new keys from Hauflo waited for a decision): per key, his edit (≠ base) stays where Hauflo
+        left the key as it was or sends the same value; Hauflo's new value goes where he didn't touch the key; a key
+        both changed to different values is a conflict (True) — then the item is his or Hauflo's whole, by `take`."""
         lvl = self.B.level[h]
-        return _cloud(_own(self.C.node[h], lvl), lvl) != _cloud(_own(self.B.node[h], lvl), lvl)
+        b = _cloud(_own(self.B.node[h], lvl), lvl)
+        c = _cloud(_own(self.C.node[h], lvl), lvl)
+        n = _cloud(_own(self.N.node[h], self.N.level[h]), self.N.level[h])
+        out, clash = dict(n), False
+        for k in {*b, *c, *n}:
+            bv, cv, nv = b.get(k, _NONE), c.get(k, _NONE), n.get(k, _NONE)
+            if cv == bv:
+                continue  # untouched by him: Hauflo's
+            if nv == bv or nv == cv:
+                if cv is _NONE:
+                    out.pop(k, None)
+                else:
+                    out[k] = cv
+            else:
+                clash = True
+        return out, clash
+
+    def _clash(self, h: str) -> bool:
+        return self._merge_own(h)[1]
 
     def _moved(self, h: str) -> bool:
         return h in self.C.node and self.C.parent.get(h) != self.B.parent.get(h)
@@ -459,13 +483,16 @@ class Merge:
         own = _cloud(_own(n, lvl), lvl)
         if self._in_current(h):
             cur_own = _own(self.C.node[h], self.B.level[h])
-            if self._cloud_edited(h) and _cloud(cur_own, lvl) != own:
+            merged, clash = self._merge_own(h)
+            if clash:
                 taken = self.take_all or h in self.take
                 self.conflicts.append(self._label(self.B, h, kept="hauflo" if taken else "yours", updated=own != _cloud(_own(self.B.node[h], lvl), lvl)))
                 if not taken:
                     own = _cloud(cur_own, lvl)
                 else:
                     self.taken.append(h)
+            else:
+                own = merged
             # His rows stay his whichever version of Hauflo's keys goes (taken or not).
             if _user_keyed(own, lvl):
                 own = {**own, **_user(cur_own, lvl)}
@@ -770,7 +797,7 @@ class Merge:
             elif not self._in_current(h):
                 if h in restored or any(self._is_under(h, r) for r in restored):
                     bump(self.N, h, "added")
-            elif nn[h] != nb[h] and (not self._cloud_edited(h) or h in taken):
+            elif nn[h] != nb[h] and (h in taken or not self._clash(h)):
                 bump(self.N, h, "changed")
         for h in nb:
             if h not in nn and h not in self.skip and self._in_current(h) and not self._edited(h):
@@ -819,7 +846,7 @@ class Merge:
                 if count[h] > 1:
                     bad.append(h)
                     continue
-                if h in taken or (not self._cloud_edited(h) and _cloud(_own(self.N.node[h], lvl), lvl) != _cloud(_own(self.B.node[h], lvl), lvl)):
+                if h in taken or (not self._clash(h) and _cloud(_own(self.N.node[h], lvl), lvl) != _cloud(_own(self.B.node[h], lvl), lvl)):
                     continue  # Hauflo's new version: in the plan
                 r = R.node.get(h)
                 if r is None or _own(r, lvl) != cur:

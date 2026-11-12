@@ -120,19 +120,55 @@ def test_own_view_and_own_section_stay_in_place():
 
 
 def test_edited_hauflo_card_is_a_conflict_kept_by_default_or_taken():
+    """The same key changed in HA and by Hauflo to different values: his item stays unless he takes Hauflo's."""
     base = hauflo()
     cur = copy.deepcopy(base)
-    cards_of(cur, 0, 1)[1]["features"] = [{"type": "climate-hvac-modes"}]
+    cards_of(cur, 0, 1)[1]["name"] = "Сплит"
     new = hauflo()
     cards_of(new, 0, 1)[1]["name"] = "Кондиционер"
     merged, plan = plan_and_merge(new, cur, base)
     assert cards_of(merged, 0, 1)[1] == cards_of(cur, 0, 1)[1]
     assert plan["conflicts"] == [{"id": "v/living/s:climate/c:t", "kind": "card", "type": "tile", "entity": "climate.living", "where": "Гостиная", "kept": "yours", "updated": True}]
+    assert plan["untouched"] == 0 and plan["pages"] == []
     merged, plan = plan_and_merge(new, cur, base, take=["v/living/s:climate/c:t"])
     assert cards_of(merged, 0, 1)[1] == cards_of(new, 0, 1)[1]
     assert plan["taken"] == 1
     merged, _ = plan_and_merge(new, cur, base, take=True)
     assert merged == new
+
+
+def test_edited_hauflo_item_merges_key_by_key_without_a_conflict():
+    """п.16 (399 13.11): a picture picked in HA on a Hauflo tile, Hauflo's new version with the same picture and new
+    keys (temps, alarms, picture_from) — no conflict, the save goes through with both. Likewise a key Hauflo left as it
+    was (his `features`) next to Hauflo's rename; a key he removed stays removed; the same at section and view level."""
+    base = hauflo()
+    cur = copy.deepcopy(base)
+    kitchen = cards_of(cur, 1, 0)[0]
+    kitchen["picture"] = "/local/hauflo/kitchen.jpg"  # picked in HA
+    cards_of(cur, 0, 1)[1]["features"] = [{"type": "climate-hvac-modes"}]  # his, Hauflo never sends it
+    del cards_of(cur, 0, 0)[1]["entity"]  # removed in HA, Hauflo leaves the key as it was
+    cur["views"][0]["title"] = "Зал"  # the view renamed in HA
+    cur["views"][0]["sections"][0]["column_span"] = 2  # his section setting
+    new = hauflo()
+    cards_of(new, 1, 0)[0].update({"picture": "/local/hauflo/kitchen.jpg", "picture_from": "ha", "temps": ["sensor.kitchen_t"], "alarms": ["binary_sensor.kitchen_leak"]})
+    cards_of(new, 0, 1)[1]["name"] = "Кондиционер"
+    new["views"][0]["icon"] = "mdi:sofa"
+    new["views"][0]["sections"][0]["cards"][0]["heading"] = "Свет"
+    merged, plan = plan_and_merge(new, cur, base)
+    assert plan["conflicts"] == [] and plan["untouched"] == 0 and plan["changes"] is True
+    assert cards_of(merged, 1, 0)[0] == cards_of(new, 1, 0)[0]
+    assert cards_of(merged, 0, 1)[1] == {**cards_of(new, 0, 1)[1], "features": [{"type": "climate-hvac-modes"}]}
+    assert "entity" not in cards_of(merged, 0, 0)[1] and cards_of(merged, 0, 0)[1][ID] == "v/living/s:light/c:l1"
+    assert merged["views"][0]["title"] == "Зал" and merged["views"][0]["icon"] == "mdi:sofa"
+    assert merged["views"][0]["sections"][0]["column_span"] == 2 and merged["views"][0]["sections"][0]["cards"][0]["heading"] == "Свет"
+    assert {r["id"]: r["changed"] for r in plan["pages"]} == {"v/living": 2, "v/kitchen": 1}  # the heading and the climate card; a view is no block
+    # The key he removed, Hauflo now changes: a conflict as before; his version of the card stays.
+    new2 = copy.deepcopy(new)
+    cards_of(new2, 0, 0)[1]["entity"] = "light.living_wall_2"
+    merged, plan = plan_and_merge(new2, cur, base)
+    assert [c["id"] for c in plan["conflicts"]] == ["v/living/s:light/c:l1"]
+    assert cards_of(merged, 0, 0)[1] == cards_of(cur, 0, 0)[1]
+    assert plan["untouched"] == 0
 
 
 def test_automations_tab_moved_into_service_keeps_the_family_cards_on_it():
@@ -241,7 +277,9 @@ def test_plan_carries_no_foreign_entity_id():
     cards_of(cur, 0, 0).append({"type": "tile", "entity": "lock.front_door", "name": "lock.front_door"})
     cur["views"].append({"title": "switch.boiler", "path": "boiler", "cards": [{"type": "button", "entity": "switch.boiler", "tap_action": {"action": "toggle"}}]})
     cards_of(cur, 0, 1)[1]["entity"] = "climate.other_house"  # an edited Hauflo card pointing elsewhere
-    _, plan = plan_and_merge(hauflo(), cur, base)
+    new = hauflo()
+    cards_of(new, 0, 1)[1]["entity"] = "climate.living_2"  # … that Hauflo points elsewhere too: a conflict
+    _, plan = plan_and_merge(new, cur, base)
     text = json.dumps(plan, ensure_ascii=False)
     for foreign in ("switch.garden_valve", "sensor.soil", "lock.front_door", "switch.boiler", "climate.other_house"):
         assert foreign not in text, foreign
@@ -666,7 +704,7 @@ async def test_a_copy_made_before_a_take_save_is_never_pruned(hass: HomeAssistan
 
     def stacked(name="Климат"):
         cfg = hauflo()
-        cards_of(cfg, 0, 1)[1] = {"type": "vertical-stack", ID: "v/living/s:climate/c:t", "title": name, "cards": [{"type": "tile", "entity": "climate.living"}]}
+        cards_of(cfg, 0, 1)[1] = {"type": "vertical-stack", ID: "v/living/s:climate/c:t", "title": name, "cards": [{"type": "tile", "entity": "climate.living", "name": name}]}
         return cfg
 
     agent = entry.runtime_data

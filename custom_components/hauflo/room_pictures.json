@@ -41,7 +41,7 @@
     "auto": false,
     "fallback": "floor",
     "types": [
-      {"id": "service", "label": {"ru": "Сервис, техническое", "en": "Service, technical"}, "match": ["сервис", "служебн", "техн", "щит", "кот[её]л", "service", "technical", "plant", "utility"], "files": ["boiler-1.webp", "electrical-2.webp", "server-1.webp"]},
+      {"id": "service", "label": {"ru": "Сервис, техническое", "en": "Service, technical"}, "match": ["сервис", "служебн", "техн", "щит", "кот[её]л", "service", "technical", "plant", "utility", "boiler", "electrical"], "files": ["boiler-1.webp", "electrical-2.webp", "server-1.webp"]},
       {"id": "outdoor", "label": {"ru": "Улица, двор", "en": "Outdoors, yard"}, "match": ["улиц", "двор", "(^|[^а-яё])сад", "участ", "фасад", "территор", "outdoor", "street", "yard", "garden", "outside"], "files": ["garden-1.webp", "garden-2.webp", "garden-3.webp"]},
       {"id": "garage", "label": {"ru": "Гараж", "en": "Garage"}, "match": ["гараж", "паркинг", "garage", "parking"], "files": ["garage-1.webp", "garage-2.webp", "garage-3.webp"]},
       {"id": "terrace", "label": {"ru": "Терраса, балкон", "en": "Terrace, balcony"}, "match": ["терр", "балкон", "terrace", "balcony"], "files": ["terrace-1.webp", "terrace-2.webp", "terrace-3.webp"]},

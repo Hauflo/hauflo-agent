@@ -150,11 +150,18 @@ def test_his_edit_of_one_copy_is_the_block_kept_his():
     assert_safe(report)
     got = [c for c in blocks(merged) if c["type"] == LIGHTS["type"]]
     assert len(got) == 1 and got[0]["title"] == "Свет у дивана"
-    assert [(c["id"], c["kept"]) for c in report["conflicts"]] == [("v/room/lights:light.a", "yours")]
-    assert report["local"] == []
-    # Taken: Hauflo's version, once.
+    # п.16: his title next to Hauflo's other keys (no grid_options any more) — no conflict, nothing to take.
+    assert report["conflicts"] == [] and report["local"] == []
+    assert got[0] == {**[c for c in blocks(new_room()) if c["type"] == LIGHTS["type"]][0], "title": "Свет у дивана"}
     taken, report = plan_and_merge(new_room(), cur, old, take=["v/room/lights:light.a"])
-    assert blocks(taken) == blocks(new_room()) and report["taken"] == 1
+    assert blocks(taken) == blocks(merged) and report["taken"] == 0
+    # The same key changed by Hauflo too: a conflict, his until taken.
+    renamed = new_room({**LIGHTS, "title": "Освещение"})
+    merged, report = plan_and_merge(renamed, cur, old)
+    assert [(c["id"], c["kept"]) for c in report["conflicts"]] == [("v/room/lights:light.a", "yours")]
+    assert [c["title"] for c in blocks(merged) if c["type"] == LIGHTS["type"]] == ["Свет у дивана"]
+    taken, report = plan_and_merge(renamed, cur, old, take=["v/room/lights:light.a"])
+    assert blocks(taken) == blocks(renamed) and report["taken"] == 1
 
 
 def test_his_edits_of_two_copies_one_is_the_block_the_other_his_card():
@@ -166,7 +173,7 @@ def test_his_edits_of_two_copies_one_is_the_block_the_other_his_card():
     assert_safe(report)
     titles = sorted(c["title"] for c in blocks(merged) if c["type"] == LIGHTS["type"])
     assert titles == ["Свет планшет", "Свет телефон"]
-    assert len(report["conflicts"]) == 1 and [x.get("dropped") for x in report["local"]] == [True]
+    assert report["conflicts"] == [] and [x.get("dropped") for x in report["local"]] == [True]  # п.16: a title Hauflo left is his
 
 
 def test_the_same_edit_in_every_copy_is_one_block():
@@ -377,17 +384,17 @@ def test_a_hauflo_block_moved_out_of_the_layout_stays_out():
 def test_pages_say_what_changes_where_and_nothing_else():
     base = new_room()
     cur = copy.deepcopy(base)
-    layout_of(cur)["cards"][1]["title"] = "Мои шторы"  # his edit: not Hauflo's change
+    layout_of(cur)["cards"][1]["title"] = "Мои шторы"  # his edit stays; Hauflo's new entities of that card still count as its change (п.16)
     new = new_room({**LIGHTS, "entities": ["light.a", "light.b", "light.c"]}, {**COVERS, "entities": ["cover.a", "cover.b"]})
     new["views"].append({"title": "Кухня", "path": "kitchen", "type": "sections", ID: "v/kitchen", "sections": [
         {"type": "grid", ID: "v/kitchen/s:light", "cards": [{"type": "tile", "entity": "light.k", ID: "v/kitchen/tile:light.k"}]}]})
     merged, report = plan_and_merge(new, cur, base)
     assert_safe(report)
     assert report["pages"] == [
-        {"id": "v/room", "title": "Гостиная", "added": 0, "changed": 1, "removed": 0, "before": 3, "after": 3},
+        {"id": "v/room", "title": "Гостиная", "added": 0, "changed": 2, "removed": 0, "before": 3, "after": 3},
         {"id": "v/kitchen", "title": "Кухня", "added": 1, "changed": 0, "removed": 0, "before": 0, "after": 1},
     ]
-    assert layout_of(merged)["cards"][1]["title"] == "Мои шторы"
+    assert layout_of(merged)["cards"][1]["title"] == "Мои шторы" and layout_of(merged)["cards"][1]["entities"] == ["cover.a", "cover.b"]
 
 
 def test_every_item_says_what_it_is():

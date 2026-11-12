@@ -111,14 +111,19 @@ def test_rows_never_leave_the_house_on_a_read():
     assert area_of(read)["type"] == dashmerge.LOCAL and "switch.shelly_kettle" not in json.dumps(read)
 
 
-def test_not_a_hauflo_card_or_a_layout_keeps_the_old_whole_card_rule():
+def test_not_a_hauflo_card_or_a_layout_merges_its_keys_three_ways():
+    """A plain card has no rows of his: every key is Hauflo's, merged key by key (п.16) — his `order` is kept as an
+    ordinary edited key Hauflo left alone, Hauflo's rename applies; the same key changed by both is a conflict."""
     tile = {"type": "tile", "entity": "light.kitchen", ID: AREA}
     base = dash(tile)
     cur = copy.deepcopy(base)
     area_of(cur)["order"] = ["x"]
     new = dash({**tile, "name": "Кухня"})
     merged, plan = plan_and_merge(new, cur, base)
-    assert area_of(merged) == area_of(cur) and [c["kept"] for c in plan["conflicts"]] == ["yours"]
+    assert area_of(merged) == {**tile, "name": "Кухня", "order": ["x"]} and plan["conflicts"] == []
+    cur2 = dash({**tile, "name": "Моя кухня"})
+    merged, plan = plan_and_merge(new, cur2, base)
+    assert area_of(merged) == area_of(cur2) and [c["kept"] for c in plan["conflicts"]] == ["yours"]
 
 
 def test_the_tunnel_check_takes_rows_only_in_their_form():
