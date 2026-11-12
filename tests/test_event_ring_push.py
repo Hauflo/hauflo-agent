@@ -319,3 +319,27 @@ def test_kinds_one_table() -> None:
     table = {k: v for k, v in TUNING["notify"]["event_kinds"].items() if not k.startswith("_")}
     assert list(notify.EVENT_KINDS) == list(table)
     assert notify.C_SOS == {"sos"} and notify.WATCH_KINDS == {"sos", "doorbell"} and notify.RING_KINDS == {"doorbell"}
+
+
+async def test_presses_counted_in_their_own_lane(hass: HomeAssistant, engine) -> None:
+    """TODO п.14 (12.11): a busy button must not use up the alarms' hour — presses have a lane and caps of their own."""
+    import time
+
+    eng, calls = engine
+    foreign.flags(hass).notify[BELL] = True
+    now = time.time()
+    # The alarms' hour is used up on this phone: a press still goes (its own lane), and is logged apart from the alarms.
+    eng._pushes["mobile_app_p"] = [now - 10] * notify.PUSH_HOUR_MAX
+    _ring(hass, BELL)
+    await hass.async_block_till_done()
+    assert len(calls) == 1
+    assert len(eng._pushes["mobile_app_p|event"]) == 1 and len(eng._pushes["mobile_app_p"]) == notify.PUSH_HOUR_MAX
+    # The presses' hour used up: a press is held, an alarm (the other lane) still has room; a critical press goes.
+    eng._pushes["mobile_app_p|event"] = [now - 10] * notify.PUSH_EVENT_HOUR_MAX
+    eng._pushes["mobile_app_p"] = []
+    assert not eng._room("mobile_app_p", False, "event") and eng._room("mobile_app_p", False) and eng._room("mobile_app_p", True, "event")
+    eng._rang[BELL] -= notify.RING_WINDOW + 1
+    _ring(hass, BELL, ago=-2)
+    await hass.async_block_till_done()
+    assert len(calls) == 1 and eng.sent_log[0]["held"] == ["mobile_app_p"]
+    assert notify.PUSH_EVENT_HOUR_MAX > notify.PUSH_HOUR_MAX and notify.PUSH_EVENT_DAY_MAX + notify.PUSH_DAY_MAX + notify.PUSH_DAY_CRITICAL <= 500  # HA's relay: 500 a day per phone

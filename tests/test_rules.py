@@ -575,6 +575,10 @@ async def test_loops_conflicts_targets_and_limits_refused(hass: HomeAssistant, h
     await refused(heater(id="t", name="T", priority="max"), "bad_priority")
     await refused(heater(id="t", name="T", back="sometimes"), "bad_back")
     await refused(heater(id="t", name="T", x="warm"), "bad_number")
+    # p.11a 12.11: a threshold outside the unit's range (500 °C, −100 °C) is a typo on any sensor, foreign ones too.
+    await refused(heater(id="t", name="T", x=500), "bad_number")
+    await refused(heater(id="t", name="T", x=-100), "bad_number")
+    await refused(heater(id="t", name="T", when="between", lo=-100, hi=20), "bad_number")
     await refused(heater(id="t", name="T", client={"lo": 5, "hi": 1}), "bad_range")
     await refused(heater(id="t", name="T", input={"entity_id": OUT, "attribute": "Bad Attr"}), "bad_input")
     with patch.dict(CANON["limits"], {"rules": len(engine.rules)}):

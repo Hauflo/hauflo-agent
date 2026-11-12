@@ -167,6 +167,12 @@ class _PushErrors(logging.Handler):
 PUSH_HOUR_MAX = _T["push_hour_max"]
 PUSH_DAY_MAX = _T["push_day_max"]
 PUSH_DAY_CRITICAL = _T["push_day_critical"]
+# A press (doorbell, wall button, motion the integrator watches) is counted in a lane of its own (TODO п.14, 12.11): a
+# busy button with «Уведомлять» used to eat the alarms' hour — a leak would wait behind twenty presses. Its cap is its
+# own too; a critical press (SOS) is critical as before.
+PUSH_EVENT_HOUR_MAX = _T["push_event_hour_max"]
+PUSH_EVENT_DAY_MAX = _T["push_event_day_max"]
+LANES = ("alarm", "event")
 # Repeats of an unaccepted alarm at the rule's pace this many times; then at most hourly until someone accepts.
 REPEAT_FAST = _T["repeat_fast"]
 REPEAT_SLOW = _T["repeat_slow_min"]
@@ -1159,7 +1165,7 @@ class NotifyEngine:
         rule = {"id": "event", "title": name, "priority": "critical" if critical else "normal", "recipients": {"all": True, "people": [], "groups": [], "phones": []}}
         silent = not critical and bool(self.quiet_now and self.quiet_now())
         extra = await self._ring_extra(state, urgent=not silent) if kind in RING_KINDS and not critical else None
-        await self._send(rule, head, message, tag=self._tag(f"event|{state.entity_id}"), critical=critical, silent=silent, targets=self.ring_targets(), extra=extra)
+        await self._send(rule, head, message, tag=self._tag(f"event|{state.entity_id}"), critical=critical, silent=silent, targets=self.ring_targets(), extra=extra, lane="event")
 
     async def _ring_extra(self, state: State, *, urgent: bool) -> Callable[[str | None], dict[str, Any]]:
         """A doorbell's push (Р55): the door's picture (iOS shows the live camera when expanded), a tap opening the
@@ -1218,7 +1224,7 @@ class NotifyEngine:
         self._rang.pop(entity_id, None)
         self._visits.pop(entity_id, None)
         rule = {"id": "event", "title": "", "priority": "normal", "recipients": {"all": True, "people": [], "groups": [], "phones": []}}
-        await self._send(rule, "", "clear_notification", tag=self._tag(f"event|{entity_id}"), critical=False, targets=self.ring_targets(), force=True)
+        await self._send(rule, "", "clear_notification", tag=self._tag(f"event|{entity_id}"), critical=False, targets=self.ring_targets(), force=True, lane="event")
 
     @callback
     def _on_intercom(self, event: Event) -> None:
@@ -2202,14 +2208,21 @@ class NotifyEngine:
         now = dt_util.utcnow()
         return {k: v for k, v in when.items() if (t := dt_util.parse_datetime(v)) is not None and (now - t).total_seconds() < seconds}
 
-    def _room(self, service: str, critical: bool) -> bool:
-        """Under the agent's own cap for this phone (PUSH_*)."""
+    @staticmethod
+    def _lane_key(service: str, lane: str) -> str:
+        """The push log's key of a phone in a lane: the alarms' is the phone itself (what older agents saved), a press's «<phone>|event»."""
+        return service if lane == "alarm" else f"{service}|{lane}"
+
+    def _room(self, service: str, critical: bool, lane: str = "alarm") -> bool:
+        """Under the agent's own cap for this phone in this lane (PUSH_*): the alarms' and the presses' counted apart."""
         now = time.time()
-        log = [t for t in self._pushes.get(service, []) if 0 <= now - t < 86400]
-        self._pushes[service] = log
+        key = self._lane_key(service, lane)
+        log = [t for t in self._pushes.get(key, []) if 0 <= now - t < 86400]
+        self._pushes[key] = log
         if critical:
             return len(log) < PUSH_DAY_CRITICAL
-        return len(log) < PUSH_DAY_MAX and sum(1 for t in log if now - t < 3600) < PUSH_HOUR_MAX
+        day, hour = (PUSH_EVENT_DAY_MAX, PUSH_EVENT_HOUR_MAX) if lane == "event" else (PUSH_DAY_MAX, PUSH_HOUR_MAX)
+        return len(log) < day and sum(1 for t in log if now - t < 3600) < hour
 
     def _english(self, config: dict[str, Any] | None = None) -> bool:
         """The project's language when Hauflo said it (in ``config`` — rules not saved yet), else Home Assistant's."""
@@ -2223,7 +2236,7 @@ class NotifyEngine:
             return
         persistent_notification.async_create(self.hass, self._say(message), title=self._say(title), notification_id=notification_id)
 
-    async def _send(self, rule: dict[str, Any], title: str, message: str, *, tag: str, critical: bool, actions: list | None = None, targets: list | None = None, quiet: bool = False, results: dict[str, str] | None = None, force: bool = False, silent: bool = False, extra: Callable[[str | None], dict[str, Any]] | None = None) -> list[str]:
+    async def _send(self, rule: dict[str, Any], title: str, message: str, *, tag: str, critical: bool, actions: list | None = None, targets: list | None = None, quiet: bool = False, results: dict[str, str] | None = None, force: bool = False, silent: bool = False, extra: Callable[[str | None], dict[str, Any]] | None = None, lane: str = "alarm") -> list[str]:
         testing = results is not None
         if not testing and not force and self._in_ha(rule.get("id")):
             # HA's own automation pushes this rule (independent.py): the phones it goes to, nothing sent twice.
@@ -2239,11 +2252,11 @@ class NotifyEngine:
 
         async def one(phone: dict[str, Any]) -> None:
             # Over the agent's cap: not sent (a test is capped on its own — TEST_GAP).
-            if not testing and not self._room(phone["service"], critical):
+            if not testing and not self._room(phone["service"], critical, lane):
                 held.append(phone["service"])
                 self.throttled[phone["service"]] = dt_util.utcnow().isoformat()
                 return
-            self._pushes.setdefault(phone["service"], []).append(time.time())
+            self._pushes.setdefault(self._lane_key(phone["service"], lane), []).append(time.time())
             self._save()
             data = push_data(phone["os"], tag=tag, critical=critical, quiet=quiet, actions=actions, silent=silent)
             for k, v in (extra(phone["os"]) if extra is not None else {}).items():

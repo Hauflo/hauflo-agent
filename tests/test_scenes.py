@@ -331,6 +331,11 @@ async def test_refusals_said_in_the_page_language(hass: HomeAssistant, hass_clie
     for lang in ("ru", "en"):
         res = await client.post(URL, json={"op": "add", "room": "bed", "kind": "l", "name": "…", "entities": [LIGHT], "lang": lang})
         assert res.status == 400 and await res.json() == {"message": tr("scenes_bad_name", lang), "code": "bad_name"}
+        # p.11a 12.11: a name over the limit is refused with the limit, never cut to it.
+        res = await client.post(URL, json={"op": "add", "room": "bed", "kind": "l", "name": "x" * (scenes.MAX_NAME + 1), "entities": [LIGHT], "lang": lang})
+        assert res.status == 400 and await res.json() == {"message": tr("scenes_name_long", lang, n=scenes.MAX_NAME), "code": "name_long"}
+        res = await client.post(URL, json={"op": "add", "room": "bed", "kind": "l", "name": "A", "entities": "light.bed_ceiling", "lang": lang})
+        assert res.status == 400 and (await res.json())["code"] == "bad_body"
         for op in ("delete", "rename", "recapture"):  # deleted on another phone meanwhile
             res = await client.post(URL, json={"op": op, "entity_id": "scene.gone", "name": "A", "entities": [LIGHT], "lang": lang})
             assert res.status == 404 and await res.json() == {"message": tr("scenes_no_scene", lang), "code": "no_scene"}, op

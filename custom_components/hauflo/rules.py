@@ -620,8 +620,10 @@ def clean_rule(raw: Any, env: Env) -> dict[str, Any]:
     elif y:
         raise Invalid("bad_hysteresis", "rules_bad_hysteresis")
     rule["y"] = y
+    # Every threshold inside what its unit can be (p.11a 12.11: 500 °C on a foreign street sensor was saved) — the
+    # backend checks the same for the project's own sensors; here the unit is HA's, so a foreign one is covered too.
+    _in_bounds(rule)
     if "window" in rule:
-        _in_bounds(rule)
         rule["for_min"] = rule["back_min"] = 0.0  # held by N periods in a row, not minutes
     else:
         rule["for_min"] = _minutes(raw.get("for_min"))
@@ -678,7 +680,7 @@ def _clean_tail(raw: dict[str, Any], rule: dict[str, Any], env: Env, meta: dict[
 
 
 def _in_bounds(rule: dict[str, Any]) -> None:
-    """A window rule's thresholds inside what its unit can be (canon «thresholds»; the backend checks the same)."""
+    """A rule's thresholds inside what its unit can be (canon «thresholds»; the backend checks the same for the project's own sensors)."""
     unit = rule["input"].get("unit")
     b = C("thresholds").get(unit) if unit else None
     if b and any(k in rule and not b[0] <= rule[k] <= b[1] for k in ("x", "lo", "hi")):
@@ -2669,8 +2671,7 @@ class Rules(Texts):
                 raise Invalid("out_of_range", "rules_out_of_range", lo=_fmt(c["lo"], None), hi=_fmt(c["hi"], None))
         if "lo" in keys and new["lo"] >= new["hi"]:
             raise Invalid("bad_range", "rules_bad_range")
-        if new.get("window"):
-            _in_bounds(new)
+        _in_bounds(new)
         self.rules[rid] = new
         self._log(rid, "tuned", **{k: new[k] for k in keys})
         await self._save()

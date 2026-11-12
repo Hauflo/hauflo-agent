@@ -135,9 +135,12 @@ def clean_name(value: Any) -> str:
     if not isinstance(value, str):
         raise Refused("bad_name")
     raw = "".join(ch for ch in value if unicodedata.category(ch) != "Cf")
-    text = " ".join(_CONTROL.sub(" ", raw).split())[:MAX_NAME].strip()
+    text = " ".join(_CONTROL.sub(" ", raw).split()).strip()
     if not any(unicodedata.category(ch)[0] in "LN" for ch in text):
         raise Refused("bad_name")
+    # Said with the limit, never cut (p.11a 12.11: 41 letters came back as 40 without a word).
+    if len(text) > MAX_NAME:
+        raise Refused("name_long", n=MAX_NAME)
     return text
 
 
@@ -500,7 +503,8 @@ class ScenesView(HomeAssistantView):
         except derived.Refused as err:
             return self.json(await said(engine.hass, err, ru), err.status)
         except (Invalid, DayInvalid) as err:
-            return self.json_message(str(err), 400)
+            # A request sent wrong (not a person's choice): the field named, with a code the app can tell apart.
+            return self.json({"message": f"bad request: {err}", "code": "bad_body", "field": str(err)}, 400)
         except NotPlain as err:
             _LOGGER.warning("Hauflo scenes: scenes.yaml left as it is (%s)", err)
             return self.json({"message": NotPlain.RU if ru else NotPlain.EN, "code": "not_plain"}, 409)

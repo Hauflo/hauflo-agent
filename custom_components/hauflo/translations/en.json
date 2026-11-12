@@ -1796,6 +1796,9 @@
     "scenes_bad_name": {
       "message": "Name: at least one letter or digit."
     },
+    "scenes_name_long": {
+      "message": "Name: up to {n} characters."
+    },
     "scenes_too_many": {
       "message": "No more than {n} scenes of your own — delete one you don't need."
     },

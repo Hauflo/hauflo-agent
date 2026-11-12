@@ -40,6 +40,8 @@
     "push_hour_max": 20,
     "push_day_max": 80,
     "push_day_critical": 200,
+    "push_event_hour_max": 30,
+    "push_event_day_max": 120,
     "repeat_fast": 12,
     "repeat_slow_min": 60,
     "native_fast_rounds": 3,
