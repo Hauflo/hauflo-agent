@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "regions": {
+    "EU": [
+      "https://app.hauflo.com"
+    ],
+    "RU": [
+      "https://app.hauflo.ru"
+    ],
+    "AE": [
+      "https://app.hauflo.com"
+    ]
+  },
+  "default_region": "EU",
+  "pair_fallback_region": "RU",
+  "mirrors": [
+    "https://app.hauflo.ru/agent",
+    "https://app.hauflo.com/agent"
+  ],
+  "github_zip": "https://github.com/Hauflo/hauflo-agent/releases/latest/download/hauflo.zip"
+}

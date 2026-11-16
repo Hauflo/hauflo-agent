@@ -1,0 +1,38 @@
+from __future__ import annotations
+import logging
+from typing import Any
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
+from .const import DOMAIN
+from .storage import HaufloStore
+_LOGGER = logging.getLogger(__name__)
+COMFORT_STORE = f'{DOMAIN}.comfort'
+_COMFORT_MODE = {'winter': 'heat', 'summer': 'cool'}
+
+def comfort_entities(hass: HomeAssistant, entry_id: str) -> list[str]:
+    reg = er.async_get(hass)
+    out = []
+    for ent in list(reg.entities.values()):
+        if ent.platform != DOMAIN:
+            continue
+        uid = str(ent.unique_id)
+        if ent.domain == 'climate' and uid.startswith('comfort_') or (ent.domain == 'select' and uid in ('house_mode', f'{entry_id}_house_mode')):
+            out.append(ent.entity_id)
+    return sorted(out)
+
+async def async_retire_comfort(hass: HomeAssistant, entry_id: str, seed: Any=None) -> dict[str, Any]:
+    reg = er.async_get(hass)
+    removed = comfort_entities(hass, entry_id)
+    for eid in removed:
+        reg.async_remove(eid)
+    store = HaufloStore(hass, COMFORT_STORE)
+    data = await store.async_load()
+    mode = None
+    if data is not None:
+        mode = _COMFORT_MODE.get(str((data or {}).get('mode')))
+        if mode and seed is not None:
+            await seed(mode)
+        await store.async_remove()
+    if removed or data is not None:
+        _LOGGER.info('Hauflo: the retired comfort floor removed (%d entities, store %s)', len(removed), 'removed' if data is not None else 'none')
+    return {'entities': removed, 'store': data is not None, 'mode': mode}

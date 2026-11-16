@@ -1,0 +1,57 @@
+off_in:
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          domain: light
+    minutes:
+      required: true
+      default: 30
+      selector:
+        number:
+          min: 0
+          max: 1440
+          unit_of_measurement: min
+unprotect:
+  fields:
+    entity_id:
+      required: false
+      selector:
+        entity:
+          integration: knx
+          multiple: true
+    group_address:
+      required: false
+      selector:
+        text:
+          multiple: true
+remove_alarms:
+intercom_answer:
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          integration: hauflo
+          domain: [sensor, event, camera, button]
+intercom_hangup:
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          integration: hauflo
+          domain: [sensor, event, camera, button]
+lock:
+  fields:
+    entity_id:
+      required: true
+      selector:
+        entity:
+          domain: lock
+    action:
+      required: true
+      selector:
+        select:
+          options: [lock, unlock, open]

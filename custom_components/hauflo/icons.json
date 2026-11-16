@@ -1,0 +1,31 @@
+{
+  "entity": {
+    "sensor": {
+      "ownership": {
+        "default": "mdi:home-import-outline"
+      },
+      "derived": {
+        "default": "mdi:calculator-variant-outline"
+      }
+    },
+    "binary_sensor": {
+      "daylight": {
+        "default": "mdi:weather-night",
+        "state": {
+          "on": "mdi:weather-sunny"
+        }
+      },
+      "rule": {
+        "default": "mdi:thermometer-auto",
+        "state": {
+          "on": "mdi:thermometer-check"
+        }
+      }
+    },
+    "switch": {
+      "rule": {
+        "default": "mdi:auto-mode"
+      }
+    }
+  }
+}

@@ -1,0 +1,26 @@
+name: Validate
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+# The public copy carries no tests (they run in the private repository and in publish-agent.sh before the push):
+# hassfest + the HACS check only.
+jobs:
+  hassfest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: home-assistant/actions/hassfest@master
+  hacs:
+    # The HACS action validates public repositories only.
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: hacs/action@main
+        with:
+          category: integration
+          # Brand images ship in custom_components/hauflo/brand (HA 2026.3+). The repository's description and topics
+          # are set on GitHub, so those checks run.
+          # `license` stays ignored: OWNER DECISION — which license the agent ships under (LICENSE is «source
+          # available», not an OSI licence, and HACS' check wants a recognised one).
+          ignore: license

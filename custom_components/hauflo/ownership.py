@@ -1,0 +1,375 @@
+from __future__ import annotations
+from collections.abc import Callable
+import logging
+import re
+from typing import Any
+from homeassistant.components.http import KEY_HASS, HomeAssistantView
+from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er, label_registry as lr
+from homeassistant.helpers.dispatcher import async_dispatcher_send
+from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers import translation
+from homeassistant.util import dt as dt_util
+from .const import ACK_PREFIX, ALARM_PREFIX, CHATTER_PREFIX, DOMAIN, MONITOR_LABEL, MONITOR_LABEL_EN, MONITOR_LABELS, OPEN_PREFIX, PUSH_SCRIPT, RUN_PREFIX
+from .storage import HaufloStore
+from .tuning import TUNING
+_LOGGER = logging.getLogger(__name__)
+LABEL = 'Hauflo'
+LABEL_ICON = 'mdi:home-import-outline'
+LABEL_COLOR = 'indigo'
+LABEL_TEXT = {'ru': 'Создано Hauflo. Метку ставит и снимает агент Hauflo — вручную её не ставьте.', 'en': "Made by Hauflo. The Hauflo agent puts this label on and takes it off — don't set it by hand."}
+MONITOR_TEXT = {'ru': 'Hauflo следит за этим устройством и присылает аварии. Ставьте на устройства не из Hauflo (котёл, вентиляция, Zigbee) — своё Hauflo видит и без метки.', 'en': "Hauflo watches this device and sends alarms. Put it on devices Hauflo didn't make (a boiler, ventilation, Zigbee) — Hauflo's own are watched without it."}
+_OLD_MONITOR_TEXT = {'Hauflo: следить и присылать аварии в Telegram', 'Hauflo: watch it and send alarms to Telegram'}
+STORE_KEY = 'hauflo.ownership'
+SIGNAL = f'{DOMAIN}_ownership'
+_T = TUNING['ownership']
+SYNC_DELAY = _T['sync_delay_s']
+MAX_LIST = 50
+_ENTITY = re.compile('[a-z_]+\\.[a-z0-9_]{1,200}')
+_AREA = re.compile('[a-z0-9_]{1,200}')
+ZONES_MAX = _T['zones_max']
+ZONES_KEY = f'{DOMAIN}_zone_rooms'
+
+def room_area(hass: HomeAssistant, area_id: str | None) -> str | None:
+    if not area_id:
+        return area_id
+    return (hass.data.get(ZONES_KEY) or {}).get(area_id, area_id)
+
+def entity_area(hass: HomeAssistant, entity_id: str) -> str | None:
+    entry = er.async_get(hass).async_get(entity_id)
+    if entry is None:
+        return None
+    if entry.area_id:
+        return entry.area_id
+    device = dr.async_get(hass).async_get(entry.device_id) if entry.device_id else None
+    return device.area_id if device else None
+
+def entity_room(hass: HomeAssistant, entity_id: str) -> str | None:
+    return room_area(hass, entity_area(hass, entity_id))
+
+def room_name(hass: HomeAssistant, entity_id: str) -> str | None:
+    area_id = entity_room(hass, entity_id)
+    area = ar.async_get(hass).async_get_area(area_id) if area_id else None
+    return area.name if area else None
+_AUTOMATION_PREFIX = 'hauflo_auto_'
+_L = TUNING['labels']
+KINDS: dict[str, dict[str, str]] = _L['kinds']
+_CLIENT_KINDS = set(_L['client_kinds'])
+_SERVICE_KINDS = set(_L['service_kinds'])
+LANGS = ('ru', 'en')
+
+def label_kinds(kind: str | None, entry: er.RegistryEntry, protected: bool) -> set[str]:
+    if kind is None:
+        return set()
+    out = {'protected'} if protected else set()
+    if kind in _SERVICE_KINDS or (kind in _CLIENT_KINDS and (entry.entity_category is not None or entry.hidden_by is er.RegistryEntryHider.INTEGRATION)):
+        out.add('service')
+    elif kind in _CLIENT_KINDS:
+        out.add('client')
+    return out
+
+def service_entity(hass: HomeAssistant, entity_id: str) -> bool:
+    entry = er.async_get(hass).async_get(entity_id)
+    if entry is None:
+        return False
+    kind = kind_of(entry, {entry.unique_id}, {entry.config_entry_id} if entry.config_entry_id else set())
+    return 'service' in label_kinds(kind, entry, False)
+
+def kind_of(entry: er.RegistryEntry, owned: set[str], owned_entries: set[str]) -> str | None:
+    if entry.platform == 'knx':
+        return 'knx' if entry.unique_id in owned else None
+    if entry.platform in ('group', 'template') and entry.entity_id.startswith(f'binary_sensor.{ALARM_PREFIX}'):
+        return 'alarm'
+    if entry.platform == 'script' and (entry.unique_id == PUSH_SCRIPT or str(entry.unique_id).startswith(RUN_PREFIX)):
+        return 'alarm'
+    if entry.platform == 'group':
+        return 'group' if entry.config_entry_id in owned_entries else None
+    if entry.platform == 'homeassistant' and entry.domain == 'scene':
+        return 'scene' if str(entry.unique_id).startswith('hauflo_') else None
+    if entry.platform == 'automation':
+        if str(entry.unique_id).startswith(ALARM_PREFIX):
+            return 'alarm'
+        return 'automation' if str(entry.unique_id).startswith(_AUTOMATION_PREFIX) else None
+    if entry.platform == 'input_boolean' and str(entry.unique_id).startswith((ACK_PREFIX, OPEN_PREFIX)):
+        return 'alarm'
+    if entry.platform == 'input_text' and str(entry.unique_id).startswith(CHATTER_PREFIX):
+        return 'alarm'
+    if entry.platform == DOMAIN:
+        return 'agent'
+    return None
+
+def _ru(hass: HomeAssistant) -> bool:
+    return str(hass.config.language or '').startswith('ru')
+
+class Ownership:
+
+    def __init__(self, hass: HomeAssistant, owned: Callable[[], set[str]], owned_entries: Callable[[], set[str]], locked: Callable[[], bool], protected: Callable[[], set[str]] | None=None) -> None:
+        self.hass = hass
+        self._protected = protected or set
+        self.kind_ids: dict[str, str] = {}
+        self.kind_names: dict[str, dict[str, str]] = {}
+        self.kind_texts: dict[str, str] = {}
+        self._owned = owned
+        self._owned_entries = owned_entries
+        self._locked = locked
+        self.store: HaufloStore = HaufloStore(hass, STORE_KEY)
+        self.label_id: str | None = None
+        self.plan: dict[str, Any] | None = None
+        self.names: dict[str, str] = {}
+        self._unsub: list[Callable[[], None]] = []
+        self._timer: Callable[[], None] | None = None
+        self.loaded = False
+        self._dirty = False
+
+    async def async_start(self) -> None:
+        data = await self.store.async_load()
+        if isinstance(data, dict) and isinstance(data.get('plan'), dict):
+            self.plan = data['plan']
+        self._publish_zones()
+        if isinstance(data, dict) and isinstance(data.get('labels'), dict):
+            self.kind_ids = {k: v for k, v in data['labels'].items() if k in KINDS and isinstance(v, str)}
+        await self._load_kind_names()
+        if isinstance(data, dict) and isinstance(data.get('names'), dict):
+            self.names = {k: v for k, v in data['names'].items() if isinstance(k, str) and isinstance(v, str)}
+        else:
+            owned, entries = (self._owned(), self._owned_entries())
+            self.names = {e.entity_id: e.name for e in er.async_get(self.hass).entities.values() if e.name and kind_of(e, owned, entries) == 'group'}
+            self._save()
+        self.loaded = True
+        self._unsub.append(self.hass.bus.async_listen(er.EVENT_ENTITY_REGISTRY_UPDATED, self._registry_changed))
+        self.async_sync()
+
+    @callback
+    def _publish_zones(self) -> None:
+        zones = (self.plan or {}).get('zones')
+        self.hass.data[ZONES_KEY] = dict(zones) if isinstance(zones, dict) else {}
+
+    @callback
+    def async_stop(self) -> None:
+        self.hass.data.pop(ZONES_KEY, None)
+        for unsub in self._unsub:
+            unsub()
+        self._unsub.clear()
+        if self._timer:
+            self._timer()
+            self._timer = None
+
+    def _data(self) -> dict[str, Any]:
+        return {'plan': self.plan, 'names': self.names, 'labels': self.kind_ids}
+
+    async def _load_kind_names(self) -> None:
+        for lang in LANGS:
+            try:
+                tr = await translation.async_get_translations(self.hass, lang, 'selector', [DOMAIN])
+            except Exception as err:
+                _LOGGER.debug('Hauflo: label names (%s) not read: %s', lang, err)
+                continue
+            names = {k: tr.get(f'component.{DOMAIN}.selector.hauflo_label.options.{k}') for k in KINDS}
+            self.kind_names[lang] = {k: v for k, v in names.items() if v}
+            if lang == ('ru' if _ru(self.hass) else 'en'):
+                texts = {k: tr.get(f'component.{DOMAIN}.selector.hauflo_label_text.options.{k}') for k in KINDS}
+                self.kind_texts = {k: v for k, v in texts.items() if v}
+
+    @callback
+    def _save(self) -> None:
+        self._dirty = True
+        self.store.async_delay_save(self._data, 1)
+
+    async def async_flush(self) -> None:
+        if self._dirty:
+            self._dirty = False
+            await self.store.async_save(self._data())
+
+    @callback
+    def remember_name(self, entity_id: Any, name: Any=None, old_entity_id: Any=None, named: bool=True) -> None:
+        if not isinstance(entity_id, str):
+            return
+        before = dict(self.names)
+        if isinstance(old_entity_id, str) and old_entity_id != entity_id and (old_entity_id in self.names):
+            self.names[entity_id] = self.names.pop(old_entity_id)
+        if named:
+            if isinstance(name, str) and name:
+                self.names[entity_id] = name
+            else:
+                self.names.pop(entity_id, None)
+        if self.names != before:
+            self._save()
+            async_dispatcher_send(self.hass, SIGNAL)
+
+    @callback
+    def _registry_changed(self, _event: Event) -> None:
+        self.schedule()
+
+    @callback
+    def schedule(self, delay: float=SYNC_DELAY) -> None:
+        if self._timer:
+            self._timer()
+        self._timer = async_call_later(self.hass, delay, self._run)
+
+    @callback
+    def _run(self, _now: Any) -> None:
+        self._timer = None
+        self.async_sync()
+
+    @callback
+    def _ensure_label(self) -> str:
+        reg = lr.async_get(self.hass)
+        if self.label_id and reg.async_get_label(self.label_id) is not None:
+            return self.label_id
+        found = next((label for label in reg.async_list_labels() if label.name.casefold() == LABEL.casefold()), None)
+        if found is None:
+            found = reg.async_create(LABEL, icon=LABEL_ICON, color=LABEL_COLOR, description=LABEL_TEXT['ru' if _ru(self.hass) else 'en'])
+        self.label_id = found.label_id
+        return found.label_id
+
+    @callback
+    def _ensure_kind_labels(self) -> dict[str, str]:
+        reg = lr.async_get(self.hass)
+        lang = 'ru' if _ru(self.hass) else 'en'
+        out: dict[str, str] = {}
+        for kind, style in KINDS.items():
+            known = self.kind_ids.get(kind)
+            if known and reg.async_get_label(known) is not None:
+                out[kind] = known
+                continue
+            names = {n.casefold() for n in (self.kind_names.get(lang2, {}).get(kind) for lang2 in LANGS) if n}
+            name = self.kind_names.get(lang, {}).get(kind)
+            if not names or not name:
+                continue
+            found = next((label for label in reg.async_list_labels() if label.name.casefold() in names), None)
+            if found is None:
+                found = reg.async_create(name, icon=style['icon'], color=style['color'], description=self.kind_texts.get(kind))
+            out[kind] = found.label_id
+        if out != self.kind_ids:
+            self.kind_ids = out
+            self._save()
+        return out
+
+    @callback
+    def _clarify_monitor_label(self) -> None:
+        reg = lr.async_get(self.hass)
+        for label in reg.async_list_labels():
+            if label.name.casefold() in MONITOR_LABELS and (label.description or '') in _OLD_MONITOR_TEXT:
+                ru = label.name == MONITOR_LABEL or (label.name != MONITOR_LABEL_EN and _ru(self.hass))
+                reg.async_update(label.label_id, description=MONITOR_TEXT['ru' if ru else 'en'])
+
+    @callback
+    def async_sync(self) -> tuple[int, int]:
+        if not self.loaded or self._locked():
+            return (0, 0)
+        try:
+            label_id = self._ensure_label()
+            self._clarify_monitor_label()
+        except Exception as err:
+            _LOGGER.warning('Hauflo: label not set up: %s', err)
+            return (0, 0)
+        try:
+            kinds = self._ensure_kind_labels()
+        except Exception as err:
+            _LOGGER.warning('Hauflo: kind labels not set up: %s', err)
+            kinds = {}
+        try:
+            protected = self._protected()
+        except Exception as err:
+            _LOGGER.debug('Hauflo: protected not known: %s', err)
+            protected = None
+        ours = {label_id, *kinds.values()}
+        owned, entries = (self._owned(), self._owned_entries())
+        reg = er.async_get(self.hass)
+        added = removed = 0
+        for entry in list(reg.entities.values()):
+            kind = kind_of(entry, owned, entries)
+            want = {kinds[k] for k in label_kinds(kind, entry, entry.entity_id in (protected or ())) if k in kinds}
+            if kind is not None:
+                want.add(label_id)
+            if protected is None and 'protected' in kinds and (kinds['protected'] in entry.labels) and (kind is not None):
+                want.add(kinds['protected'])
+            has = set(entry.labels) & ours
+            if want == has:
+                continue
+            try:
+                reg.async_update_entity(entry.entity_id, labels=set(entry.labels) - ours | want)
+            except Exception as err:
+                _LOGGER.debug('Hauflo: label on %s not changed: %s', entry.entity_id, err)
+                continue
+            added += len(want - has)
+            removed += len(has - want)
+        if added or removed:
+            _LOGGER.debug('Hauflo: label «%s» put on %d, taken off %d', LABEL, added, removed)
+        async_dispatcher_send(self.hass, SIGNAL)
+        return (added, removed)
+
+    @callback
+    def facts(self) -> dict[str, Any]:
+        owned, entries = (self._owned(), self._owned_entries())
+        by_kind: dict[str, int] = {}
+        renamed: list[str] = []
+        disabled: list[str] = []
+        for entry in er.async_get(self.hass).entities.values():
+            kind = kind_of(entry, owned, entries)
+            if kind is None or kind == 'agent':
+                continue
+            by_kind[kind] = by_kind.get(kind, 0) + 1
+            if entry.name and entry.name != self.names.get(entry.entity_id):
+                renamed.append(entry.entity_id)
+            if entry.disabled_by is er.RegistryEntryDisabler.USER:
+                disabled.append(entry.entity_id)
+        plan = self.plan or {}
+        kept = [e for e in plan.get('kept', []) if isinstance(e, str)]
+        return {'owned': sum(by_kind.values()), 'by_kind': by_kind, 'label': LABEL, 'hand_edited': sorted(set(renamed) | set(disabled) | set(kept))[:MAX_LIST], 'renamed': sorted(renamed)[:MAX_LIST], 'disabled': sorted(disabled)[:MAX_LIST], 'kept_by_plan': sorted(kept)[:MAX_LIST], 'next_deploy': {k: v for k, v in plan.items() if k not in ('kept', 'zones')} or None}
+
+    async def async_set_plan(self, raw: Any) -> dict[str, Any]:
+        self.plan = clean_plan(raw)
+        self._publish_zones()
+        self._dirty = False
+        await self.store.async_save(self._data())
+        async_dispatcher_send(self.hass, SIGNAL)
+        return self.plan
+_COUNTS = ('create', 'update', 'leftovers', 'leftover_rooms', 'kept_count')
+
+def clean_plan(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise ValueError('not an object')
+    out: dict[str, Any] = {'at': dt_util.utcnow().isoformat()}
+    for key in _COUNTS:
+        v = raw.get(key)
+        if isinstance(v, int) and (not isinstance(v, bool)) and (0 <= v <= 1000000):
+            out[key] = v
+    if isinstance(raw.get('dashboard'), bool):
+        out['dashboard'] = raw['dashboard']
+    if isinstance(raw.get('project'), str):
+        out['project'] = raw['project'][:120]
+    kept = raw.get('kept')
+    out['kept'] = sorted({k for k in kept if isinstance(k, str) and _ENTITY.fullmatch(k)})[:MAX_LIST] if isinstance(kept, list) else []
+    zones = raw.get('zones')
+    if isinstance(zones, dict):
+        ok = sorted(((k, v) for k, v in zones.items() if isinstance(k, str) and isinstance(v, str) and (k != v) and _AREA.fullmatch(k) and _AREA.fullmatch(v)))
+        if ok:
+            out['zones'] = dict(ok[:ZONES_MAX])
+    return out
+
+class OwnershipView(HomeAssistantView):
+    url = '/api/hauflo/ownership'
+    name = 'api:hauflo:ownership'
+    requires_auth = True
+
+    def __init__(self, of: Callable[[HomeAssistant], Ownership | None]) -> None:
+        self._of = of
+
+    async def get(self, request):
+        if not request['hass_user'].is_admin:
+            return self.json_message('admin only', 403)
+        own = self._of(request.app[KEY_HASS])
+        return self.json(own.facts() if own else {})
+
+    async def post(self, request):
+        if not request['hass_user'].is_admin:
+            return self.json_message('admin only', 403)
+        own = self._of(request.app[KEY_HASS])
+        if own is None:
+            return self.json_message('not ready', 503)
+        try:
+            body = await request.json()
+            return self.json(await own.async_set_plan(body))
+        except ValueError:
+            return self.json_message('bad request', 400)

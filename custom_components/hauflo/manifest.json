@@ -1,0 +1,31 @@
+{
+  "domain": "hauflo",
+  "name": "Hauflo",
+  "after_dependencies": [
+    "backup",
+    "conversation",
+    "homekit",
+    "knx",
+    "lovelace",
+    "mobile_app",
+    "network",
+    "person",
+    "recorder",
+    "web_rtc"
+  ],
+  "codeowners": [
+    "@Hauflo"
+  ],
+  "config_flow": true,
+  "dependencies": [
+    "frontend",
+    "http"
+  ],
+  "documentation": "https://github.com/Hauflo/hauflo-agent/blob/main/README.md",
+  "integration_type": "service",
+  "iot_class": "cloud_push",
+  "issue_tracker": "https://github.com/Hauflo/hauflo-agent/issues",
+  "requirements": [],
+  "single_config_entry": true,
+  "version": "0.38.1"
+}

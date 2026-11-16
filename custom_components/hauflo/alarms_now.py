@@ -1,0 +1,59 @@
+from __future__ import annotations
+from typing import Any
+from .tuning import TUNING
+ITEMS_MAX = TUNING['notify']['now_items_max']
+_RANK = {'open': 0, 'returned': 1, 'lost': 2}
+HOUSE_KEY = '_house'
+
+def house_key(entity_id: str) -> str:
+    return f'{HOUSE_KEY}|{entity_id}'
+
+def summary(items: list[dict[str, Any]], faults: list[dict[str, Any]], cap: int | None=None, house_acks: dict[str, str] | None=None) -> dict[str, Any]:
+    by: dict[str, dict[str, Any]] = {}
+    for a in items:
+        eid = a.get('entityId') or a.get('entity')
+        if not isinstance(eid, str) or not eid:
+            continue
+        state = 'lost' if a.get('noData') else 'returned' if a.get('returned') else 'open'
+        e = by.get(eid)
+        if e is None:
+            e = by[eid] = {'entity': eid, 'name': a.get('name') or '', 'area': a.get('area') or '', 'title': a.get('title') or '', 'state': state, 'critical': False, 'since': a.get('since'), 'keys': [], 'ackedBy': None, 'source': 'rule', '_acks': []}
+        elif _RANK[state] < _RANK[e['state']]:
+            e.update(state=state, title=a.get('title') or e['title'])
+        if state == 'open':
+            e['critical'] = e['critical'] or bool(a.get('critical'))
+            e['_acks'].append(a.get('ackedBy'))
+        if a.get('since') and (not e['since'] or str(a['since']) < str(e['since'])):
+            e['since'] = a['since']
+        if a.get('key') and state != 'lost':
+            e['keys'].append(a['key'])
+    for f in faults:
+        eid = f.get('entity')
+        if not isinstance(eid, str) or not eid:
+            continue
+        state = 'lost' if f.get('offline') else 'open'
+        e = by.get(eid)
+        if e is not None:
+            if state == 'open' and e['state'] != 'open':
+                e['state'], e['source'] = ('open', 'house')
+            if state == 'open':
+                e['critical'] = e['critical'] or f.get('house') == 'alarm'
+                e['house'] = f.get('house')
+            continue
+        by[eid] = {'entity': eid, 'name': f.get('name') or '', 'area': f.get('area') or '', 'title': '', 'state': state, 'critical': state == 'open' and f.get('house') == 'alarm', 'since': f.get('since'), 'keys': [], 'ackedBy': None, 'source': 'house', 'house': f.get('house'), '_acks': []}
+    out = []
+    for e in by.values():
+        acks = e.pop('_acks')
+        if e['state'] == 'open' and acks and all(acks) and (e['source'] == 'rule'):
+            e['ackedBy'] = acks[0]
+        elif e['state'] == 'open' and e['source'] == 'house' and (not acks):
+            e['keys'] = [house_key(e['entity'])]
+            e['ackedBy'] = (house_acks or {}).get(e['entity']) or None
+        e['acked'] = bool(e['ackedBy'])
+        out.append(e)
+    out.sort(key=lambda e: (_RANK[e['state']], e['acked'], not e['critical'], str(e['since'] or '')))
+    open_ = [e for e in out if e['state'] == 'open']
+    res = {'critical': sum((1 for e in open_ if e['critical'] and (not e['acked']))), 'normal': sum((1 for e in open_ if not e['critical'] and (not e['acked']))), 'acked': sum((1 for e in open_ if e['acked'])), 'total': len(open_), 'returned': sum((1 for e in out if e['state'] == 'returned')), 'lost': sum((1 for e in out if e['state'] == 'lost')), 'items': out if cap is None else out[:cap]}
+    if cap is not None and len(out) > cap:
+        res['more'] = len(out) - cap
+    return res
