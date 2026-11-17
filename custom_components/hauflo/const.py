@@ -5,7 +5,7 @@ from typing import Any
 from homeassistant.util.hass_dict import HassKey
 from . import servers as _servers
 DOMAIN = 'hauflo'
-VERSION = '0.38.1'
+VERSION = '0.39.0'
 
 def _www_hash() -> str:
     h = hashlib.sha256()

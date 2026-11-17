@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Any, Callable
 import voluptuous as vol
 from homeassistant.core import HomeAssistant, ServiceCall, callback
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.event import async_call_later
 from .const import DOMAIN, HassKey
@@ -21,7 +22,9 @@ def async_setup(hass: HomeAssistant) -> None:
     async def handle(call: ServiceCall) -> None:
         eid: str = call.data['entity_id']
         if not eid.startswith('light.'):
-            raise vol.Invalid('only a light')
+            raise ServiceValidationError(translation_domain=DOMAIN, translation_key='timer_not_light')
+        if hass.states.get(eid) is None:
+            raise ServiceValidationError(translation_domain=DOMAIN, translation_key='timer_unknown_light')
         if (old := timers.pop(eid, None)) is not None:
             old()
         minutes = call.data['minutes']

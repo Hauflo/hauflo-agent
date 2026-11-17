@@ -81,7 +81,8 @@
     ],
     "agent_commands": [
       "hauflo/dashboard/plan",
-      "hauflo/dashboard/save"
+      "hauflo/dashboard/save",
+      "hauflo/panel/state"
     ],
     "services": [
       [

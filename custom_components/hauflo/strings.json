@@ -3,14 +3,14 @@
     "step": {
       "user": {
         "title": "Connect to Hauflo",
-        "description": "The connection code is in Hauflo: your project → “Connect the site” → “Get a code”. It works once, for 30 minutes. Enter only the code — the server is picked from it.",
+        "description": "The connection code is in Hauflo: your project → “Connect the site” → “Get a code”. It works once, for 30 minutes. Enter only the code — Hauflo picks the server from the code.",
         "data": {
           "code": "Connection code",
           "confirm_takeover": "Yes, move this Home Assistant to this project (it leaves the other company in Hauflo)"
         },
         "data_description": {
           "code": "The code from Hauflo: your project → “Connect the site” → “Get a code” (9 characters, an “RU-” or “EU-” region in front is fine). Spaces and dashes don't matter. It works once, for 30 minutes.",
-          "confirm_takeover": "Tick only if this Home Assistant really moves to this project: the other company's site in Hauflo loses its connection."
+          "confirm_takeover": "Check only if this Home Assistant really moves to this project: the other company's site in Hauflo loses its connection."
         },
         "sections": {
           "advanced": {
@@ -26,14 +26,14 @@
       },
       "reauth_confirm": {
         "title": "Reconnect the Hauflo agent",
-        "description": "Hauflo no longer knows this Home Assistant: the agent was disconnected or the project deleted. Get a new code in Hauflo (your project → “Connect the site” → “Get a code”). This entry is updated, no need to remove it.",
+        "description": "Hauflo no longer knows this Home Assistant: the agent was disconnected or the project deleted. Get a new code in Hauflo (your project → “Connect the site” → “Get a code”). This entry will be updated; you don't need to remove it.",
         "data": {
           "code": "Connection code",
           "confirm_takeover": "Yes, move this Home Assistant to this project (it leaves the other company in Hauflo)"
         },
         "data_description": {
           "code": "The code from Hauflo: your project → “Connect the site” → “Get a code” (9 characters, an “RU-” or “EU-” region in front is fine). Spaces and dashes don't matter. It works once, for 30 minutes.",
-          "confirm_takeover": "Tick only if this Home Assistant really moves to this project: the other company's site in Hauflo loses its connection."
+          "confirm_takeover": "Check only if this Home Assistant really moves to this project: the other company's site in Hauflo loses its connection."
         },
         "sections": {
           "advanced": {
@@ -56,7 +56,7 @@
         },
         "data_description": {
           "code": "The code from Hauflo: your project → “Connect the site” → “Get a code” (9 characters, an “RU-” or “EU-” region in front is fine). Spaces and dashes don't matter. It works once, for 30 minutes.",
-          "confirm_takeover": "Tick only if this Home Assistant really moves to this project: the other company's site in Hauflo loses its connection."
+          "confirm_takeover": "Check only if this Home Assistant really moves to this project: the other company's site in Hauflo loses its connection."
         },
         "sections": {
           "advanced": {
@@ -103,7 +103,7 @@
       "invalid_code": "The code is wrong or expired. A code works once, for 30 minutes — get a new one in Hauflo.",
       "cannot_connect": "Can't reach Hauflo. Check that this Home Assistant has internet access, then enter the code again.",
       "https_required": "Hauflo's address must be https:// (http only for a local server).",
-      "takeover_confirm": "This Home Assistant is connected to a site of ANOTHER Hauflo account. If you continue, it leaves that account and the old site loses its connection. If that is intended, tick the box “Yes, move…” and press Submit; otherwise close this window.",
+      "takeover_confirm": "This Home Assistant is connected to a site of ANOTHER Hauflo account. If you continue, it leaves that account and the old site loses its connection. If that is intended, select the box “Yes, move…” and press Submit; otherwise close this window.",
       "transfer_ask": "Your decision is needed: hand this site's service over to another company?"
     },
     "abort": {
@@ -113,7 +113,7 @@
       "reconfigure_successful": "The Hauflo agent is connected with the new code.",
       "transfer_declined": "Nothing changed: this Home Assistant stays linked to the previous company.",
       "transfer_recorded": "Done: your confirmation is attached to the request of “{company}”. Nothing changed in this Home Assistant; Hauflo support decides after telling the previous company, and you will see the new company here once it is decided.",
-      "transfer_via_request": "Nothing changed. A site’s service now goes to another company only by Hauflo support's decision: the new company files “Site transfer request” in the Hauflo app and gives you a code to confirm it here."
+      "transfer_via_request": "Nothing changed. A site’s service now goes to another company only by Hauflo support's decision: the new company files a site transfer request in the Hauflo app and gives you a code to confirm it here."
     }
   },
   "entity": {
@@ -297,6 +297,29 @@
             "name": "Version"
           }
         }
+      },
+      "panel": {
+        "name": "Panel",
+        "state": {
+          "current": "Up to date",
+          "refreshed": "Refreshed",
+          "apply": "Waiting to be applied",
+          "update": "Agent update needed"
+        },
+        "state_attributes": {
+          "reason": {
+            "name": "Reason",
+            "state": {
+              "remerged": "Merged again after the agent update"
+            }
+          },
+          "agent": {
+            "name": "Agent version"
+          },
+          "at": {
+            "name": "Updated at"
+          }
+        }
       }
     },
     "switch": {
@@ -345,12 +368,12 @@
           "allow_changes": "Off: Hauflo changes nothing in Home Assistant — deploys, dashboards, rooms, KNX entities and backups started by Hauflo are refused. Monitoring, alarms and voice keep working.",
           "ranges": "Remove any Hauflo must not control (a gate, a lock).",
           "independent": "Next step explains it: the dashboard cards stay in /config/www/hauflo and the alarm automations are brought up to date. Nothing is deleted.",
-          "intercom": "On the next step — the doors: the panel model, its address and how to open."
+          "intercom": "On the next step — the doors: the panel model, its address and how to open the door."
         }
       },
       "init_pending": {
         "title": "Hauflo at this site",
-        "description": "Connected to project “{project}” on {server} — [open Hauflo]({url}).\n\n**Who services this site:** {service}\n\n**Access history:** {history}\n\nHauflo sends KNX commands only to the allowed addresses. Hauflo asked for these and waits for your permission: {pending}. They are NOT allowed until you tick them below. Check each one: it may be a gate or a lock. Unticked ones are declined when you save.",
+        "description": "Connected to project “{project}” on {server} — [open Hauflo]({url}).\n\n**Who services this site:** {service}\n\n**Access history:** {history}\n\nHauflo sends KNX commands only to the allowed addresses. Hauflo asked for these and waits for your permission: {pending}. They are NOT allowed until you check them below. Check each one: it may be a gate or a lock. Unchecked ones are declined when you save.",
         "data": {
           "allow_changes": "Allow Hauflo to change this site's setup",
           "ranges": "Allowed addresses (1/1/5, a span 1/1/1-21 or a whole group 1/1; comma-separated or one per line)",
@@ -361,9 +384,9 @@
         "data_description": {
           "allow_changes": "Off: Hauflo changes nothing in Home Assistant — deploys, dashboards, rooms, KNX entities and backups started by Hauflo are refused. Monitoring, alarms and voice keep working.",
           "ranges": "Remove any Hauflo must not control (a gate, a lock).",
-          "accept_pending": "Tick only your own project's addresses. Check each one: it may be a gate or a lock.",
+          "accept_pending": "Check only your own project's addresses. Check each one: it may be a gate or a lock.",
           "independent": "Next step explains it: the dashboard cards stay in /config/www/hauflo and the alarm automations are brought up to date. Nothing is deleted.",
-          "intercom": "On the next step — the doors: the panel model, its address and how to open."
+          "intercom": "On the next step — the doors: the panel model, its address and how to open the door."
         }
       },
       "independent": {
@@ -393,13 +416,13 @@
     },
     "error": {
       "intercom_bad_address": "Not an IPv4 address",
-      "intercom_missing_host": "Door \"{door}\": set the panel's address",
-      "intercom_missing_sip_server": "Door \"{door}\": set the call server",
-      "intercom_missing_sip_account": "Door \"{door}\": set the line's number and password",
+      "intercom_missing_host": "Door “{door}”: set the panel's address",
+      "intercom_missing_sip_server": "Door “{door}”: set the call server",
+      "intercom_missing_sip_account": "Door “{door}”: set the line's number and password",
       "intercom_bad_port": "The port is a number from 1 to 65535",
-      "intercom_bad_preset": "Door \"{door}\": no such model in the list",
-      "intercom_bad_mode": "Door \"{door}\": unknown way of calling",
-      "intercom_bad_open": "Door \"{door}\": unknown way of opening",
+      "intercom_bad_preset": "Door “{door}”: no such model in the list",
+      "intercom_bad_mode": "Door “{door}”: unknown way of calling",
+      "intercom_bad_open": "Door “{door}”: unknown way of opening",
       "intercom_bad_ice": "Connection servers: an address like turn:host:3478 or stun:host:3478"
     }
   },
@@ -1147,6 +1170,12 @@
     },
     "lock_user_index": {
       "message": "user #{n}"
+    },
+    "timer_not_light": {
+      "message": "Only a light can be switched off by the timer"
+    },
+    "timer_unknown_light": {
+      "message": "This light was not found"
     },
     "lock_unknown": {
       "message": "This lock was not found"
@@ -2116,7 +2145,7 @@
     },
     "intercom_answer": {
       "name": "Answer the intercom call",
-      "description": "Answers the call: the person who answered talks, everyone else sees \"Answered on another device\". The sound goes through the door's \"Talk\" camera.",
+      "description": "Answers the call: the person who answered talks, everyone else sees “Answered on another device”. The sound goes through the door's “Talk” camera.",
       "fields": {
         "entity_id": {
           "name": "Intercom",

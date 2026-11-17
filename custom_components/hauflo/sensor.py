@@ -6,15 +6,18 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from .const import DOMAIN
 from .device import device_info
 from .house_state import LEVELS, HouseEntity, facts
 from .intercom.entities import entities as intercom_entities
 from .ownership import SIGNAL
+from .panel import SIGNAL as SIGNAL_PANEL
+from .panel import STATES as PANEL_STATES
 from .season import SeasonCurrent, SeasonRecommended
 PARALLEL_UPDATES = 0
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEntitiesCallback) -> None:
-    add([HaufloOwnership(entry), HaufloHouseState(entry)])
+    add([HaufloOwnership(entry), HaufloHouseState(entry), HaufloPanel(entry)])
     add(intercom_entities(getattr(entry.runtime_data, 'intercom', None), 'sensor'))
     if (season := getattr(entry.runtime_data, 'season', None)) is not None:
         add([SeasonRecommended(entry, season), SeasonCurrent(entry, season)])
@@ -79,3 +82,38 @@ class HaufloHouseState(HouseEntity, SensorEntity):
     def extra_state_attributes(self) -> dict[str, Any] | None:
         st = self._state()
         return facts(st) if st else None
+
+class HaufloPanel(SensorEntity):
+    _attr_has_entity_name = True
+    _attr_translation_key = 'panel'
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = PANEL_STATES
+    _attr_should_poll = False
+
+    def __init__(self, entry: ConfigEntry) -> None:
+        self._entry = entry
+        self._attr_unique_id = f'{entry.entry_id}_panel'
+        self._attr_device_info = device_info(entry.entry_id, entry)
+        self.entity_id = f'sensor.{DOMAIN}_panel'
+
+    def _data(self) -> dict[str, Any] | None:
+        panel = getattr(getattr(self._entry, 'runtime_data', None), 'panel', None)
+        return getattr(panel, 'data', None)
+
+    @property
+    def native_value(self) -> str | None:
+        d = self._data()
+        return d['state'] if d else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        d = self._data()
+        return {k: d[k] for k in ('reason', 'agent', 'at')} if d else None
+
+    async def async_added_to_hass(self) -> None:
+        self.async_on_remove(async_dispatcher_connect(self.hass, SIGNAL_PANEL, self._changed))
+
+    @callback
+    def _changed(self) -> None:
+        self.async_write_ha_state()

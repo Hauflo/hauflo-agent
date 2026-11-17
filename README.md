@@ -59,8 +59,11 @@ All of them belong to one service device, **Hauflo**.
 
 | Entity | What it is | When |
 | --- | --- | --- |
-| `binary_sensor.hauflo_link` (**Connection**, diagnostic) | On while the agent is connected to Hauflo. Attribute `server`: which Hauflo server. | Always |
-| `sensor.hauflo_made_in_this_home` (**Made at this site**, diagnostic) | How many entities Hauflo made or took over here. Attributes: `by_kind`, `hand_edited` (renamed or disabled in Home Assistant, or kept as a hand edit by the last plan), `next_deploy` (what the next deploy would create, update, offer to remove, and when Hauflo said it). Read only. | Always |
+| `binary_sensor.hauflo_connection` (**Connection**, diagnostic) | On while the agent is connected to Hauflo. Attribute `server`: which Hauflo server. | Always |
+| `sensor.hauflo_made_at_this_site` (**Made at this site**, diagnostic) | How many entities Hauflo made or took over here. Attributes: `by_kind`, `hand_edited` (renamed or disabled in Home Assistant, or kept as a hand edit by the last plan), `next_deploy` (what the next deploy would create, update, offer to remove, and when Hauflo said it). Read only. | Always |
+| `sensor.hauflo_house_state` (**Site status**) | All good / Fault / Alarm / Devices offline — the same level the cards and Hauflo's monitoring show. Attributes: the counts by level, the active signals, since when. For the client's own automations. | Always |
+| `binary_sensor.hauflo_house_problem` (**Site problem**) | On while the site status is anything but All good. | Always |
+| `sensor.hauflo_panel` (**Panel**, diagnostic) | What the cloud last said of this site's Hauflo dashboard: Up to date / Refreshed / Waiting to be applied / Agent update needed. | Always |
 | `binary_sensor.hauflo_daylight` (**Daylight outside**) | On while it is light outside: by an outdoor lux sensor an administrator chose, otherwise by the sun’s elevation; a change holds 10 minutes. While it is on, a Hauflo scene leaves off the lights the client marked **Leave off in scenes by day** (a niche, a shelf). Attributes: `source`, `value`, `threshold`, `since`. | Always |
 | **Recommended season** / **Current season** (sensors), **Switch automatically** (switch) | Winter / Summer (or Heating / Cooling): the mode in force, what the outdoor temperature suggests, and whether the mode is switched once a day by itself. The switch can be changed only by staff, not by the client. | After Winter / Summer is set up in Hauflo |
 | **Rule · name** (switch), **Rule active · name** (binary sensor) | One on / off switch and one “has fired” sensor for each rule (by a value, for example ventilation by CO₂, or by a schedule). | After a deploy with rules |
@@ -91,9 +94,9 @@ Hauflo can ask only for what is on the agent's fixed list, and the agent edits s
 
 **Every minute:** Home Assistant and agent versions, the KNX connection, how many KNX entities are unavailable (up to 10 ids), the name and state of entities labelled **Hauflo monitoring**, open alarms, and whether the owner's switch is off. For the service passport in the handover pack: how KNX is connected (tunnel or routing, the gateway's address and port, the individual address; whether KNX Secure is on — never its keys or passwords), Home Assistant's address and the names of its administrators (no passwords).
 
-**New in 0.34 on request** (still the fixed list, still over the one outgoing connection): commissioning checks after a deploy (the bus, scenes, groups, automations, the dashboard, voice) read only states and the registry; “read after a command” and polling for devices without feedback; **What voice assistants can reach** and **Close the dangerous** change only which entities are exposed to voice; “+ Own signal” turns any entity of the site into an alarm signal; the fleet updates the agent in waves, with a way back to the previous version.
+**On request** (still the fixed list, still over the one outgoing connection): commissioning checks after a deploy (the bus, scenes, groups, automations, the dashboard, voice) read only states and the registry; “read after a command” and polling for devices without feedback; **What voice assistants can reach** and **Close the dangerous** change only which entities are exposed to voice; “+ Own signal” turns any entity of the site into an alarm signal; the fleet updates the agent in waves, with a way back to the previous version.
 
-**Every minute, also (0.34):**
+**Every minute, also:**
 
 - **The one alarm count:** the alarms open now with their sensor name, class and since when, counted once by the agent — Hauflo's monitoring, the cards, the fleet and the Telegram bot show this number.
 - **Observations on the site's own norm** (the “Background observations” and “Habits” of **Analysis**): a zone or sensor clearly off its learned norm — entity name, the finding and its numbers, never an action — and your **This is normal** / **Watch again** choices made on the card in Home Assistant.

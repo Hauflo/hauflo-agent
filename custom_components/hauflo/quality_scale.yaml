@@ -3,8 +3,10 @@
 rules:
   # Bronze
   action-setup:
-    status: exempt
-    comment: The agent registers no service actions of its own.
+    status: todo
+    comment: >-
+      The six service actions (lock, off_in, unprotect, remove_alarms, intercom_answer, intercom_hangup) are
+      registered in async_setup_entry, when the subsystem that serves them exists; moving them to async_setup is planned.
   appropriate-polling:
     status: exempt
     comment: No polling — one push link to Hauflo; the entities are updated by dispatcher and state events.
@@ -18,8 +20,8 @@ rules:
     status: done
     comment: No requirements (only Home Assistant's own aiohttp).
   docs-actions:
-    status: exempt
-    comment: No service actions.
+    status: todo
+    comment: The six actions are described in services.yaml (selectors, translated names); a README section is to come.
   docs-conditions:
     status: exempt
     comment: No device conditions.
@@ -46,10 +48,10 @@ rules:
     comment: single_config_entry in the manifest.
   # Silver
   action-exceptions:
-    status: exempt
+    status: todo
     comment: >-
-      No service actions of its own. The climate / select entity actions only store a value Home Assistant already
-      validated; the floor thermostats are written later by the engine, never inside the action.
+      The lock action and the light timer raise ServiceValidationError (translated) on a wrong target; the
+      other four actions (unprotect, remove_alarms, intercom_answer, intercom_hangup) are to be reviewed.
   config-entry-unloading: done
   docs-configuration-parameters:
     status: done
@@ -70,7 +72,9 @@ rules:
   reauthentication-flow: done
   test-coverage:
     status: todo
-    comment: Measured in CI per module (pytest-cov, no gate yet) — 85 % of lines overall, config flow 98 %; below 95 %: the tunnel (__init__ 69 %), the notify engine (77 %), voice (44 %).
+    comment: >-
+      Measured in CI per module (pytest-cov, no gate yet) — 85 % of lines overall, config flow 98 %; below 95 % —
+      the tunnel (__init__ 69 %), the notify engine (77 %), voice (44 %).
   # Gold
   devices:
     status: done

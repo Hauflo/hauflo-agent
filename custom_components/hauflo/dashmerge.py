@@ -14,6 +14,7 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 from . import stock as stock_cards
+from .const import VERSION
 from .storage import HaufloStore
 _LOGGER = logging.getLogger(__name__)
 ID = 'hauflo_id'
@@ -208,9 +209,123 @@ def _strip_ids(node: Any) -> Any:
         return out
     return node
 
+def _view_of(target: Any, url_path: str) -> str | None:
+    if not isinstance(target, str):
+        return None
+    t = target.strip().split('#', 1)[0].split('?', 1)[0]
+    if not t.startswith('/') or t.startswith('//'):
+        return None
+    parts = [x for x in t.split('/') if x]
+    return parts[1] if len(parts) >= 2 and parts[0] == url_path else None
+_CONTENT_KEYS = ('entity', 'entities', 'area')
+
+def _ways(card: dict[str, Any]) -> list[Any]:
+    out: list[Any] = []
+    if isinstance(card.get('path'), str) and card['path'].strip():
+        out.append(card['path'])
+    if not any((k in card for k in _CONTENT_KEYS)):
+        if isinstance(card.get('navigation_path'), str):
+            out.append(card['navigation_path'])
+        tap = card.get('tap_action')
+        if isinstance(tap, dict) and tap.get('action') == 'navigate':
+            out.append(tap.get('navigation_path'))
+    return out
+DEAD_LINK = 'dead_link'
+
+class Dead:
+
+    def __init__(self) -> None:
+        self.removed: list[dict[str, Any]] = []
+        self.prints: Counter[str] = Counter()
+        self.ids: set[str] = set()
+        self.on: list[str] = []
+        self.labels: list[dict[str, Any]] = []
+
+def drop_dead(cfg: Any, url_path: str, mine: Callable[[dict[str, Any]], bool], labels: dict[int, dict[str, Any]] | None=None) -> Dead | None:
+    views = [v for v in _kids(cfg, 0) if isinstance(v, dict)] if isinstance(cfg, dict) else []
+    if not views:
+        return None
+    paths = {v['path'] for v in views if isinstance(v.get('path'), str) and v['path']}
+    out = Dead()
+    used: set[str] = set()
+
+    def gone(card: dict[str, Any]) -> str | None:
+        ways = _ways(card)
+        pages = [_view_of(w, url_path) for w in ways]
+        if not ways or any((p is None for p in pages)):
+            return None
+        if any((p in paths or (p.isdigit() and int(p) < len(views)) for p in pages if p is not None)):
+            return None
+        return pages[0]
+
+    def drop(card: dict[str, Any], to: str, view: dict[str, Any]) -> None:
+        out.prints[Merge._fp(card, 3)] += 1
+        label = (labels or {}).get(id(card))
+        if label is not None:
+            out.labels.append(label)
+        h = label.get('id') if label is not None and label.get('dropped') else None
+        if h:
+            out.ids.add(h)
+        else:
+            h, k = (f'~dead/{to}', 2)
+            while h in used:
+                h, k = (f'~dead/{to}#{k}', k + 1)
+        used.add(h)
+        item: dict[str, Any] = {'id': h, 'kind': 'card'}
+        if isinstance(card.get('type'), str):
+            item['type'] = card['type'][:60]
+        if (t := _title(card, 3)):
+            item['title'] = t
+        if (w := _title(view, 1)):
+            item['where'] = w
+        out.removed.append({**item, 'reason': DEAD_LINK, 'to': to[:128]})
+        if (vh := _hid(view)) is not None:
+            out.on.append(vh)
+
+    def cards(items: list[Any], view: dict[str, Any]) -> list[Any]:
+        kept: list[Any] = []
+        for c in items:
+            if not isinstance(c, dict):
+                kept.append(c)
+                continue
+            his = mine(c)
+            if his and (to := gone(c)) is not None:
+                drop(c, to, view)
+                continue
+            inner = _stack(c) if his or c.get('type') == LAYOUT else None
+            if inner:
+                before = Merge._fp(c, 3)
+                left = cards(inner, view)
+                if len(left) != len(inner):
+                    if his:
+                        out.prints[before] += 1
+                        if not left:
+                            continue
+                    c['cards'] = left
+            kept.append(c)
+        return kept
+    for v in views:
+        if _kids_key(v, 1) == 'cards':
+            if isinstance(v.get('cards'), list):
+                v['cards'] = cards(v['cards'], v)
+            continue
+        if not isinstance(v.get('sections'), list):
+            continue
+        secs: list[Any] = []
+        for s in v['sections']:
+            if isinstance(s, dict) and isinstance(s.get('cards'), list) and s['cards']:
+                before = Merge._fp(s, 2)
+                s['cards'] = cards(s['cards'], v)
+                if not s['cards'] and mine(s):
+                    out.prints[before] += 1
+                    continue
+            secs.append(s)
+        v['sections'] = secs
+    return out
+
 class Merge:
 
-    def __init__(self, new: dict[str, Any], current: Any, base: dict[str, Any], take: Any=(), restore: Any=(), skip: Any=()) -> None:
+    def __init__(self, new: dict[str, Any], current: Any, base: dict[str, Any], take: Any=(), restore: Any=(), skip: Any=(), url_path: str | None=None) -> None:
         self.new, self.current, self.base = (new, current if isinstance(current, dict) else {'views': []}, base)
         self.skip: set[str] = set(skip)
         self.B = _Index(base)
@@ -233,8 +348,16 @@ class Merge:
         self._dissolve()
         self.rehomed: set[int] = set()
         self.held: dict[int, list[tuple[int, dict[str, Any]]]] = {}
+        self._labels: dict[int, dict[str, Any]] = {}
         self._rehome()
+        self.dead_prints: Counter[str] = Counter()
+        self.dead_ids: set[str] = set()
+        self.dead_on: list[str] = []
+        self.blank_prints: Counter[str] = Counter()
         self.result = self._build_root()
+        self._drop_blank_doubles()
+        if url_path:
+            self._drop_dead(url_path)
 
     def _mark_view(self, node: dict[str, Any], level: int, title: str | None) -> None:
         for c in _kids(node, level):
@@ -494,7 +617,7 @@ class Merge:
             h = self._hauflo(c)
             if h is None:
                 node = self._local(c, child_level)
-                self.local.append(self._local_label(c, child_level))
+                self.local.append(self._said(node, self._local_label(c, child_level)))
                 put(node)
                 continue
             if h in self.N.node and (not self._moved(h)):
@@ -506,12 +629,12 @@ class Merge:
                 self.moved.append(self._label(self.B, h))
                 put(self._build(h))
                 continue
-            if self._keeps(h):
-                self.local.append(self._local_label(c, child_level, dropped=h))
+            if self._keeps(h) and (not (child_level == 1 and _blank_view(c))):
                 node = self._local(c, child_level)
+                self.local.append(self._said(node, self._local_label(c, child_level, dropped=h)))
                 put(node) if anchored else tail.append(node)
             else:
-                if self._edited(h):
+                if self._edited(h) and (not (child_level == 1 and _blank_view(c))):
                     self.removed.append(self._label(self.B, h, twin=self._twin(h)))
                 if id(c) not in self.rehomed:
                     items = self.held.pop(id(c)) if id(c) in self.held else self._orphans(c, child_level)
@@ -554,17 +677,19 @@ class Merge:
                 continue
             h = self._hauflo(x)
             if h is None:
-                self.local.append(self._local_label(x, cl))
-                out.append((cl, self._local(x, cl)))
+                node = self._local(x, cl)
+                self.local.append(self._said(node, self._local_label(x, cl)))
+                out.append((cl, node))
             elif h in self.N.node:
                 if self._moved(h):
                     self.moved.append(self._label(self.B, h))
                     out.append((cl, self._build(h)))
-            elif self._keeps(h):
-                self.local.append(self._local_label(x, cl, dropped=h))
-                out.append((cl, self._local(x, cl)))
+            elif self._keeps(h) and (not (cl == 1 and _blank_view(x))):
+                node = self._local(x, cl)
+                self.local.append(self._said(node, self._local_label(x, cl, dropped=h)))
+                out.append((cl, node))
             else:
-                if self._edited(h):
+                if self._edited(h) and (not (cl == 1 and _blank_view(x))):
                     self.removed.append(self._label(self.B, h, twin=self._twin(h)))
                 out.extend(self._orphans(x, cl))
         return out
@@ -604,6 +729,32 @@ class Merge:
                 view['cards'] = self._fit(rest, 3, holder)
             views.append(view)
         return views
+
+    def _said(self, node: dict[str, Any], label: dict[str, Any]) -> dict[str, Any]:
+        self._labels[id(node)] = label
+        return label
+
+    def _drop_blank_doubles(self) -> None:
+        views = self.result.get('views')
+        if not isinstance(views, list):
+            return
+        ours = {v.get('path') for v in views if isinstance(v, dict) and _hid(v) and v.get('path')}
+        gone = [v for v in views if isinstance(v, dict) and _hid(v) is None and (v.get('path') in ours) and _blank_view(v)]
+        if not gone:
+            return
+        self.result['views'] = [v for v in views if not any((v is g for g in gone))]
+        self.blank_prints = self._prints({'views': gone}, True)
+        said = {id(self._labels[id(v)]) for v in gone if id(v) in self._labels}
+        self.local = [x for x in self.local if id(x) not in said]
+
+    def _drop_dead(self, url_path: str) -> None:
+        gone = drop_dead(self.result, url_path, lambda c: _hid(c) is None, self._labels)
+        if gone is None:
+            return
+        self.removed.extend(gone.removed)
+        self.dead_prints, self.dead_ids, self.dead_on = (gone.prints, gone.ids, gone.on)
+        said = {id(x) for x in gone.labels}
+        self.local = [x for x in self.local if id(x) not in said]
 
     def _local_label(self, c: dict[str, Any], level: int, dropped: str | None=None) -> dict[str, Any]:
         out: dict[str, Any] = {'kind': ('view', 'section', 'card')[level - 1]}
@@ -645,7 +796,7 @@ class Merge:
         return out
 
     def lost(self) -> int:
-        missing = self._prints(self.current, True) - self._prints(self.result, False)
+        missing = self._prints(self.current, True) - self._prints(self.result, False) - self.dead_prints - self.blank_prints
         return sum(missing.values())
 
     def updates(self) -> dict[str, int]:
@@ -677,6 +828,8 @@ class Merge:
             if h not in nn and h not in self.skip and self._in_current(h) and (not self._edited(h)):
                 bump(self.B, h, 'removed')
         R = _Index(self.result)
+        for v in self.dead_on:
+            bump(R, v, 'removed')
         for v, row in rows.items():
             row['before'] = _count_cards(self.C.node[v], 1) if v in self.C.node else 0
             row['after'] = _count_cards(R.node[v], 1) if v in R.node else 0
@@ -720,7 +873,7 @@ class Merge:
                 r = R.node.get(h)
                 if r is None or _own(r, lvl) != cur:
                     bad.append(h)
-            elif self._keeps(h):
+            elif self._keeps(h) and h not in self.dead_ids:
                 if self._fp(c, lvl) not in kept:
                     bad.append(h)
         return bad
@@ -1152,7 +1305,7 @@ def edited_where(seen: Any, base: Any, limit: int=5) -> list[dict[str, Any]]:
 def _digest(config: Any) -> str:
     return hashlib.sha256(json.dumps(config, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()
 
-def plan_and_merge(new: dict[str, Any], current: Any, base: dict[str, Any] | None, take: Any=(), restore: Any=()) -> tuple[dict[str, Any], dict[str, Any]]:
+def plan_and_merge(new: dict[str, Any], current: Any, base: dict[str, Any] | None, take: Any=(), restore: Any=(), url_path: str | None=None) -> tuple[dict[str, Any], dict[str, Any]]:
     new = ensure_ids(copy.deepcopy(new))
     if base is not None:
         base, seen = (unpanel(base, new), unpanel(current, new))
@@ -1161,9 +1314,9 @@ def plan_and_merge(new: dict[str, Any], current: Any, base: dict[str, Any] | Non
         return (new, {'base': False})
     up = upgrade(base, seen, new)
     b2, c2, info = up if up is not None else (base, seen, None)
-    m = Merge(new, c2, b2, take, restore, skip=info['copies'] if info else ())
+    m = Merge(new, c2, b2, take, restore, skip=info['copies'] if info else (), url_path=url_path)
     unique_paths(m.result)
-    lost = sum((_local_prints(seen, base) - m._prints(m.result, False) - (info['allow'] if info else Counter())).values())
+    lost = sum((_local_prints(seen, base) - m._prints(m.result, False) - (info['allow'] if info else Counter()) - m.dead_prints - m.blank_prints).values())
     report = {**m.summary(), 'base': True, 'edited': seen != base, 'changes': m.result != current, 'lost': max(m.lost(), lost), 'untouched': len(m.untouched())}
     if seen != base:
         report['edited_where'] = edited_where(seen, base)
@@ -1253,6 +1406,13 @@ class Access:
     def key(self) -> tuple[Any, ...]:
         return (tuple(self.family), tuple(sorted(self.guests)), json.dumps(self.pages, sort_keys=True), self.active)
 
+def _blank_view(v: Any) -> bool:
+    if not isinstance(v, dict):
+        return False
+    if any((isinstance(c, dict) for c in v.get('cards') or [])):
+        return False
+    return not any((isinstance(c, dict) for s in v.get('sections') or [] if isinstance(s, dict) for c in s.get('cards') or []))
+
 def _views(cfg: Any) -> list[Any]:
     return cfg['views'] if isinstance(cfg, dict) and isinstance(cfg.get('views'), list) else []
 
@@ -1333,6 +1493,7 @@ class DashboardMerge:
         self.copies: dict[str, list[str]] = {}
         self.taken_copies: set[str] = set()
         self.written: dict[str, str] = {}
+        self.merged_by: str | None = None
         self.key: bytes = b''
         self.access_of: Callable[[], Any] | None = None
         self.write_lock = asyncio.Lock()
@@ -1399,6 +1560,7 @@ class DashboardMerge:
         self.taken_copies = {x for x in taken if isinstance(x, str)} if isinstance(taken, list) else set()
         written = meta.get('written')
         self.written = {k: v for k, v in written.items() if isinstance(k, str) and isinstance(v, str)} if isinstance(written, dict) else {}
+        self.merged_by = meta.get('merged_by') if isinstance(meta.get('merged_by'), str) else None
         key = meta.get('key')
         if not (isinstance(key, str) and len(key) == 64):
             key = secrets.token_hex(32)
@@ -1423,7 +1585,7 @@ class DashboardMerge:
         return True
 
     async def _save_meta(self, key: str | None=None) -> None:
-        await self.meta_store.async_save({'copies': self.copies, 'taken': sorted(self.taken_copies), 'written': self.written, 'key': key or self.key.hex()})
+        await self.meta_store.async_save({'copies': self.copies, 'taken': sorted(self.taken_copies), 'written': self.written, 'key': key or self.key.hex(), **({'merged_by': self.merged_by} if self.merged_by else {})})
 
     def unchanged(self, url_path: str, raw: Any) -> bool:
         return raw is not None and self.written.get(url_path) == _digest(raw)
@@ -1477,7 +1639,7 @@ class DashboardMerge:
             return {'base': False, 'exists': False}
         current = self._plain(current, await self._access())
         base = self.bases.get(url_path) if current is not None else None
-        _, out = plan_and_merge(await self._expand(config), current, base)
+        _, out = plan_and_merge(await self._expand(config), current, base, url_path=url_path)
         offers = stock_cards.offers(current, stock_cards.hass_info(self.hass)) if base is not None and current is not None else []
         pairs = twins(current, config) if base is not None else []
         return {**out, 'exists': True, **({'stock': offers[:200]} if offers else {}), **({'twins': pairs} if pairs else {})}
@@ -1499,7 +1661,7 @@ class DashboardMerge:
             raise MergeError('no_base', 'the agent has no Hauflo version of this dashboard to merge against')
         src, made = stock_cards.apply(current, list(stock), stock_cards.hass_info(self.hass)) if base is not None and current is not None and stock else (current, 0)
         src, dropped = drop_twins(src, new, list(drop)) if base is not None and src is not None and drop else (src, 0)
-        merged, report = plan_and_merge(new, src, base, take, restore)
+        merged, report = plan_and_merge(new, src, base, take, restore, url_path=url_path)
         if made:
             report['stock'] = made
         if dropped:
@@ -1530,9 +1692,69 @@ class DashboardMerge:
         else:
             self.written[url_path] = _digest(raw)
         self.bases[url_path] = new
+        self.merged_by = VERSION
         await self.store.async_save(self.bases)
         await self._save_meta()
         return {**report, 'saved': out != raw, **({'copy': copy_url, 'copy_reason': 'upgrade' if base is None else 'edited'} if copy_url else {}), **({'copies_removed': pruned} if pruned else {})}
+
+    def outdated(self) -> bool:
+        return self.merged_by != VERSION
+
+    async def remerge(self, local_ws: Callable[[list[dict[str, Any]]], Any], locked: bool=False) -> dict[str, dict[str, Any]]:
+        out: dict[str, dict[str, Any]] = {}
+        failed = False
+        for url_path in [u for u in self.bases if not is_copy(u)]:
+            try:
+                out[url_path] = await self._remerge_one(url_path, local_ws, locked)
+            except Exception as err:
+                failed = True
+                _LOGGER.warning('Hauflo: dashboard %s not merged again after the update: %s', url_path, err)
+                out[url_path] = {'outcome': 'failed'}
+        if not locked and (not failed):
+            self.merged_by = VERSION
+            await self._save_meta()
+        return out
+
+    async def _remerge_one(self, url_path: str, local_ws: Callable[[list[dict[str, Any]]], Any], locked: bool) -> dict[str, Any]:
+        from . import order as block_order
+        async with self.write_lock:
+            exists, raw = await self._current(url_path)
+            base = self.bases.get(url_path)
+            if not exists or not isinstance(raw, dict) or (not isinstance(base, dict)):
+                return {'outcome': 'skipped:no_dashboard'}
+            access = await self._access()
+            current = self._plain(raw, access)
+            merged, report = plan_and_merge(copy.deepcopy(base), current, base, url_path=url_path)
+            if report.get('lost') or report.get('untouched'):
+                _LOGGER.warning('Hauflo: dashboard %s not merged again — %s of his items / %s blocks would change', url_path, report.get('lost'), report.get('untouched'))
+                return {'outcome': 'skipped:guard'}
+            dead = [r for r in report.get('removed', []) if r.get('reason') == DEAD_LINK]
+            if dead:
+                plain, _ = plan_and_merge(copy.deepcopy(base), current, base)
+                if plain != current:
+                    _LOGGER.warning('Hauflo: dashboard %s not merged again — the merge would change more than the tiles to pages gone', url_path)
+                    return {'outcome': 'skipped:other_changes'}
+            else:
+                merged = current
+            if (views := block_order.view_order(merged, await block_order.async_load(self.hass), url_path)) is not None:
+                merged = {**merged, 'views': views}
+            out = expand_access(copy.deepcopy(merged), access, url_path)
+            if out == raw:
+                return {'outcome': 'same'}
+            if locked:
+                _LOGGER.info('Hauflo: dashboard %s would be merged again after the update — changes by Hauflo are switched off', url_path)
+                return {'outcome': 'skipped:locked'}
+            copy_url = None
+            if dead:
+                shown = getattr(self._dashboard(url_path), 'config', None) or {}
+                title = shown.get('title') if isinstance(shown.get('title'), str) else None
+                copy_url, _ = await self._copy(url_path, current, title, local_ws)
+            await self._dashboard(url_path).async_save(out)
+            _, back = await self._current(url_path)
+            self.written[url_path] = _digest(back if back is not None else out)
+            await self._save_meta()
+            _LOGGER.info('Hauflo: dashboard %s merged again after the update — %s tile(s) to pages gone removed, tabs reordered: %s', url_path, len(dead), views is not None)
+            return {'outcome': 'saved', 'removed': dead, 'reordered': views is not None, 'verify': 'ok' if back == out else 'mismatch', **({'copy': copy_url} if copy_url else {})}
 
     async def _copy(self, url_path: str, config: Any, title: str | None, local_ws: Callable[[list[dict[str, Any]]], Any], lang: str | None=None, before_take: bool=False) -> tuple[str, int]:
         now = dt_util.now()

@@ -31,6 +31,7 @@ from .intercom import setup as intercom_setup
 from . import alarms_now, analysis, automations, backup, combos, dashmerge, daylight, exposure, foreign, guest, house, independent, insight, install, issues, keep, noeffect, notify, ownership, presence, protect, quiet, ranges, retired, rules, scenes, season, self_update, servers, service, sidebar, signals, stock, theme, timers, titles, voice, watchdog
 from . import derived as dv
 from . import order as block_order
+from . import panel as panel_mod
 from . import room_pictures
 from . import habits as habits_mod
 from . import history as history_mod
@@ -1789,6 +1790,7 @@ class Agent:
         self._flow_memo: dict[str, list[str]] = {}
         self._owned_store: HaufloStore = HaufloStore(hass, OWNED_STORE)
         self.dashboards = dashmerge.DashboardMerge(hass)
+        self.panel = panel_mod.Panel(hass)
         self._pending: dict[tuple[int, Any], tuple[str, Any]] = {}
         self._note_subs: set[tuple[int, Any]] = set()
         self._unsub_signals = None
@@ -1951,6 +1953,7 @@ class Agent:
         self.owned = set(data.get('unique_ids', [])) if isinstance(data, dict) else set()
         self.owned_entries = set(data.get('entries', [])) if isinstance(data, dict) else set()
         await self.dashboards.async_load()
+        await self.panel.async_load()
 
     def _knx_uid(self, entity_id: Any) -> str | None:
         entry = er.async_get(self.hass).async_get(entity_id) if isinstance(entity_id, str) else None
@@ -2182,6 +2185,9 @@ class Agent:
             data = json.dumps({'type': 'auth', 'access_token': self.token})
         elif msg.get('type') == dashmerge.PLAN or (msg.get('type') == 'lovelace/config' and self.dashboards.manages(msg.get('url_path')) and (not dashmerge.is_copy(msg.get('url_path')))):
             await dashmerge.handle(self, ch, msg, self._dashboard_why, backup.fresh, LOCKED_CODE, self._dashboard_prune)
+            return
+        elif msg.get('type') == panel_mod.STATE:
+            await panel_mod.handle(self, ch, msg)
             return
         elif self.locked and _ws_locked(msg):
             _LOGGER.info('Hauflo: «%s» refused — changes by Hauflo are switched off in HA', msg.get('type'))
@@ -2710,6 +2716,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> bo
         agent._watch_signals()
         agent.house_now()
     entry.async_on_unload(async_at_started(hass, _house_start))
+
+    async def _remerge() -> None:
+        if not agent.dashboards.outdated():
+            return
+        try:
+            res = await agent.dashboards.remerge(lambda cmds: dashmerge.local_ws(agent.local_session, f'{agent.local_base}/api/websocket', agent.token, cmds), agent.locked)
+        except Exception as err:
+            _LOGGER.warning('Hauflo: dashboards not merged again after the update: %s', err)
+            return
+        _LOGGER.info('Hauflo: dashboards merged again by %s: %s', VERSION, {u: r.get('outcome') for u, r in res.items()})
+        if res and all((r.get('outcome') in ('saved', 'same') for r in res.values())):
+            await agent.panel.remerged()
+
+    @callback
+    def _remerge_start(_hass: HomeAssistant) -> None:
+        entry.async_create_background_task(hass, _remerge(), 'hauflo dashboards merged again')
+    entry.async_on_unload(async_at_started(hass, _remerge_start))
     entry.async_on_unload(hass.bus.async_listen(er.EVENT_ENTITY_REGISTRY_UPDATED, callback(lambda _e: agent.rewatch_soon() if hass.is_running else None)))
     await hass.async_add_executor_job(stock.table)
     try:

@@ -1909,5 +1909,9 @@
       "water_heater",
       "humidifier"
     ]
+  },
+  "panel": {
+    "reason_max": 200,
+    "agent_max": 32
   }
 }
