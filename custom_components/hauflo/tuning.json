@@ -863,7 +863,6 @@
       "flapping": "link",
       "night_water": "water",
       "disk_full": "system",
-      "backup_old": "system",
       "norm_temperature": "climate",
       "loop_slow": "climate",
       "loop_warmup": "climate",
@@ -1060,14 +1059,6 @@
     "disk_min_rise_pct": 1,
     "disk_min_fall_gb": 0.5,
     "disk_end_factor": 1.5,
-    "backup_platforms": [
-      "backup"
-    ],
-    "backup_keys": [
-      "last_successful_automatic_backup"
-    ],
-    "backup_max_days": 7,
-    "backup_never_days": 2,
     "water_units": [
       "L",
       "m³",

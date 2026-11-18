@@ -1,13 +1,12 @@
 """Forecasts of device health: battery, link quality and the HA host."""
 from __future__ import annotations
 from typing import Any, ClassVar
-from homeassistant.const import PERCENTAGE, STATE_UNKNOWN
+from homeassistant.const import PERCENTAGE
 from homeassistant.core import State
-from homeassistant.util import dt as dt_util
-from ..derived import NOT_A_STATE, num
+from ..derived import num
 from ..insight.common import round2
 from ..insight.detector import CanonAttr
-from .stats import DAY_S, WEEK, Series, date_in, day_of, day_x, forecast, p_cfg
+from .stats import WEEK, Series, date_in, day_x, forecast, p_cfg
 
 class BatteryForecast(Series):
     name = 'battery'
@@ -86,16 +85,18 @@ class LinkQuality(Series):
         return {'daysLeft': round(fc['days']), 'date': date_in(now, fc['days']), 'value': round2(fc['level']), 'limit': warn, 'perWeek': round2(fc['slope'] * WEEK)}
 
 class HaHost(Series):
-    """HA's own disk (System Monitor / Supervisor sensors) and the age of its last automatic backup."""
+    """HA's own disk (System Monitor / Supervisor sensors): only the FORECAST («fills up in N days»).
+    The levels already reached and the age of the last backup are health/'s (health_disk, health_backup):
+    one fault, one source (0.41 W1)."""
     name = 'host'
     domains = ('sensor',)
     agg = 'max'
-    kinds: ClassVar[dict[str, str]] = {'use': 'disk_full', 'free': 'disk_full', 'backup': 'backup_old'}
-    units: ClassVar[dict[str, str]] = {'use': 'pct', 'free': 'gb', 'backup': 'days'}
-    KINDS = ('disk_full', 'backup_old')
+    kinds: ClassVar[dict[str, str]] = {'use': 'disk_full', 'free': 'disk_full'}
+    units: ClassVar[dict[str, str]] = {'use': 'pct', 'free': 'gb'}
+    KINDS = ('disk_full',)
 
     def need(self, rec: dict[str, Any]) -> int:
-        return 0 if rec['kind'] == 'backup' else p_cfg()['disk_min_days']
+        return p_cfg()['disk_min_days']
 
     def _key(self, st: State) -> tuple[str | None, str | None]:
         entry = self.ctx.entry(st.entity_id)
@@ -103,8 +104,6 @@ class HaHost(Series):
 
     def kind_of(self, st: State) -> str | None:
         platform, key = self._key(st)
-        if platform in p_cfg()['backup_platforms'] and key in p_cfg()['backup_keys']:
-            return 'backup'
         if platform not in p_cfg()['host_platforms']:
             return None
         if key in p_cfg()['disk_use_keys']:
@@ -113,24 +112,7 @@ class HaHost(Series):
             return 'free'
         return None
 
-    def _watch(self, st: State) -> str | None:
-        if st.state == STATE_UNKNOWN and self.ctx.visible(st.entity_id, self.diagnostic):
-            return 'backup' if self.kind_of(st) == 'backup' else None
-        return super()._watch(st)
-
-    def on_state(self, new: State, now: float) -> None:
-        if new.state == STATE_UNKNOWN and self._watch(new) == 'backup':
-            rec = self.recs.get(new.entity_id)
-            if rec is None or rec['kind'] != 'backup':
-                self.recs[new.entity_id] = {'kind': 'backup', 'pts': [], 'day': day_of(now), 'today': None, 'ring': [], 'last': None, 'open': None, 'since': now}
-                self.ctx.dirty()
-            return
-        super().on_state(new, now)
-
     def reading(self, st: State, kind: str) -> float | None:
-        if kind == 'backup':
-            at = dt_util.parse_datetime(st.state)
-            return at.timestamp() if at else None
         v = num(st.state)
         if v is None or kind != 'free':
             return v
@@ -142,19 +124,7 @@ class HaHost(Series):
     def assess(self, eid: str, rec: dict[str, Any], now: float) -> dict[str, Any] | None:
         kind, last = (rec['kind'], rec['last'])
         if last is None:
-            st = self.ctx.hass.states.get(eid)
-            if kind != 'backup':
-                return None
-            if st is None or (st.state != STATE_UNKNOWN and st.state in NOT_A_STATE):
-                return rec.get('found') if rec['open'] is not None else None
-            if st.state == STATE_UNKNOWN and now - (rec['since'] or now) >= p_cfg()['backup_never_days'] * DAY_S:
-                return {'limit': p_cfg()['backup_max_days']}
             return None
-        if kind == 'backup':
-            age = (now - last) / DAY_S
-            if age <= p_cfg()['backup_max_days']:
-                return None
-            return {'days': int(age), 'date': dt_util.as_local(dt_util.utc_from_timestamp(last)).date().isoformat(), 'limit': p_cfg()['backup_max_days']}
         if kind == 'use':
             limit, sign, change, past = (p_cfg()['disk_full_pct'], 1, p_cfg()['disk_min_rise_pct'], last >= p_cfg()['disk_full_pct'])
         else:
@@ -162,7 +132,6 @@ class HaHost(Series):
         pts = rec['pts']
         fc = forecast(pts, day_x(now), limit, sign, change) if len(pts) >= p_cfg()['disk_min_days'] else None
         bound = p_cfg()['disk_warn_days'] * (p_cfg()['disk_end_factor'] if rec['open'] is not None else 1)
-        if not past and (fc is None or fc['days'] >= bound):
+        if past or fc is None or fc['days'] >= bound:
             return None
-        days = 0.0 if past or fc is None else fc['days']
-        return {'daysLeft': round(days), 'date': date_in(now, days), 'value': round2(last), 'limit': limit, **({'perWeek': round2(fc['slope'] * WEEK)} if fc else {})}
+        return {'daysLeft': round(fc['days']), 'date': date_in(now, fc['days']), 'value': round2(last), 'limit': limit, 'perWeek': round2(fc['slope'] * WEEK)}

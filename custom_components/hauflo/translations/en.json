@@ -2040,7 +2040,6 @@
         "flapping": "Drops off often",
         "night_water": "Water use at night",
         "disk_full": "HA disk filling up",
-        "backup_old": "No recent HA backup",
         "norm_temperature": "Temperature off its usual",
         "loop_slow": "Loop heats slower than its peers",
         "loop_warmup": "Slow to reach the setpoint",
