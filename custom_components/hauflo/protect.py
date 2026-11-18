@@ -1,21 +1,29 @@
+"""protected — its KNX entity and the addresses that open it — even if the cloud deletes and remakes it on the same
+addresses, or under another class or platform. Only HA's own admin clears it, here, with «hauflo.unprotect».
+A relay the deploy marked (a gate's / an electric lock's, red-team 2 A1) is the deploy's word: the deploy that marked it
+What is protected now is decided in __init__ (_protect_refresh / _sticky); this keeps the marks."""
 from __future__ import annotations
-from typing import Any, Callable
-import voluptuous as vol
+from collections.abc import Callable
+import functools
+from typing import Any
 from homeassistant.components.http import KEY_HASS, HomeAssistantView
 from homeassistant.core import HomeAssistant, ServiceCall, callback
-from homeassistant.exceptions import Unauthorized
+from homeassistant.exceptions import ServiceValidationError, Unauthorized
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.service import async_register_admin_service
+import voluptuous as vol
 from .const import DOMAIN
 from .storage import HaufloStore
-from .tuning import TUNING
+from .tuning import tuning
 STORE_KEY = f'{DOMAIN}.protected'
 DATA = f'{DOMAIN}_protected'
 SERVICE = 'unprotect'
-MAX_MARK = TUNING['ownership']['protect_max']
+max_mark = functools.cache(lambda: tuning()['ownership']['protect_max'])
 SCHEMA = vol.Schema({vol.Optional('entity_id'): cv.entity_ids, vol.Optional('group_address'): vol.All(cv.ensure_list, [cv.string])})
 
 class Marks:
+    """KNX unique ids and group-address keys (their raw numbers, __init__._ga_key) that stay protected: the agent's own
+    each relay with the addresses it was marked by. `uids` / `gas` are all of them."""
 
     def __init__(self, hass: HomeAssistant) -> None:
         self._uids: set[str] = set()
@@ -47,6 +55,7 @@ class Marks:
 
     @callback
     def add(self, uid: str, gas: set[str]) -> None:
+        """The agent's own mark (a gate cover by its class): only HA's admin clears it."""
         if uid in self._uids and gas <= self._gas:
             return
         self._uids.add(uid)
@@ -55,6 +64,7 @@ class Marks:
 
     @callback
     def add_deploy(self, uid: str, gas: set[str]) -> None:
+        """The deploy's mark: a relay it says opens something, by the addresses it opens by."""
         if uid in self.deploy and gas <= self.deploy[uid]:
             return
         self.deploy[uid] = self.deploy.get(uid, set()) | gas
@@ -62,6 +72,7 @@ class Marks:
 
     @callback
     def unmark_deploy(self, uids: set[str]) -> set[str]:
+        """The deploy takes back its own marks — and with them only the addresses no other mark holds."""
         gone = uids & set(self.deploy)
         for uid in gone:
             del self.deploy[uid]
@@ -83,32 +94,53 @@ def marks(hass: HomeAssistant | None) -> Marks | None:
     data = getattr(hass, 'data', None)
     return data.get(DATA) if data is not None else None
 
-async def async_setup(hass: HomeAssistant, marks_of: Callable[[str], tuple[str | None, set[str]]], ga_key: Callable[[Any], str | None], refresh: Callable[[], None]) -> Marks:
+async def async_load(hass: HomeAssistant) -> Marks:
+    """Load the marks once per HA run (the entry's setup; a reload keeps them)."""
     if (m := marks(hass)) is not None:
         return m
     m = Marks(hass)
     await m.async_load()
     hass.data[DATA] = m
+    return m
+
+@callback
+def async_setup_service(hass: HomeAssistant, loaded: Callable[[], Any], marks_of: Callable[[str], tuple[str | None, set[str]]], ga_key: Callable[[Any], str | None], refresh: Callable[[], None]) -> None:
+    """The admin-only «hauflo.unprotect», registered once for HA's whole run (integration setup). loaded() raises
+    «not_loaded» without a loaded entry; marks_of(entity) → (its KNX unique id, its opening addresses); ga_key spells an
+    address the way the marks keep it; refresh marks what is protected now."""
 
     async def handle(call: ServiceCall) -> None:
         user = await hass.auth.async_get_user(call.context.user_id) if call.context.user_id else None
         if user is None or user.system_generated or (not user.is_admin):
             raise Unauthorized(context=call.context)
-        uids, gas = (set(), set())
+        loaded()
+        if (m := marks(hass)) is None:
+            raise ServiceValidationError(translation_domain=DOMAIN, translation_key='not_loaded')
+        if not (call.data.get('entity_id') or call.data.get('group_address')):
+            raise ServiceValidationError(translation_domain=DOMAIN, translation_key='unprotect_empty')
+        uids, gas, missed = (set(), set(), [])
         for eid in call.data.get('entity_id') or []:
             uid, opening = marks_of(eid)
-            if uid is not None:
+            if uid is None:
+                missed.append(eid)
+            else:
                 uids.add(uid)
             gas |= opening
         for ga in call.data.get('group_address') or []:
-            if (key := ga_key(ga)) is not None:
+            if (key := ga_key(ga)) is None:
+                missed.append(str(ga))
+            else:
                 gas.add(key)
+        if missed or not (uids or gas):
+            raise ServiceValidationError(translation_domain=DOMAIN, translation_key='unprotect_nothing', translation_placeholders={'items': ', '.join(missed) or '—'})
         m.clear(uids, gas)
         refresh()
     async_register_admin_service(hass, DOMAIN, SERVICE, handle, schema=SCHEMA)
-    return m
 
 class ProtectView(HomeAssistantView):
+    """The deploy names what is a gate's / an electric lock's relay (red-team 2, A1): marked, it stays protected.
+    {"entity_ids": [...], "unmark": [...]} → {"marked": [...], "unmarked": [...]}: «unmark» takes back only the
+    itself, stays until HA's admin clears it («hauflo.unprotect»)."""
     url = '/api/hauflo/protect'
     name = 'api:hauflo:protect'
     requires_auth = True
@@ -137,4 +169,4 @@ class ProtectView(HomeAssistantView):
         return self.json({'marked': self._mark(hass, ids), 'unmarked': unmarked})
 
 def _ids_ok(ids: Any) -> bool:
-    return isinstance(ids, list) and len(ids) <= MAX_MARK and all((isinstance(x, str) and cv.valid_entity_id(x) for x in ids))
+    return isinstance(ids, list) and len(ids) <= max_mark() and all((isinstance(x, str) and cv.valid_entity_id(x) for x in ids))

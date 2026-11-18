@@ -1,29 +1,42 @@
+"""window, for Hauflo's page (the hour before the alarm → its end / now). Never our own history: the recorder holds it.
+
+Read only, admin only, through the tunnel (tunnel.json). What may be read is what the tunnel may read anyway — the
+agent's `reads` gate (__init__._cloud_reads: no person / zone / tracker / phone, no presence sensor Hauflo doesn't own,
+only get_states' attributes) — and only a numeric value of the domains in tuning.json `history.domains` (a climate's
+current temperature, a humidifier's humidity — `history.attrs`). The answer is thinned to `max_points` (each bucket's
+min and max kept in time order: a spike survives), the window clipped to `max_window_h`."""
 from __future__ import annotations
+from collections.abc import Callable
 from datetime import datetime, timedelta
-from typing import Any, Callable
+import functools
+from typing import Any
 from homeassistant.components.http import KEY_HASS, HomeAssistantView
 from homeassistant.core import HomeAssistant, State
 from homeassistant.util import dt as dt_util
 from .derived import num
-from .signals import ENTITY_ID
-from .tuning import TUNING
-T = TUNING['history']
-MAX_POINTS = int(T['max_points'])
-MAX_WINDOW = timedelta(hours=T['max_window_h'])
-ATTRS: dict[str, str] = T['attrs']
-DOMAINS = frozenset(T['domains'])
+from .signals.canon import entity_id_cfg
+from .tuning import tuning
+t_cfg = functools.cache(lambda: tuning()['history'])
+max_points = functools.cache(lambda: int(t_cfg()['max_points']))
+max_window = functools.cache(lambda: timedelta(hours=t_cfg()['max_window_h']))
+attrs = functools.cache(lambda: t_cfg()['attrs'])
+domains = functools.cache(lambda: frozenset(t_cfg()['domains']))
 Point = tuple[float, float]
 
 def attribute_of(entity_id: str) -> str | None:
-    return ATTRS.get(entity_id.split('.')[0])
+    """The value a graph shows: the state, or the domain's measured attribute (a climate's current temperature)."""
+    return attrs().get(entity_id.split('.')[0])
 
 def unit_of(hass: HomeAssistant, entity_id: str, attribute: str | None) -> str | None:
+    """The state's own unit; a measured attribute's by its kind (HA's temperature unit, humidity in %)."""
     if attribute is None:
         st = hass.states.get(entity_id)
         return st.attributes.get('unit_of_measurement') if st else None
     return hass.config.units.temperature_unit if 'temperature' in attribute else '%'
 
 def window(start: str | None, end: str | None, now: datetime | None=None) -> tuple[datetime, datetime] | None:
+    """[start, end) as asked (ISO or epoch ms), end never in the future, the span never above MAX_WINDOW (its last part
+    kept — the alarm's end side). None — unreadable or empty."""
     now = now or dt_util.utcnow()
 
     def at(v: str | None) -> datetime | None:
@@ -37,10 +50,11 @@ def window(start: str | None, end: str | None, now: datetime | None=None) -> tup
     if a is None or b is None:
         return None
     b = min(b, now)
-    a = max(a, b - MAX_WINDOW)
+    a = max(a, b - max_window())
     return (a, b) if a < b else None
 
 def points_of(states: list[Any], attribute: str | None) -> list[Point]:
+    """(epoch ms, value) of the numeric ones, in time order; `unavailable` / text dropped (a gap in the line)."""
     out: list[Point] = []
     for s in states:
         if isinstance(s, State):
@@ -57,7 +71,10 @@ def points_of(states: list[Any], attribute: str | None) -> list[Point]:
     out.sort(key=lambda p: p[0])
     return out
 
-def thin(points: list[Point], a_ms: float, b_ms: float, limit: int=MAX_POINTS) -> list[Point]:
+def thin(points: list[Point], a_ms: float, b_ms: float, limit: int | None=None) -> list[Point]:
+    """At most `limit` points (tuning's max_points by default): the window cut in limit/2 buckets, each keeps its min
+    and max in their time order."""
+    limit = max_points() if limit is None else limit
     if len(points) <= limit:
         return points
     n = max(1, limit // 2)
@@ -74,6 +91,7 @@ def thin(points: list[Point], a_ms: float, b_ms: float, limit: int=MAX_POINTS) -
     return out
 
 async def read(hass: HomeAssistant, entity_id: str, a: datetime, b: datetime) -> dict[str, Any]:
+    """The graph's data: {entity, attribute, unit, points: [[ms, value]], why} — `why` says why there is no line."""
     attribute = attribute_of(entity_id)
     unit = unit_of(hass, entity_id, attribute)
     base = {'entity': entity_id, 'attribute': attribute, 'unit': unit, 'from': a.timestamp() * 1000, 'to': b.timestamp() * 1000}
@@ -88,6 +106,8 @@ async def read(hass: HomeAssistant, entity_id: str, a: datetime, b: datetime) ->
     return {**base, 'points': [[round(t), v] for t, v in thin(pts, base['from'], base['to'])], 'why': None}
 
 class HistoryView(HomeAssistantView):
+    """GET ?entity=<id>&start=<iso|ms>&end=<iso|ms> → one numeric entity's values (read()). Admins only (Hauflo through
+    its tunnel); an entity the tunnel may not read, a domain without a number — 403 / 400, never an empty «no data»."""
     url = '/api/hauflo/history'
     name = 'api:hauflo:history'
     requires_auth = True
@@ -101,7 +121,7 @@ class HistoryView(HomeAssistantView):
         hass = request.app[KEY_HASS]
         q = request.query
         entity = q.get('entity', '')
-        if not ENTITY_ID.match(entity) or entity.split('.')[0] not in DOMAINS:
+        if not entity_id_cfg().match(entity) or entity.split('.')[0] not in domains():
             return self.json_message('entity: a numeric sensor / climate', 400)
         span = window(q.get('start'), q.get('end'))
         if span is None:

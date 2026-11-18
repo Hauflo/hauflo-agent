@@ -1,5 +1,11 @@
 {
   "version": 1,
+  "features": [
+    "schedule",
+    "actions_by_domain",
+    "repeat",
+    "state_is"
+  ],
   "engine": {
     "tick_s": 60,
     "log_size": 100,
@@ -42,7 +48,10 @@
       0,
       100
     ],
-    "hysteresis_floor": 10
+    "hysteresis_floor": 10,
+    "is_max": 8,
+    "is_step_share": 0.5,
+    "is_tolerance": 0.5
   },
   "purposes": {
     "heater": {
@@ -378,6 +387,7 @@
         "field": "percentage",
         "zero": "turn_off",
         "read": "percentage",
+        "tol": "percentage_step",
         "slot": "power",
         "power": "value",
         "features": [

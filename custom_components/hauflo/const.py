@@ -1,22 +1,15 @@
-import hashlib
+"""Hauflo agent constants."""
+from __future__ import annotations
 from collections.abc import Callable
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+from homeassistant.helpers import translation
 from homeassistant.util.hass_dict import HassKey
-from . import servers as _servers
+if TYPE_CHECKING:
+    from .servers import GoodHosts
 DOMAIN = 'hauflo'
-VERSION = '0.39.0'
-
-def _www_hash() -> str:
-    h = hashlib.sha256()
-    www = Path(__file__).parent / 'www'
-    for p in sorted((f for f in www.rglob('*') if f.is_file() and f.suffix in ('.js', '.json'))):
-        h.update(p.relative_to(www).as_posix().encode() + p.read_bytes())
-    return h.hexdigest()[:8]
-ASSET_TAG = f'{VERSION}&h={_www_hash()}'
-DEFAULT_SERVER = _servers.DEFAULT_SERVER
-REGION_SERVERS = {region: hosts[0] for region, hosts in _servers.REGIONS.items()}
-FALLBACK_SERVER = _servers.PAIR_FALLBACK_SERVER
+VERSION = '0.41.0'
+SIGNING_KEYS = ('ygNZu39MKqI4HCznYsl8HqVXRdxPypJn7Q6Bikp3sUc=', 'LKtAtwSRuhK2nonpJrxHeGQigg/I4viRV+ZwRCuvIYY=')
+UNSIGNED_BEFORE = '0.40.0'
 CONF_SERVER = 'server'
 CONF_SECRET = 'secret'
 CONF_CODE = 'code'
@@ -35,6 +28,7 @@ DATA_THEME_LISTENER: HassKey[Callable[[], None]] = HassKey(f'{DOMAIN}_theme_list
 DATA_THEME_FIRING: HassKey[bool] = HassKey(f'{DOMAIN}_theme_firing')
 DATA_THEME_DEFAULTS: HassKey[dict[str, str | None]] = HassKey(f'{DOMAIN}_theme_defaults')
 DATA_WWW: HassKey[bool] = HassKey(f'{DOMAIN}_www_registered')
+DATA_GOOD_HOSTS: HassKey[GoodHosts] = HassKey(f'{DOMAIN}_good_hosts')
 DATA_CARDS_FILE: HassKey[str] = HassKey(f'{DOMAIN}_cards_file')
 DATA_CARDS_LOCAL: HassKey[bool] = HassKey(f'{DOMAIN}_cards_local')
 CONF_RANGES = 'ranges'
@@ -61,12 +55,20 @@ QUIET_PARENT = f'{DOMAIN}_quiet'
 LOCKED_CODE = 'locked_by_owner'
 
 def site_ru(hass_language: str | None, config: object=None) -> bool:
+    """The ONE language of everything the house says by itself — every push, HA notice and logbook line (0.33 С3): the
+    project's, as Hauflo wrote it into the alarm engine's config (`lang`), else Home Assistant's. A push in English over
+    a Russian HA said «🚨 Equipment alarm» while the value rules' pushes to the same phone came in Russian. Names of
+    rooms
+    and devices are the integrator's and stay as written."""
     lang = config.get('lang') if isinstance(config, dict) else None
     return str(lang if isinstance(lang, str) and lang.strip() else hass_language or 'ru').lower().startswith('ru')
 SITE_LANGS = ('ru', 'en')
 
 async def async_entity_names(hass: Any) -> dict[str, dict[str, str]]:
-    from homeassistant.helpers import translation
+    """The agent's entity names with a placeholder in both languages ({lang: {"<platform>.<key>": template}}, from the
+    translations' «entity» section) — for the names a site gives its own sensors (combination, rule): HA words them in
+    its own language («Hauflo Combination · Приток…» on an English HA of a Russian project, w5 acceptance), the house
+    says everything in ONE language (site_ru)."""
     pre, suf = (f'component.{DOMAIN}.entity.', '.name')
     out: dict[str, dict[str, str]] = {}
     for lang in SITE_LANGS:
@@ -75,6 +77,7 @@ async def async_entity_names(hass: Any) -> dict[str, dict[str, str]]:
     return out
 
 def site_name(names: dict[str, dict[str, str]], ru: bool, key: str, **ph: str) -> str | None:
+    """`key` («binary_sensor.combo») worded in the house's language; None — no texts (HA's own translation then)."""
     text = names.get(SITE_LANGS[0] if ru else SITE_LANGS[1], {}).get(key)
     if not text:
         return None
@@ -84,5 +87,6 @@ def site_name(names: dict[str, dict[str, str]], ru: bool, key: str, **ph: str) -
         return None
 
 def wants_ru(body: object, hass_language: str | None) -> bool:
+    """The language of an answer to a card: the house's language the card sends (`lang`, from its dashboard), else HA's."""
     lang = body.get('lang') if isinstance(body, dict) else None
     return str(lang if isinstance(lang, str) and lang.strip() else hass_language or '').lower().startswith('ru')

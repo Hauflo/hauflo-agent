@@ -1,19 +1,38 @@
+"""A statistic of a value over time windows for the value rules (rules.py): «среднее / мин / макс / сумма за час · день
+·
+
+Never our own history — HA's recorder holds it:
+  * a sensor with a state_class: the recorder's long-term statistics (`statistics_during_period`, hour / day / week,
+    local days and ISO weeks as HA reduces them); mean / min / max of a measurement, the period's change («сумма») of a
+    total (an energy meter, a run-hours counter);
+  * a weather entity (no statistics): its recorded states' attribute, mean / min / max per period from at least
+    `history_min_samples` samples;
+  * an on / off entity (a pump, a boiler): «сумма» = hours on in the period, from its recorded state changes — within
+  the
+    recorder's keep (`history_keep_days`).
+A period without data (no row, too few samples, mostly unavailable) is None — «нет данных», never a guess and never a
+trigger. Only complete periods count: the one running now never does. Read in the recorder's executor, when a period
+closes (+ `compile_delay_s`: HA compiles the hour's statistics just after it), at start and on a save — never polled.
+
+Numbers: rules_canon.json «window»; refusals: translations («exceptions», rules_window_…)."""
 from __future__ import annotations
 from datetime import datetime, timedelta
+import itertools
 from typing import Any
 from homeassistant.const import STATE_ON
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
-from .canon import CANON
+from .canon import rules_canon
 from .derived import NOT_A_STATE, SECONDS_PER_HOUR, Invalid, num
 STATISTICS, HISTORY, ON_TIME = ('statistics', 'history', 'on_time')
 SUM, CHANGE = ('sum', 'change')
 ONE_SECOND = timedelta(seconds=1)
 
 def _w() -> dict[str, Any]:
-    return CANON['window']
+    return rules_canon()['window']
 
 def period_start(t: datetime, period: str) -> datetime:
+    """The start of the local hour / day / ISO week (Monday) `t` is in."""
     local = dt_util.as_local(t)
     if period == 'hour':
         return local.replace(minute=0, second=0, microsecond=0)
@@ -23,11 +42,13 @@ def period_start(t: datetime, period: str) -> datetime:
     return dt_util.start_of_local_day((day - timedelta(days=day.weekday())).date())
 
 def next_start(t: datetime, period: str) -> datetime:
+    """When the period `t` is in closes."""
     s = period_start(t, period)
     step = timedelta(seconds=_w()['periods'][period])
     return period_start(dt_util.as_utc(s) + step + step / len(_w()['periods']), period)
 
 def starts(n: int, period: str, now: datetime | None=None) -> list[datetime]:
+    """The last `n` complete periods' starts, oldest first (the running one is not over — never counted)."""
     cur = period_start(now or dt_util.now(), period)
     out: list[datetime] = []
     for _ in range(n):
@@ -36,6 +57,7 @@ def starts(n: int, period: str, now: datetime | None=None) -> list[datetime]:
     return out[::-1]
 
 def source_of(hass: HomeAssistant, entity_id: str, attribute: str | None, stat: str) -> str:
+    """statistics / history / on_time for this input and statistic; raises Invalid with the reason (RU + EN texts)."""
     w = _w()
     domain = entity_id.split('.')[0]
     st = hass.states.get(entity_id)
@@ -57,6 +79,7 @@ def source_of(hass: HomeAssistant, entity_id: str, attribute: str | None, stat: 
     return STATISTICS
 
 def history_span_ok(period: str, n: int) -> bool:
+    """A source read from the recorder's states: the whole window inside its keep."""
     w = _w()
     return n * w['periods'][period] <= w['history_keep_days'] * w['periods']['day']
 
@@ -65,6 +88,7 @@ def _key(t: Any) -> float | None:
     return when.timestamp() if isinstance(when, datetime) else None
 
 async def values(hass: HomeAssistant, entity_id: str, attribute: str | None, win: dict[str, Any], now: datetime | None=None) -> tuple[list[float | None], list[float], str | None]:
+    """(the last n complete periods' values oldest first — None = no data, their start timestamps, why none at all)."""
     period, stat = (win['period'], win['stat'])
     n = max(int(win['n']), int(win.get('n_back') or win['n']))
     first = starts(n, period, now)
@@ -109,7 +133,7 @@ def _reduce(samples: list[float], stat: str) -> float | None:
 def _on_hours(states: list[Any], edges: list[float]) -> list[float | None]:
     spans = [(s.last_changed.timestamp(), s.state) for s in states]
     out: list[float | None] = []
-    for a, b in zip(edges, edges[1:]):
+    for a, b in itertools.pairwise(edges):
         on = gap = 0.0
         for i, (t0, state) in enumerate(spans):
             t1 = spans[i + 1][0] if i + 1 < len(spans) else b

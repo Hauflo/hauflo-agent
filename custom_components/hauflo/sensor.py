@@ -11,9 +11,8 @@ from .device import device_info
 from .house_state import LEVELS, HouseEntity, facts
 from .intercom.entities import entities as intercom_entities
 from .ownership import SIGNAL
-from .panel import SIGNAL as SIGNAL_PANEL
-from .panel import STATES as PANEL_STATES
-from .season import SeasonCurrent, SeasonRecommended
+from .panel import SIGNAL as SIGNAL_PANEL, STATES as PANEL_STATES
+from .season.entities import SeasonCurrent, SeasonRecommended
 PARALLEL_UPDATES = 0
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEntitiesCallback) -> None:
@@ -84,6 +83,7 @@ class HaufloHouseState(HouseEntity, SensorEntity):
         return facts(st) if st else None
 
 class HaufloPanel(SensorEntity):
+    """«Панель» (panel.py): what the cloud last said of the house's Hauflo panel, kept over restarts."""
     _attr_has_entity_name = True
     _attr_translation_key = 'panel'
     _attr_entity_category = EntityCategory.DIAGNOSTIC

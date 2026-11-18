@@ -1,26 +1,69 @@
+"""agent older than Hauflo needs.
+Each issue is made when its cause appears and removed when it goes; the texts are in strings.json → «issues»."""
 from __future__ import annotations
+from collections.abc import Iterator
+from contextlib import contextmanager
 import logging
 import re
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import issue_registry as ir
-from .const import DOMAIN
+from .const import DOMAIN, HassKey
+from .ranges import count, describe
 _LOGGER = logging.getLogger(__name__)
 LINK_LOST = 'link_lost'
 UNLINKED = 'unlinked'
 RANGES_PENDING = 'ranges_pending'
 DEGRADED_FEATURE = 'degraded'
+AGENT_FAULT = 'agent_fault'
 OUTDATED = 'outdated'
 CARDS_OUTDATED = 'cards_plugin_outdated'
 CARDS_NEED_AGENT = 'cards_need_agent'
-ALL = (LINK_LOST, UNLINKED, RANGES_PENDING, DEGRADED_FEATURE, OUTDATED, CARDS_OUTDATED, CARDS_NEED_AGENT)
-_SEVERITY = {UNLINKED: ir.IssueSeverity.ERROR, OUTDATED: ir.IssueSeverity.ERROR}
-DEGRADED: set[str] = set()
+UPDATE_NOT_SIGNED = 'update_not_signed'
+ALL = (LINK_LOST, UNLINKED, RANGES_PENDING, DEGRADED_FEATURE, AGENT_FAULT, OUTDATED, CARDS_OUTDATED, CARDS_NEED_AGENT, UPDATE_NOT_SIGNED)
+_SEVERITY = {UNLINKED: ir.IssueSeverity.ERROR, OUTDATED: ir.IssueSeverity.ERROR, UPDATE_NOT_SIGNED: ir.IssueSeverity.ERROR}
+HA, AGENT = ('ha', 'agent')
+KINDS = {HA: DEGRADED_FEATURE, AGENT: AGENT_FAULT}
+DATA_DEGRADED: HassKey[dict[str, str]] = HassKey(f'{DOMAIN}_degraded')
+
+def _degraded(hass: object, make: bool=True) -> dict[str, str] | None:
+    data = getattr(hass, 'data', None)
+    if not isinstance(data, dict):
+        return None
+    return data.setdefault(DATA_DEGRADED, {}) if make else data.get(DATA_DEGRADED)
 
 @callback
-def degrade(feature: str, err: BaseException) -> None:
-    if feature not in DEGRADED:
-        DEGRADED.add(feature)
-        _LOGGER.warning('Hauflo: %s unavailable on this Home Assistant (%s) — skipped', feature, err)
+def degrade(hass: object, feature: str, err: BaseException, kind: str=HA) -> None:
+    """The feature skipped: told once with its stack (a repeat only at debug, the stack of the first is enough)."""
+    state = _degraded(hass)
+    if state is not None and state.get(feature) == kind:
+        _LOGGER.debug('Hauflo: %s still unavailable: %s', feature, err)
+        return
+    if state is not None:
+        state[feature] = kind
+    if kind == AGENT:
+        _LOGGER.error('Hauflo: %s failed — skipped', feature, exc_info=err)
+    else:
+        _LOGGER.warning('Hauflo: %s unavailable on this Home Assistant (%s) — skipped', feature, err, exc_info=err)
+
+@contextmanager
+def degrading(hass: object, feature: str, kind: str=HA) -> Iterator[None]:
+    """The block's feature skipped on any error in it: `degrade` tells it (the setup stage never stops the agent)."""
+    try:
+        yield
+    except Exception as err:
+        degrade(hass, feature, err, kind)
+
+@callback
+def recover(hass: object, feature: str) -> None:
+    """The feature works again (a later call succeeded): no longer named; Repairs follow with the next status."""
+    state = _degraded(hass, make=False)
+    if state and state.pop(feature, None) is not None:
+        _LOGGER.info('Hauflo: %s works again', feature)
+
+def degraded(hass: object) -> dict[str, list[str]]:
+    """{kind: [feature, ...]} — only the kinds that have one (the minute's status, diagnostics)."""
+    state = _degraded(hass, make=False) or {}
+    return {kind: sorted((f for f, k in state.items() if k == kind)) for kind in KINDS if kind in state.values()}
 
 @callback
 def raise_issue(hass: HomeAssistant, issue_id: str, fixable: bool=False, **placeholders: str) -> None:
@@ -47,15 +90,23 @@ def clear_all(hass: HomeAssistant) -> None:
 
 @callback
 def sync_degraded(hass: HomeAssistant) -> None:
-    if DEGRADED:
-        raise_issue(hass, DEGRADED_FEATURE, features=', '.join(sorted(DEGRADED)))
-    else:
-        clear_issue(hass, DEGRADED_FEATURE)
+    now = degraded(hass)
+    for kind, issue_id in KINDS.items():
+        if now.get(kind):
+            raise_issue(hass, issue_id, features=', '.join(now[kind]))
+        else:
+            clear_issue(hass, issue_id)
+
+@callback
+def clear_degraded(hass: HomeAssistant) -> None:
+    """The entry unloaded: what was skipped is tried again by the next setup — nothing named until then."""
+    hass.data.pop(DATA_DEGRADED, None)
+    sync_degraded(hass)
 
 @callback
 def sync_ranges(hass: HomeAssistant, pending: set[str] | None, project: str='') -> None:
+    """Fixable: «Allow / Decline» in one click (repairs.py), the exact addresses in its form."""
     if pending:
-        from .ranges import count, describe
         raise_issue(hass, RANGES_PENDING, fixable=True, ranges=describe(pending), count=str(count(pending)), project=project or '—')
     else:
         clear_issue(hass, RANGES_PENDING)
@@ -65,6 +116,7 @@ def _version(text: object) -> tuple[int, ...] | None:
     return tuple((int(x) for x in m.groups())) if m else None
 
 def older(version: str, minimum: object) -> bool:
+    """True when this agent's version is below what the server needs; an unreadable minimum never says so."""
     mine, least = (_version(version), _version(minimum))
     return mine is not None and least is not None and (mine < least)
 

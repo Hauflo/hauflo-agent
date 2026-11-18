@@ -1,57 +1,81 @@
+"""Р56: smart door locks of any integration (Z2M / ZHA / Matter / a cloud one) — recognised by HA's metadata only: the
+`lock` domain and the other entities of the same device (an event entity or a text sensor saying what happened, a
+tamper sensor, a battery), never a brand or an integration's name.
+
+What a lock does is read from three places, merged within `merge_s` (Z2M sends the lock's state, its `action` and
+`action_source_name` / `action_user` as separate updates): the lock's own state (locked / unlocked / jammed), an event /
+text sensor of its device («fingerprint_unlock», «lock_failure_invalid_pin_or_id», Matter's «LockOperation»), the
+user / method sensors or attributes. The words are tuning.json `locks`, never code.
+
+The push («🔓 Входная дверь» / «открыта отпечатком · Мария · 18:02») goes to the phones with «пуш о звонке» on, by the
+alarms' own path (notify.NotifyEngine.send): an alarm (jammed, tamper, `wrong_count` wrong attempts within
+`wrong_window_s`) by default, each unlock only once the integrator turned it on. Tamper is critical (through silent
+mode and the quiet hours); anything else in the quiet hours comes without a sound.
+
+`hauflo.lock` (entity_id, action lock / unlock / open): the panel's buttons. Locking is always allowed; unlocking /
+opening the door only by the people the integrator listed (none listed — anyone), else «Нет прав». Honest limit: it
+guards Hauflo's panel; HA's own `lock.unlock` stays HA's (its users' rights). A second tap while the first command is
+under way is the same command (one call to the lock).
+
+A cloud lock (its integration's iot_class cloud_*): HA reads it as rarely as the cloud allows; the integrator may ask
+for a read every N minutes (`poll`), and the card says «обновляется раз в N мин»."""
 from __future__ import annotations
+from collections.abc import Callable
+from datetime import timedelta
+import functools
 import logging
 import re
 import time
-from collections.abc import Callable
-from datetime import timedelta
 from typing import Any
-import voluptuous as vol
 from homeassistant.components.lock import LockEntityFeature
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, ServiceCall, State, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv, entity_registry as er, translation
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event, async_track_time_interval
-from homeassistant.loader import async_get_integration
+from homeassistant.loader import IntegrationNotFound, async_get_integration
 from homeassistant.util import dt as dt_util
-from . import foreign
+import voluptuous as vol
 from .const import DOMAIN
+from .foreign import common as foreign_common, flags as foreign_flags
+from .guard import contained
 from .storage import HaufloStore
-from .tuning import TUNING
+from .tuning import tuning
 _LOGGER = logging.getLogger(__name__)
-FEATURE = foreign.LOCKS_FEATURE
+FEATURE = foreign_common.LOCKS_FEATURE
 SERVICE = 'lock'
 STORE_KEY = f'{DOMAIN}.locks'
-T = TUNING['locks']
-IGNORE = re.compile(T['ignore'], re.I)
-OPS: list[tuple[str, re.Pattern[str]]] = [(k, re.compile(v, re.I)) for k, v in T['ops'].items()]
-METHODS: list[tuple[str, re.Pattern[str]]] = [(k, re.compile(v, re.I)) for k, v in T['methods'].items()]
-STATE_OPS: dict[str, str] = T['state_ops']
-OP_ATTRS: list[str] = T['op_attrs']
-USER_ATTRS: list[str] = T['user_attrs']
-METHOD_ATTRS: list[str] = T['method_attrs']
-USER_SENSOR = re.compile(T['user_sensor_words'], re.I)
-METHOD_SENSOR = re.compile(T['method_sensor_words'], re.I)
-ICONS: dict[str, str] = T['icons']
-ALARM_OPS = frozenset(T['alarm_ops'])
-CRITICAL_OPS = frozenset(T['critical_ops'])
-RANK = {op: i for i, op in enumerate(reversed(list(T['ops'])))}
-WRONG_COUNT = int(T['wrong_count'])
-WRONG_WINDOW = float(T['wrong_window_s'])
-MERGE_S = float(T['merge_s'])
-EVENT_FRESH = TUNING['link']['event_recent_s']
+t_cfg = functools.cache(lambda: tuning()['locks'])
+ignore = functools.cache(lambda: re.compile(t_cfg()['ignore'], re.I))
+ops = functools.cache(lambda: [(k, re.compile(v, re.I)) for k, v in t_cfg()['ops'].items()])
+methods = functools.cache(lambda: [(k, re.compile(v, re.I)) for k, v in t_cfg()['methods'].items()])
+state_ops = functools.cache(lambda: t_cfg()['state_ops'])
+op_attrs = functools.cache(lambda: t_cfg()['op_attrs'])
+user_attrs = functools.cache(lambda: t_cfg()['user_attrs'])
+method_attrs = functools.cache(lambda: t_cfg()['method_attrs'])
+user_sensor = functools.cache(lambda: re.compile(t_cfg()['user_sensor_words'], re.I))
+method_sensor = functools.cache(lambda: re.compile(t_cfg()['method_sensor_words'], re.I))
+icons = functools.cache(lambda: t_cfg()['icons'])
+alarm_ops = functools.cache(lambda: frozenset(t_cfg()['alarm_ops']))
+critical_ops = functools.cache(lambda: frozenset(t_cfg()['critical_ops']))
+rank = functools.cache(lambda: {op: i for i, op in enumerate(reversed(list(t_cfg()['ops'])))})
+wrong_count = functools.cache(lambda: int(t_cfg()['wrong_count']))
+wrong_window = functools.cache(lambda: float(t_cfg()['wrong_window_s']))
+merge_s = functools.cache(lambda: float(t_cfg()['merge_s']))
+event_fresh = functools.cache(lambda: tuning()['link']['event_recent_s'])
 NOT_A_STATE = (STATE_UNAVAILABLE, STATE_UNKNOWN)
 SCHEMA = vol.Schema({vol.Required('entity_id'): cv.entity_id, vol.Required('action'): vol.In(['lock', 'unlock', 'open'])})
 
 def op_of(text: str) -> str | None:
-    if not text or IGNORE.search(text):
+    """«fingerprint_unlock» → unlock, «lock_failure_invalid_pin_or_id» → wrong, «LockFactoryReset» → None."""
+    if not text or ignore().search(text):
         return None
-    return next((op for op, words in OPS if words.search(text)), None)
+    return next((op for op, words in ops() if words.search(text)), None)
 
 def method_of(text: str) -> str | None:
     if not text:
         return None
-    return next((m for m, words in METHODS if words.search(text)), None)
+    return next((m for m, words in methods() if words.search(text)), None)
 
 def _attr(state: State | None, keys: list[str]) -> Any:
     if state is None:
@@ -66,6 +90,7 @@ def _text_sensor(e: er.RegistryEntry) -> bool:
     return e.domain == 'sensor' and (not e.unit_of_measurement) and (not (e.capabilities or {}).get('state_class')) and ((e.device_class or e.original_device_class) in (None, 'enum'))
 
 class Locks:
+    """The house's locks: what each did last, the pushes, the panel's service, the cloud ones' reads."""
 
     def __init__(self, hass: HomeAssistant, engine: Callable[[], Any]) -> None:
         self.hass = hass
@@ -84,15 +109,18 @@ class Locks:
         self._store = HaufloStore(hass, STORE_KEY)
 
     def settings(self, eid: str) -> dict[str, Any]:
-        f = foreign.flags(self.hass)
+        f = foreign_flags.flags(self.hass)
         return dict((f.locks if f is not None else {}).get(eid) or {})
 
     def may_unlock(self, eid: str, user_id: str | None) -> bool:
+        """None (an automation, the system) or nobody listed — yes; else only the listed people."""
         users = self.settings(eid).get('users') or []
         return user_id is None or not users or user_id in users
 
     def linked(self, door_id: str) -> str | None:
-        f = foreign.flags(self.hass)
+        """The lock that opens this intercom door (the integrator's link) — even a lock gone since: «не открылась» then,
+        never the panel's relay quietly «opening» a door it may not be wired to."""
+        f = foreign_flags.flags(self.hass)
         for eid, s in sorted((f.locks if f is not None else {}).items()):
             if s.get('door') == door_id:
                 return eid
@@ -107,7 +135,7 @@ class Locks:
                 by_device.setdefault(e.device_id, []).append(e)
         devices: dict[str, dict[str, Any]] = {}
         for e in sorted(reg.entities.values(), key=lambda x: x.entity_id):
-            if e.domain != 'lock' or e.disabled_by or e.platform == DOMAIN or (len(devices) >= T['locks_max']):
+            if e.domain != 'lock' or e.disabled_by or e.platform == DOMAIN or (len(devices) >= t_cfg()['locks_max']):
                 continue
             d: dict[str, Any] = {'device': e.device_id, 'sources': [], 'users': [], 'methods': [], 'tamper': None, 'battery': None}
             for x in by_device.get(e.device_id or '', []) if e.device_id else []:
@@ -120,12 +148,13 @@ class Locks:
                 elif x.domain in ('sensor', 'binary_sensor') and dc == 'battery' and (d['battery'] is None):
                     d['battery'] = x.entity_id
                 elif _text_sensor(x):
-                    d['users' if USER_SENSOR.search(obj) else 'methods' if METHOD_SENSOR.search(obj) else 'sources'].append(x.entity_id)
+                    d['users' if user_sensor().search(obj) else 'methods' if method_sensor().search(obj) else 'sources'].append(x.entity_id)
             devices[e.entity_id] = d
         self.devices = devices
         self.owner = {x: lock for lock, d in devices.items() for x in [*d['sources'], *d['users'], *d['methods'], *([d['tamper']] if d['tamper'] else [])]}
 
     def owns_event(self, eid: str) -> bool:
+        """An event entity of a lock's device: its press is the lock's, not a «кнопка» ring (notify.py)."""
         return eid in self.owner
 
     async def _cloud_of(self) -> None:
@@ -133,10 +162,9 @@ class Locks:
         out: dict[str, bool] = {}
         for eid in self.devices:
             e = reg.async_get(eid)
-            try:
+            integ = None
+            with contained(_LOGGER, 'Hauflo: lock %s: integration %s not found — not taken as cloud', eid, getattr(e, 'platform', None), expect=IntegrationNotFound):
                 integ = await async_get_integration(self.hass, e.platform) if e is not None else None
-            except Exception:
-                integ = None
             out[eid] = bool(integ is not None and str(integ.manifest.get('iot_class') or '').startswith('cloud'))
         self.cloud = out
 
@@ -163,6 +191,7 @@ class Locks:
             self.hass.async_create_task(self.apply())
 
     async def apply(self) -> None:
+        """(Re)read the locks and their devices, listen to them, (re)start the cloud ones' reads."""
         self.discover()
         await self._cloud_of()
         for u in self._polls:
@@ -213,16 +242,16 @@ class Locks:
             return
         d = self.devices[lock]
         if eid == lock:
-            if old is None or old.state in NOT_A_STATE or old.state == new.state or (new.state not in STATE_OPS):
+            if old is None or old.state in NOT_A_STATE or old.state == new.state or (new.state not in state_ops()):
                 return
-            self._piece(lock, STATE_OPS[new.state], self._method_attr(new), _attr(new, USER_ATTRS), new.context.user_id)
+            self._piece(lock, state_ops()[new.state], self._method_attr(new), _attr(new, user_attrs()), new.context.user_id)
         elif new.domain == 'event':
             at = dt_util.parse_datetime(new.state)
-            if old is not None and old.state == new.state or at is None or at.tzinfo is None or (abs((dt_util.utcnow() - at).total_seconds()) > EVENT_FRESH):
+            if old is not None and old.state == new.state or at is None or at.tzinfo is None or (abs((dt_util.utcnow() - at).total_seconds()) > event_fresh()):
                 return
             said = str(new.attributes.get('event_type') or '')
-            op_said = _attr(new, OP_ATTRS)
-            self._piece(lock, op_of(str(op_said)) if op_said is not None else op_of(said), self._method_attr(new) or method_of(said), _attr(new, USER_ATTRS), None)
+            op_said = _attr(new, op_attrs())
+            self._piece(lock, op_of(str(op_said)) if op_said is not None else op_of(said), self._method_attr(new) or method_of(said), _attr(new, user_attrs()), None)
         elif eid == d['tamper']:
             if new.state == 'on' and old is not None and (old.state == 'off'):
                 self._piece(lock, 'tamper', None, None, None)
@@ -233,11 +262,11 @@ class Locks:
         elif eid in d['methods']:
             self._piece(lock, None, method_of(new.state), None, None)
         else:
-            self._piece(lock, op_of(new.state), self._method_attr(new) or method_of(new.state), _attr(new, USER_ATTRS), None)
+            self._piece(lock, op_of(new.state), self._method_attr(new) or method_of(new.state), _attr(new, user_attrs()), None)
 
     @staticmethod
     def _method_attr(state: State) -> str | None:
-        v = _attr(state, METHOD_ATTRS)
+        v = _attr(state, method_attrs())
         return method_of(str(v)) if v is not None else None
 
     @callback
@@ -249,8 +278,8 @@ class Locks:
         p = self._pending.get(lock)
         if p is None:
             p = self._pending[lock] = {'op': None, 'method': None, 'user': None, 'user_id': None, 'at': dt_util.utcnow(), 'timer': None}
-            p['timer'] = async_call_later(self.hass, MERGE_S, callback(lambda _now: self._finish(lock)))
-        if op is not None and (p['op'] is None or RANK[op] > RANK[p['op']]):
+            p['timer'] = async_call_later(self.hass, merge_s(), callback(lambda _now: self._finish(lock)))
+        if op is not None and (p['op'] is None or rank()[op] > rank()[p['op']]):
             p['op'] = op
         if method is not None and p['method'] is None:
             p['method'] = method
@@ -277,7 +306,7 @@ class Locks:
                 st = self.hass.states.get(eid)
                 if st is None or st.state in NOT_A_STATE or st.state == '':
                     continue
-                if abs((st.last_reported - p['at']).total_seconds()) > MERGE_S:
+                if abs((st.last_reported - p['at']).total_seconds()) > merge_s():
                     continue
                 p[key] = st.state if key == 'user' else method_of(st.state)
                 if p[key] is not None:
@@ -292,13 +321,13 @@ class Locks:
         n = 1
         if op == 'wrong':
             now = time.monotonic()
-            log = [t for t in self._wrong.get(lock, []) if now - t < WRONG_WINDOW] + [now]
+            log = [t for t in self._wrong.get(lock, []) if now - t < wrong_window()] + [now]
             self._wrong[lock] = log
-            if len(log) < WRONG_COUNT:
+            if len(log) < wrong_count():
                 return
             self._wrong[lock] = []
             n = len(log)
-        if op in ALARM_OPS:
+        if op in alarm_ops():
             if s.get('alarms') is False:
                 return
         elif not (op == 'unlock' and s.get('push') is True):
@@ -314,22 +343,21 @@ class Locks:
                 return str(names[key])
             if key.isdigit():
                 return f'#{int(key)}'
-            return key[:T['name_max']]
+            return key[:t_cfg()['name_max']]
         if p['user_id'] is not None and (user := (await self.hass.auth.async_get_user(p['user_id']))) is not None:
             return user.name or ''
         return ''
 
     async def _words(self, english: bool) -> dict[str, str]:
-        try:
+        with contained(_LOGGER, 'Hauflo: lock texts not loaded — the keys stand in for them'):
             return await translation.async_get_translations(self.hass, 'en' if english else 'ru', 'exceptions', [DOMAIN])
-        except Exception:
-            return {}
+        return {}
 
     async def _push(self, lock: str, op: str, method: str | None, user: str, at: Any, n: int) -> None:
         engine = self._engine()
         if engine is None:
             return
-        got = await self._words(engine._english())
+        got = await self._words(engine.english())
 
         def word(key: str, fallback: str='') -> str:
             return got.get(f'component.{DOMAIN}.exceptions.{key}.message') or fallback
@@ -339,13 +367,14 @@ class Locks:
         if user.startswith('#') and user[1:].isdigit():
             user = word('lock_user_index', user).format(n=user[1:])
         message = ' · '.join((x for x in (what, user, dt_util.as_local(at).strftime('%H:%M')) if x))
-        name = engine._name(lock)
-        critical = op in CRITICAL_OPS
+        name = engine.name_of(lock)
+        critical = op in critical_ops()
         rule = {'id': 'lock', 'title': name, 'priority': 'critical' if critical else 'normal', 'recipients': {'all': True, 'people': [], 'groups': [], 'phones': []}}
         silent = not critical and bool(engine.quiet_now and engine.quiet_now())
-        await engine._send(rule, f"{ICONS.get(op, '')} {name}".strip(), message, tag=engine._tag(f'lock|{lock}|{op}'), critical=critical, silent=silent, targets=engine.ring_targets())
+        await engine.send(rule, f"{icons().get(op, '')} {name}".strip(), message, tag=engine.tag(f'lock|{lock}|{op}'), critical=critical, silent=silent, targets=engine.ring_targets())
 
     async def act(self, eid: str, action: str, call_context: Any=None) -> None:
+        """`hauflo.lock`: lock always; unlock / open — the listed people only; open — a lock that can (feature OPEN)."""
         st = self.hass.states.get(eid)
         if eid.split('.', 1)[0] != 'lock' or st is None:
             raise ServiceValidationError(translation_domain=DOMAIN, translation_key='lock_unknown')
@@ -369,10 +398,13 @@ class Locks:
         return st is not None and bool(int(st.attributes.get('supported_features') or 0) & LockEntityFeature.OPEN)
 
     async def wizard(self, doors: list[dict[str, str]]) -> dict[str, Any]:
-        people = [{'id': u.id, 'name': str(u.name or '')[:T['name_max']]} for u in await self.hass.auth.async_get_users() if u.is_active and (not u.system_generated)]
-        return {'seen': {eid: {'cloud': bool(self.cloud.get(eid)), 'open': self.can_open(eid)} for eid in sorted(self.devices)}, 'people': sorted(people, key=lambda p: (p['name'].casefold(), p['id']))[:T['users_max']], 'doors': doors}
+        """The wizard's «Замок» (GET /api/hauflo/foreign `lock_info`): each lock found (cloud — the poll and the hint;
+        open — «Открыть дверь»), the HA people one may give the right to unlock, the intercom's doors to link."""
+        people = [{'id': u.id, 'name': str(u.name or '')[:t_cfg()['name_max']]} for u in await self.hass.auth.async_get_users() if u.is_active and (not u.system_generated)]
+        return {'seen': {eid: {'cloud': bool(self.cloud.get(eid)), 'open': self.can_open(eid)} for eid in sorted(self.devices)}, 'people': sorted(people, key=lambda p: (p['name'].casefold(), p['id']))[:t_cfg()['users_max']], 'doors': doors}
 
     def view(self, user_id: str | None) -> dict[str, dict[str, Any]]:
+        """The cards' lock tile (house.py): the last event, the battery, the door, whether this person may unlock."""
         out: dict[str, dict[str, Any]] = {}
         for eid, d in self.devices.items():
             s = self.settings(eid)
@@ -382,8 +414,8 @@ class Locks:
 
 @callback
 def async_setup_services(hass: HomeAssistant, find: Callable[[], Locks | None]) -> None:
-    if hass.services.has_service(DOMAIN, SERVICE):
-        return
+    """«hauflo.lock», registered once for HA's whole run (integration setup); find() raises «not_loaded» without a
+    loaded entry, None — the house has no lock."""
 
     async def _act(call: ServiceCall) -> None:
         locks = find()

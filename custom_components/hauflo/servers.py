@@ -1,5 +1,16 @@
+"""автоматом с другого»). The hosts are data — servers.json; this module keeps the mechanics:
+
+- ``same_region(server)``: the hosts the agent's link may use — only those of the server's OWN region (a Russian
+  house's tunnel and data never move to the EU server or back), the last one that answered first. A server that
+  isn't Hauflo's (a test stand typed under «Дополнительно») is only itself.
+- ``first_answer(hosts, attempt)``: tries the hosts in order; a host that can't be reached (refused, no DNS, TLS,
+  timeout) gives way to the next one, any answer — a 404 too — is the answer. The host that answered is remembered.
+
+With one host in a region (today) the link only retries that host with its back-off: the list is ready for a second
+one. Plain Python with aiohttp only (no HA import): tests and scripts/check-contracts.py read the same file."""
 from __future__ import annotations
 from collections.abc import Awaitable, Callable, Iterable
+import functools
 import json
 from pathlib import Path
 from typing import Any, TypeVar
@@ -28,41 +39,55 @@ def load(path: Path=FILE) -> dict[str, Any]:
     _hosts('mirrors', data.get('mirrors'))
     _hosts('github_zip', [data.get('github_zip')])
     return data
-SERVERS = load()
-REGIONS: dict[str, tuple[str, ...]] = {k: tuple(v) for k, v in SERVERS['regions'].items()}
-DEFAULT_REGION: str = SERVERS['default_region']
-PAIR_FALLBACK_REGION: str = SERVERS['pair_fallback_region']
-DEFAULT_SERVER = REGIONS[DEFAULT_REGION][0]
-PAIR_FALLBACK_SERVER = REGIONS[PAIR_FALLBACK_REGION][0]
-_last_good: dict[tuple[str, ...], str] = {}
+
+@functools.cache
+def servers_cfg() -> dict[str, Any]:
+    """servers.json, read on first use — off the event loop: async_setup_entry and the config flow preload it in the
+    executor."""
+    return load()
+regions_cfg = functools.cache(lambda: {k: tuple(v) for k, v in servers_cfg()['regions'].items()})
+default_region = functools.cache(lambda: servers_cfg()['default_region'])
+pair_fallback_region = functools.cache(lambda: servers_cfg()['pair_fallback_region'])
+default_server = functools.cache(lambda: regions_cfg()[default_region()][0])
+region_servers = functools.cache(lambda: {region: hosts[0] for region, hosts in regions_cfg().items()})
+pair_fallback_server = functools.cache(lambda: regions_cfg()[pair_fallback_region()][0])
+
+class GoodHosts:
+    """The host of each region's list that answered last: tried first next time. One per HA run, kept in hass.data
+    (link/common.good_hosts) — not module state (HA core review): two HA instances in one process never share it."""
+
+    def __init__(self) -> None:
+        self.by_region: dict[tuple[str, ...], str] = {}
+
+    def remember(self, host: str) -> None:
+        """``host`` answered: its region's list starts with it next time (a host not Hauflo's isn't kept)."""
+        h = norm(host)
+        if ours(h):
+            self.by_region[tuple(_region_list(h))] = h
 
 def norm(server: str) -> str:
     return str(server or '').strip().rstrip('/')
 
 def ours(server: str) -> bool:
     s = norm(server)
-    return any((s in hosts for hosts in REGIONS.values()))
+    return any((s in hosts for hosts in regions_cfg().values()))
 
 def _region_list(server: str) -> list[str]:
     s = norm(server)
-    lists = [hosts for hosts in REGIONS.values() if s in hosts]
+    lists = [hosts for hosts in regions_cfg().values() if s in hosts]
     return [h for h in lists[0] if all((h in other for other in lists))] if lists else [s]
 
-def same_region(server: str) -> list[str]:
+def same_region(server: str, good: GoodHosts | None=None) -> list[str]:
+    """The hosts the link to ``server`` may use, in the order to try: the last that answered (``good``), ``server``,
+    the rest."""
     s = norm(server)
     allowed = _region_list(s)
-    good = _last_good.get(tuple(allowed))
-    return list(dict.fromkeys([*([good] if good in allowed else []), s, *allowed]))
+    last = good.by_region.get(tuple(allowed)) if good is not None else None
+    return list(dict.fromkeys([*([last] if last in allowed else []), s, *allowed]))
 
-def remember(host: str) -> None:
-    h = norm(host)
-    if ours(h):
-        _last_good[tuple(_region_list(h))] = h
-
-def forget() -> None:
-    _last_good.clear()
-
-async def first_answer(hosts: Iterable[str], attempt: Callable[[str], Awaitable[T]]) -> tuple[str, T]:
+async def first_answer[T](hosts: Iterable[str], attempt: Callable[[str], Awaitable[T]], good: GoodHosts | None=None) -> tuple[str, T]:
+    """``attempt(host)`` on each host in turn until one answers (kept in ``good``); raises the last «unreachable»
+    when none does."""
     last: BaseException | None = None
     for host in hosts:
         try:
@@ -70,7 +95,8 @@ async def first_answer(hosts: Iterable[str], attempt: Callable[[str], Awaitable[
         except UNREACHABLE as err:
             last = err
             continue
-        remember(host)
+        if good is not None:
+            good.remember(host)
         return (host, result)
     raise last if last is not None else aiohttp.ClientConnectionError('no host')
 

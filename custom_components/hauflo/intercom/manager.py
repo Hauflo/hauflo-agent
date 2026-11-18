@@ -1,25 +1,35 @@
+"""The doors of one house: one SIP socket on the chosen address (never every interface), the loopback RTSP of their
+sound for HA's go2rtc, the registrations (the agent on a panel's / a cloud's server; the panel on the agent), and who
+a request is for — a call is taken only from an address the door's settings name. Services «Ответить» / «Завершить»
+(the door's opening is its button only — notify.RUN_SERVICES never names it, a push can't open a door)."""
 from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import functools
 import logging
 import socket
 import time
 from typing import Any
 import aiohttp
+from homeassistant.components import network
 from homeassistant.core import Context, HomeAssistant, ServiceCall, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import voluptuous as vol
 from ..const import DOMAIN
-from ..tuning import TUNING
+from ..guard import contained
+from ..tuning import tuning
 from . import sip
-from .door import RINGING, TALKING, Door, DoorConfig, IntercomError, configs, render
+from .cloud_ice import CloudIce
+from .door import Door
+from .door_config import RINGING, TALKING, DoorConfig, IntercomError, configs, render
 from .rtsp import AudioHub, RtspServer
+from .setup import register_ice
 from .ua import Endpoint, Registrar, Registration, Timers
 _LOGGER = logging.getLogger(__name__)
-T = TUNING['intercom']
+t_cfg = functools.cache(lambda: tuning()['intercom'])
 EVENT = f'{DOMAIN}_intercom'
 KINDS = ('camera', 'talk', 'call', 'state', 'open')
 SERVICE_ANSWER = 'intercom_answer'
@@ -40,9 +50,9 @@ class Intercom:
         self.bind_host = ''
         self.listen_error: str | None = None
         self.public = _address(str(self.options.get('public') or ''))
-        timers = Timers(T['t1_s'], T['t2_s'], T['transaction_s'], T['answers_kept'])
-        self.endpoint = Endpoint(self._on_request, timers, T['user_agent'])
-        self.registrar = Registrar(T['realm'], T['nonce_ttl_s'], T['registrar_max_expires_s'])
+        timers = Timers(t_cfg()['t1_s'], t_cfg()['t2_s'], t_cfg()['transaction_s'], t_cfg()['answers_kept'])
+        self.endpoint = Endpoint(self._on_request, timers, t_cfg()['user_agent'])
+        self.registrar = Registrar(t_cfg()['realm'], t_cfg()['nonce_ttl_s'], t_cfg()['registrar_max_expires_s'])
         self.rtsp: RtspServer | None = None
         self.hub_device_id: str | None = None
         self.entities: dict[tuple[str, str], str] = {}
@@ -52,10 +62,9 @@ class Intercom:
         self.cloud_ice: Any = None
 
     async def start(self) -> None:
+        """No door — no socket. The SIP socket on the chosen address only; the sound's RTSP on loopback only."""
         if not self.doors:
             return
-        from .cloud_ice import CloudIce
-        from .setup import register_ice
         if self.cloud_fetch is not None and (not self.options.get('ice_servers')):
             self.cloud_ice = CloudIce(self.hass, self.cloud_fetch)
             self._spawn(self.cloud_ice.refresh())
@@ -66,18 +75,18 @@ class Intercom:
         else:
             try:
                 port = self.options.get('port')
-                await self.endpoint.start(self.bind_host, int(T['sip_port'] if port in (None, '') else port))
+                await self.endpoint.start(self.bind_host, int(t_cfg()['sip_port'] if port in (None, '') else port))
             except OSError as err:
                 _LOGGER.warning('Hauflo intercom: the call port is taken (%s)', err)
                 self.listen_error = 'sip_port_busy'
-        self.rtsp = RtspServer('127.0.0.1', T['rtsp_port'])
+        self.rtsp = RtspServer('127.0.0.1', t_cfg()['rtsp_port'])
         try:
             await self.rtsp.start()
         except OSError:
             self.rtsp = RtspServer('127.0.0.1', 0)
             await self.rtsp.start()
         for door in self.doors.values():
-            door.hub = AudioHub(door.cfg.codec, T['frame_ms'], door.from_card, T['rtsp_max_clients'])
+            door.hub = AudioHub(door.cfg.codec, t_cfg()['frame_ms'], door.from_card, t_cfg()['rtsp_max_clients'])
             self.rtsp.hubs[door.cfg.id] = door.hub
             if self.endpoint.transport is not None and door.cfg.error is None and (door.cfg.mode in ('register', 'cloud')):
                 self._spawn(self._register(door))
@@ -107,12 +116,9 @@ class Intercom:
         chosen = str(self.options.get('bind') or 'auto')
         if chosen != 'auto':
             return chosen
-        try:
-            from homeassistant.components import network
+        with contained(_LOGGER, 'Hauflo intercom: no source address (%s)', err=True, expect=(KeyError, HomeAssistantError)):
             return str(await network.async_get_source_ip(self.hass) or '')
-        except Exception as err:
-            _LOGGER.debug('Hauflo intercom: no source address (%s)', err)
-            return ''
+        return ''
 
     async def _register(self, door: Door) -> None:
         cfg = door.cfg
@@ -133,7 +139,7 @@ class Intercom:
             assert extra is not None
             msg.headers.append(('Content-Type', str(extra.get('content_type') or 'application/xml')))
             msg.body = render(str(extra.get('body') or ''), cfg).encode()
-        reg = Registration(self.endpoint, server, cfg.sip_server, cfg.sip_user, cfg.sip_password, self.public or (self.bind_host, self.endpoint.port), expires=T['cloud_register_expires_s'] if cloud else T['register_expires_s'], retry=T['register_retry_s'], keepalive=T['nat_keepalive_s'], nat=cloud, on_change=door.changed, extra=_extra if extra else None)
+        reg = Registration(self.endpoint, server, cfg.sip_server, cfg.sip_user, cfg.sip_password, self.public or (self.bind_host, self.endpoint.port), expires=t_cfg()['cloud_register_expires_s'] if cloud else t_cfg()['register_expires_s'], retry=t_cfg()['register_retry_s'], keepalive=t_cfg()['nat_keepalive_s'], nat=cloud, on_change=door.changed, extra=_extra if extra else None)
         door.registration = reg
         reg.start()
 
@@ -144,6 +150,7 @@ class Intercom:
         return task
 
     def ice_state(self) -> dict[str, Any]:
+        """Where a phone outside the home network gets its TURN: the integrator's own servers, Hauflo's, or none."""
         if self.options.get('ice_servers'):
             turn = any((str(u).startswith(('turn:', 'turns:')) for s in self.options['ice_servers'] for u in s.get('urls') or []))
             return {'source': 'manual', 'turn': turn, 'expires_in': 0}
@@ -155,6 +162,7 @@ class Intercom:
         return f'{self.endpoint.host}:{self.endpoint.port}' if self.endpoint.transport is not None else None
 
     def advertised(self, door: Door) -> tuple[str, int]:
+        """The address the panel answers to (Contact, SDP): the one a cloud saw us at, the one set by hand, or ours."""
         reg = door.registration
         if reg is not None and reg.public is not None:
             return reg.public
@@ -174,6 +182,7 @@ class Intercom:
         return None
 
     def watched(self) -> set[str]:
+        """The doorbell events: a ring pushes to the phones (notify.py) like any doorbell the canon watches."""
         return {eid for (_d, kind), eid in self.entities.items() if kind == 'call'}
 
     def _door_for(self, msg: sip.Message, src: tuple[str, int]) -> Door | None:
@@ -240,17 +249,19 @@ class Intercom:
         door.changed()
 
     def fire(self, door: Door, state: str, user_id: str | None=None, result: str | None=None) -> None:
+        """`hauflo_intercom` on the bus: the card's / an automation's view of the call (the push is the event entity)."""
         if state == RINGING and self.cloud_ice is not None:
             self._spawn(self.cloud_ice.refresh())
         self.hass.bus.async_fire(EVENT, {'door': door.cfg.id, 'state': state, 'user_id': user_id, 'result': result, 'entity_id': self.entity_of(door.cfg.id, 'state'), 'call': self.entity_of(door.cfg.id, 'call')})
 
     async def http(self, cfg: DoorConfig, spec: dict[str, Any], body_ok: bool=False) -> bytes:
+        """A request to the panel's own web API (ISAPI, CGI…) as its preset describes it; IntercomError on a refusal."""
         if not cfg.host or not spec.get('path'):
             raise IntercomError('open_not_set')
         scheme = str(spec.get('scheme') or 'http')
         port = f":{int(spec['port'])}" if str(spec.get('port') or '').isdigit() else ''
         url = f"{scheme}://{cfg.host}{port}{render(str(spec['path']), cfg)}"
-        kw: dict[str, Any] = {'timeout': aiohttp.ClientTimeout(total=T['http_timeout_s'])}
+        kw: dict[str, Any] = {'timeout': aiohttp.ClientTimeout(total=t_cfg()['http_timeout_s'])}
         headers: dict[str, str] = {}
         auth = str(spec.get('auth') or 'none')
         if auth == 'digest' and cfg.user:
@@ -275,8 +286,9 @@ class Intercom:
             raise IntercomError('open_failed') from err
 
     async def press_entity(self, entity_id: str) -> None:
+        """A relay of another integration (KNX, Zigbee…) that opens the door: its own «press / on / unlock»."""
         domain = entity_id.split('.', 1)[0]
-        service = T['open_services'].get(domain)
+        service = t_cfg()['open_services'].get(domain)
         if not entity_id or service is None:
             raise IntercomError('open_not_set')
         try:
@@ -288,6 +300,9 @@ class Intercom:
         return self.locks.linked(door_id) if self.locks is not None else None
 
     async def open_lock(self, entity_id: str, user_id: str | None) -> None:
+        """A door opened by its linked smart lock (Р56): «открыть» when the lock can, else «отпереть»; only by the
+        people
+        the lock's settings list (locks.py) — else «Нет прав»."""
         if self.locks is None:
             raise IntercomError('open_not_set')
         if not self.locks.may_unlock(entity_id, user_id):
@@ -339,12 +354,13 @@ def _address(text: str) -> tuple[str, int] | None:
     if not text:
         return None
     host, _, port = text.partition(':')
-    return (host, int(port) if port.isdigit() else int(T['sip_port']))
+    return (host, int(port) if port.isdigit() else int(t_cfg()['sip_port']))
 
 @callback
 def async_setup_services(hass: HomeAssistant, find: Any) -> None:
-    if hass.services.has_service(DOMAIN, SERVICE_ANSWER):
-        return
+    """`hauflo.intercom_answer` / `hauflo.intercom_hangup` (entity_id: any entity of the door), registered once for HA's
+    whole run (integration setup). `find()` → the running Intercom or None; raises «not_loaded» without a loaded
+    entry."""
 
     def _mgr() -> Intercom:
         mgr = find()

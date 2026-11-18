@@ -1,14 +1,17 @@
+"""A window «from … to» in the house's local time; it may cross midnight (22:00–08:00). Numbers and the classes that are
+never silenced (safety: leak, frost…) are data: rules_canon.json «quiet». Pure functions — rules.py decides what is
+held."""
 from __future__ import annotations
 from datetime import datetime, timedelta
 import re
 from typing import Any
 from homeassistant.util import dt as dt_util
-from .canon import CANON
+from .canon import rules_canon
 from .derived import SECONDS_PER_MINUTE as MINUTES_PER_HOUR, Invalid
 _HHMM = re.compile('^([01]\\d|2[0-3]):([0-5]\\d)$')
 
 def _q() -> dict[str, Any]:
-    return CANON['quiet']
+    return rules_canon()['quiet']
 
 def default() -> dict[str, Any]:
     return dict(_q()['default'])
@@ -18,6 +21,7 @@ def minutes(hhmm: Any) -> int | None:
     return int(m[1]) * MINUTES_PER_HOUR + int(m[2]) if m else None
 
 def clean(raw: Any, old: dict[str, Any]) -> dict[str, Any]:
+    """The house's setting from a POST (only the keys sent change); «from» = «to» is no window — refused."""
     if not isinstance(raw, dict):
         raise Invalid('bad', 'rules_bad_quiet')
     out = {**old}
@@ -35,6 +39,7 @@ def clean(raw: Any, old: dict[str, Any]) -> dict[str, Any]:
     return out
 
 def inside(cfg: dict[str, Any], t: datetime) -> bool:
+    """Is the local time `t` in the quiet window (off → never)? The start counts, the end does not."""
     if not cfg.get('on'):
         return False
     local = dt_util.as_local(t)
@@ -45,6 +50,7 @@ def inside(cfg: dict[str, Any], t: datetime) -> bool:
     return a <= now < b if a < b else now >= a or now < b
 
 def ends_at(cfg: dict[str, Any], t: datetime) -> datetime | None:
+    """When the window `t` is in ends (None outside it)."""
     if not inside(cfg, t):
         return None
     local = dt_util.as_local(t)

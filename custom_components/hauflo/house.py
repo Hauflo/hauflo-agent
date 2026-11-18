@@ -1,13 +1,26 @@
+"""* «Кто обслуживает дом»: the service company and its contact as service.py keeps them (the cloud's «service» frame) —
+  every signed-in person reads them here: the alarm card's «Позвонить», the settings, the «Сервис» page.
+* «Кто может менять настройки дома» (Google Home: adults are equal, kids are limited — family review round 3): every
+  person of the house may change its settings; an admin marks a person «Ограниченный (детский) профиль». A restricted
+  person can't create / edit / delete automations, rename / re-learn / delete scenes, change the season or «Нет дома»,
+  create guest links (asks an admin instead), rename or reorder blocks — checked by the views themselves (403,
+  `refuse`), not only the cards. Lights, blinds, temperature and «Принято» on an alarm stay open to everyone.
+* «Избранное» and «Моя комната» of each person (per HA user, as the view prefs are): the top of «Главная».
+
+GET/POST /api/hauflo/house — any signed-in person (the restricted list: admins only)."""
 from __future__ import annotations
 import re
 import time
-import unicodedata
 from typing import Any
+import unicodedata
 from homeassistant.components.http import KEY_HASS, HomeAssistantView
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import issue_registry as ir
 from . import service as service_info
+from .const import DOMAIN
 from .natural import natural_key
 from .ownership import ZONES_KEY
+from .policy.own import protected_ids, unknown_source
 from .storage import HaufloStore
 STORE_KEY = 'hauflo.house'
 DATA = 'hauflo_house'
@@ -62,6 +75,7 @@ class House:
         await self.store.async_save(self.data)
 
 async def service_of(hass: HomeAssistant) -> dict[str, str] | None:
+    """«Кто обслуживает дом» for the cards: the company and one contact to call (service.py's store)."""
     info = await service_info.async_load(hass)
     contact = (info or {}).get('contact') or {}
     if not info or not (contact.get('phone') or contact.get('email')):
@@ -80,8 +94,7 @@ def _migrate(data: dict[str, Any], people: list[Any], issue_cleared: bool) -> No
     data.pop('grandfathered', None)
 
 async def async_init(hass: HomeAssistant) -> None:
-    from homeassistant.helpers import issue_registry as ir
-    from .const import DOMAIN
+    """Once per house: the rights model of round 3 (everyone allowed by default) and the old Repairs note gone."""
     h = house(hass)
     data = await h.load()
     reg = ir.async_get(hass)
@@ -103,6 +116,7 @@ def house(hass: HomeAssistant) -> House:
     return hass.data[DATA]
 
 async def is_restricted(hass: HomeAssistant, user: Any) -> bool:
+    """«Ограниченный (детский) профиль»: an admin marked this person (an admin never is)."""
     if user is None or not getattr(user, 'is_active', False) or is_guest(hass, user):
         return True
     if user.is_admin:
@@ -113,27 +127,26 @@ async def is_restricted(hass: HomeAssistant, user: Any) -> bool:
     return user.id in (data.get('restricted') or [])
 
 async def may_edit(hass: HomeAssistant, user: Any) -> bool:
+    """Every adult of the house may change its settings (Google Home); a restricted (child) profile may not."""
     return not await is_restricted(hass, user)
 
 async def refuse(request: Any) -> Any:
+    """The view's answer for a restricted (child) profile, else None."""
     if await may_edit(request.app[KEY_HASS], request.get('hass_user')):
         return None
     return HomeAssistantView.json({'message': "a restricted (child) profile can't change the house's settings", 'code': 'not_allowed'}, 403)
 
 def _protected_ids(hass: HomeAssistant) -> list[str]:
-    from . import protected_ids
     return protected_ids(hass)
 
 def _protected_why(hass: HomeAssistant, ids: list[str]) -> dict[str, str]:
-    from . import unknown_source
     return {eid: 'unknown_source' for eid in ids if unknown_source(hass, eid)}
 
 def _rule_states(hass: HomeAssistant, admin: bool) -> dict[str, str]:
-    from . import rule_states
+    from .runtime import rule_states
     return rule_states(hass, admin)
 
 def _locks_view(hass: HomeAssistant, user_id: str | None) -> dict[str, Any]:
-    from .const import DOMAIN
     for entry in hass.config_entries.async_loaded_entries(DOMAIN):
         locks = getattr(entry.runtime_data, 'locks', None)
         return locks.view(user_id) if locks is not None else {}

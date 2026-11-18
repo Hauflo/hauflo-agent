@@ -72,6 +72,19 @@ All of them belong to one service device, **Hauflo**.
 
 Everything else a deploy makes (rooms, KNX entities, light groups, scenes, dashboards) belongs to Home Assistant's own integrations, not to this one.
 
+## Actions
+
+**Developer tools → Actions**, or in your automations and scripts. They exist from Home Assistant's start; while the integration isn't loaded (turned off, still starting) each one stops with “Hauflo isn't loaded yet”. Errors are shown in your Home Assistant language.
+
+| Action | What it does | Fields |
+| --- | --- | --- |
+| `hauflo.lock` | Locks, unlocks or opens a door, as the lock buttons on the dashboard do: locking is open to anyone, unlocking and opening only to the people chosen in the lock's settings (none chosen: everyone). | `entity_id` (a lock), `action`: `lock` / `unlock` / `open` |
+| `hauflo.off_in` | Turns a light off in N minutes; `0` cancels. Kept until Home Assistant restarts. | `entity_id` (a light), `minutes` (0–1440) |
+| `hauflo.unprotect` | Administrators only; the Hauflo cloud can't call it. Takes the gate protection off KNX entities or group addresses Hauflo once saw as a gate, garage door or door. An entity whose class is still a gate is protected again at once. If something isn't found, nothing changes and the error says what. | `entity_id` (KNX entities) and / or `group_address` (`1/2/3`) |
+| `hauflo.remove_alarms` | Administrators only; the Hauflo cloud can't call it. Removes Hauflo's alarm automations “Alarm: …” and their “Hauflo · accepted: …” helpers, hand-edited ones too; the agent sends the alarms itself until the next deploy. | — |
+| `hauflo.intercom_answer` | Answers a door call: the one who answered talks, the others see “Answered on another device”. | `entity_id` (the door's intercom entity) |
+| `hauflo.intercom_hangup` | Declines a call or ends the talk. Only an administrator can end someone else's conversation. | `entity_id` (the door's intercom entity) |
+
 ## How data updates
 
 No polling. The agent keeps one outgoing WebSocket to Hauflo, reconnecting by itself with backoff. **Connection** changes the moment the connection does. Every minute the agent sends Hauflo a short status (see [What leaves the house](#what-leaves-the-house)).
@@ -92,9 +105,9 @@ Hauflo can ask only for what is on the agent's fixed list, and the agent edits s
 - KNX: the ETS project loaded in Home Assistant's KNX integration, the settings of KNX entities, and which group addresses sent telegrams (addresses and times, never values).
 - The HomeKit bridge Hauflo set up: its pairing code and QR, shown to you in Hauflo to add the bridge to Apple Home (not stored). Alice: its label settings.
 
-**Every minute:** Home Assistant and agent versions, the KNX connection, how many KNX entities are unavailable (up to 10 ids), the name and state of entities labelled **Hauflo monitoring**, open alarms, and whether the owner's switch is off. For the service passport in the handover pack: how KNX is connected (tunnel or routing, the gateway's address and port, the individual address; whether KNX Secure is on — never its keys or passwords), Home Assistant's address and the names of its administrators (no passwords).
+**Every minute:** Home Assistant and agent versions, the KNX connection, how many KNX entities are unavailable (up to 10 ids), the name and state of entities labelled **Hauflo monitoring**, open alarms, and whether the owner's switch is off. **Home Assistant health:** when the last backup was made, free and total disk space, which Home Assistant updates are waiting (core, OS, supervisor: installed and available version), and until when the certificate of the external address is valid (not the address's contents; never backup contents). Hauflo tells the site's people when the last backup is too old, the disk is nearly full, a system update waits or the certificate is about to end. The limits are in `tuning.json`. For the service passport in the handover pack: how KNX is connected (tunnel or routing, the gateway's address and port, the individual address; whether KNX Secure is on — never its keys or passwords), Home Assistant's address and the names of its administrators (no passwords).
 
-**On request** (still the fixed list, still over the one outgoing connection): commissioning checks after a deploy (the bus, scenes, groups, automations, the dashboard, voice) read only states and the registry; “read after a command” and polling for devices without feedback; **What voice assistants can reach** and **Close the dangerous** change only which entities are exposed to voice; “+ Own signal” turns any entity of the site into an alarm signal; the fleet updates the agent in waves, with a way back to the previous version.
+**On request** (still the fixed list, still over the one outgoing connection): commissioning checks after a deploy (the bus, scenes, groups, automations, the dashboard, voice) read only states and the registry; “read after a command” and polling for devices without feedback; **What voice assistants can reach** and **Close the dangerous** change only which entities are exposed to voice; “+ Own signal” turns any entity of the site into an alarm signal; the fleet updates the agent in waves, with a way back to the previous version (the agent installs only a release signed by Hauflo's offline key: a substituted file is refused, nothing changes).
 
 **Every minute, also:**
 
@@ -108,7 +121,7 @@ Hauflo can ask only for what is on the agent's fixed list, and the agent edits s
 
 **Never:** where people are, camera images or tokens, media, calendars, PIN codes (other than the HomeKit pairing code above), passwords, KNX Secure keys, backups, the history database.
 
-**Where data is stored.** EU accounts at app.hauflo.com, in the EU. Russian accounts at app.hauflo.ru, in Russia. One exception in transit: the Russian region has no direct access to Telegram, so the text of a Telegram alert and the recipient's chat ID pass through a Hauflo relay server on the way to Telegram (not stored, not logged). The EU region sends them to Telegram directly.
+**Where data is stored.** EU accounts at app.hauflo.com, in the EU. Russian accounts at app.hauflo.ru, in Russia. One exception in transit: the Russian region has no direct access to Telegram, so the text of a Telegram alert and the recipient's chat ID pass through a Hauflo relay server in Germany on the way to Telegram (not stored, not logged). The EU region sends them to Telegram directly.
 
 ## Security in plain words
 
@@ -227,6 +240,13 @@ Open the group monitor (**Settings → Devices & services → KNX → Monitor**)
 </details>
 
 <details>
+<summary><b>How the agent updates itself</b></summary>
+
+The integrator starts an update of the agent from the Hauflo cloud; nothing is installed without their confirmation. The agent downloads the published release from GitHub, checks its sha256 and the release's Ed25519 signature (`hauflo.zip.sig`, public keys in the code), swaps the files and waits for the restart the integrator confirmed — a restart is never automatic. If the new code fails to load, the previous version is restored. **Settings → System → Updates** keeps working as before; the Hauflo update is the same release that is published there. The font Onest in `www/fonts` is under the SIL Open Font License 1.1 (`www/fonts/OFL.txt`).
+
+</details>
+
+<details>
 <summary><b>“What changes in the panel when the agent updates?”</b></summary>
 
 After the update (Settings → Updates) and a restart, the Hauflo cards and theme refresh themselves; your manual dashboard edits are kept. If cards look old, hard-reload the page (Ctrl+F5) or the HA app.
@@ -290,5 +310,5 @@ After the update (Settings → Updates) and a restart, the Hauflo cards and them
 
 ## License
 
-The source code is published so you can check what runs in the home. It is not open source: you may install and run the agent only with the Hauflo service, and not copy it into other products. See [LICENSE](https://github.com/Hauflo/hauflo-agent/blob/main/LICENSE).
+The agent and the cards are Apache-2.0: read, check, fork. See [LICENSE](https://github.com/Hauflo/hauflo-agent/blob/main/LICENSE). The Hauflo cloud (project parsing, the plan, applying, alarms, billing) is a separate closed service.
 

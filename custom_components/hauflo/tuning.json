@@ -3,6 +3,7 @@
   "notify": {
     "repeat_min": 5,
     "native_hold_s": 5,
+    "helper_command_s": 30,
     "hold": {
       "max_s": 3600,
       "default_s": 60,
@@ -569,6 +570,7 @@
     "max_skip": 200
   },
   "link": {
+    "channels_max": 8,
     "reconnect_hint_wait_s": [
       1.0,
       30.0
@@ -700,6 +702,14 @@
     "max_skip": 200,
     "max_ours": 3000,
     "living_words": "гостин|кухн|столов|зал\\b|living|kitchen|lounge|dining"
+  },
+  "lovelace": {
+    "row_num_abs": 1000000000.0,
+    "row_text_max": 120,
+    "rows_max": 300,
+    "sub_modes_max": 64,
+    "why_max": 300,
+    "prune_max": 100
   },
   "cards": {
     "off_in_max_min": 1440,
@@ -1827,6 +1837,36 @@
       "helper",
       "system"
     ]
+  },
+  "health": {
+    "tick_s": 300,
+    "start_delay_s": 120,
+    "save_delay_s": 10,
+    "stale_h": 72,
+    "every_s": {
+      "backup": 21600,
+      "disk": 900,
+      "updates": 3600,
+      "cert": 43200
+    },
+    "backup_warn_days": 7,
+    "backup_crit_days": 14,
+    "backup_never_h": 48,
+    "disk_warn_pct": 10,
+    "disk_warn_cap_gb": 20,
+    "disk_warn_floor_gb": 2,
+    "disk_crit_pct": 5,
+    "disk_crit_cap_gb": 10,
+    "disk_crit_floor_gb": 1,
+    "disk_clear_factor": 1.1,
+    "update_ids": {
+      "core": "home_assistant_core_version_latest",
+      "os": "home_assistant_os_version_latest",
+      "supervisor": "home_assistant_supervisor_version_latest"
+    },
+    "cert_warn_days": 14,
+    "cert_crit_days": 7,
+    "cert_timeout_s": 15
   },
   "labels": {
     "kinds": {

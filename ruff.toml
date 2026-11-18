@@ -1,0 +1,41 @@
+# Lint of the Hauflo agent (the HA custom integration + its tests): `ruff check` + `ruff format --check` (CI: ci.yml, job agent).
+# Home Assistant core's choices where they apply: line length 120 (E501 on, `ruff format`), isort with HA's settings (force-sort-within-sections, combine-as-imports,
+# custom_components.hauflo as first party).
+# py313, not py314: the formatter then keeps `except (A, B):` (py314 would drop the parentheses — PEP 758 — and the
+# standalone checks that parse the sources with the system Python (scripts/check-contracts.py, strip-internal.py,
+# tests/test_tunnel_allowlist.py in CI on 3.13) could not read them). HA itself needs >=3.14.2 (hacs.json).
+target-version = "py313"
+line-length = 120
+
+[lint]
+# The subset of HA core's rule set that applies here: E/W — pycodestyle; F — pyflakes; I — import order; UP — pyupgrade;
+# B — bugbear; C4 — comprehensions; SIM — simplify; RUF — ruff's own;
+# PLC2701 — no `from module import _private` across modules (ruff exempts relative imports inside the package itself —
+# tests/test_no_private_imports.py covers those and `module._name` attribute access).
+preview = true
+explicit-preview-rules = true
+select = ["E", "F", "I", "W", "UP", "B", "C4", "SIM", "RUF", "PLC2701", "BLE001", "SLF001", "PLC0415"]
+ignore = [
+    "E731",  # a named lambda: short callbacks handed to engines, kept as in the code base
+    # Ambiguous unicode: the agent's comments, docstrings and fallback texts are Russian by design; Cyrillic letters are
+    # «confusable» with Latin ones only to a Latin-only code base (HA core has no non-English source text).
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# Rules of HA core's set that are not enforced here yet but whose `# noqa` marks document a deliberate choice
+# (a lazy import inside a function, a private access in a test, a magic number): RUF100 must not strip those marks.
+external = ["PLR2004", "S324"]
+
+[lint.per-file-ignores]
+# Fixtures: pytest injects them by parameter name, so an imported fixture «shadows» itself in every test that uses it (F811).
+# Test doubles of HA objects (a fake dashboard's `config = {...}`) are class-level literals by design (RUF012).
+# Tests reach into private state of the objects they test (SLF001) and import lazily after patching (PLC0415), as in HA core.
+"tests/**" = ["F811", "RUF012", "SLF001", "PLC0415"]
+
+[lint.isort]
+force-sort-within-sections = true
+combine-as-imports = true
+split-on-trailing-comma = false
+known-first-party = ["custom_components.hauflo"]
+known-local-folder = ["tests"]

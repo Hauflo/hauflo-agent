@@ -1,12 +1,13 @@
 from __future__ import annotations
 from typing import Any
-from homeassistant.components.repairs import RepairsFlow
+from homeassistant.components.repairs import ConfirmRepairFlow, RepairsFlow
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
 from . import issues, ranges
 from .const import DOMAIN
 
 class RangesFixFlow(RepairsFlow):
+    """Exactly what is added and what goes, then one click — on what was shown, never on what waits by then."""
     _shown: tuple[list[str], list[str]] | None = None
 
     async def async_step_init(self, user_input: dict[str, Any] | None=None) -> FlowResult:
@@ -38,5 +39,4 @@ class RangesFixFlow(RepairsFlow):
 async def async_create_fix_flow(hass: HomeAssistant, issue_id: str, data: dict[str, Any] | None) -> RepairsFlow:
     if issue_id == issues.RANGES_PENDING:
         return RangesFixFlow()
-    from homeassistant.components.repairs import ConfirmRepairFlow
     return ConfirmRepairFlow()

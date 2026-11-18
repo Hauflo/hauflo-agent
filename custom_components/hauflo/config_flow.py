@@ -1,26 +1,28 @@
+"""Hauflo agent setup: the integrator types the pairing code from Hauflo (project → «Агент Hauflo»)."""
 from __future__ import annotations
+import functools
+import ipaddress
 from typing import Any
 from urllib.parse import urlparse
 import aiohttp
-import voluptuous as vol
 from homeassistant.config_entries import SOURCE_REAUTH, ConfigEntry, ConfigEntryState, ConfigFlow, ConfigFlowResult, OptionsFlow
-from homeassistant.components import persistent_notification
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import section
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.selector import BooleanSelector, NumberSelector, NumberSelectorConfig, NumberSelectorMode, ObjectSelector, ObjectSelectorConfig, SelectSelector, SelectSelectorConfig, SelectSelectorMode, TextSelector, TextSelectorConfig
-from . import relinked as _relinked, servers, service
-from . import ranges as ranges_mod
-from .const import CONF_CARDS_VIEW_OLD, CONF_INDEPENDENT, CONF_INTERCOM, CONF_ACCEPT_PENDING, CONF_ALLOW_CHANGES, CONF_CODE, CONF_CONFIRM_TAKEOVER, CONF_RANGES, CONF_SECRET, CONF_SERVER, DATA_PENDING_RANGES, DATA_UNLINKED, DEFAULT_SERVER, DOMAIN, FALLBACK_SERVER, REGION_SERVERS
-from .ranges import parse_ranges
-from .ranges import range_key as _range_key
-from .tuning import TUNING
-CONNECT_TIMEOUT = TUNING['link']['connect_timeout_s']
-PAIR_TIMEOUT = TUNING['link']['pair_timeout_s']
+from homeassistant.helpers.selector import TextSelector, TextSelectorConfig
+import voluptuous as vol
+from . import ranges, servers
+from .const import CONF_CODE, CONF_CONFIRM_TAKEOVER, CONF_RANGES, CONF_SECRET, CONF_SERVER, DATA_UNLINKED, DOMAIN
+from .entry import hooks as entry_hooks
+from .link.common import good_hosts
+from .options_flow import HaufloOptionsFlow
+from .preload import async_preload
+from .tuning import tuning
+connect_timeout = functools.cache(lambda: tuning()['link']['connect_timeout_s'])
+pair_timeout = functools.cache(lambda: tuning()['link']['pair_timeout_s'])
+ASKS_CONFIRM = ('takeover_confirm', 'relink_confirm')
 
 def _secure(server: str) -> bool:
-    import ipaddress
-    from urllib.parse import urlparse
     u = urlparse(server)
     if u.scheme == 'https':
         return True
@@ -41,8 +43,10 @@ def _pair_code(typed: str) -> str:
     return typed.strip().upper()
 
 class HaufloConfigFlow(ConfigFlow, domain=DOMAIN):
+    """One Hauflo agent per Home Assistant."""
     VERSION = 1
     _takeover = False
+    _relink_project = ''
     _typed_code = ''
     _transfer_company = ''
     _transfer: tuple[str, str, str | None] | None = None
@@ -51,13 +55,13 @@ class HaufloConfigFlow(ConfigFlow, domain=DOMAIN):
     def _server_for(code: str, typed: str) -> str:
         region = code.split('-', 1)[0]
         typed = typed.strip().rstrip('/')
-        if (typed == '' or servers.ours(typed)) and region in REGION_SERVERS:
-            return REGION_SERVERS[region]
+        if (typed == '' or servers.ours(typed)) and region in servers.region_servers():
+            return servers.region_servers()[region]
         return typed
 
     @staticmethod
     def _plan_b(code: str, server: str, errors: dict[str, str]) -> bool:
-        return server == DEFAULT_SERVER and code.split('-', 1)[0] not in REGION_SERVERS and bool(errors) and (CONF_SERVER not in errors)
+        return server == servers.default_server() and code.split('-', 1)[0] not in servers.region_servers() and bool(errors) and (CONF_SERVER not in errors)
 
     async def _pair(self, server: str, code: str, previous: str | None=None, confirm: bool=False, transfer: bool=False) -> tuple[dict[str, Any] | None, dict[str, str]]:
         if not _secure(server):
@@ -66,11 +70,11 @@ class HaufloConfigFlow(ConfigFlow, domain=DOMAIN):
         payload = {'code': code, **({'previous': previous} if previous else {}), **({'confirmTakeover': True} if confirm else {}), **({'confirmTransfer': True} if transfer else {})}
 
         async def at(host: str) -> tuple[dict[str, Any] | None, dict[str, str]]:
-            timeout = aiohttp.ClientTimeout(total=PAIR_TIMEOUT, sock_connect=CONNECT_TIMEOUT)
+            timeout = aiohttp.ClientTimeout(total=pair_timeout(), sock_connect=connect_timeout())
             async with session.post(f'{host}/api/agent/pair', json=payload, timeout=timeout) as res:
                 return await self._pair_answer(res)
         try:
-            _host, answer = await servers.first_answer(servers.same_region(server), at)
+            _host, answer = await servers.first_answer(servers.same_region(server, (good := good_hosts(self.hass))), at, good)
         except (aiohttp.ClientError, TimeoutError, OSError, ValueError):
             return (None, {'base': 'cannot_connect'})
         return answer
@@ -92,6 +96,9 @@ class HaufloConfigFlow(ConfigFlow, domain=DOMAIN):
                 return (None, {'base': 'transfer_recorded'})
             if code_ == 'pair_transfer_request':
                 return (None, {'base': 'transfer_via_request'})
+            if code_ == 'pair_relink':
+                self._relink_project = str(why.get('project') or '')[:120]
+                return (None, {'base': 'relink_confirm'})
             return (None, {'base': 'takeover_confirm'})
         if res.status >= 400:
             return (None, {'base': 'cannot_connect'})
@@ -99,6 +106,9 @@ class HaufloConfigFlow(ConfigFlow, domain=DOMAIN):
         if not isinstance(body, dict) or not body.get('secret'):
             return (None, {'base': 'cannot_connect'})
         return (body, {})
+
+    def _asked(self) -> dict[str, str]:
+        return {'project': self._relink_project or '—'}
 
     def _schema(self, server: str) -> vol.Schema:
         extra: dict[Any, Any] = {}
@@ -108,6 +118,7 @@ class HaufloConfigFlow(ConfigFlow, domain=DOMAIN):
         return vol.Schema({vol.Required(CONF_CODE, **{'default': self._typed_code} if self._typed_code else {}): str, **extra, vol.Optional('advanced'): section(vol.Schema({vol.Optional(CONF_SERVER, default=shown): str}), {'collapsed': True})})
 
     async def _code_step(self, step_id: str, user_input: dict[str, Any] | None, server: str, entry: Any=None) -> tuple[dict[str, Any] | None, str, dict[str, str]]:
+        await async_preload(self.hass)
         errors: dict[str, str] = {}
         if user_input is not None:
             code = _pair_code(user_input[CONF_CODE])
@@ -118,37 +129,38 @@ class HaufloConfigFlow(ConfigFlow, domain=DOMAIN):
             server = self._server_for(code, typed) or server
             previous = entry.data.get(CONF_SECRET) if entry is not None and entry.data.get(CONF_SERVER) == server else None
             body, errors = await self._pair(server, code, previous, confirm)
-            self._takeover = errors.get('base') == 'takeover_confirm'
+            self._takeover = errors.get('base') in ASKS_CONFIRM
             if errors.get('base') == 'transfer_ask':
                 self._transfer = (server, code, previous)
             if body is None and self._plan_b(code, server, errors):
-                prev_b = entry.data.get(CONF_SECRET) if entry is not None and entry.data.get(CONF_SERVER) == FALLBACK_SERVER else None
-                body_b, errors_b = await self._pair(FALLBACK_SERVER, code, prev_b, confirm)
+                prev_b = entry.data.get(CONF_SECRET) if entry is not None and entry.data.get(CONF_SERVER) == servers.pair_fallback_server() else None
+                body_b, errors_b = await self._pair(servers.pair_fallback_server(), code, prev_b, confirm)
                 if body_b is not None:
-                    return (body_b, FALLBACK_SERVER, {})
-                if errors_b.get(CONF_CODE) or errors_b.get('base') in ('takeover_confirm', 'transfer_ask', 'transfer_recorded', 'transfer_via_request'):
+                    return (body_b, servers.pair_fallback_server(), {})
+                if errors_b.get(CONF_CODE) or errors_b.get('base') in (*ASKS_CONFIRM, 'transfer_ask', 'transfer_recorded', 'transfer_via_request'):
                     errors = errors_b
-                    self._takeover = errors.get('base') == 'takeover_confirm'
+                    self._takeover = errors.get('base') in ASKS_CONFIRM
                     if errors.get('base') == 'transfer_ask':
-                        self._transfer = (FALLBACK_SERVER, code, prev_b)
+                        self._transfer = (servers.pair_fallback_server(), code, prev_b)
             if body is not None:
                 return (body, server, {})
         return (None, server, errors)
 
     async def async_step_user(self, user_input: dict[str, Any] | None=None) -> ConfigFlowResult:
-        body, server, errors = await self._code_step('user', user_input, DEFAULT_SERVER)
+        body, server, errors = await self._code_step('user', user_input, servers.default_server())
         if body is not None:
             self._paired = (body, server)
             return await self.async_step_ranges()
-        return self.async_show_form(step_id='user', data_schema=self._schema(server), errors=errors)
+        return self.async_show_form(step_id='user', data_schema=self._schema(server), description_placeholders=self._asked(), errors=errors)
 
     async def async_step_ranges(self, user_input: dict[str, Any] | None=None) -> ConfigFlowResult:
+        """Which group addresses Hauflo may send to — confirmed here, in the house, not by the cloud (narrow round"""
         body, server = self._paired
-        proposed = ', '.join(parse_ranges(body.get('addresses') or body.get('ranges')))
+        proposed = ', '.join(ranges.parse_ranges(body.get('addresses') or body.get('ranges')))
         if user_input is not None:
-            ranges = parse_ranges(user_input.get(CONF_RANGES, ''))
-            return self.async_create_entry(title=f"Hauflo — {body.get('project', '')}", data={CONF_SERVER: server, CONF_SECRET: body['secret']}, options={CONF_RANGES: ranges})
-        return self.async_show_form(step_id='ranges', data_schema=vol.Schema({vol.Optional(CONF_RANGES, default=proposed): TextSelector(TextSelectorConfig(multiline=True))}), description_placeholders={'project': str(body.get('project', '')), 'ranges': ranges_mod.describe(proposed) or '—'})
+            typed = ranges.parse_ranges(user_input.get(CONF_RANGES, ''))
+            return self.async_create_entry(title=f"Hauflo — {body.get('project', '')}", data={CONF_SERVER: server, CONF_SECRET: body['secret']}, options={CONF_RANGES: typed})
+        return self.async_show_form(step_id='ranges', data_schema=vol.Schema({vol.Optional(CONF_RANGES, default=proposed): TextSelector(TextSelectorConfig(multiline=True))}), description_placeholders={'project': str(body.get('project', '')), 'ranges': ranges.describe(proposed) or '—'})
 
     @staticmethod
     @callback
@@ -156,20 +168,21 @@ class HaufloConfigFlow(ConfigFlow, domain=DOMAIN):
         return HaufloOptionsFlow()
 
     async def async_step_reconfigure(self, user_input: dict[str, Any] | None=None) -> ConfigFlowResult:
+        """Linked to another project, or again after an unlink: a new code updates this entry (its HA user stays)."""
         entry = self._get_reconfigure_entry()
-        body, server, errors = await self._code_step('reconfigure', user_input, entry.data.get(CONF_SERVER, DEFAULT_SERVER), entry)
+        body, server, errors = await self._code_step('reconfigure', user_input, entry.data.get(CONF_SERVER, servers.default_server()), entry)
         if body is not None:
             return await self._relinked(entry, body, server)
         if errors.get('base') == 'transfer_ask':
             return await self.async_step_transfer()
         if (done := self._transfer_end(errors)) is not None:
             return done
-        return self.async_show_form(step_id='reconfigure', data_schema=self._schema(server), errors=errors)
+        return self.async_show_form(step_id='reconfigure', data_schema=self._schema(server), description_placeholders=self._asked(), errors=errors)
 
     async def _relinked(self, entry: ConfigEntry, body: dict[str, Any], server: str) -> ConfigFlowResult:
         self._paired = (body, server)
         self._entry = entry
-        if not parse_ranges(body.get('addresses') or body.get('ranges')):
+        if not ranges.parse_ranges(body.get('addresses') or body.get('ranges')):
             return self._finish_relink(None)
         return await self.async_step_relink_ranges()
 
@@ -177,24 +190,25 @@ class HaufloConfigFlow(ConfigFlow, domain=DOMAIN):
         body, server = self._paired
         self.hass.data.pop(DATA_UNLINKED, None)
         if allowed is not None:
-            ranges_mod.reset(self.hass)
+            ranges.reset(self.hass)
         entry = self._entry
         result = self.async_update_and_abort(entry, title=f"Hauflo — {body.get('project', '')}", data_updates={CONF_SERVER: server, CONF_SECRET: body['secret']}, **{'options': {**entry.options, CONF_RANGES: allowed}} if allowed is not None else {})
         agent = getattr(entry, 'runtime_data', None) if entry.state is ConfigEntryState.LOADED else None
-        if agent is None or not entry.update_listeners or (not _relinked(agent, entry.data)):
+        if agent is None or not entry.update_listeners or (not entry_hooks.relinked(agent, entry.data)):
             self.hass.config_entries.async_schedule_reload(entry.entry_id)
         return result
 
     async def async_step_relink_ranges(self, user_input: dict[str, Any] | None=None) -> ConfigFlowResult:
+        """The new project's addresses, prefilled, and what goes of the old allowed list — said, never kept silently."""
         body, _server = self._paired
-        proposed = parse_ranges(body.get('addresses') or body.get('ranges'))
+        proposed = ranges.parse_ranges(body.get('addresses') or body.get('ranges'))
         if user_input is not None:
-            return self._finish_relink(parse_ranges(user_input.get(CONF_RANGES, '')))
+            return self._finish_relink(ranges.parse_ranges(user_input.get(CONF_RANGES, '')))
         old = [str(r) for r in self._entry.options.get(CONF_RANGES) or []]
-        want = ranges_mod.expand(proposed)
-        removed = [r for r in parse_ranges(old) if not ranges_mod.expand([r]) & want]
+        want = ranges.expand(proposed)
+        removed = [r for r in ranges.parse_ranges(old) if not ranges.expand([r]) & want]
         text = ', '.join(proposed)
-        return self.async_show_form(step_id='relink_ranges', data_schema=vol.Schema({vol.Optional(CONF_RANGES, default=text): TextSelector(TextSelectorConfig(multiline=True))}), description_placeholders={'project': str(body.get('project', '')), 'ranges': ranges_mod.describe(proposed) or '—', 'removed': ranges_mod.describe(removed) or '—'})
+        return self.async_show_form(step_id='relink_ranges', data_schema=vol.Schema({vol.Optional(CONF_RANGES, default=text): TextSelector(TextSelectorConfig(multiline=True))}), description_placeholders={'project': str(body.get('project', '')), 'ranges': ranges.describe(proposed) or '—', 'removed': ranges.describe(removed) or '—'})
 
     def _transfer_end(self, errors: dict[str, str]) -> ConfigFlowResult | None:
         if errors.get('base') == 'transfer_recorded':
@@ -204,6 +218,8 @@ class HaufloConfigFlow(ConfigFlow, domain=DOMAIN):
         return None
 
     async def async_step_transfer(self, user_input: dict[str, Any] | None=None) -> ConfigFlowResult:
+        """        is only evidence on the request — Hauflo support decides after telling the previous company; this HA keeps its
+        link until then (_transfer_end)."""
         return self.async_show_menu(step_id='transfer', menu_options=['transfer_yes', 'transfer_no'], description_placeholders={'company': self._transfer_company or '—'})
 
     async def async_step_transfer_yes(self, user_input: dict[str, Any] | None=None) -> ConfigFlowResult:
@@ -218,114 +234,22 @@ class HaufloConfigFlow(ConfigFlow, domain=DOMAIN):
         if (done := self._transfer_end(errors)) is not None:
             return done
         self._takeover = False
-        return self.async_show_form(step_id='reauth_confirm' if reauth else 'reconfigure', data_schema=self._schema(server), errors=errors or {'base': 'cannot_connect'})
+        return self.async_show_form(step_id='reauth_confirm' if reauth else 'reconfigure', data_schema=self._schema(server), description_placeholders=self._asked(), errors=errors or {'base': 'cannot_connect'})
 
     async def async_step_transfer_no(self, user_input: dict[str, Any] | None=None) -> ConfigFlowResult:
         return self.async_abort(reason='transfer_declined')
 
     async def async_step_reauth(self, entry_data: dict[str, Any]) -> ConfigFlowResult:
+        """Hauflo no longer knows this agent (unlinked, project deleted): HA's own «re-configure» with a new code."""
         return await self.async_step_reauth_confirm()
 
     async def async_step_reauth_confirm(self, user_input: dict[str, Any] | None=None) -> ConfigFlowResult:
         entry = self._get_reauth_entry()
-        body, server, errors = await self._code_step('reauth_confirm', user_input, entry.data.get(CONF_SERVER, DEFAULT_SERVER), entry)
+        body, server, errors = await self._code_step('reauth_confirm', user_input, entry.data.get(CONF_SERVER, servers.default_server()), entry)
         if body is not None:
             return await self._relinked(entry, body, server)
         if errors.get('base') == 'transfer_ask':
             return await self.async_step_transfer()
         if (done := self._transfer_end(errors)) is not None:
             return done
-        return self.async_show_form(step_id='reauth_confirm', data_schema=self._schema(server), errors=errors)
-
-class HaufloOptionsFlow(OptionsFlow):
-    _shown_pending: list[str] | None = None
-    _saved: dict[str, Any] | None = None
-    _report: str = ''
-    _independent: bool = False
-
-    async def async_step_init(self, user_input: dict[str, Any] | None=None) -> ConfigFlowResult:
-        if user_input is not None:
-            shown_pending = self._shown_pending or []
-            ticked = user_input.get(CONF_ACCEPT_PENDING) or []
-            accepted = [r for r in ticked if r in shown_pending] if isinstance(ticked, list) else []
-            ranges = parse_ranges(user_input.get(CONF_RANGES, ''))
-            pending = self.hass.data.get(DATA_PENDING_RANGES)
-            if isinstance(pending, set):
-                pending -= set(shown_pending)
-                ranges_mod.sync(self.hass)
-            options = {**{k: v for k, v in self.config_entry.options.items() if k != CONF_CARDS_VIEW_OLD}, CONF_ALLOW_CHANGES: user_input.get(CONF_ALLOW_CHANGES) is not False, CONF_RANGES: parse_ranges(ranges + accepted)}
-            self._saved = options
-            self._independent = user_input.get(CONF_INDEPENDENT) is True
-            if user_input.get(CONF_INTERCOM) is True:
-                return await self.async_step_intercom()
-            return await self._done()
-        return await self._show_init()
-
-    async def _done(self) -> ConfigFlowResult:
-        if self._independent:
-            return await self.async_step_independent()
-        return self.async_create_entry(data=self._saved if self._saved is not None else dict(self.config_entry.options))
-
-    async def async_step_intercom(self, user_input: dict[str, Any] | None=None) -> ConfigFlowResult:
-        from .intercom import door as door_mod, setup as setup_mod
-        current = dict(self.config_entry.options.get(CONF_INTERCOM) or {})
-        errors: dict[str, str] = {}
-        placeholders = {'door': '', 'presets': ', '.join(dict.fromkeys((p['maker'] for p in door_mod.PRESETS.values() if p.get('maker'))))}
-        if user_input is not None:
-            doors = user_input.get('doors') or []
-            doors = [d for d in (doors if isinstance(doors, list) else [doors]) if isinstance(d, dict)]
-            try:
-                value = setup_mod.normalize({**user_input, 'doors': doors}, current)
-            except setup_mod.SetupError as err:
-                errors[err.field] = f'intercom_{err.code}'
-                placeholders['door'] = err.door
-                value = {**current, **{k: user_input.get(k) for k in ('bind', 'port', 'public')}, 'doors': doors}
-            else:
-                self._saved = {**(self._saved or dict(self.config_entry.options)), CONF_INTERCOM: value}
-                return await self._done()
-            current = value
-        binds = ['auto']
-        try:
-            from homeassistant.components import network
-            for adapter in await network.async_get_adapters(self.hass):
-                binds += [str(a['address']) for a in adapter['ipv4'] if str(a['address']) not in binds]
-        except Exception:
-            pass
-        text = {'text': {}}
-        secret = {'text': {'type': 'password'}}
-        fields = {'name': {'required': True, 'selector': text}, 'area': {'selector': {'area': {}}}, 'preset': {'required': True, 'selector': {'select': {'options': list(door_mod.PRESETS), 'translation_key': 'intercom_preset', 'mode': 'dropdown'}}}, 'host': {'selector': text}, 'user': {'selector': text}, 'password': {'selector': secret}, 'mode': {'selector': {'select': {'options': list(door_mod.MODES), 'translation_key': 'intercom_mode', 'mode': 'dropdown'}}}, 'sip_server': {'selector': text}, 'sip_port': {'selector': {'number': {'min': 1, 'max': 65535, 'mode': 'box'}}}, 'sip_user': {'selector': text}, 'sip_password': {'selector': secret}, 'rtsp': {'selector': text}, 'open': {'selector': {'select': {'options': list(door_mod.OPENERS), 'translation_key': 'intercom_open', 'mode': 'dropdown'}}}, 'dtmf': {'selector': text}, 'relay': {'selector': {'number': {'min': 1, 'max': 16, 'mode': 'box'}}}, 'open_entity': {'selector': {'entity': {'domain': sorted(TUNING['intercom']['open_services'])}}}, 'codec': {'selector': {'select': {'options': ['PCMA', 'PCMU'], 'mode': 'dropdown'}}}}
-        return self.async_show_form(step_id='intercom', data_schema=vol.Schema({vol.Required('bind', default=str(current.get('bind') or 'auto')): SelectSelector(SelectSelectorConfig(options=binds, custom_value=True, mode=SelectSelectorMode.DROPDOWN, translation_key='intercom_bind')), vol.Required('port', default=int(current.get('port') or TUNING['intercom']['sip_port'])): NumberSelector(NumberSelectorConfig(min=1, max=65535, mode=NumberSelectorMode.BOX)), vol.Optional('public', default=str(current.get('public') or '')): TextSelector(), vol.Optional('doors', default=list(current.get('doors') or [])): ObjectSelector(ObjectSelectorConfig(fields=fields, multiple=True, label_field='name', translation_key='intercom_doors'))}), errors=errors, description_placeholders=placeholders)
-
-    async def _show_init(self) -> ConfigFlowResult:
-        current = list(self.config_entry.options.get(CONF_RANGES) or [])
-        pending = sorted(self.hass.data.get(DATA_PENDING_RANGES, set()), key=_range_key)
-        self._shown_pending = pending
-        shown = ', '.join(sorted(current, key=_range_key))
-        extra: dict[Any, Any] = {}
-        if pending:
-            extra[vol.Optional(CONF_ACCEPT_PENDING, default=[])] = SelectSelector(SelectSelectorConfig(options=pending, multiple=True, mode=SelectSelectorMode.LIST))
-        server = str(self.config_entry.data.get(CONF_SERVER) or '')
-        who, history = service.describe(await service.async_load(self.hass), self.hass.config.language)
-        title = self.config_entry.title or ''
-        project = title.split(' — ', 1)[1] if title.startswith('Hauflo — ') else title
-        return self.async_show_form(step_id='init_pending' if pending else 'init', data_schema=vol.Schema({vol.Required(CONF_ALLOW_CHANGES, default=self.config_entry.options.get(CONF_ALLOW_CHANGES, True) is True): BooleanSelector(), vol.Optional(CONF_RANGES, default=shown): TextSelector(TextSelectorConfig(multiline=True)), **extra, vol.Optional(CONF_INTERCOM, default=False): BooleanSelector(), vol.Optional(CONF_INDEPENDENT, default=False): BooleanSelector()}), description_placeholders={'pending': ranges_mod.describe(pending), 'project': project or '—', 'server': urlparse(server).hostname or server or '—', 'url': server, 'service': who, 'history': history})
-
-    async def async_step_init_pending(self, user_input: dict[str, Any] | None=None) -> ConfigFlowResult:
-        return await self.async_step_init(user_input)
-
-    async def async_step_independent(self, user_input: dict[str, Any] | None=None) -> ConfigFlowResult:
-        if user_input is None:
-            return self.async_show_form(step_id='independent', data_schema=vol.Schema({}))
-        from . import independent
-        agent = getattr(self.config_entry, 'runtime_data', None)
-        engine = getattr(agent, 'engine', None)
-        ru = str(self.hass.config.language or '').startswith('ru')
-        result = await independent.async_export(self.hass, engine)
-        self._report = independent.summary(result, ru)
-        persistent_notification.async_create(self.hass, self._report, 'Hauflo', 'hauflo_independent')
-        return await self.async_step_independent_done()
-
-    async def async_step_independent_done(self, user_input: dict[str, Any] | None=None) -> ConfigFlowResult:
-        if user_input is None:
-            return self.async_show_form(step_id='independent_done', data_schema=vol.Schema({}), description_placeholders={'report': self._report})
-        return self.async_create_entry(data=self._saved if self._saved is not None else dict(self.config_entry.options))
+        return self.async_show_form(step_id='reauth_confirm', data_schema=self._schema(server), description_placeholders=self._asked(), errors=errors)

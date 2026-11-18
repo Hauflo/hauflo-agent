@@ -1,12 +1,20 @@
+"""automations.yaml / scenes.yaml as Home Assistant's own editor writes them, but never with YAML anchors: one list
+used twice (an alarm's sources in its triggers and its message) became «&id001 … *id001», renumbered on every write —
+a diff and «changed» each time (5B e2e D-5). A file with anchors written by HA's editor still reads as plain.
+
+Reading, parsing, dumping and writing all run in the executor (HA review M-1: 100 rules ≈ 1 MB blocked the loop
+for seconds). A write re-reads the file first: changed since it was read (HA's own editor saved meanwhile — it doesn't
+take our lock), the change is made again on what is there now, never over it (M-2)."""
 from __future__ import annotations
 from collections.abc import Callable
 import os
 from typing import Any
-import yaml
 from annotatedyaml.dumper import FastestAvailableSafeDumper
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
+from homeassistant.util.file import write_utf8_file_atomic
 from homeassistant.util.yaml import dump as ha_dump
+import yaml
 
 class _NoAliases(FastestAvailableSafeDumper):
 
@@ -15,12 +23,17 @@ class _NoAliases(FastestAvailableSafeDumper):
 _NoAliases.add_representer(type(None), lambda dumper, _value: dumper.represent_scalar('tag:yaml.org,2002:null', ''))
 
 def dump(data: Any) -> str:
+    """HA's dump (same options, «key:» for null), every repeated value written out in full."""
     return yaml.dump(data, Dumper=_NoAliases, default_flow_style=False, allow_unicode=True, sort_keys=False)
 
 def plain(data: Any, body: str) -> bool:
+    """``body`` (stripped) is exactly what we or HA's editor would write for ``data``."""
     return body in (dump(data).strip(), ha_dump(data).strip())
 
 def parse(text: str, error: type[Exception], shape: type=list) -> Any:
+    """The file as data — only when a dump gives back the same text (HA's editor's own format); else ``error``. An
+    empty file / «[]» is plain. ``shape`` — a list (automations.yaml, scenes.yaml) or a dict (scripts.yaml: script id →
+    its config, «{}» empty)."""
     body = text.strip()
     if body in ('', '[]', '{}'):
         return shape()
@@ -41,6 +54,7 @@ def _text(path: str) -> str | None:
         return f.read()
 
 async def async_read(hass: HomeAssistant, path: str, error: type[Exception], shape: type=list) -> tuple[Any, str | None]:
+    """(data, the text it was read from — None: no file)."""
 
     def job() -> tuple[Any, str | None]:
         text = _text(path)
@@ -48,7 +62,9 @@ async def async_read(hass: HomeAssistant, path: str, error: type[Exception], sha
     return await hass.async_add_executor_job(job)
 
 def write(path: str, backup: str, keep: int, data: Any, before: str | None, error: type[Exception], redo: Callable[[Any], Any] | None=None, shape: type=list) -> Any:
-    from homeassistant.util.file import write_utf8_file_atomic
+    """Writes ``data`` (read as ``before``) to ``path`` — atomically, the text it replaces kept as ``backup``+stamp
+    (the last ``keep``). The file changed since ``before``: ``redo`` makes the change again on what is there now (no
+    ``redo`` — ``error``). Returns what was written. Blocking: the executor's."""
     now = _text(path)
     if now != before:
         if redo is None:
@@ -69,6 +85,9 @@ async def async_write(hass: HomeAssistant, path: str, backup: str, keep: int, da
     return await hass.async_add_executor_job(write, path, backup, keep, data, before, error, redo, shape)
 
 def rebase(writes: dict[str, Any], base: dict[str, Any], same: Callable[[Any, Any], bool], kept: list[str] | None=None) -> Callable[[list[Any]], list[Any]]:
+    """``redo`` for writes by id (``writes``: id → new item, None — remove) planned on ``base`` (id → item as read):
+    on the file as it is now, an item someone changed or removed meanwhile is left as they made it (its id into
+    ``kept``); all else — every other item, new ones — as now, the writes applied."""
 
     def redo(fresh: list[Any]) -> list[Any]:
         out: list[Any] = []

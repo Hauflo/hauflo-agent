@@ -1,3 +1,4 @@
+"""was visible nowhere in HA). On while Hauflo has said «welcome»; off when the link is down or the agent unlinked."""
 from __future__ import annotations
 from urllib.parse import urlparse
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass, BinarySensorEntity
@@ -6,10 +7,10 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from .const import CONF_SERVER, DOMAIN, VERSION
 from .daylight import HaufloDaylight
 from .device import device_info
 from .house_state import HouseEntity
-from .const import CONF_SERVER, DOMAIN, VERSION
 SIGNAL_LINK = f'{DOMAIN}_link'
 PARALLEL_UPDATES = 0
 

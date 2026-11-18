@@ -1,21 +1,26 @@
+"""Hauflo's monitoring) as HA entities for the client's own automations: `sensor.hauflo_house_state` (ok / fault / alarm /
+offline, with the counts, the active signals and since when) and `binary_sensor.hauflo_house_problem` (on — anything but
+ok). Push-updated by the agent's recompute (dispatcher), never polled, no timer of their own."""
 from __future__ import annotations
 from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import Entity
-from .alarms_now import ITEMS_MAX
+from .alarms_now import items_max
 from .const import DOMAIN, VERSION
 from .device import device_info
 SIGNAL_HOUSE = f'{DOMAIN}_house'
 LEVELS = ['ok', 'fault', 'alarm', 'offline']
 
 def facts(st: dict[str, Any]) -> dict[str, Any]:
+    """The sensor's attributes from Agent.house_state: counts by level, «не решено», «отложено», since, the signals."""
     faults = st['faults']
     live = [f for f in faults if not f['offline']]
-    return {'alarm': sum((1 for f in live if f['house'] == 'alarm')), 'fault': sum((1 for f in live if f['house'] != 'alarm')), 'offline': len(faults) - len(live), 'undetermined': st['undetermined'], 'shelved': len(st['held']), 'since': st['since'], 'signals': [{'entity': f['entity'], 'level': 'offline' if f['offline'] else f['house']} for f in faults[:ITEMS_MAX]], 'version': VERSION}
+    return {'alarm': sum((1 for f in live if f['house'] == 'alarm')), 'fault': sum((1 for f in live if f['house'] != 'alarm')), 'offline': len(faults) - len(live), 'undetermined': st['undetermined'], 'shelved': len(st['held']), 'since': st['since'], 'signals': [{'entity': f['entity'], 'level': 'offline' if f['offline'] else f['house']} for f in faults[:items_max()]], 'version': VERSION}
 
 class HouseEntity(Entity):
+    """The two entities' one way: the agent's last house_now, refreshed on its dispatch."""
     _attr_has_entity_name = True
     _attr_should_poll = False
 

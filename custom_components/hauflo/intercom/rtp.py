@@ -1,9 +1,12 @@
+"""RTP (RFC 3550) for a door call: G.711 packets, A-law ↔ μ-law (a panel offering only the other law than the one the
+cards' stream carries), DTMF as telephone-event (RFC 4733), and the call's UDP session — symmetric (it answers where
+the panel's packets really come from, a NAT in between) and counted for the diagnosis."""
 from __future__ import annotations
 import asyncio
+from collections.abc import Callable
 import secrets
 import struct
 import time
-from collections.abc import Callable
 from typing import Any
 HEADER = struct.Struct('!BBHII')
 VERSION = 2 << 6
@@ -14,6 +17,7 @@ def packet(pt: int, seq: int, ts: int, ssrc: int, payload: bytes, marker: bool=F
     return HEADER.pack(VERSION, (128 if marker else 0) | pt & 127, seq & 65535, ts & 4294967295, ssrc) + payload
 
 def parse(data: bytes) -> tuple[int, int, int, int, bool, bytes] | None:
+    """(payload type, seq, timestamp, ssrc, marker, payload) — None for anything that isn't RTP v2."""
     if len(data) < 12 or data[0] >> 6 != 2:
         return None
     b0, b1, seq, ts, ssrc = HEADER.unpack_from(data)
@@ -73,6 +77,9 @@ def convert(payload: bytes, src: str, dst: str) -> bytes:
     return payload.translate(A2U if src == 'PCMA' else U2A)
 
 class RtpSession(asyncio.DatagramProtocol):
+    """The panel's audio leg of one call: what comes in goes to `on_audio` (payload, in the call's codec); `send` puts
+    the card's voice on the wire. Symmetric: the first packets from the panel's address (any port) say where to
+    answer."""
 
     def __init__(self, codec: str, pt: int, dtmf_pt: int | None, on_audio: Callable[[bytes], None]) -> None:
         self.codec, self.pt, self.dtmf_pt = (codec, pt, dtmf_pt)
@@ -93,6 +100,7 @@ class RtpSession(asyncio.DatagramProtocol):
         self.any_source = False
 
     async def open(self, host: str, ports: tuple[int, int]) -> int:
+        """Binds the first free even port of the range on the listening address; OSError — none free."""
         loop = asyncio.get_running_loop()
         lo, hi = ports
         last: OSError | None = None
@@ -136,6 +144,7 @@ class RtpSession(asyncio.DatagramProtocol):
             self.on_audio(payload)
 
     def send(self, payload: bytes, marker: bool=False) -> None:
+        """The card's voice (the call's codec, 20 ms frames) to the panel."""
         if self.transport is None or (to := self.target) is None or (not payload):
             return
         self.seq = self.seq + 1 & 65535
@@ -146,9 +155,11 @@ class RtpSession(asyncio.DatagramProtocol):
         self.last_tx = time.monotonic()
 
     def punch(self) -> None:
+        """One silent frame right after the answer: opens the NAT's way back for the panel's / the cloud's audio."""
         self.send(bytes([SILENCE[self.codec]]) * 160, marker=True)
 
     async def send_dtmf(self, digits: str, ms: int, frame_ms: int) -> None:
+        """RFC 4733 telephone-events: one timestamp per digit, growing duration, the end packet three times."""
         if self.transport is None or (to := self.target) is None or self.dtmf_pt is None:
             raise OSError('no telephone-event')
         step = 8 * frame_ms

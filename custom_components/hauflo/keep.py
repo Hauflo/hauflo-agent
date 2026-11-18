@@ -1,8 +1,31 @@
+"""restarting HA turned every «Atelier» card into «Configuration error»).
+
+Removed: the cards, icons and font are copied to /config/www/hauflo and added as Lovelace resources
+(HA serves /local itself) — the dashboard keeps working without the agent (theme aside). Set up
+again: those resources are taken off — the agent serves the files.
+
+«Сделать дом независимым» (independent.py) makes it permanent: the copy and the resources stay while the agent is
+installed too (refreshed on every start, the agent no longer adds its own copy), so the dashboard doesn't depend on
+the agent however it is removed (Marketplace/HACS first, a restart, a broken update).
+
+Installed (not independent): the agent's own addresses (/hauflo_static/…) are Lovelace resources too, besides HA's
+extra JS. HA's frontend reads the extra JS only when a page loads, the resources when its first dashboard opens: a
+browser tab opened before the agent was set up (paired in that very tab) showed «Configuration error» on every Hauflo
+card of the new dashboard until a reload (integrator review r2, D2). Removed or independent: those go, /local ones come.
+
+Dashboards' resources kept in configuration.yaml (Lovelace YAML mode) can't be added by anyone but a person: the copy
+is made and HA says in a notification what to add.
+
+own resources go and it adds no extra JS. The agent's: as above (the plugin's file loads too and stays idle). Removed,
+or
+made independent, with a plugin at least as new as the agent's cards: the plugin keeps the dashboard — no copy beside
+it."""
 from __future__ import annotations
 import logging
-import shutil
 from pathlib import Path
+import shutil
 from homeassistant.components import persistent_notification
+from homeassistant.components.lovelace.const import LOVELACE_DATA
 from homeassistant.core import HomeAssistant
 from . import cards
 from .const import CARDS_FILE, OLD_CARDS_FILES
@@ -14,6 +37,7 @@ ICONS = 'hauflo-icons.js'
 MODULES = (ICONS, CARDS_FILE)
 
 def modules(hass: HomeAssistant) -> tuple[str, ...]:
+    """The icons and the cards file."""
     return MODULES
 STORE_KEY = 'hauflo.independent'
 NOTE_ID = 'hauflo_dashboard_resources'
@@ -21,7 +45,6 @@ ADDED = 'added'
 YAML = 'yaml'
 
 def _resources(hass: HomeAssistant):
-    from homeassistant.components.lovelace.const import LOVELACE_DATA
     data = hass.data.get(LOVELACE_DATA)
     res = getattr(data, 'resources', None)
     return res if res is not None and hasattr(res, 'async_create_item') else None
@@ -32,8 +55,11 @@ async def _copy(hass: HomeAssistant) -> None:
     await hass.async_add_executor_job(lambda: shutil.copytree(src, dst, dirs_exist_ok=True))
 
 async def async_keep_dashboard(hass: HomeAssistant, version: str) -> str:
+    """Copies the cards to /config/www/hauflo and adds them as resources (a resource of another version is moved to
+    this one). Returns ADDED, or YAML when only a person can add them (said in a notification). A plugin at least as new
+    as these cards keeps the dashboard instead: the agent's resources go, nothing is copied."""
     plugin = await cards.async_find_plugin(hass)
-    if plugin is not None and cards.at_least(plugin['version'], cards.OWN.get('version')):
+    if plugin is not None and cards.at_least(plugin['version'], cards.own_cards().get('version')):
         await _release_ours(hass)
         return ADDED
     await _copy(hass)
@@ -64,21 +90,25 @@ def _say_yaml(hass: HomeAssistant) -> None:
 
 async def _save_now(res) -> None:
     store = getattr(res, 'store', None)
-    data = getattr(res, '_data_to_save', None)
-    if store is not None and callable(data):
-        await store.async_save(data())
+    if store is not None:
+        await store.async_save(res._data_to_save())
 
 async def async_independent(hass: HomeAssistant) -> bool:
     data = await HaufloStore(hass, STORE_KEY).async_load()
     return isinstance(data, dict) and data.get('cards') is True
 
 async def async_make_independent(hass: HomeAssistant, version: str) -> str:
+    """The copy and its resources for good; remembered only when HA really took the resources."""
     how = await async_keep_dashboard(hass, version)
     if how == ADDED:
         await HaufloStore(hass, STORE_KEY).async_save({'cards': True})
     return how
 
 async def async_on_start(hass: HomeAssistant, version: str) -> bool:
+    """At setup: an independent house gets its copy refreshed (this agent's cards); otherwise the fallback resources an
+    earlier removal left go — the agent serves the files. Returns True when the agent adds no copy of its own (HA's
+    extra
+    JS): an independent house, or the «Hauflo Cards» plugin serving (cards.py)."""
     source, plugin = await cards.async_choose(hass)
     if source == cards.PLUGIN:
         await _release_ours(hass)
@@ -119,6 +149,8 @@ async def _release_ours(hass: HomeAssistant) -> None:
         await _save_now(res)
 
 async def async_release(hass: HomeAssistant, version: str | None=None) -> None:
+    """The agent serves the cards: the fallback copies' resources go; with `version`, its own addresses are resources
+    (of this version — a browser's cached copy of another one mustn't stay). YAML resources: the extra JS alone."""
     res = _resources(hass)
     if res is None:
         return

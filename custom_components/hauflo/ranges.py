@@ -1,23 +1,31 @@
+"""The KNX group addresses Hauflo may send to — a security boundary owned by the house, never by the cloud.
+
+Hauflo may only ASK (a refused write, or the deploy plan saying what the project writes): the ask waits in HA's
+reconfigure kept the previous project's ranges and the only fix was a text field). Nothing here grants by itself."""
 from __future__ import annotations
+import functools
 import re
 from typing import Any
 from homeassistant.components import persistent_notification
 from homeassistant.core import HomeAssistant, callback
 from . import issues
 from .const import CONF_RANGES, DATA_PENDING_RANGES
-from .tuning import TUNING
+from .tuning import tuning
 DATA_PENDING_REMOVE = 'hauflo_pending_ranges_remove'
 DATA_PENDING_PROJECT = 'hauflo_pending_ranges_project'
 DATA_DECLINED = 'hauflo_declined_ranges'
 NOTIFICATION_ID = 'hauflo_ranges'
 MAX_ITEMS = 2048
-SHOWN_ITEMS = TUNING['ranges']['shown_items']
+shown_items = functools.cache(lambda: tuning()['ranges']['shown_items'])
 
 def range_key(r: str) -> tuple[int, ...]:
+    """«main/middle[/first[-last]]» in bus order; a whole group before its addresses."""
     nums = [int(p) if p.isdigit() else 999 for p in re.split('[/-]', r)]
-    return tuple((nums + [-1, -1, -1])[:3])
+    return tuple([*nums, -1, -1, -1][:3])
 
 def parse_ranges(value: Any) -> list[str]:
+    """«1/1, 1/2/5 7/0/1-21» or a list → ["1/1", "1/2/5", "7/0/1-21"]: a main/middle group, one address or a span of
+    limits 0–31 / 0–7 / 0–255; anything else is dropped."""
     items = value if isinstance(value, list) else re.split('[\\s,;]+', str(value or ''))
     out = set()
     for x in items:
@@ -36,6 +44,7 @@ def parse_ranges(value: Any) -> list[str]:
     return sorted(out, key=range_key)
 
 def expand(items: Any) -> set[int]:
+    """Allowed items → the raw group addresses they cover."""
     out: set[int] = set()
     for item in parse_ranges(sorted(items) if isinstance(items, (set, frozenset, tuple)) else items):
         nums = [int(p) for p in re.split('[/-]', item)]
@@ -45,6 +54,7 @@ def expand(items: Any) -> set[int]:
     return out
 
 def compress(raws: set[int]) -> list[str]:
+    """Raw group addresses → «1/1/5», «1/1/1-21», «1/2» (a whole middle group), in bus order."""
     out: list[str] = []
     by_group: dict[int, list[int]] = {}
     for raw in raws:
@@ -65,6 +75,8 @@ def compress(raws: set[int]) -> list[str]:
     return out
 
 def describe(items: Any) -> str:
+    """Items as a reader sees them: covered addresses re-compacted, a run of whole middle groups as «0/3 – 31/7», at
+    most SHOWN_ITEMS spans then «… +N» (the exact list stays in the field / the stored options)."""
     out: list[str] = []
     run: list[int] = []
 
@@ -84,8 +96,8 @@ def describe(items: Any) -> str:
         close()
         out.append(item)
     close()
-    if len(out) > SHOWN_ITEMS:
-        return f"{', '.join(out[:SHOWN_ITEMS])} … +{len(out) - SHOWN_ITEMS}"
+    if len(out) > shown_items():
+        return f"{', '.join(out[:shown_items()])} … +{len(out) - shown_items()}"
     return ', '.join(out)
 
 def count(items: Any) -> int:
@@ -100,6 +112,7 @@ def state(hass: HomeAssistant) -> dict[str, Any]:
 
 @callback
 def sync(hass: HomeAssistant) -> None:
+    """The Repairs issue and the bell follow what waits; nothing waits — both go."""
     add = pending(hass)
     if not add:
         hass.data.pop(DATA_PENDING_REMOVE, None)
@@ -117,6 +130,7 @@ def notify(hass: HomeAssistant) -> None:
 
 @callback
 def ask(hass: HomeAssistant, items: set[str]) -> None:
+    """A write the agent refused: its addresses join what waits (never a whole group around them)."""
     before = set(pending(hass))
     pending(hass).update(items)
     sync(hass)
@@ -125,6 +139,8 @@ def ask(hass: HomeAssistant, items: set[str]) -> None:
 
 @callback
 def request(hass: HomeAssistant, allowed_now: set[str], wanted: Any, project: str) -> dict[str, Any]:
+    """    asked again until HA restarts — Configure still allows them), and allowed items none of the project's addresses
+    fall into are offered for removal with it (a previous project's). Never grants."""
     items = parse_ranges(wanted if isinstance(wanted, list) else [])[:MAX_ITEMS]
     want = expand(items)
     declined = expand(hass.data.get(DATA_DECLINED) or set())
@@ -141,6 +157,8 @@ def request(hass: HomeAssistant, allowed_now: set[str], wanted: Any, project: st
 
 @callback
 def resolve(hass: HomeAssistant, entry: Any, allowed_now: set[str], allow: bool, add: list[str], remove: list[str]) -> None:
+    """    the form and the click grants nothing new): allow — those addresses join the options and the removals named go;
+    decline — all stays as it is and the same addresses aren't asked again. What else waits stays in Repairs."""
     if allow:
         kept = [r for r in parse_ranges(sorted(allowed_now)) if r not in set(remove)]
         hass.config_entries.async_update_entry(entry, options={**entry.options, CONF_RANGES: compress(expand(kept) | expand(add))})

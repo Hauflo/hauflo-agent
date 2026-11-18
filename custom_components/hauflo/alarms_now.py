@@ -1,7 +1,23 @@
+"""object
+page and the bot all said their own sums (a card: the rules' alarms; the bot: the rules' + the marked signals; the
+header: the faults apart) — now each shows this one answer.
+
+Pure: no HA here. In — the push engine's alarms (`items`: notify.NotifyEngine.alarm_items — open, taken back after a
+restart, back to normal and not yet looked at) and the house's problems by the site's policy (`faults`: __init__.house
+`_faults` — a «Не авария» / «не влияет» / «не следить» signal is never one). Out — one entry per entity:
+
+  state  open      — an alarm now (a rule's or the house's problem), counted;
+         returned  — back to normal, nobody accepted it yet (the alert card asks for a look), not counted as open;
+         lost      — no data from it (a rule's «нет связи», a signal unavailable), told apart, never an alarm.
+
+Counts over the open ones: `critical` — not accepted, life / critical priority; `normal` — not accepted, the rest;
+`acked` — every rule alarm of it accepted, or — a house problem with no rule's alarm — accepted by its own key
+until it clears, and its «Принято» is forgotten then (notify.NotifyEngine.house_acks_keep)."""
 from __future__ import annotations
+import functools
 from typing import Any
-from .tuning import TUNING
-ITEMS_MAX = TUNING['notify']['now_items_max']
+from .tuning import tuning
+items_max = functools.cache(lambda: tuning()['notify']['now_items_max'])
 _RANK = {'open': 0, 'returned': 1, 'lost': 2}
 HOUSE_KEY = '_house'
 

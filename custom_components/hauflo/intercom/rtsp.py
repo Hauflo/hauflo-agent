@@ -1,19 +1,28 @@
+"""The door's sound as an RTSP source for HA's own go2rtc (no add-on, no Docker): rtsp://127.0.0.1:<port>/door/<id>/<token>.
+One audio track of what the panel says (G.711) and — when go2rtc asks for it with ONVIF's «Require:
+www.onvif.org/ver20/backchannel» — a second, `sendonly` track: the card's microphone, which go2rtc sends back over the
+same TCP connection (interleaved) and the agent relays to the panel. TCP only, loopback only, a path with a secret
+token: nothing else on the host reaches a door call through it."""
 from __future__ import annotations
 import asyncio
-import contextlib
+from collections.abc import Callable
+import logging
 import re
 import secrets
 import struct
 import time
-from collections.abc import Callable
 from typing import Any
-from ..tuning import TUNING
+from ..guard import contained
+from ..tuning import tuning
 from . import rtp
+_LOGGER = logging.getLogger(__name__)
 BACKCHANNEL = 'www.onvif.org/ver20/backchannel'
 _TRACK = re.compile('trackID=(\\d+)')
 _PT = {'PCMA': 8, 'PCMU': 0}
 
 class AudioHub:
+    """One door's stream: the panel's audio to every playing client (silence between calls — go2rtc drops a source that
+    sends nothing), the clients' back audio to `on_back`."""
 
     def __init__(self, codec: str, frame_ms: int, on_back: Callable[[bytes], None], max_clients: int) -> None:
         self.codec = codec
@@ -31,6 +40,7 @@ class AudioHub:
         self._task: asyncio.Task[None] | None = None
 
     def feed(self, payload: bytes) -> None:
+        """The panel's audio (in this hub's codec)."""
         self.last_feed = time.monotonic()
         self._send(payload)
 
@@ -105,7 +115,7 @@ class _Client:
                     self._interleaved(ch, data)
                     continue
                 head = first + await self.reader.readuntil(b'\r\n\r\n')
-                if len(head) > TUNING['intercom']['rtsp_max_head']:
+                if len(head) > tuning()['intercom']['rtsp_max_head']:
                     break
                 await self._request(head)
         except (asyncio.IncompleteReadError, asyncio.LimitOverrunError, ConnectionError):
@@ -123,14 +133,14 @@ class _Client:
 
     async def _request(self, head: bytes) -> None:
         lines = head.decode('utf-8', 'replace').split('\r\n')
-        method, url, *_ = (lines[0].split(' ') + ['', ''])[:3]
+        method, url, *_ = [*lines[0].split(' '), '', ''][:3]
         headers: dict[str, str] = {}
         for ln in lines[1:]:
             k, colon, v = ln.partition(':')
             if colon:
                 headers[k.strip().lower()] = v.strip()
         if (size := headers.get('content-length', '0')).isdigit() and int(size):
-            await self.reader.readexactly(min(int(size), TUNING['intercom']['rtsp_max_head']))
+            await self.reader.readexactly(min(int(size), tuning()['intercom']['rtsp_max_head']))
         cseq = headers.get('cseq', '0')
         status, extra, body = self._handle(method.upper(), url, headers)
         reason = {200: 'OK', 400: 'Bad Request', 404: 'Not Found', 405: 'Method Not Allowed', 453: 'Not Enough Bandwidth', 454: 'Session Not Found', 461: 'Unsupported Transport', 551: 'Option not supported'}.get(status, 'Error')
@@ -193,6 +203,7 @@ class _Client:
         return ('\r\n'.join(lines) + '\r\n').encode()
 
 class RtspServer:
+    """Loopback RTSP for the doors' sound. Port 0 — any free one (the tests)."""
 
     def __init__(self, host: str, port: int) -> None:
         self.host, self.port = (host, port)
@@ -210,7 +221,7 @@ class RtspServer:
             hub.close()
         if self._server is not None:
             self._server.close()
-            with contextlib.suppress(Exception):
+            with contained(_LOGGER, 'Hauflo intercom: RTSP server did not close cleanly'):
                 await self._server.wait_closed()
             self._server = None
         for t in list(self._clients):

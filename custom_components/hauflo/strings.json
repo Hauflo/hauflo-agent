@@ -6,11 +6,11 @@
         "description": "The connection code is in Hauflo: your project → “Connect the site” → “Get a code”. It works once, for 30 minutes. Enter only the code — Hauflo picks the server from the code.",
         "data": {
           "code": "Connection code",
-          "confirm_takeover": "Yes, move this Home Assistant to this project (it leaves the other company in Hauflo)"
+          "confirm_takeover": "Yes, move this Home Assistant to this project (the site it is connected to now loses its connection)"
         },
         "data_description": {
           "code": "The code from Hauflo: your project → “Connect the site” → “Get a code” (9 characters, an “RU-” or “EU-” region in front is fine). Spaces and dashes don't matter. It works once, for 30 minutes.",
-          "confirm_takeover": "Check only if this Home Assistant really moves to this project: the other company's site in Hauflo loses its connection."
+          "confirm_takeover": "Check only if this Home Assistant really moves to this project: the site in Hauflo it is connected to now — of another company or of your own — loses its connection."
         },
         "sections": {
           "advanced": {
@@ -29,11 +29,11 @@
         "description": "Hauflo no longer knows this Home Assistant: the agent was disconnected or the project deleted. Get a new code in Hauflo (your project → “Connect the site” → “Get a code”). This entry will be updated; you don't need to remove it.",
         "data": {
           "code": "Connection code",
-          "confirm_takeover": "Yes, move this Home Assistant to this project (it leaves the other company in Hauflo)"
+          "confirm_takeover": "Yes, move this Home Assistant to this project (the site it is connected to now loses its connection)"
         },
         "data_description": {
           "code": "The code from Hauflo: your project → “Connect the site” → “Get a code” (9 characters, an “RU-” or “EU-” region in front is fine). Spaces and dashes don't matter. It works once, for 30 minutes.",
-          "confirm_takeover": "Check only if this Home Assistant really moves to this project: the other company's site in Hauflo loses its connection."
+          "confirm_takeover": "Check only if this Home Assistant really moves to this project: the site in Hauflo it is connected to now — of another company or of your own — loses its connection."
         },
         "sections": {
           "advanced": {
@@ -52,11 +52,11 @@
         "description": "Get a new code in Hauflo (your project → “Connect the site” → “Get a code”). This entry is updated; the agent's Home Assistant user stays.",
         "data": {
           "code": "Connection code",
-          "confirm_takeover": "Yes, move this Home Assistant to this project (it leaves the other company in Hauflo)"
+          "confirm_takeover": "Yes, move this Home Assistant to this project (the site it is connected to now loses its connection)"
         },
         "data_description": {
           "code": "The code from Hauflo: your project → “Connect the site” → “Get a code” (9 characters, an “RU-” or “EU-” region in front is fine). Spaces and dashes don't matter. It works once, for 30 minutes.",
-          "confirm_takeover": "Check only if this Home Assistant really moves to this project: the other company's site in Hauflo loses its connection."
+          "confirm_takeover": "Check only if this Home Assistant really moves to this project: the site in Hauflo it is connected to now — of another company or of your own — loses its connection."
         },
         "sections": {
           "advanced": {
@@ -103,7 +103,8 @@
       "invalid_code": "The code is wrong or expired. A code works once, for 30 minutes — get a new one in Hauflo.",
       "cannot_connect": "Can't reach Hauflo. Check that this Home Assistant has internet access, then enter the code again.",
       "https_required": "Hauflo's address must be https:// (http only for a local server).",
-      "takeover_confirm": "This Home Assistant is connected to a site of ANOTHER Hauflo account. If you continue, it leaves that account and the old site loses its connection. If that is intended, select the box “Yes, move…” and press Submit; otherwise close this window.",
+      "takeover_confirm": "This Home Assistant is connected to a site of ANOTHER Hauflo account. If you continue, it leaves that account and the old site loses its connection. If that is intended, check the box “Yes, move…” and press Submit; otherwise close this window.",
+      "relink_confirm": "This Home Assistant is connected to another project of your company in Hauflo — “{project}”. If you continue, it moves to this project, and “{project}” loses its connection (its monitoring and alarms stop). If that is intended, check the box “Yes, move…” and press Submit; otherwise close this window.",
       "transfer_ask": "Your decision is needed: hand this site's service over to another company?"
     },
     "abort": {
@@ -457,6 +458,10 @@
       "title": "Some Hauflo features are off on this Home Assistant version",
       "description": "Home Assistant changed an internal part these features use, so the agent skipped them: {features}. Everything else works. Update the Hauflo agent (Settings → Updates → Hauflo → Install); if it is already the latest, tell your integrator."
     },
+    "agent_fault": {
+      "title": "Part of Hauflo didn't start",
+      "description": "These parts of the Hauflo agent failed to start and are skipped: {features}. Everything else works. Update the Hauflo agent (Settings → Updates → Hauflo → Install); if it is already the latest, tell your integrator — the details are in Home Assistant's log."
+    },
     "outdated": {
       "title": "The Hauflo agent needs an update",
       "description": "This agent is version {version}; Hauflo needs at least {minimum} (latest: {latest}). Deploys and some features may fail until it is updated: Settings → Updates → Hauflo → Install, then restart Home Assistant."
@@ -484,6 +489,10 @@
     "rule_paused": {
       "title": "Value rule “{name}” is paused",
       "description": "{entity} was changed by hand several times while the rule “{name}” held it, so the rule paused itself instead of arguing with people. Switch the rule on again (in Hauflo or with its switch in Home Assistant) once the reason is sorted."
+    },
+    "update_not_signed": {
+      "title": "Hauflo agent update to {version} refused: not signed by Hauflo",
+      "description": "The update to version {version} was downloaded but not installed: its signature is missing or does not match Hauflo's key. Nothing was changed — the agent keeps working on its current version. If this repeats, tell your integrator or Hauflo support: the file offered may have been substituted. This message goes away after the next successful update or a restart of Home Assistant."
     }
   },
   "exceptions": {
@@ -528,6 +537,18 @@
     },
     "rules_private_input": {
       "message": "Private site data ({entity}) can't be read through the cloud: phones, people, presence and opening sensors. Pick a Hauflo sensor or label the entity “Hauflo monitoring” in Home Assistant."
+    },
+    "rules_foreign_input": {
+      "message": "{entity} is not a Hauflo device: a rule watches Hauflo's own devices and any sensor."
+    },
+    "rules_opt_standby": {
+      "message": "Standby"
+    },
+    "rules_opt_economy": {
+      "message": "Economy"
+    },
+    "rules_opt_building_protection": {
+      "message": "Building protection"
     },
     "rules_client_input": {
       "message": "You can use Hauflo's sensors only."
@@ -696,6 +717,30 @@
     },
     "rules_word_off": {
       "message": "off"
+    },
+    "rules_thr_is": {
+      "message": "equal to {values}"
+    },
+    "rules_thr_is_not": {
+      "message": "not equal to {values}"
+    },
+    "rules_word_or": {
+      "message": "or"
+    },
+    "rules_word_open": {
+      "message": "open"
+    },
+    "rules_word_closed": {
+      "message": "closed"
+    },
+    "rules_bad_not": {
+      "message": "“Not equal to” is only for a rule by a device's state, and only yes or no."
+    },
+    "rules_is_count": {
+      "message": "\"Equal to\" takes 1 to {n} values."
+    },
+    "rules_is_value": {
+      "message": "Value “{value}” does not fit “{entity}”: allowed {options}."
     },
     "rules_forecast": {
       "message": "{label} (forecast)"
@@ -1046,7 +1091,7 @@
       "message": "📵 {title}: no data"
     },
     "alarm_native_nodata": {
-      "message": "No data for {minutes} min: {names}. Until it is back, no alarm can come from it."
+      "message": "No data for {minutes} min: {names}. Until it is back, no alarm can come from it. Check the power; if that does not help, call your service."
     },
     "alarm_native_nodata_back_title": {
       "message": "✅ {title}: data back"
@@ -1176,6 +1221,15 @@
     },
     "timer_unknown_light": {
       "message": "This light was not found"
+    },
+    "not_loaded": {
+      "message": "Hauflo isn't loaded yet (or was turned off): the action can't run now. Check Settings → Devices & services → Hauflo."
+    },
+    "unprotect_nothing": {
+      "message": "Nothing to unprotect: not found: {items}. Nothing was changed — check the entity or the group address."
+    },
+    "unprotect_empty": {
+      "message": "Nothing to unprotect: no entity or group address given. Nothing was changed — name what to clear."
     },
     "lock_unknown": {
       "message": "This lock was not found"
@@ -1346,7 +1400,7 @@
       "message": "{title} · all sensors"
     },
     "alarm_native_rule_description": {
-      "message": "Made by Hauflo from the alarm rule. Watches: {sources}. Alarm — a sensor in alarm for {hold} s. To: {phones}. {repeat} The rule's sensors — the helper “{group}”, “Accept” — the helper “{helper}” (the push button, a card or the toggle). A chattering sensor and “no data” are watched by the Hauflo service. A Home Assistant restart while the alarm is open gives one more push."
+      "message": "Made by Hauflo from the alarm rule. Watches: {sources}. Alarm — a sensor in alarm for {hold} s. To: {phones}. {repeat} The rule's sensors — the helper “{group}”, “Accepted” — the helper “{helper}” (the push button, a card or the toggle). A chattering sensor and “no data” are watched by the Hauflo service. A Home Assistant restart while the alarm is open gives one more push."
     },
     "alarm_native_repeat_plan": {
       "message": "Repeated while nobody has pressed “Accept” and a sensor is in alarm: {more} more times every {every} min, then every {slow} min."
@@ -1373,7 +1427,7 @@
       "message": "Hauflo: “Accept” from a phone"
     },
     "alarm_native_accept_description": {
-      "message": "Made by Hauflo: “Accept” in any alarm's push turns its rule's “Accept” helper on — the repeats stop."
+      "message": "Made by Hauflo: “Accept” in any alarm's push turns its rule's “Accepted” helper on — the repeats stop."
     },
     "alarm_native_button_alias": {
       "message": "Hauflo: button from a push"

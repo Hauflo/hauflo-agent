@@ -1,26 +1,35 @@
+"""The cloud wizard's «Домофон» (Р55): the presets of presets.json (their names RU+EN, honestly «not checked»), the
+doors as set (passwords never sent back — only whether one is set), the listen address and the network cards to
+choose from; a POST saves the same block the options' «Домофон» step saves (one check for both) and the entry reloads.
+The TURN / STUN servers a phone outside the LAN needs for the talk (`ice_servers`) are passed to HA's WebRTC here."""
 from __future__ import annotations
 import base64
+import functools
 import hashlib
 import hmac
 import ipaddress
 import json
 import logging
-import time
 from pathlib import Path
+import time
 from typing import Any
+from homeassistant.components import network
 from homeassistant.components.http import KEY_HASS, HomeAssistantView
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from ..const import CONF_INTERCOM, DOMAIN
-from ..tuning import TUNING
-from .door import FIELDS, MODES, OPENERS, PRESETS, configs
+from ..guard import contained
+from ..tuning import tuning
+from .door_config import FIELDS, MODES, OPENERS, configs, presets_cfg
 _LOGGER = logging.getLogger(__name__)
-T = TUNING['intercom']
+t = functools.cache(lambda: tuning()['intercom'])
 FEATURE = 'intercom_setup'
 SECRETS = ('password', 'sip_password')
 LANGS = ('ru', 'en')
 ICE_FIELDS = ('urls', 'username', 'credential', 'secret', 'ttl_s')
 
 class SetupError(ValueError):
+    """What the wizard / the options form shows: its code (intercom_<code>) and the door it is about."""
 
     def __init__(self, code: str, field: str, door: str='') -> None:
         super().__init__(code)
@@ -39,16 +48,23 @@ def _read_labels() -> dict[str, dict[str, str]]:
         for key, text in data['selector']['intercom_preset']['options'].items():
             out.setdefault(key, {})[lang] = text
     return out
-LABELS = _read_labels()
+
+@functools.cache
+def preset_labels() -> dict[str, dict[str, str]]:
+    """The presets' names from translations/*.json, read on first use — off the event loop: async_setup_entry and the
+    config flow preload it in the executor. The wizard's GET runs on the loop, where a file read is blocking I/O (0.33"""
+    return _read_labels()
 
 def _labels() -> dict[str, dict[str, str]]:
-    return LABELS
+    return preset_labels()
 
 def presets() -> list[dict[str, Any]]:
+    """What the wizard lists: no path, body or code of a panel's API — only what a choice needs."""
     labels = _labels()
-    return [{'id': pid, 'label': labels.get(pid) or {lang: str(p.get('label') or pid) for lang in LANGS}, 'maker': str(p.get('maker') or ''), 'mode': str(p.get('mode') or 'direct'), 'open': str(p.get('open') or ''), 'dtmf': str(p.get('dtmf') or ''), 'relay': p.get('relay'), 'sip_server': str(p.get('sip_server') or ''), 'sip_user': str(p.get('sip_user') or ''), 'codec': str(p.get('codec') or ''), 'checked': bool(p.get('checked'))} for pid, p in PRESETS.items()]
+    return [{'id': pid, 'label': labels.get(pid) or {lang: str(p.get('label') or pid) for lang in LANGS}, 'maker': str(p.get('maker') or ''), 'mode': str(p.get('mode') or 'direct'), 'open': str(p.get('open') or ''), 'dtmf': str(p.get('dtmf') or ''), 'relay': p.get('relay'), 'sip_server': str(p.get('sip_server') or ''), 'sip_user': str(p.get('sip_user') or ''), 'codec': str(p.get('codec') or ''), 'checked': bool(p.get('checked'))} for pid, p in presets_cfg().items()]
 
 def masked(block: dict[str, Any]) -> dict[str, Any]:
+    """The block as set, its passwords replaced by whether one is set (a TURN secret too)."""
     doors = []
     for raw in block.get('doors') or []:
         if isinstance(raw, dict):
@@ -56,7 +72,7 @@ def masked(block: dict[str, Any]) -> dict[str, Any]:
             door.update({f'{k}_set': bool(raw.get(k)) for k in SECRETS})
             doors.append(door)
     ice = [{k: v for k, v in s.items() if k in ICE_FIELDS and k not in ('credential', 'secret')} | {'credential_set': bool(s.get('credential') or s.get('secret'))} for s in block.get('ice_servers') or [] if isinstance(s, dict)]
-    return {'bind': str(block.get('bind') or 'auto'), 'port': int(block.get('port') or T['sip_port']), 'public': str(block.get('public') or ''), 'doors': doors, 'ice_servers': ice}
+    return {'bind': str(block.get('bind') or 'auto'), 'port': int(block.get('port') or t()['sip_port']), 'public': str(block.get('public') or ''), 'doors': doors, 'ice_servers': ice}
 
 def _ice(raw: Any, old: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if raw is None:
@@ -69,7 +85,7 @@ def _ice(raw: Any, old: list[dict[str, Any]]) -> list[dict[str, Any]]:
             raise SetupError('bad_ice', 'ice_servers')
         urls = s.get('urls')
         urls = [urls] if isinstance(urls, str) else urls
-        if not urls or not all((isinstance(u, str) and u.split(':', 1)[0] in T['ice_schemes'] for u in urls)):
+        if not urls or not all((isinstance(u, str) and u.split(':', 1)[0] in t()['ice_schemes'] for u in urls)):
             raise SetupError('bad_ice', 'ice_servers')
         item: dict[str, Any] = {k: str(s[k]) for k in ('username', 'credential', 'secret') if s.get(k)}
         item['urls'] = urls
@@ -83,6 +99,8 @@ def _ice(raw: Any, old: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 def normalize(raw: dict[str, Any], old: dict[str, Any] | None=None) -> dict[str, Any]:
+    """The block the options keep: {bind, port, public, doors, ice_servers}. A door's password not sent keeps the one
+    it had (by the door's name). SetupError — what is wrong and with which door."""
     old = dict(old or {})
     olds = {str(d.get('name') or '').strip(): d for d in old.get('doors') or [] if isinstance(d, dict)}
     doors_in = raw.get('doors') or []
@@ -94,7 +112,7 @@ def normalize(raw: dict[str, Any], old: dict[str, Any] | None=None) -> dict[str,
         for k in SECRETS:
             if not door.get(k) and prev.get(k) and (not d.get(f'{k}_clear')):
                 door[k] = prev[k]
-        if door.get('preset') not in (None, '') and door['preset'] not in PRESETS:
+        if door.get('preset') not in (None, '') and door['preset'] not in presets_cfg():
             raise SetupError('bad_preset', 'doors', str(door.get('name') or ''))
         if door.get('mode') not in (None, '') and door['mode'] not in MODES:
             raise SetupError('bad_mode', 'doors', str(door.get('name') or ''))
@@ -102,7 +120,7 @@ def normalize(raw: dict[str, Any], old: dict[str, Any] | None=None) -> dict[str,
             raise SetupError('bad_open', 'doors', str(door.get('name') or ''))
         doors.append(door)
     try:
-        port = int(raw.get('port') or T['sip_port'])
+        port = int(raw.get('port') or t()['sip_port'])
     except (TypeError, ValueError) as err:
         raise SetupError('bad_port', 'port') from err
     value: dict[str, Any] = {'bind': str(raw.get('bind') or 'auto').strip(), 'port': port, 'public': str(raw.get('public') or '').strip(), 'doors': doors}
@@ -120,13 +138,16 @@ def normalize(raw: dict[str, Any], old: dict[str, Any] | None=None) -> dict[str,
     return value
 
 def ice_servers(block: dict[str, Any], now: float | None=None) -> list[dict[str, Any]]:
+    """The servers HA's WebRTC hands the card. A coturn `use-auth-secret` server gets fresh time-limited credentials
+    each time (TURN REST: username «<expiry>:<name>», credential base64 HMAC-SHA1 of it by the shared secret)."""
     out = []
     for s in block.get('ice_servers') or []:
         if not isinstance(s, dict) or not s.get('urls'):
             continue
         item: dict[str, Any] = {'urls': s['urls']}
         if s.get('secret'):
-            user = f"{int((time.time() if now is None else now) + int(s.get('ttl_s') or T['turn_ttl_s']))}:{T['turn_user']}"
+            expires = int((time.time() if now is None else now) + int(s.get('ttl_s') or t()['turn_ttl_s']))
+            user = f"{expires}:{t()['turn_user']}"
             item['username'] = user
             item['credential'] = base64.b64encode(hmac.new(str(s['secret']).encode(), user.encode(), hashlib.sha1).digest()).decode()
         elif s.get('username'):
@@ -135,6 +156,8 @@ def ice_servers(block: dict[str, Any], now: float | None=None) -> list[dict[str,
     return out
 
 def register_ice(hass: HomeAssistant, block: dict[str, Any], cloud: Any=None) -> Any:
+    """Hands the servers to HA's WebRTC (camera/webrtc/get_client_config gives them to the card, asked anew each time);
+    the remover, or None. The integrator's own `ice_servers` win; else Hauflo's TURN (`cloud`: cloud_ice.CloudIce)."""
     if not block.get('ice_servers') and cloud is None:
         return None
     try:
@@ -149,13 +172,15 @@ def register_ice(hass: HomeAssistant, block: dict[str, Any], cloud: Any=None) ->
         return None
 
 async def adapters(hass: HomeAssistant) -> list[str]:
-    try:
-        from homeassistant.components import network
+    with contained(_LOGGER, 'Hauflo intercom: network adapters not listed', expect=(KeyError, HomeAssistantError)):
         return [str(a['address']) for ad in await network.async_get_adapters(hass) for a in ad['ipv4']]
-    except Exception:
-        return []
+    return []
 
 class IntercomView(HomeAssistantView):
+    """GET (admin) → {features, presets, config (passwords masked), ice (where the phones' TURN comes from), listen,
+    adapters, doors: {id: state}};
+    POST (admin) {bind?, port?, public?, doors: [...], ice_servers?} → saved into the options (the entry reloads);
+    400 {code, field, door} when something is wrong."""
     url = '/api/hauflo/intercom'
     name = 'api:hauflo:intercom'
     requires_auth = True

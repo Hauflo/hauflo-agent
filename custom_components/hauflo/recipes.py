@@ -1,10 +1,20 @@
+"""Client recipes of «Настройки → Автоматизации» (p6d, docs/automations-recipes.md): ready rules from the house's own
+devices. The recipes are DATA (automation_recipes.json: RU+EN texts, parameters with defaults and limits, the standard
+behind each default); this module only resolves them against what the house has (targets()) into the rule form that
+automations.validate() takes — the engine stays the single judge, a recipe it refuses is simply not offered.
+
+Pure Python (no Home Assistant import): the data is checkable offline (check()) and the resolver is testable with a
+fake `targets`."""
 from __future__ import annotations
 from collections.abc import Callable
+import functools
 import json
+import logging
 from pathlib import Path
 import re
 from typing import Any
-from .tuning import TUNING
+from .tuning import tuning
+_LOGGER = logging.getLogger(__name__)
 PATH = Path(__file__).with_name('automation_recipes.json')
 LANGS = ('ru', 'en')
 DAYS = ('mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun')
@@ -13,18 +23,25 @@ _VAR = re.compile('-?\\$([a-z]+)')
 KINDS = ('int', 'temp', 'time')
 DOS = ('room_covers', 'room_off', 'set', 'on', 'off', 'ramp', 'temp')
 EVENTS = ('sunrise', 'sunset', 'time', 'alarm', 'value', 'presence', 'state')
-STATE_KINDS = (*TUNING['automations']['state_classes'], 'media')
+state_kinds = functools.cache(lambda: (*tuning()['automations']['state_classes'], 'media'))
 WITH = {'fan': 'fans', 'light': 'lights'}
 
 def load() -> dict[str, Any]:
     return json.loads(PATH.read_text(encoding='utf-8'))
-DATA = load()
+
+@functools.cache
+def recipes_data() -> dict[str, Any]:
+    """automation_recipes.json, read on first use — off the event loop: async_setup_entry and the config flow preload
+    it in the executor."""
+    return load()
 
 def _texts(v: Any, what: str, out: list[str]) -> None:
     if not isinstance(v, dict) or any((not isinstance(v.get(k), str) or not v[k].strip() for k in LANGS)):
         out.append(f"{what}: text in {' and '.join(LANGS)}")
 
 def check(data: dict[str, Any]) -> list[str]:
+    """Everything wrong with the recipe data (empty = fine): ids, RU+EN texts, parameters with defaults inside limits,
+    every $param / {param} known, only events and actions the engine has."""
     bad: list[str] = []
     for g, t in data.get('groups', {}).items():
         _texts(t, f'group {g}', bad)
@@ -73,8 +90,8 @@ def check(data: dict[str, Any]) -> list[str]:
         when = r.get('when', {})
         if when.get('event') not in EVENTS:
             bad.append(f'{rid}: when.event')
-        if when.get('event') == 'state' and (when.get('to') not in ('on', 'off') or when.get('sensors', {}).get('kind') not in STATE_KINDS or when.get('sensors', {}).get('with') not in (None, *WITH)):
-            bad.append(f"{rid}: state — sensors.kind {'/'.join(STATE_KINDS)}, to on/off, with light/fan")
+        if when.get('event') == 'state' and (when.get('to') not in ('on', 'off') or when.get('sensors', {}).get('kind') not in state_kinds() or when.get('sensors', {}).get('with') not in (None, *WITH)):
+            bad.append(f"{rid}: state — sensors.kind {'/'.join(state_kinds())}, to on/off, with light/fan")
         if bool(r.get('alarm')) != (when.get('event') == 'alarm'):
             bad.append(f'{rid}: `alarm` flag must match the alarm event')
         days = r.get('days')
@@ -102,6 +119,8 @@ def _fill(text: str, vals: dict[str, Any], extra: dict[str, str]) -> str:
     return text.format_map({**{k: _num(v) if isinstance(v, (int, float)) else v for k, v in vals.items()}, **extra})
 
 def resolve(data: dict[str, Any], targets: dict[str, Any], validate: Callable[[Any], Any] | None=None) -> list[dict[str, Any]]:
+    """The recipes this house can run: [{key, group, icon, title, sub, basis, params, rule}]. `validate` is the engine's
+    automations.validate(): a recipe it refuses is left out (never an error for the client)."""
     out: list[dict[str, Any]] = []
     for r in data['recipes']:
         item = _one(data, r, targets)
@@ -110,7 +129,10 @@ def resolve(data: dict[str, Any], targets: dict[str, Any], validate: Callable[[A
         if validate is not None:
             try:
                 validate(item['rule'])
+            except ValueError:
+                continue
             except Exception:
+                _LOGGER.warning("Hauflo: recipe %s: the engine's check failed unexpectedly: not offered", item.get('key'), exc_info=True)
                 continue
         out.append(item)
     return out

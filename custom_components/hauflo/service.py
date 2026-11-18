@@ -1,3 +1,6 @@
+"""access to their house»). Hauflo sends it over the link (frame «service»): the company, its contact, the access history
+(transfers between companies, Hauflo support let in). Kept in `.storage/hauflo.service`; shown in the integration's
+options (Settings → Devices & services → Hauflo → Configure) and in diagnostics. Nothing here changes anything."""
 from __future__ import annotations
 from datetime import datetime
 from typing import Any
@@ -10,6 +13,7 @@ def _s(v: Any, n: int) -> str | None:
     return v[:n] if isinstance(v, str) and v else None
 
 def clean(info: Any) -> dict[str, Any] | None:
+    """The frame's info kept to the known fields, types and sizes (a bad frame never lands in the store)."""
     if not isinstance(info, dict) or not _s(info.get('company'), 120):
         return None
     contact = info.get('contact') if isinstance(info.get('contact'), dict) else {}
@@ -53,6 +57,7 @@ def _date(iso: str | None) -> str:
 _T = {'ru': {'none': 'нет данных — Hauflo пришлёт их при следующем подключении', 'no_history': 'передач и доступа поддержки не было', 'phone': 'тел.', 'company': '{at} — объект передан от «{frm}» компании «{to}» (передала прежняя компания)', 'owner': '{at} — объект передан от «{frm}» компании «{to}» (подтвердил владелец в Home Assistant)', 'support_view': '{at} — поддержка Hauflo: просмотр проекта до {until}', 'support_edit': '{at} — поддержка Hauflo: правка проекта до {until}', 'ended': ' (закрыт {ended})'}, 'en': {'none': 'no data yet — Hauflo sends it on the next connection', 'no_history': 'no transfers and no support access', 'phone': 'phone', 'company': '{at} — the site moved from «{frm}» to «{to}» (handed over by the previous company)', 'owner': '{at} — the site moved from «{frm}» to «{to}» (approved by the owner in Home Assistant)', 'support_view': '{at} — Hauflo support: project view until {until}', 'support_edit': '{at} — Hauflo support: project editing until {until}', 'ended': ' (closed {ended})'}}
 
 def describe(info: dict[str, Any] | None, language: str | None) -> tuple[str, str]:
+    """(who services the home, the access history as markdown lines) in the HA user's language."""
     t = _T['ru' if str(language or '').lower().startswith('ru') else 'en']
     if not info:
         return (t['none'], t['no_history'])

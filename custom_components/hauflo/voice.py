@@ -1,12 +1,19 @@
+"""Voice: «включи / выключи тёплый пол», «выключи термостат», «включи защиту» [в комнате].
+
+A KNX floor heating or room thermostat usually has no on/off object — it keeps the climate all the
+time, and HA's own «включи / выключи» fails on it with a general error. The agent adds these
+sentences to HA (its own file in custom_sentences) and answers them: switches where the thermostat
+can, otherwise says it works by its setpoint; a thermostat with the «building protection» mode is"""
 from __future__ import annotations
 import contextlib
 import logging
 import os
 import re
 from homeassistant.components.climate import ClimateEntityFeature, HVACMode
-from homeassistant.core import HomeAssistant, State
 from homeassistant.components.homeassistant.exposed_entities import async_should_expose
+from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er, intent
+from .guard import contained
 from .ownership import room_area
 _LOGGER = logging.getLogger(__name__)
 HEADER = '# Hauflo agent — generated, removed with the integration. Do not edit.\n'
@@ -17,7 +24,7 @@ SENTENCES = HEADER + f'language: ru\nintents:\n  HaufloHeatingOn:\n    data:\n  
 FLOOR = re.compile('(^|[^а-я])пол')
 PROTECTION, COMFORT = ('building_protection', 'comfort')
 
-def _norm(text: str | None) -> str:
+def norm(text: str | None) -> str:
     return (text or '').lower().replace('ё', 'е').strip()
 
 def _sentences_path(hass: HomeAssistant) -> str:
@@ -38,7 +45,8 @@ def _remove_strays(path: str) -> bool:
                     gone = True
     return gone
 
-def _write(path: str) -> bool:
+def write_sentences(path: str) -> bool:
+    """Our file only: one a human put there under the same name is left alone. True = the sentences changed."""
     changed = _remove_strays(path)
     if os.path.exists(path):
         with open(path, encoding='utf-8') as f:
@@ -76,13 +84,13 @@ class _Climate(intent.IntentHandler):
     def _targets(self, intent_obj: intent.Intent) -> tuple[list[State] | None, str]:
         hass = intent_obj.hass
         slot = intent_obj.slots.get('area') or {}
-        said = _norm(str(slot.get('text') or slot.get('value') or ''))
-        m = re.search(f'(?:^|\\s)((?:в|во|на)\\s+{re.escape(said)})', _norm(getattr(intent_obj, 'text_input', None) or '')) if said else None
+        said = norm(str(slot.get('text') or slot.get('value') or ''))
+        m = re.search(f'(?:^|\\s)((?:в|во|на)\\s+{re.escape(said)})', norm(getattr(intent_obj, 'text_input', None) or '')) if said else None
         where = f' {m.group(1)}' if m else f' в {said}' if said else ''
         area_ids: set[str] | None = None
         if said:
-            value = _norm(str(slot.get('value') or ''))
-            area_ids = {a.id for a in ar.async_get(hass).async_list_areas() if {value, said} & {_norm(a.id), _norm(a.name), *(_norm(x) for x in a.aliases if isinstance(x, str))}}
+            value = norm(str(slot.get('value') or ''))
+            area_ids = {a.id for a in ar.async_get(hass).async_list_areas() if {value, said} & {norm(a.id), norm(a.name), *(norm(x) for x in a.aliases if isinstance(x, str))}}
         devs = dr.async_get(hass)
         found = []
         for e in er.async_get(hass).entities.values():
@@ -91,7 +99,7 @@ class _Climate(intent.IntentHandler):
             if not async_should_expose(hass, 'conversation', e.entity_id):
                 continue
             names = [n for n in (e.name, e.original_name, state.attributes.get('friendly_name'), *e.aliases) if isinstance(n, str)]
-            floor = any((FLOOR.search(_norm(n)) for n in names))
+            floor = any((FLOOR.search(norm(n)) for n in names))
             if self.kind != 'room' and floor != (self.kind == 'floor'):
                 continue
             device = devs.async_get(e.device_id) if e.device_id else None
@@ -181,11 +189,9 @@ HANDLERS = (_Climate('HaufloHeatingOn', 'floor', 'on'), _Climate('HaufloHeatingO
 async def async_setup(hass: HomeAssistant) -> None:
     for handler in HANDLERS:
         intent.async_register(hass, handler)
-    try:
-        if await hass.async_add_executor_job(_write, _sentences_path(hass)):
+    with contained(_LOGGER, 'Hauflo voice sentences not installed', level=logging.ERROR):
+        if await hass.async_add_executor_job(write_sentences, _sentences_path(hass)):
             await _reload(hass)
-    except Exception:
-        _LOGGER.exception('Hauflo voice sentences not installed')
 
 def async_unload(hass: HomeAssistant) -> None:
     remove = getattr(intent, 'async_remove', None)
@@ -194,6 +200,6 @@ def async_unload(hass: HomeAssistant) -> None:
             remove(hass, handler.intent_type)
 
 async def async_remove(hass: HomeAssistant) -> None:
-    with contextlib.suppress(Exception):
+    with contained(_LOGGER, 'Hauflo: voice sentences not removed'):
         if await hass.async_add_executor_job(_remove, _sentences_path(hass)):
             await _reload(hass)

@@ -1,3 +1,7 @@
+"""The door's entities (one device per door, under the «Hauflo» service device): `camera.<door>` (the panel's video),
+`camera.<door>_talk` (the call's sound both ways through HA's go2rtc — the card's WebRTC sendrecv), `event.<door>_call`
+(a doorbell: its ring is the push), `sensor.<door>_intercom` (idle / ringing / talking / answered_elsewhere and the
+plate's diagnosis), `button.<door>_open` (the door's opening — only here and never from a push)."""
 from __future__ import annotations
 from typing import Any
 from homeassistant.components.button import ButtonEntity
@@ -7,7 +11,8 @@ from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import Entity
 from ..const import DOMAIN
-from .door import STATES, Door
+from .door import Door
+from .door_config import STATES
 from .manager import Intercom, unique_id
 _UNRECORDED = frozenset({'last_call', 'last_open', 'last_rejected', 'audio', 'listen', 'camera', 'talk_camera', 'open_button', 'rtp_bytes_in', 'rtp_bytes_out', 'last_register_at', 'last_invite_at', 'panel_contact', 'public_address'})
 
@@ -34,6 +39,9 @@ class DoorEntity(Entity):
         self.mgr.entities.pop((self.door.cfg.id, self.KIND), None)
 
 class DoorCall(DoorEntity, EventEntity):
+    """A ring of the door: the push to the phones (notify.py) — and nothing else of the call moves it (every state
+    change
+    of an event entity is a push; the call's other moments are the sensor and the bus event)."""
     KIND, DOMAIN_, SUFFIX = ('call', 'event', '_call')
     _attr_translation_key = 'intercom_call'
     _attr_device_class = EventDeviceClass.DOORBELL
@@ -71,7 +79,7 @@ class DoorOpen(DoorEntity, ButtonEntity):
     _attr_translation_key = 'intercom_open'
 
     async def async_press(self) -> None:
-        ctx = getattr(self, '_context', None)
+        ctx = self._context
         await self.mgr.open(self.door, ctx.user_id if ctx is not None else None)
 
 def _area_name(mgr: Intercom, area: str) -> str:
@@ -81,6 +89,7 @@ def _area_name(mgr: Intercom, area: str) -> str:
     return found.name if found is not None else area
 
 def entities(mgr: Intercom | None, platform: str) -> list[Entity]:
+    """This platform's entities of every door (the cameras: camera.py — the camera component loads only with a door)."""
     if mgr is None:
         return []
     out: list[Entity] = []

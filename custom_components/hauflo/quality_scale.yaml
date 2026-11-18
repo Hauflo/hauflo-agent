@@ -1,12 +1,13 @@
-# Home Assistant integration quality scale — where the Hauflo agent stands (HA core review 29.10: every rule, marked
-# honestly; «todo» where it isn't there yet).
+# Home Assistant integration quality scale — where the Hauflo agent stands (HA core review 29.10, rechecked against the
+# code by audit 0.40, 17.11: every rule, marked honestly; «todo» where it isn't there yet).
 rules:
   # Bronze
   action-setup:
-    status: todo
+    status: done
     comment: >-
-      The six service actions (lock, off_in, unprotect, remove_alarms, intercom_answer, intercom_hangup) are
-      registered in async_setup_entry, when the subsystem that serves them exists; moving them to async_setup is planned.
+      The six actions (lock, off_in, unprotect, remove_alarms, intercom_answer, intercom_hangup) are registered in
+      async_setup (CONFIG_SCHEMA: config entry only) and stay for HA's whole run; with no loaded entry each raises a
+      translated ServiceValidationError «not_loaded» (tests/test_actions_setup.py).
   appropriate-polling:
     status: exempt
     comment: No polling — one push link to Hauflo; the entities are updated by dispatcher and state events.
@@ -20,8 +21,8 @@ rules:
     status: done
     comment: No requirements (only Home Assistant's own aiohttp).
   docs-actions:
-    status: todo
-    comment: The six actions are described in services.yaml (selectors, translated names); a README section is to come.
+    status: done
+    comment: README «Actions» (EN and RU) — each action, who may call it, its fields; services.yaml and translations name every field.
   docs-conditions:
     status: exempt
     comment: No device conditions.
@@ -29,7 +30,7 @@ rules:
   docs-installation-instructions: done
   docs-removal-instructions:
     status: done
-    comment: README «Removing» — what removal takes, what it leaves (and how to remove that by hand).
+    comment: README «Updating and removing» — what removal takes, what it leaves (and how to remove that by hand), «Leaving Hauflo».
   docs-triggers:
     status: exempt
     comment: No device triggers.
@@ -48,14 +49,16 @@ rules:
     comment: single_config_entry in the manifest.
   # Silver
   action-exceptions:
-    status: todo
+    status: done
     comment: >-
-      The lock action and the light timer raise ServiceValidationError (translated) on a wrong target; the
-      other four actions (unprotect, remove_alarms, intercom_answer, intercom_hangup) are to be reviewed.
+      Wrong input → ServiceValidationError, a failure in HA → HomeAssistantError, all translated: lock (unknown lock,
+      no rights, can't open, the lock refused), off_in (not a light, unknown light), unprotect (nothing found — nothing changed), remove_alarms (hand-formatted
+      automations.yaml, write failed), intercom_answer / intercom_hangup (unknown door, the call's own refusals); no entry loaded →
+      «not_loaded». Admin-only actions raise Unauthorized.
   config-entry-unloading: done
   docs-configuration-parameters:
     status: done
-    comment: README «Options» — «Allow Hauflo to change this home's setup» and the allowed KNX group addresses.
+    comment: README «Options» — «Allow Hauflo to change this site's setup», the allowed KNX group addresses, «Make the site independent».
   docs-installation-parameters:
     status: done
     comment: README «Install» — the pairing code, the optional server, the takeover checkbox, the KNX addresses.
@@ -65,7 +68,11 @@ rules:
       «Link» is the link's own state (on / off, never unavailable). Rule and daylight entities are computed by the
       agent from HA state; a missing source gives the rule's safe state (see rules.py), not an error.
   integration-owner: done
-  log-when-unavailable: done
+  log-when-unavailable:
+    status: done
+    comment: >-
+      The lost link is logged once and its return once; a part of the agent that HA took away or that failed is logged
+      once with its traceback, repeats go to debug, and its success clears it (issues.degrade / recover).
   parallel-updates:
     status: done
     comment: PARALLEL_UPDATES = 0 on every platform (push entities).
@@ -90,8 +97,10 @@ rules:
     status: done
     comment: README «How data updates».
   docs-examples:
-    status: done
-    comment: README «Examples».
+    status: todo
+    comment: >-
+      No examples section yet (audit 0.40: the README had none); the entities table names what the client's own
+      automations can use (Site status, Site problem, rules), the actions table their calls.
   docs-known-limitations:
     status: done
     comment: README «Known limitations».
@@ -103,10 +112,12 @@ rules:
     comment: README «Entities the integration creates» and the feature sections.
   docs-troubleshooting:
     status: done
-    comment: README troubleshooting questions (code, silent actuator, old HA, cards after an update).
+    comment: README questions under «Security in plain words» (code wrong or expired, silent actuator, old HA, the panel after an update).
   docs-use-cases:
-    status: done
-    comment: README «For the family», «For you, the integrator».
+    status: todo
+    comment: >-
+      No use-case section yet (audit 0.40: the «For the family» / «For you, the integrator» sections named here don't
+      exist); the intro and the FAQ say what it is for.
   dynamic-devices:
     status: exempt
     comment: One service device.
@@ -121,15 +132,22 @@ rules:
   exception-translations:
     status: done
     comment: >-
-      The one HomeAssistantError the agent raises (no local backup location) is translated; other errors are answers
-      of its own HTTP views, not raised to the HA UI.
+      Every HomeAssistantError / ServiceValidationError the agent raises has a translation key with its text in
+      strings.json, en and ru — checked by tests/test_actions_setup.py over the source (no bare text left). Internal
+      exceptions (PermissionError of a scene's learn target, RuntimeError of a missing helper or of a release without
+      its alarm texts) never reach a person: they are caught and told in the agent's own answer or log.
   icon-translations:
     status: done
     comment: icons.json for the rule, daylight, ownership and derived entities; «Link» takes its icon from its device class.
   reconfiguration-flow: done
   repair-issues:
     status: done
-    comment: Repairs for a link lost for hours, an unlinked agent, KNX addresses waiting for the owner, features HA took away, an outdated agent.
+    comment: >-
+      Repairs only for what a person can act on: a link lost for hours, an unlinked agent (re-authenticate), KNX
+      addresses waiting for the owner (fix flow → Configure), parts skipped because something of HA's is missing or
+      changed («degraded») apart from parts of the agent's own that failed («agent_fault»: update the agent), an
+      outdated agent, an outdated or newer-agent-needing cards plugin, an unsigned update refused. Each is cleared
+      when its cause is gone.
   stale-devices:
     status: exempt
     comment: One service device.

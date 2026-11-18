@@ -1,3 +1,14 @@
+"""Values worked out from other sensors («Правила по значениям», docs/automations.md): dew point, absolute humidity,
+the difference of two sensors, min / max / average of several, how fast one rises. Each is a real HA sensor
+(`sensor.hauflo_…`): seen in HA's history and dashboards, usable by HA's own automations, and the input of a value rule.
+
+number or hasn't reported for `max_age` minutes — a rule on it then goes to its safe state, it never acts on an old
+value.
+
+«Улица» (outdoor): a KNX weather station or a Hauflo sensor whose name says so (canon: derived.outdoor_words), else HA's
+weather.* (its temperature, said «по прогнозу» — a forecast is not the street).
+
+Defaults are in rules_canon.json (canon.py); the texts of refusals in translations («exceptions», rules_…)."""
 from __future__ import annotations
 from collections import deque
 from http import HTTPStatus
@@ -10,8 +21,8 @@ from homeassistant.const import PERCENTAGE, STATE_UNAVAILABLE, STATE_UNKNOWN, Un
 from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util.unit_conversion import TemperatureConverter
-from .canon import CANON
-from .notify import label
+from .canon import rules_canon
+from .notify.common import label
 MAGNUS_B, MAGNUS_C = (17.62, 243.12)
 MAGNUS_E0_HPA = 6.112
 VAPOUR_G_K_PER_HPA = 2.1674
@@ -33,21 +44,26 @@ NOT_SOURCES = ('sensor.hauflo_', 'binary_sensor.', 'switch.', 'light.')
 _SRC_RE = re.compile('^[a-z_]+\\.[a-z0-9_]+(#[a-z_]+)?$')
 
 def now() -> float:
+    """Wall clock (tests move it)."""
     return time.time()
 
 def _cfg() -> dict[str, Any]:
-    return CANON['derived']
+    return rules_canon()['derived']
 
 def id_re() -> re.Pattern[str]:
-    return re.compile(f"^[a-z0-9_]{{1,{int(CANON['limits']['id_len'])}}}$")
+    return re.compile(f"^[a-z0-9_]{{1,{int(rules_canon()['limits']['id_len'])}}}$")
 
 class Invalid(ValueError):
+    """A setting refused: `code` for the app, `key` its text in translations («exceptions»), `ph` the placeholders."""
 
     def __init__(self, code: str, key: str, **ph: Any) -> None:
         super().__init__(key)
         self.code, self.key, self.ph = (code, key, ph)
 
 class Refused(Invalid):
+    """A refusal a person can meet on a page (not a request sent wrong): its HTTP status and its text by key, said in
+    the
+    page's language by rules.said (Р83 polish: scenes, daylight, presence, guests — as rules and automations)."""
 
     def __init__(self, code: str, key: str, status: int=HTTPStatus.BAD_REQUEST, **ph: Any) -> None:
         super().__init__(code, key, **ph)
@@ -61,18 +77,21 @@ def num(v: Any) -> float | None:
     return f if math.isfinite(f) else None
 
 def dew_point(t: float, rh: float) -> float | None:
+    """°C from °C and % (Magnus). 20 °C / 50 % → 9.26 °C."""
     if not 0 < rh <= PERCENT or t <= -MAGNUS_C:
         return None
     g = math.log(rh / PERCENT) + MAGNUS_B * t / (MAGNUS_C + t)
     return MAGNUS_C * g / (MAGNUS_B - g)
 
 def abs_humidity(t: float, rh: float) -> float | None:
+    """g/m³ from °C and %: the saturation pressure by the same Magnus, the ideal gas law. 20 °C / 50 % → 8.6 g/m³."""
     if not 0 <= rh <= PERCENT or t <= -MAGNUS_C:
         return None
     es = MAGNUS_E0_HPA * math.exp(MAGNUS_B * t / (MAGNUS_C + t))
     return es * rh * VAPOUR_G_K_PER_HPA / (KELVIN_ZERO + t)
 
 def slope_per_hour(samples: list[tuple[float, float]]) -> float | None:
+    """Least squares over (time s, value): units per hour."""
     if len(samples) <= 1:
         return None
     n = len(samples)
@@ -88,6 +107,7 @@ def split_source(src: str) -> tuple[str, str | None]:
     return (eid, attr or None)
 
 def default_attribute(eid: str) -> str | None:
+    """A climate's value is its room temperature, a weather's its temperature."""
     if eid.startswith('climate.'):
         return 'current_temperature'
     if eid.startswith('weather.'):
@@ -115,6 +135,8 @@ def unit_of(st: State, attr: str | None) -> str | None:
     return None
 
 def read(hass: HomeAssistant, src: str, max_age: float=0) -> tuple[float | None, str | None, str | None]:
+    """(value, unit, why not): a number now, or the reason there is none (no_entity / unavailable / not_a_number /
+    stale)."""
     eid, attr = split_source(src)
     attr = attr or default_attribute(eid)
     st = hass.states.get(eid)
@@ -139,6 +161,7 @@ def to_celsius(v: float, unit: str | None) -> float | None:
     return None
 
 def convert(v: float, unit: str | None, to: str | None) -> float | None:
+    """`v` in `unit` said in `to`: the same unit, or two temperature units (°F houses — HA's own converter)."""
     if (unit or '') == (to or ''):
         return v
     if unit in TEMP_UNITS and to in TEMP_UNITS:
@@ -146,6 +169,7 @@ def convert(v: float, unit: str | None, to: str | None) -> float | None:
     return None
 
 def outdoor(hass: HomeAssistant, owns: Any=None) -> dict[str, Any] | None:
+    """The street's temperature: a KNX / Hauflo sensor named so, else a weather entity («по прогнозу»)."""
     words = re.compile('|'.join((re.escape(w) for w in _cfg()['outdoor_words'])), re.IGNORECASE)
     reg = er.async_get(hass)
     best: list[tuple[bool, str]] = []
@@ -169,7 +193,8 @@ def outdoor(hass: HomeAssistant, owns: Any=None) -> dict[str, Any] | None:
     return None
 
 def clean(raw: Any, hass: HomeAssistant | None=None) -> dict[str, Any]:
-    c, lim = (_cfg(), CANON['limits'])
+    """One derived value, checked; raises Invalid."""
+    c, lim = (_cfg(), rules_canon()['limits'])
     if not isinstance(raw, dict):
         raise Invalid('bad', 'rules_bad_object')
     rid = raw.get('id')
@@ -200,6 +225,7 @@ def clean(raw: Any, hass: HomeAssistant | None=None) -> dict[str, Any]:
     return out
 
 class Derived:
+    """One derived value: worked out on every source change and every minute."""
 
     def __init__(self, hass: HomeAssistant, cfg: dict[str, Any]) -> None:
         self.hass = hass

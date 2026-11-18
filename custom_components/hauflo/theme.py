@@ -1,32 +1,52 @@
+"""dark mode (follows the phone), and Hauflo's own icon set `hauflo:*`.
+
+The theme is added to HA's themes in memory — the client's configuration.yaml isn't touched. HA's
+«Reload themes» drops it; the agent puts it back. Picked per user in the profile, or by Hauflo as the
+default (frontend.set_theme) when the integrator asks."""
 from __future__ import annotations
+import functools
+import hashlib
 import json
 import logging
 from pathlib import Path
 from typing import Any
 from aiohttp import web
+from homeassistant.components import persistent_notification
 from homeassistant.components.frontend import add_extra_js_url
 from homeassistant.components.http import KEY_HASS, HomeAssistantView
-from homeassistant.components import persistent_notification
 from homeassistant.core import CoreState, Event, HomeAssistant, callback
 from homeassistant.helpers.event import async_call_later
-from .tuning import TUNING
-from .const import ASSET_TAG, CARDS_FILE, DATA_CARDS_FILE, DATA_CARDS_LOCAL, DATA_THEME_DEFAULTS, DATA_THEME_LISTENER, DATA_THEME_FIRING, DATA_WWW
+from homeassistant.helpers.storage import Store
+from .const import CARDS_FILE, DATA_CARDS_FILE, DATA_CARDS_LOCAL, DATA_THEME_DEFAULTS, DATA_THEME_FIRING, DATA_THEME_LISTENER, DATA_WWW, VERSION
+from .guard import contained
+from .tuning import tuning
 _LOGGER = logging.getLogger(__name__)
 THEME = 'Hauflo Atelier'
+
+def _www_hash() -> str:
+    h = hashlib.sha256()
+    www = Path(__file__).parent / 'www'
+    for p in sorted((f for f in www.rglob('*') if f.is_file() and f.suffix in ('.js', '.json'))):
+        h.update(p.relative_to(www).as_posix().encode() + p.read_bytes())
+    return h.hexdigest()[:8]
+asset_tag = functools.cache(lambda: f'{VERSION}&h={_www_hash()}')
 OLD_THEMES = ('Hauflo Aura', 'Hauflo Atelier', 'Hauflo Atelier · светлая', 'Hauflo Atelier · тёмная')
-ICONS_URL = f'/hauflo_static/hauflo-icons.js?v={ASSET_TAG}'
-CARDS_URL = f'/hauflo_static/{CARDS_FILE}?v={ASSET_TAG}'
+icons_url = functools.cache(lambda: f'/hauflo_static/hauflo-icons.js?v={asset_tag()}')
+cards_url = functools.cache(lambda: f'/hauflo_static/{CARDS_FILE}?v={asset_tag()}')
 _DIR = Path(__file__).parent / 'www' / 'themes'
-_DATA = json.loads((_DIR / 'hauflo.json').read_text(encoding='utf-8'))
-_COMMON: dict[str, str] = _DATA['ha']['common']
-DARK: dict[str, str] = _DATA['ha']['dark']
-LIGHT: dict[str, str] = _DATA['ha']['light']
-AURA = {**_COMMON, 'modes': {'light': LIGHT, 'dark': DARK}}
+
+@functools.cache
+def _theme_data() -> dict[str, Any]:
+    return json.loads((_DIR / 'hauflo.json').read_text(encoding='utf-8'))
+_common = functools.cache(lambda: _theme_data()['ha']['common'])
+dark_cfg = functools.cache(lambda: _theme_data()['ha']['dark'])
+light_cfg = functools.cache(lambda: _theme_data()['ha']['light'])
+aura = functools.cache(lambda: {**_common(), 'modes': {'light': light_cfg(), 'dark': dark_cfg()}})
 LIGHT_TAIL, DARK_TAIL = (' · светлая', ' · тёмная')
 THEME_LIGHT = f'{THEME}{LIGHT_TAIL}'
 THEME_DARK = f'{THEME}{DARK_TAIL}'
-FIXED = {THEME_LIGHT: {**_COMMON, **LIGHT}, THEME_DARK: {**_COMMON, **DARK}}
-_STALE = tuple((t for t in OLD_THEMES if t != THEME and t not in FIXED))
+fixed = functools.cache(lambda: {THEME_LIGHT: {**_common(), **light_cfg()}, THEME_DARK: {**_common(), **dark_cfg()}})
+_stale = functools.cache(lambda: tuple((t for t in OLD_THEMES if t != THEME and t not in fixed())))
 
 def _valid(data: object) -> bool:
     if not isinstance(data, dict) or not isinstance(data.get('name'), str) or (not data['name'].strip()):
@@ -37,6 +57,9 @@ def _valid(data: object) -> bool:
     return all((isinstance(p, dict) and all((isinstance(v, str) for v in p.values())) for p in [*parts, cards]))
 
 def variants(data: dict) -> dict[str, dict]:
+    """One theme file → HA's themes: the one that follows the phone and the fixed light / dark ones. Another file's card
+    tokens go in as `hf-t-<name>` (the cards read `--hf-<name>: var(--hf-t-<name>, Hauflo's own)`): a new theme is one
+    JSON file in www/themes, no code (stage 5, item 6)."""
     common, dark, light = (data['ha']['common'], data['ha']['dark'], data['ha']['light'])
     tokens = {f'hf-t-{k}': v for k, v in data.get('cards', {}).items()}
     base = {**common, **tokens}
@@ -44,6 +67,7 @@ def variants(data: dict) -> dict[str, dict]:
     return {name: {**base, 'modes': {'light': light, 'dark': dark}}, f'{name}{LIGHT_TAIL}': {**base, **light}, f'{name}{DARK_TAIL}': {**base, **dark}}
 
 def load_extra(folder: Path) -> dict[str, dict]:
+    """Every other theme file in the folder (sorted by file name), a broken one skipped with a warning."""
     out: dict[str, dict] = {}
     for f in sorted(folder.glob('*.json')):
         if f.name == 'hauflo.json':
@@ -52,17 +76,18 @@ def load_extra(folder: Path) -> dict[str, dict]:
             data = json.loads(f.read_text(encoding='utf-8'))
         except (OSError, ValueError):
             data = None
-        if not _valid(data) or data['name'].strip() in (THEME, *FIXED):
+        if not _valid(data) or data['name'].strip() in (THEME, *fixed()):
             _LOGGER.warning("Hauflo: theme file %s skipped (not a theme or Hauflo's own name)", f.name)
             continue
         out.update(variants(data))
     return out
-EXTRA = load_extra(_DIR)
+extra = functools.cache(lambda: load_extra(_DIR))
 
 def _ours() -> dict:
-    return {THEME: AURA, **FIXED, **EXTRA}
+    return {THEME: aura(), **fixed(), **extra()}
 
 def names() -> set[str]:
+    """The themes that are Hauflo's own — the only ones the cloud may make the house's default."""
     return set(_ours())
 
 @callback
@@ -71,15 +96,14 @@ def _inject(hass: HomeAssistant) -> bool:
     if themes is None:
         return False
     want = _ours()
-    if all((themes.get(k) == v for k, v in want.items())) and (not any((t in themes for t in _STALE))):
+    if all((themes.get(k) == v for k, v in want.items())) and (not any((t in themes for t in _stale()))):
         return False
-    for old in _STALE:
+    for old in _stale():
         themes.pop(old, None)
     themes.update(want)
     return True
 
 async def _restore_default(hass: HomeAssistant) -> bool:
-    from homeassistant.helpers.storage import Store
     saved = await Store(hass, 1, 'frontend_theme').async_load() or {}
     changed = False
     for key in ('frontend_default_theme', 'frontend_default_dark_theme'):
@@ -128,9 +152,9 @@ async def async_setup(hass: HomeAssistant) -> None:
     if not hass.data.get(DATA_WWW) and await hass.async_add_executor_job(www.is_dir):
         hass.data[DATA_WWW] = True
         hass.http.register_view(StaticView(www))
-        hass.data[DATA_CARDS_FILE] = CARDS_URL
+        hass.data[DATA_CARDS_FILE] = cards_url()
         if not hass.data.get(DATA_CARDS_LOCAL):
-            add_extra_js_url(hass, ICONS_URL)
+            add_extra_js_url(hass, icons_url())
             add_extra_js_url(hass, hass.data[DATA_CARDS_FILE])
             if hass.state is CoreState.running:
                 _say_reload(hass)
@@ -138,6 +162,8 @@ CACHE_VERSIONED = 'public, max-age=31536000, immutable'
 CACHE_PLAIN = 'no-cache'
 
 class StaticView(HomeAssistantView):
+    """The agent's www folder at /hauflo_static: HA's extra JS loads before anyone has logged in (no auth, like HA's
+    own static paths), only files inside the folder."""
     url = '/hauflo_static/{path:.+}'
     name = 'hauflo:static'
     requires_auth = False
@@ -156,12 +182,12 @@ class StaticView(HomeAssistantView):
         return web.FileResponse(f, headers={'Cache-Control': CACHE_VERSIONED if request.query.get('v') else CACHE_PLAIN})
     head = get
 RELOAD_NOTE = 'hauflo_cards_reload'
-RELOAD_NOTE_S = TUNING['theme']['reload_note_s']
+reload_note_s = functools.cache(lambda: tuning()['theme']['reload_note_s'])
 DATA_RELOAD_TIMER = 'hauflo_reload_note_timer'
 
 def _say_reload(hass: HomeAssistant) -> None:
     ru = str(hass.config.language or '').startswith('ru')
-    try:
+    with contained(_LOGGER, 'Hauflo: reload hint not shown'):
         persistent_notification.async_create(hass, 'Агент Hauflo подключён. Если панель Hauflo не загрузилась, обновите страницу в браузере.' if ru else "The Hauflo agent is connected. If the Hauflo dashboard doesn't load, refresh the page in your browser.", 'Hauflo', RELOAD_NOTE)
         if callable((old := hass.data.pop(DATA_RELOAD_TIMER, None))):
             old()
@@ -170,12 +196,12 @@ def _say_reload(hass: HomeAssistant) -> None:
         def _gone(_now: Any) -> None:
             hass.data.pop(DATA_RELOAD_TIMER, None)
             persistent_notification.async_dismiss(hass, RELOAD_NOTE)
-        hass.data[DATA_RELOAD_TIMER] = async_call_later(hass, RELOAD_NOTE_S, _gone)
-    except Exception:
-        _LOGGER.debug('Hauflo: reload hint not shown', exc_info=True)
+        hass.data[DATA_RELOAD_TIMER] = async_call_later(hass, reload_note_s(), _gone)
 
 @callback
 def async_unload(hass: HomeAssistant) -> None:
+    """Unloaded or removed: «Reload themes» no longer puts the Hauflo theme back (HA review round 4). The cards'
+    JS stays registered — dashboards keep working until HA restarts (keep.py makes copies on removal)."""
     if callable((unsub := hass.data.pop(DATA_THEME_LISTENER, None))):
         unsub()
     if callable((timer := hass.data.pop(DATA_RELOAD_TIMER, None))):

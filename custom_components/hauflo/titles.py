@@ -1,8 +1,15 @@
+"""как мне»): «Кондиционеры» → «Климат», «Свет» → «Освещение». For the whole house, not per person; kept here, so a
+deploy (which rewrites the dashboard) never loses them; the cards put them over the integrator's titles (`block` key of
+a card — backend yaml/blockTitles.ts).
+
+GET/POST /api/hauflo/titles — any signed-in person of this HA (the client isn't an admin); not through the tunnel
+(not in the tunnel's list of the agent's views). Text only: known block kinds, one line, up to 40 characters; the cards
+escape it when they draw it."""
 from __future__ import annotations
 import re
 import time
-import unicodedata
 from typing import Any
+import unicodedata
 from homeassistant.components.http import KEY_HASS, HomeAssistantView
 from homeassistant.core import HomeAssistant
 from .house import refuse
@@ -14,6 +21,8 @@ _CONTROL = re.compile('[\x00-\x1f\x7f-\x9f\u2028\u2029]+')
 _BLANK = re.compile('[͏ᅟᅠ឴឵⠀ㅤﾠ]+')
 
 def clean(body: Any) -> dict[str, str] | None:
+    """The names as kept: known kinds, one trimmed line up to 40 characters; empty = the integrator's. None — not
+    names."""
     if not isinstance(body, dict):
         return None
     out: dict[str, str] = {}

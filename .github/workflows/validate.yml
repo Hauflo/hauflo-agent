@@ -21,6 +21,3 @@ jobs:
           category: integration
           # Brand images ship in custom_components/hauflo/brand (HA 2026.3+). The repository's description and topics
           # are set on GitHub, so those checks run.
-          # `license` stays ignored: OWNER DECISION — which license the agent ships under (LICENSE is «source
-          # available», not an OSI licence, and HACS' check wants a recognised one).
-          ignore: license

@@ -1,10 +1,18 @@
+"""To-do hidden for the family — every person in this HA who isn't an administrator. HA's administrators only with the
+option «Также у администраторов» (HA reviewer r2: an admin's menu was stripped to «Home» — so off for new houses; the
+frontend storage (each can show a panel again in their profile). The choice is kept by the agent: a person added
+later gets it too (integrator run 16: a client created after the deploy saw Map/Energy/…).
+
+API for Hauflo (through the agent's tunnel, admin): POST /api/hauflo/sidebar {"hide": [...], "show": [...],
+"admins": bool}. Without "admins" the house's choice stays as it is."""
 from __future__ import annotations
 from typing import Any
+from homeassistant.components.frontend.storage import async_system_store, async_user_store
 from homeassistant.components.http import KEY_HASS, HomeAssistantView
 from homeassistant.core import Event, HomeAssistant
-from .storage import HaufloStore
 from .const import DATA_SIDEBAR_LISTENER
 from .house import is_guest
+from .storage import HaufloStore
 STORE_KEY = 'hauflo.sidebar'
 EXTRAS = ['map', 'energy', 'logbook', 'history', 'calendar', 'media-browser', 'todo']
 
@@ -14,7 +22,6 @@ def _admins_of(data: dict[str, Any]) -> bool:
     return bool(data.get('hide'))
 
 async def _set_hidden(hass: HomeAssistant, user_id: str, add: list[str], drop: set[str]) -> bool:
-    from homeassistant.components.frontend.storage import async_user_store
     store = await async_user_store(hass, user_id)
     sidebar = dict(store.data.get('sidebar') or {})
     was = list(sidebar.get('hiddenPanels') or [])
@@ -50,6 +57,8 @@ async def async_apply(hass: HomeAssistant, hide: list[str], show: list[str], adm
     return {'users': users, 'hidden': hide, 'shown': show, 'admins': admins}
 
 async def async_upgrade(hass: HomeAssistant) -> int:
+    """    its
+    goes out of their menu again. Returns how many administrators got it hidden again."""
     saved = HaufloStore(hass, STORE_KEY)
     data = await saved.async_load() or {}
     if 'admins' in data or not data.get('hide'):
@@ -66,6 +75,7 @@ async def async_upgrade(hass: HomeAssistant) -> int:
     return again
 
 async def async_setup(hass: HomeAssistant) -> None:
+    """A person added to this HA gets the same short menu (an administrator — only with the option on)."""
 
     async def _added(event: Event) -> None:
         data = await HaufloStore(hass, STORE_KEY).async_load() or {}
@@ -79,12 +89,13 @@ async def async_setup(hass: HomeAssistant) -> None:
     await async_upgrade(hass)
 
 def async_unload(hass: HomeAssistant) -> None:
+    """The integration unloaded or removed: people added later keep HA's full menu (HA review round 3)."""
     if (unsub := hass.data.pop(DATA_SIDEBAR_LISTENER, None)):
         unsub()
 MENU_EXTRAS = {'map', 'energy', 'logbook', 'history', 'calendar', 'media-browser', 'todo'}
 
 async def async_remove(hass: HomeAssistant) -> int:
-    from homeassistant.components.frontend.storage import async_user_store
+    """The integration removed: the panels Hauflo hid (as it recorded them) come back for every person, and the choice"""
     saved = HaufloStore(hass, STORE_KEY)
     hidden_by_us = {p for p in (await saved.async_load() or {}).get('hide', []) if p in MENU_EXTRAS}
     back = 0
@@ -129,7 +140,7 @@ class SidebarView(HomeAssistantView):
         return self.json(result)
 
 async def async_home(hass: HomeAssistant, url_path: str) -> bool:
-    from homeassistant.components.frontend.storage import async_system_store
+    """Hauflo's dashboard as HA's default — only while it's still HA's own («Обзор»): a choice made in HA stays."""
     store = await async_system_store(hass)
     core = dict(store.data.get('core') or {})
     current = core.get('default_panel')

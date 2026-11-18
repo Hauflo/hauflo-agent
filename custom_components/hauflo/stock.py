@@ -1,12 +1,27 @@
+"""«Заменить на Hauflo» (stage 5): a stock Home Assistant card of any integration → the Hauflo card for it, by ONE table
+(www/stock.json, the cards read the same file). Only on the integrator's action: the admin's «Настройки» sheet of the
+cards (GET/POST /api/hauflo/stock, admins only, never through the tunnel) or his ticks in the deploy plan (dashmerge.py
+`plan` → `stock`, `save` with `stock` ids). Never Hauflo's own items (a `hauflo_id`: Hauflo decides their look) and
+never
+silently: an offer is only an offer.
+
+Each replaced card keeps what it was (`hauflo_was`): «Вернуть штатную» puts it back as it was. A device's cards in one
+place (≥ 2 of one device_id) can become one «Устройство целиком» card (hauflo-area with `device`). Guarded entities
+(locks, alarm panels, valves, garage / gate / door covers — protect.py / massSafety) never go into a console with an
+«all
+at once» action, and an offer with one is never pre-ticked."""
 from __future__ import annotations
+from collections.abc import Callable
 import copy
+from functools import lru_cache
 import hashlib
 import json
-from functools import lru_cache
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 from homeassistant.components.http import KEY_HASS, HomeAssistantView
+from homeassistant.components.lovelace.const import LOVELACE_DATA, ConfigNotFound
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 WAS = 'hauflo_was'
 HID = 'hauflo_id'
 Info = Callable[[str], 'dict[str, Any] | None']
@@ -67,6 +82,7 @@ def _make(to: str, key: str, ents: list[str], infos: dict[str, dict[str, Any]], 
     return out
 
 def offer_of(card: Any, info: Info) -> dict[str, Any] | None:
+    """What one stock card becomes: {card, from, to, entities, guarded} or None (ours, Hauflo's, unknown, unsure)."""
     if not isinstance(card, dict) or HID in card or WAS in card:
         return None
     t = card.get('type')
@@ -175,9 +191,12 @@ def _plan(cfg: Any, info: Info) -> list[dict[str, Any]]:
     return out
 
 def offers(cfg: Any, info: Info) -> list[dict[str, Any]]:
+    """What the integrator is offered: id, from → to, how many entities, where; `pick` — pre-ticked (never a guarded
+    one)."""
     return [{'id': o['id'], 'from': o['from'], 'to': o['to'], 'entities': o['entities'], 'device': bool(o.get('device')), 'guarded': o['guarded'], 'pick': not o['guarded'], **({'where': o['where']} if o['where'] else {}), **({'title': o['title']} if o.get('title') else {})} for o in _plan(cfg, info)]
 
 def replaced(cfg: Any, info: Info | None=None) -> list[dict[str, Any]]:
+    """Cards replaced earlier (they keep `hauflo_was`): «Вернуть штатную»."""
     out: list[dict[str, Any]] = []
     for path, cards, vt in _holders(cfg):
         for ci, c in enumerate(cards):
@@ -188,6 +207,7 @@ def replaced(cfg: Any, info: Info | None=None) -> list[dict[str, Any]]:
     return out
 
 def apply(cfg: Any, ids: Any, info: Info) -> tuple[Any, int]:
+    """The config with the chosen offers made (a device's offer first: its cards then are taken), and how many."""
     want = {x for x in ids if isinstance(x, str)} if isinstance(ids, list) else set()
     if not want:
         return (cfg, 0)
@@ -214,6 +234,7 @@ def apply(cfg: Any, ids: Any, info: Info) -> tuple[Any, int]:
     return (new, n)
 
 def undo(cfg: Any, ids: Any) -> tuple[Any, int]:
+    """The chosen replaced cards back as they were (a whole device's card: all its cards, in its place)."""
     want = {x for x in ids if isinstance(x, str)} if isinstance(ids, list) else set()
     if not want:
         return (cfg, 0)
@@ -234,7 +255,6 @@ def undo(cfg: Any, ids: Any) -> tuple[Any, int]:
     return (new, n)
 
 def hass_info(hass: HomeAssistant) -> Info:
-    from homeassistant.helpers import device_registry as dr, entity_registry as er
     reg = er.async_get(hass)
     devs = dr.async_get(hass)
 
@@ -249,7 +269,6 @@ def hass_info(hass: HomeAssistant) -> Info:
     return info
 
 def _dashboard(hass: HomeAssistant, url_path: Any) -> Any:
-    from homeassistant.components.lovelace.const import LOVELACE_DATA
     key = None if url_path in (None, '', 'lovelace') else url_path
     if key is not None and (not isinstance(key, str)):
         return None
@@ -257,12 +276,13 @@ def _dashboard(hass: HomeAssistant, url_path: Any) -> Any:
     return dash if dash is not None and getattr(dash, 'mode', 'storage') == 'storage' else None
 
 class StockView(HomeAssistantView):
+    """GET ?url_path=… — the offers and the replaced cards of a dashboard; POST {url_path, replace: [ids]} or
+    {url_path, undo: [ids]} — made, the new lists back. Admins only (the integrator), never through the tunnel."""
     url = '/api/hauflo/stock'
     name = 'api:hauflo:stock'
     requires_auth = True
 
     async def _load(self, request: Any, url_path: Any) -> tuple[Any, Any]:
-        from homeassistant.components.lovelace.const import ConfigNotFound
         dash = _dashboard(request.app[KEY_HASS], url_path)
         if dash is None:
             return (None, None)

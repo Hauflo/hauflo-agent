@@ -1,3 +1,11 @@
+"""The combinations come with the site's signal policy (signals.py `combos`, feature COMBOS_FEATURE) and are read by the
+same
+calculator as every signal (signals.cond_holds → alarm_of). Each is one Hauflo binary sensor (device class problem) —
+on while every condition has held for `holdS`; Hauflo watches it by the site's own policy for it (watch, severity, «Всё
+хорошо»), so it rides every alarm channel as any signal. Only a signal: nothing is switched — the service only warns,
+
+«Since when» is the newest `last_changed` of the sources when the combination is first seen holding (a restart or a new
+combination never waits T again for what has held long already), then kept while it holds."""
 from __future__ import annotations
 from collections.abc import Callable
 from functools import partial
@@ -7,10 +15,10 @@ from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
 from homeassistant.util import dt as dt_util
-from . import signals
 from .const import async_entity_names, site_name
 from .device import device_info
-FEATURE = signals.COMBOS_FEATURE
+from .signals import canon as signals_canon, store as signals_store
+FEATURE = signals_canon.COMBOS_FEATURE
 
 class Combos:
 
@@ -32,15 +40,16 @@ class Combos:
         self.names = await async_entity_names(self.hass)
 
     def title(self, name: str) -> str | None:
+        """«Сочетание · <name>» in the house's language; None — HA's translation (texts not loaded)."""
         return site_name(self.names, self.ru(), 'binary_sensor.combo', name=name) if self.names else None
 
     def defs(self) -> dict[str, dict[str, Any]]:
-        s = signals.store(self.hass)
+        s = signals_store.store(self.hass)
         return s.combos() if s is not None else {}
 
     @callback
     def start(self) -> None:
-        if (s := signals.store(self.hass)) is not None and self._unsub_policy is None:
+        if (s := signals_store.store(self.hass)) is not None and self._unsub_policy is None:
             self._unsub_policy = s.listen(self.reload)
         self.reload()
 
@@ -56,6 +65,8 @@ class Combos:
 
     @callback
     def reload(self) -> None:
+        """The policy changed (or the platform came up): sources tracked, entities synced, every combination worked
+        out."""
         defs = self.defs()
         for cid in [c for c in (*self.since, *self.on, *self._timers) if c not in defs]:
             self._forget(cid)
@@ -90,7 +101,7 @@ class Combos:
             t()
         states = [self.hass.states.get(c['entityId']) for c in d['all']]
         now = dt_util.utcnow().timestamp()
-        if signals.combo_holds(states, d):
+        if signals_canon.combo_holds(states, d):
             if cid not in self.since:
                 self.since[cid] = max((st.last_changed.timestamp() for st in states if st is not None))
             left = self.since[cid] + d['holdS'] - now
@@ -127,12 +138,13 @@ class Combos:
                 self.add_binary([e])
 
     def attrs(self, cid: str, d: dict[str, Any]) -> dict[str, Any]:
-        out: dict[str, Any] = {'hold_s': d['holdS'], 'conditions': [{'entity_id': c['entityId'], 'holds': signals.cond_holds(self.hass.states.get(c['entityId']), c['alarm'])} for c in d['all']]}
+        out: dict[str, Any] = {'hold_s': d['holdS'], 'conditions': [{'entity_id': c['entityId'], 'holds': signals_canon.cond_holds(self.hass.states.get(c['entityId']), c['alarm'])} for c in d['all']]}
         if (s := self.since.get(cid)) is not None:
             out['since'] = dt_util.utc_from_timestamp(s).isoformat()
         return out
 
 class ComboActive(BinarySensorEntity):
+    """On while every condition of the combination has held for its time; which hold now — in its attributes."""
     _attr_should_poll = False
     _attr_has_entity_name = True
     _attr_translation_key = 'combo'
@@ -144,17 +156,18 @@ class ComboActive(BinarySensorEntity):
         self.cid = cid
         self.combo = combo
         self._attr_unique_id = f'{engine.entry_id}_combo_{cid}'
-        self.entity_id = signals.combo_entity(cid)
+        self.entity_id = signals_store.combo_entity(cid)
         if engine.entry_id:
             self._attr_device_info = device_info(engine.entry_id)
         self._attr_translation_placeholders = {'name': combo['name']}
+        self._site_title: str | None = None
         self._name_in_site_lang(combo)
 
     def _name_in_site_lang(self, combo: dict[str, Any]) -> bool:
         title = self.engine.title(combo['name'])
-        if title is None or getattr(self, '_attr_name', None) == title:
+        if title is None or self._site_title == title:
             return False
-        self._attr_name = title
+        self._site_title = self._attr_name = title
         return True
 
     @callback

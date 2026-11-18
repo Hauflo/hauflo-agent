@@ -1,9 +1,11 @@
+"""SIP messages (RFC 3261), digest authentication (RFC 2617 / 8760 MD5 — what door panels speak) and SDP offers /
+answers (RFC 4566 / 3264) with G.711 and telephone-event (RFC 4733). Pure functions, no I/O: ua.py sends them."""
 from __future__ import annotations
+from dataclasses import dataclass, field
 import hashlib
 import ipaddress
 import re
 import secrets
-from dataclasses import dataclass, field
 from urllib.parse import quote, unquote
 CRLF = '\r\n'
 _COMPACT = {'v': 'via', 'f': 'from', 't': 'to', 'i': 'call-id', 'm': 'contact', 'l': 'content-length', 'c': 'content-type', 'k': 'supported'}
@@ -13,6 +15,7 @@ MAGIC = 'z9hG4bK'
 
 @dataclass
 class Message:
+    """One SIP request (`method`, `uri`) or response (`status`, `reason`); headers keep their order and repeats."""
     method: str | None = None
     uri: str | None = None
     status: int | None = None
@@ -81,11 +84,12 @@ def _split_commas(value: str) -> list[str]:
     return out
 
 def parse(data: bytes) -> Message:
+    """A datagram → Message. ValueError for anything that isn't SIP (a stray packet, a keep-alive CRLF)."""
     head, sep, body = data.partition(b'\r\n\r\n')
     if not sep:
         head, sep, body = data.partition(b'\n\n')
     text = head.decode('utf-8', 'replace')
-    lines = [ln for ln in re.split('\\r?\\n', text)]
+    lines = list(re.split('\\r?\\n', text))
     if not lines or not lines[0].strip():
         raise ValueError('empty')
     first = lines[0].split(' ', 2)
@@ -111,6 +115,7 @@ def parse(data: bytes) -> Message:
     return msg
 
 def param(value: str, name: str) -> str | None:
+    """A «;name=value» parameter of a header (outside its <uri>)."""
     tail = value.rsplit('>', 1)[-1] if '>' in value else value
     for part in tail.split(';')[1:]:
         k, _, v = part.partition('=')
@@ -119,6 +124,7 @@ def param(value: str, name: str) -> str | None:
     return None
 
 def uri_of(value: str) -> str:
+    """«"Door" <sip:100@10.0.0.5:5060>;tag=x» → «sip:100@10.0.0.5:5060»."""
     if '<' in value:
         return value.split('<', 1)[1].split('>', 1)[0].strip()
     return value.split(';', 1)[0].strip()
@@ -134,6 +140,7 @@ def host_port(uri: str, default: int=5060) -> tuple[str, int]:
     return (host, int(port) if port.isdigit() else default)
 
 def sip_uri(user: str, host: str, port: int | None=None) -> str:
+    """A SIP URI with the user escaped (Dahua's «9901#1» → «9901%231», RFC 3261 §25.1 user-unreserved kept)."""
     who = f"""{quote(user, safe="-_.!~*'()&=+$,;?/")}@""" if user else ''
     return f"sip:{who}{host}{(f':{port}' if port else '')}"
 
@@ -147,6 +154,8 @@ def new_call_id(host: str) -> str:
     return f'{secrets.token_hex(10)}@{host}'
 
 def response(req: Message, status: int, reason: str, *, to_tag: str | None=None, headers: list[tuple[str, str]] | None=None, body: bytes=b'', received: tuple[str, int] | None=None) -> Message:
+    """A response to `req`: its Via (the first one marked with where it really came from — rport, RFC 3581), From,
+    To (with our tag), Call-ID, CSeq copied."""
     out = Message(status=status, reason=reason)
     vias = req.get_all('via')
     for i, via in enumerate(vias):
@@ -178,6 +187,7 @@ def _mark_received(via: str, src: tuple[str, int]) -> str:
     return ';'.join(keep)
 
 def parse_auth(value: str) -> dict[str, str]:
+    """«Digest realm="x", nonce="y", qop="auth"» → {"realm": "x", …}; keys lower-case."""
     _, _, rest = value.strip().partition(' ')
     out: dict[str, str] = {}
     for m in re.finditer('([A-Za-z0-9_-]+)\\s*=\\s*("([^"]*)"|[^,\\s]+)', rest):
@@ -195,6 +205,7 @@ def digest(method: str, uri: str, user: str, password: str, realm: str, nonce: s
     return _md5(f'{ha1}:{nonce}:{ha2}')
 
 def authorization(method: str, uri: str, user: str, password: str, challenge: dict[str, str], nc: int=1) -> str:
+    """The Authorization (or Proxy-Authorization) value answering a 401 / 407 challenge."""
     realm, nonce = (challenge.get('realm', ''), challenge.get('nonce', ''))
     qops = [q.strip() for q in challenge.get('qop', '').split(',') if q.strip()]
     qop = 'auth' if 'auth' in qops else None
@@ -212,6 +223,7 @@ def challenge(realm: str, nonce: str) -> str:
     return f'Digest realm="{realm}", nonce="{nonce}", algorithm=MD5, qop="auth"'
 
 def verify(method: str, auth: dict[str, str], password: str) -> bool:
+    """The client's digest is right for this password (the realm / nonce are checked by the caller)."""
     if auth.get('algorithm', 'MD5').upper() != 'MD5':
         return False
     want = digest(method, auth.get('uri', ''), auth.get('username', ''), password, auth.get('realm', ''), auth.get('nonce', ''), qop=auth.get('qop'), nc=auth.get('nc', ''), cnonce=auth.get('cnonce', ''))
@@ -219,6 +231,7 @@ def verify(method: str, auth: dict[str, str], password: str) -> bool:
 
 @dataclass
 class Media:
+    """The audio of an SDP: where to send, which payload types in order, their names, DTMF's type."""
     addr: str = ''
     port: int = 0
     pts: list[int] = field(default_factory=list)
@@ -227,12 +240,14 @@ class Media:
     direction: str = 'sendrecv'
 
     def choose(self, prefer: str) -> tuple[int, str] | None:
+        """The first G.711 the offer has, ours first: (payload type, «PCMA» / «PCMU»)."""
         offered = [(pt, self.names.get(pt, STATIC.get(pt, '')).upper()) for pt in self.pts]
         g711 = [(pt, n) for pt, n in offered if n in CODECS]
         g711.sort(key=lambda x: x[1] != prefer)
         return g711[0] if g711 else None
 
 def parse_sdp(body: bytes) -> Media | None:
+    """The first audio m-line of an SDP; None — no audio in it."""
     media: Media | None = None
     session_addr = ''
     for raw in body.decode('utf-8', 'replace').splitlines():
@@ -272,6 +287,7 @@ def build_sdp(addr: str, port: int, pt: int, codec: str, dtmf_pt: int | None, se
     return (CRLF.join(lines) + CRLF).encode()
 
 def is_private(addr: str) -> bool:
+    """A LAN / carrier-NAT address: an SDP of a cloud call naming it can't be reached from the internet."""
     try:
         ip = ipaddress.ip_address(addr)
     except ValueError:

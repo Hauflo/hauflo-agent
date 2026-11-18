@@ -1,3 +1,5 @@
+"""Р55: the doors' cameras — `camera.<door>` (the panel's video) and `camera.<door>_talk` (the call's sound both ways
+through HA's go2rtc: the card's WebRTC sendrecv); the rest of a door's entities: intercom/entities.py."""
 from __future__ import annotations
 from homeassistant.components.camera import Camera, CameraEntityFeature
 from homeassistant.config_entries import ConfigEntry
@@ -20,6 +22,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEnt
     add(out)
 
 class DoorCamera(DoorEntity, Camera):
+    """The panel's own RTSP (its preset's path): video for the card, through HA's go2rtc."""
     KIND, DOMAIN_ = ('camera', 'camera')
     _attr_name = None
     _attr_supported_features = CameraEntityFeature.STREAM
@@ -34,12 +37,14 @@ class DoorCamera(DoorEntity, Camera):
     async def async_camera_image(self, width: int | None=None, height: int | None=None) -> bytes | None:
         if (img := (await self.mgr.snapshot(self.door))) is not None:
             return img
-        provider = getattr(self, '_webrtc_provider', None)
+        provider = self.webrtc_provider
         if provider is not None and hasattr(provider, 'async_get_image'):
             return await provider.async_get_image(self, width, height)
         return None
 
 class DoorTalkCamera(DoorEntity, Camera):
+    """The call's sound: the agent's loopback RTSP with ONVIF backchannel — the card's microphone goes back to the panel
+    only while its person is the call's talker (the sensor's `talker`)."""
     KIND, DOMAIN_, SUFFIX = ('talk', 'camera', '_talk')
     _attr_translation_key = 'intercom_talk'
     _attr_supported_features = CameraEntityFeature.STREAM

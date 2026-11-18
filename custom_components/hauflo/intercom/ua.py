@@ -1,13 +1,18 @@
+"""The SIP user agent's transport (UDP, one socket on the chosen address) with its transactions — a retransmitted
+request gets the same answer, our requests are retransmitted until answered (RFC 3261 §17, timers T1 / T2 / F) — plus
+the two registration roles: the agent registering on a panel's / a cloud's SIP server (`Registration`, digest), and the
+agent as the registrar of one account a panel registers to (`Registrar`, digest required)."""
 from __future__ import annotations
 import asyncio
+from collections import OrderedDict
+from collections.abc import Callable
 import contextlib
+from dataclasses import dataclass
 import logging
 import secrets
 import time
-from collections import OrderedDict
-from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any
+from ..guard import contained
 from . import sip
 _LOGGER = logging.getLogger(__name__)
 
@@ -19,6 +24,8 @@ class Timers:
     cache: int
 
 class Endpoint(asyncio.DatagramProtocol):
+    """One UDP socket for every door. Requests go to `on_request(msg, source)`; a retransmission of one already
+    answered is answered again from the cache and not passed on."""
 
     def __init__(self, on_request: Callable[[sip.Message, tuple[str, int]], None], timers: Timers, user_agent: str) -> None:
         self.on_request = on_request
@@ -66,10 +73,8 @@ class Endpoint(asyncio.DatagramProtocol):
             raw, _ = self._answers[key]
             self._raw(raw, src)
             return
-        try:
+        with contained(_LOGGER, 'Hauflo intercom: request not handled', level=logging.ERROR):
             self.on_request(msg, src)
-        except Exception:
-            _LOGGER.exception('Hauflo intercom: request not handled')
 
     @staticmethod
     def _key(msg: sip.Message) -> tuple[str, str, str]:
@@ -89,6 +94,7 @@ class Endpoint(asyncio.DatagramProtocol):
         self._raw(msg.to_bytes(), to)
 
     def reply(self, req: sip.Message, to: tuple[str, int], status: int, reason: str, **kw: Any) -> sip.Message:
+        """Answers `req` and remembers the answer for its retransmissions (the last one wins: 180 then 200 / 487)."""
         resp = sip.response(req, status, reason, received=to, **kw)
         self.send(resp, to)
         key = self._key(req)
@@ -99,6 +105,7 @@ class Endpoint(asyncio.DatagramProtocol):
         return resp
 
     async def request(self, msg: sip.Message, to: tuple[str, int]) -> sip.Message | None:
+        """Sends a request until a final answer (T1 doubling up to T2) or timer F: None — nobody answered."""
         branch = msg.branch
         fut: asyncio.Future[sip.Message] = asyncio.get_running_loop().create_future()
         self._waiting[branch] = fut
@@ -108,6 +115,7 @@ class Endpoint(asyncio.DatagramProtocol):
             self._waiting.pop(branch, None)
 
     async def retransmit(self, msg: sip.Message, to: tuple[str, int], done: asyncio.Future[Any]) -> Any:
+        """Sends `msg` again and again (T1, 2·T1 … T2) until `done` resolves or timer F: then None."""
         wait, end = (self.timers.t1, time.monotonic() + self.timers.timeout)
         while True:
             self.send(msg, to)
@@ -122,6 +130,9 @@ class Endpoint(asyncio.DatagramProtocol):
         return ('Via', f'SIP/2.0/UDP {host}:{port};branch={sip.new_branch()};rport')
 
 class Registration:
+    """The agent's account on a SIP server (a Dahua panel's own, a cloud's): REGISTER with digest, refreshed before it
+    runs out, retried after a failure. Behind a NAT (`nat`): the address the server saw (Via received / rport) becomes
+    the Contact, and a CRLF keeps the router's way open between refreshes."""
 
     def __init__(self, ep: Endpoint, server: tuple[str, int], domain: str, user: str, password: str, contact: tuple[str, int], *, expires: int, retry: float, keepalive: float, nat: bool, on_change: Callable[[], None], extra: Callable[[sip.Message], None] | None=None) -> None:
         self.ep, self.server, self.domain = (ep, server, domain)
@@ -149,7 +160,7 @@ class Registration:
             self._task = None
         if self.registered and self.ep.transport is not None:
             self.registered = False
-            with contextlib.suppress(Exception):
+            with contained(_LOGGER, 'Hauflo intercom: unregister (expires 0) not sent'):
                 async with asyncio.timeout(2):
                     await self.register(0)
 
@@ -159,6 +170,7 @@ class Registration:
             try:
                 ok = await self.register(self.expires)
             except Exception as err:
+                _LOGGER.warning('Hauflo: intercom SIP registration failed, retrying', exc_info=True)
                 self.error = f'error: {err}'
             self.on_change()
             if not ok:
@@ -230,6 +242,8 @@ class Binding:
     at: float
 
 class Registrar:
+    """The registrar of one account: digest required (no REGISTER is ever taken without the password), nonces of ours
+    only and for a while."""
 
     def __init__(self, realm: str, nonce_ttl: float, max_expires: int) -> None:
         self.realm = realm
@@ -247,6 +261,7 @@ class Registrar:
         return n
 
     def check(self, req: sip.Message, src: tuple[str, int], user: str, password: str) -> tuple[int, str, list[tuple[str, str]], Binding | None]:
+        """(status, reason, headers, the binding to keep — None: unregister / refused)."""
         auth_hdr = req.get('authorization')
         if not auth_hdr:
             return (401, 'Unauthorized', [('WWW-Authenticate', sip.challenge(self.realm, self.nonce()))], None)
