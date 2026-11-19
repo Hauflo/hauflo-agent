@@ -7,7 +7,7 @@ from homeassistant.util.hass_dict import HassKey
 if TYPE_CHECKING:
     from .servers import GoodHosts
 DOMAIN = 'hauflo'
-VERSION = '0.42.0'
+VERSION = '0.42.1'
 SIGNING_KEYS = ('ygNZu39MKqI4HCznYsl8HqVXRdxPypJn7Q6Bikp3sUc=', 'LKtAtwSRuhK2nonpJrxHeGQigg/I4viRV+ZwRCuvIYY=')
 UNSIGNED_BEFORE = '0.40.0'
 CONF_SERVER = 'server'
