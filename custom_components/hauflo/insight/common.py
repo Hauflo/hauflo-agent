@@ -76,8 +76,7 @@ def round2(v: float) -> float:
     return round(v, 2)
 
 def sane_line(line: dict[str, Any]) -> dict[str, Any]:
-    """A ring line written before 0.38: a rate from an episode of seconds (60 °C/h over 0.02 h) is a sensor jump, not a
-    speed — the line keeps its facts, the rate goes (the table shows «—»)."""
+    """A ring line written before 0.38: a rate from an episode of seconds (60 °C/h over 0.02 h) is a sensor jump, not a speed — the line keeps its facts, the rate goes (the table shows «—»)."""
     hours = num(line.get('hours'))
     if 'rate' in line and (hours is None or hours < rate_min_h()):
         return {k: v for k, v in line.items() if k != 'rate'}
@@ -93,8 +92,7 @@ def learned_rates(v: Any) -> list[list[float | None]]:
     return out
 
 def median_rate(rates: list[list[float | None]], gap: float | None) -> float | None:
-    """The median rate; with `gap` — only of the episodes from as far away (±GAP_BAND), fewer than GAP_LIKE_MIN of them:
-    None (that band is still learning; an episode learned before 0.32 has no gap and counts for none)."""
+    """The median rate; with `gap` — only of the episodes from as far away (±GAP_BAND), fewer than GAP_LIKE_MIN of them: None (that band is still learning; an episode learned before 0.32 has no gap and counts for none)."""
     if gap is None:
         like = [r for r, _g in rates]
     else:

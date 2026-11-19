@@ -1,6 +1,3 @@
-"""access to their house»). Hauflo sends it over the link (frame «service»): the company, its contact, the access history
-(transfers between companies, Hauflo support let in). Kept in `.storage/hauflo.service`; shown in the integration's
-options (Settings → Devices & services → Hauflo → Configure) and in diagnostics. Nothing here changes anything."""
 from __future__ import annotations
 from datetime import datetime
 from typing import Any

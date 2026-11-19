@@ -1,7 +1,4 @@
-"""A small QR code encoder (byte mode, error correction M, versions 1–10) for the guest link (guest.py): the link is
-born in the agent and never leaves HA at issue time, so its QR is drawn here too — no library, no service. Follows
-ISO/IEC 18004 the way Project Nayuki's reference encoder does (MIT). Returns rows of booleans (True = dark), no quiet
-zone (the card draws it)."""
+"""A small QR code encoder (byte mode, error correction M, versions 1–10) for the guest link (guest.py): the link is born in the agent and never leaves HA at issue time, so its QR is drawn here too — no library, no service."""
 from __future__ import annotations
 _ECC_PER_BLOCK = (-1, 10, 16, 26, 18, 24, 16, 18, 22, 22, 26)
 _BLOCKS = (-1, 1, 1, 1, 2, 2, 4, 4, 4, 5, 5)
@@ -178,7 +175,7 @@ class _Qr:
         return p
 
 def encode(text: str) -> list[list[bool]]:
-    """The QR matrix of `text` (UTF-8 bytes). ValueError when it doesn't fit version 10-M (~213 bytes)."""
+    """The QR matrix of `text` (UTF-8 bytes)."""
     data = text.encode('utf-8')
     for ver in range(1, MAX_VERSION + 1):
         cc_bits = 8 if ver <= 9 else 16

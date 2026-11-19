@@ -1,19 +1,3 @@
-"""word.
-
-Only Hauflo's own release: the exact version asked, from GitHub's release of that version first, then Hauflo's mirrors
-(servers.json: they hold the latest one — the version inside the zip decides), every hop on those hosts only (https),
-checked against the sha256 the cloud read from the published release AND against the release's signature
-(hauflo.zip.sig beside the zip, at the same source): Ed25519 over {"domain","version","sha256"} by one of SIGNING_KEYS —
-sha256 alone came from the very mirror it guards). The manifest's domain and version checked too;
-unpacked as install.py unpacks (no path out of the folder, size and file count capped) into custom_components/hauflo,
-the folder it replaces kept beside (install's backups, the last few). Never a downgrade by «update»: going back is
-«rollback», to the very folder this update replaced.
-
-HA loads the new code only after a restart, and the restart is never automatic: `restart: true` with `confirm: true` in
-the same request — the wave the integrator started and confirmed («HA перезапустится на каждом объекте»). After the
-restart the new code says what happened (async_load): updated / rolled_back, or failed:not_loaded. What cannot be
-answered by code that does not load (an import error in the new version) the cloud sees as the agent not coming back:
-that site is left for a manual rollback (the backup folder is there)."""
 from __future__ import annotations
 import asyncio
 import base64
@@ -57,8 +41,6 @@ def signed_message(version: str, sha256: str) -> bytes:
     return json.dumps({'domain': DOMAIN, 'version': install_common.bare(version), 'sha256': sha256}, separators=(',', ':')).encode()
 
 def signature_ok(version: str, sha256: str, sig: bytes) -> bool:
-    """hauflo.zip.sig (one line: the 64-byte Ed25519 signature in base64) made by one of SIGNING_KEYS for this version
-    and this zip's sha256 — another version's signature, another zip's, another key's: False."""
     try:
         raw = base64.b64decode(sig.strip(), validate=True)
     except (binascii.Error, ValueError):
@@ -217,8 +199,7 @@ class SelfUpdate:
         return None if signature_ok(version, sha256, sig) else 'signature'
 
     async def rollback(self, restart: bool) -> dict[str, Any]:
-        """Back to the folder this update replaced — while its files are what is in place (before or after the
-        restart)."""
+        """Back to the folder this update replaced — while its files are what is in place (before or after the restart)."""
         if self._task and (not self._task.done()):
             raise install_common.Refused('busy')
         if self.job.get('state') not in ('restart_required', 'restarting', 'updated', 'failed:not_loaded') or not self.job.get('backup'):

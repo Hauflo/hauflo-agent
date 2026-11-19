@@ -14,9 +14,7 @@ PREFIX = 'hauflo_independent_'
 hold_cfg = functools.cache(lambda: native_hold())
 
 def alarm_hold(rule: dict[str, Any]) -> int:
-    """Seconds a source stays in alarm before the rule's «alarm» (its `for:`): the rule's hold (notify.hold_value /
-    default_hold — 0 for life safety, a minute for doors / motion / classless signals, two for levels), never under
-    HOLD (a flicker of a few seconds says nothing even for a leak). A rule from before holds — the canon's."""
+    """Seconds a source stays in alarm before the rule's «alarm» (its `for:`): the rule's hold (notify.hold_value / default_hold — 0 for life safety, a minute for doors / motion / classless signals, two for levels), never under HOLD (a flicker of a few seconds says nothing even for a leak)."""
     hold = rule.get('hold')
     if not isinstance(hold, int) or isinstance(hold, bool):
         own = hold_value(rule.get('hold_s'))
@@ -24,8 +22,7 @@ def alarm_hold(rule: dict[str, Any]) -> int:
     return max(hold_cfg(), hold)
 
 def alarm_groups(rule: dict[str, Any], sources: list[str]) -> list[tuple[list[str], int]]:
-    """The sources by their `for:` — the rule's (alarm_hold); one that holds its time itself (a combination's T —
-    notify.own_holds, the rule's `holds`) its own, never under HOLD. In the rule's order, one trigger per hold."""
+    """The sources by their `for:` — the rule's (alarm_hold); one that holds its time itself (a combination's T — notify.own_holds, the rule's `holds`) its own, never under HOLD."""
     own = rule.get('holds') or {}
     by: dict[int, list[str]] = {}
     for eid in sources:
@@ -33,9 +30,7 @@ def alarm_groups(rule: dict[str, Any], sources: list[str]) -> list[tuple[list[st
     return [(eids, s) for s, eids in by.items()]
 
 def back_after(rule: dict[str, Any]) -> int:
-    """Seconds a source stays in normal before the rule's «back» (its chatter window, at least HOLD — ISA-18.2 / Nagios
-    flap hysteresis on the return; HA's own `for:`). In alarm again sooner (or after a radio blip of no data as short):
-    the same open alarm — nothing said."""
+    """Seconds a source stays in normal before the rule's «back» (its chatter window, at least HOLD — ISA-18.2 / Nagios flap hysteresis on the return; HA's own `for:`)."""
     return native_back(rule)
 NO_DATA = ['unavailable', 'unknown']
 ICON = 'mdi:bell-check'
@@ -59,8 +54,7 @@ def slug_of(rule_id: str) -> str:
     return f"{slugify(rule_id)[:40] or 'rule'}_{hashlib.sha1(rule_id.encode()).hexdigest()[:6]}"
 
 def ids(rule_id: str) -> dict[str, str]:
-    """The rule's automation id, its helpers' object ids and its push buttons (const.py prefixes). «chatter» — the
-    helper of the rule before 0.31, only removed."""
+    """The rule's automation id, its helpers' object ids and its push buttons (const.py prefixes)."""
     slug = slug_of(rule_id)
     return {'automation': ALARM_PREFIX + slug, 'helper': ACK_PREFIX + slug, 'open': OPEN_PREFIX + slug, 'chatter': CHATTER_PREFIX + slug, 'ack': ACK_ACTION + slug.upper(), 'run': RUN_ACTION + slug.upper()}
 
@@ -105,9 +99,6 @@ def state_is(entity_id: str, state: str) -> dict[str, Any]:
     return {'condition': 'state', 'entity_id': entity_id, 'state': state}
 
 def outputs(rule: dict[str, Any], when: str) -> list[dict[str, Any]]:
-    """    OUTPUTS, each on its own (``continue_on_error``: a siren that fails never stops the pushes). Empty for a rule with
-    none
-    — its automation stays exactly as before."""
     by: dict[str, list[str]] = {}
     for o in rule.get('outputs') or []:
         domain = o['entity_id'].partition('.')[0]

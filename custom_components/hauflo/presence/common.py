@@ -45,8 +45,7 @@ class Invalid(ValueError):
     """A request the agent refuses (400)."""
 
 class Refused(Invalid, derived.Refused):
-    """A refusal a person can meet (not a request sent wrong): said in the page's language — translations
-    presence_<code>."""
+    """A refusal a person can meet (not a request sent wrong): said in the page's language — translations presence_<code>."""
 
     def __init__(self, code: str, status: int=HTTPStatus.BAD_REQUEST, **ph: Any) -> None:
         derived.Refused.__init__(self, code, f'presence_{code}', status, **ph)
@@ -68,9 +67,7 @@ def at(day: dt.date, minutes: float) -> dt.datetime:
     return (dt.datetime.combine(day, dt.time(4)) + dt.timedelta(minutes=minutes)).replace(tzinfo=dt_util.get_default_time_zone())
 
 def action_of(domain: str, st: State, dim: bool, pos: bool) -> tuple[str, int | None] | None:
-    """A light on (brightness %) / off; a blind open / closed / at a position. Nothing for unavailable / unknown / a
-    blind
-    on its way."""
+    """A light on (brightness %) / off; a blind open / closed / at a position."""
     s = st.state
     if domain == 'light':
         if s == 'off':

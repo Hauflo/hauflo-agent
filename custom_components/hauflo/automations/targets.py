@@ -18,10 +18,7 @@ class AutomationsTargetsMixin:
         return entity_room(self.hass, eid)
 
     def pickable(self, eid: Any, depth: int=0) -> bool:
-        """A device of the canon's client domains, of any integration, that the person sees in HA, and safe: never what
-        Hauflo protects (locks, the alarm, valves, garage doors and gates, sticky marks), a blind only by its class, a
-        switch only a socket, a scene / a script only when what it sets is safe — and one that takes at least one of the
-        canon's actions (HA would refuse the rest)."""
+        """A device of the canon's client domains, of any integration, that the person sees in HA, and safe: never what Hauflo protects (locks, the alarm, valves, garage doors and gates, sticky marks), a blind only by its class, a switch only a socket, a scene / a script only when what it sets is safe — and one that takes at least one of the canon's actions (HA would refuse the rest)."""
         if not isinstance(eid, str) or not (acts := client_acts((domain := eid.split('.')[0]))) or (st := self.hass.states.get(eid)) is None:
             return False
         ent = er.async_get(self.hass).async_get(eid)

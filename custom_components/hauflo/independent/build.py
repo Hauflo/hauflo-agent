@@ -5,8 +5,7 @@ from ..notify.common import ACTION_EVENT, LINK_KINDS, RUN_SERVICES, repeat_fast,
 from .common import ALARMED, LEVELS_ALARMED, LEVELS_ON, NO_DATA, ONE, alarm_groups, alarm_hold, back_after, gap, helper_action, hold_cfg, ids, level_names, lit, names_cfg, outputs, push, say, state_is, who_template
 
 def automation_for(rule: dict[str, Any], phones: list[dict[str, Any]], t: dict[str, str], ack: str, opn: str, *, names: dict[str, str] | None=None) -> dict[str, Any]:
-    """One rule as a plain HA automation (HA's own editor format). ``t`` — the texts (``texts``), ``ack`` — the rule's
-    «Принято» helper, ``opn`` — its «авария открыта» helper, ``names`` — entity → its name for the button («Закрыть:"""
+    """One rule as a plain HA automation (HA's own editor format)."""
     if rule.get('thresholds'):
         return level_automation_for(rule, phones, t, ack, opn, names=names)
     sources, states = (list(rule['sources']), list(rule['alarm_states']))
@@ -20,10 +19,6 @@ def automation_for(rule: dict[str, Any], phones: list[dict[str, Any]], t: dict[s
     return _automation(rule, phones, t, ack, opn, names, triggers=[*alarm, back], told=told, still=still, alarmed=ALARMED, names_tpl=names_cfg(), variables={'sources': sources, 'alarm_states': states, 'ack': ack})
 
 def level_automation_for(rule: dict[str, Any], phones: list[dict[str, Any]], t: dict[str, str], ack: str, opn: str, *, names: dict[str, str] | None=None) -> dict[str, Any]:
-    """    threshold for the rule's hold, back past it by the step for HOLD (a level has its own hysteresis: battery < 20 →
-    alarm, > 25 → back). One threshold for all its sources (no signals): ``below`` / ``above`` as an integrator writes
-    them; different ones (or signals beside them): each source's margin to its own threshold (``value_template``, a
-    signal −1 in alarm / 1 in normal). «Принято», the repeat, the button and the siren as in ``automation_for``."""
     sources, states = (list(rule['sources']), list(rule['alarm_states']))
     levels: dict[str, dict[str, float]] = rule['thresholds']
     signals = [e for e in sources if e not in levels]

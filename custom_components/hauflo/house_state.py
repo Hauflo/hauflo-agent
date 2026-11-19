@@ -1,6 +1,3 @@
-"""Hauflo's monitoring) as HA entities for the client's own automations: `sensor.hauflo_house_state` (ok / fault / alarm /
-offline, with the counts, the active signals and since when) and `binary_sensor.hauflo_house_problem` (on — anything but
-ok). Push-updated by the agent's recompute (dispatcher), never polled, no timer of their own."""
 from __future__ import annotations
 from typing import Any
 from homeassistant.config_entries import ConfigEntry

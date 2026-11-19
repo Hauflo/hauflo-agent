@@ -1,11 +1,3 @@
-"""The combinations come with the site's signal policy (signals.py `combos`, feature COMBOS_FEATURE) and are read by the
-same
-calculator as every signal (signals.cond_holds → alarm_of). Each is one Hauflo binary sensor (device class problem) —
-on while every condition has held for `holdS`; Hauflo watches it by the site's own policy for it (watch, severity, «Всё
-хорошо»), so it rides every alarm channel as any signal. Only a signal: nothing is switched — the service only warns,
-
-«Since when» is the newest `last_changed` of the sources when the combination is first seen holding (a restart or a new
-combination never waits T again for what has held long already), then kept while it holds."""
 from __future__ import annotations
 from collections.abc import Callable
 from functools import partial
@@ -65,8 +57,7 @@ class Combos:
 
     @callback
     def reload(self) -> None:
-        """The policy changed (or the platform came up): sources tracked, entities synced, every combination worked
-        out."""
+        """The policy changed (or the platform came up): sources tracked, entities synced, every combination worked out."""
         defs = self.defs()
         for cid in [c for c in (*self.since, *self.on, *self._timers) if c not in defs]:
             self._forget(cid)

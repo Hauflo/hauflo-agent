@@ -20,11 +20,7 @@ from .sync import async_sync
 _LOGGER = logging.getLogger(__name__)
 
 async def async_remove_all(hass: HomeAssistant, engine: NotifyEngine | None) -> list[str]:
-    """«Убрать аварии Hauflo» (hauflo.remove_alarms, HA's admin): every hauflo_alarm_* automation, hauflo_ack_* /
-    hauflo_open_* helper (and a
-    hauflo_chatter_* of before 0.31) goes — edited ones too (the admin asked for exactly that); the agent's engine takes
-    the rules back. Returns the
-    aliases removed. NotPlain when automations.yaml isn't plain (nothing removed)."""
+    """«Убрать аварии Hauflo» (hauflo.remove_alarms, HA's admin): every hauflo_alarm_* automation, hauflo_ack_* / hauflo_open_* helper (and a hauflo_chatter_* of before 0.31) goes — edited ones too (the admin asked for exactly that); the agent's engine takes the rules back."""
     file = automations_engine.Automations(hass, lambda _eid: False)
     async with automations_common.FILE_LOCK:
         data, before = await file.read_file()
@@ -71,9 +67,7 @@ async def async_remove_all(hass: HomeAssistant, engine: NotifyEngine | None) -> 
     return [str(a.get('alias') or a.get('id')) for a in ours] + gone_scripts
 
 async def written_english(hass: HomeAssistant, engine: NotifyEngine | None) -> bool:
-    """One language for everything said about the alarm automations: the one they were written in (the project's, kept
-    with their records), else the engine's (the project's or HA's) — never HA's beside a project's other (5B e2e
-    D-4)."""
+    """One language for everything said about the alarm automations: the one they were written in (the project's, kept with their records), else the engine's (the project's or HA's) — never HA's beside a project's other (5B e2e D-4)."""
     stored = engine.native if engine is not None else await HaufloStore(hass, NATIVE_STORE).async_load()
     lang = next((r['lang'] for r in (stored or {}).values() if isinstance(r, dict) and r.get('lang') in ('ru', 'en')), None)
     if lang:
@@ -83,8 +77,7 @@ async def written_english(hass: HomeAssistant, engine: NotifyEngine | None) -> b
     return not site_ru(hass.config.language)
 
 def async_setup_service(hass: HomeAssistant, engine_of: Any) -> None:
-    """``hauflo.remove_alarms`` — HA's admin in the house only (never the agent's own tunnel user, an admin too).
-    Registered once for HA's whole run (integration setup); engine_of() raises «not_loaded» without a loaded entry."""
+    """``hauflo.remove_alarms`` — HA's admin in the house only (never the agent's own tunnel user, an admin too)."""
 
     async def handle(call: ServiceCall) -> None:
         user = await hass.auth.async_get_user(call.context.user_id) if call.context.user_id else None
@@ -102,14 +95,13 @@ def async_setup_service(hass: HomeAssistant, engine_of: Any) -> None:
     async_register_admin_service(hass, DOMAIN, SERVICE, handle)
 
 async def async_removed(hass: HomeAssistant) -> None:
-    """    them away. Their record stays: the agent added again knows them as its own."""
     if not await HaufloStore(hass, NATIVE_STORE).async_load():
         return
     t = await texts(hass, await written_english(hass, None))
     persistent_notification.async_create(hass, t['kept'], t['kept_title'], NOTE)
 
 async def async_export(hass: HomeAssistant, engine: NotifyEngine | None) -> dict[str, Any]:
-    """«Сделать дом независимым»: cards kept for good; the alarm rules as HA's own automations — the same sync as a"""
+    """«Сделать дом независимым»: cards kept for good; the alarm rules as HA's own automations — the same sync as a deploy (they usually are there already)."""
     out: dict[str, Any] = {'cards': None, **empty()}
     try:
         out['cards'] = await keep.async_make_independent(hass, asset_tag())

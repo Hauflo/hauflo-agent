@@ -28,7 +28,6 @@ class AgentChannelsMixin:
     """Opens and serves the cloud's channels."""
 
     async def cloud_ice(self) -> Any:
-        """        region's coturn; the intercom (intercom/cloud_ice.py) hands them to HA's WebRTC. Raises on no / a bad answer."""
         it = tuning()['intercom']
 
         async def ask(host: str) -> Any:
@@ -88,12 +87,10 @@ class AgentChannelsMixin:
 
     @property
     def locked(self) -> bool:
-        """        reload."""
         return self.entry.options.get(CONF_ALLOW_CHANGES, True) is not True
 
     def allowed_ranges(self) -> set[str]:
-        """Main/middle groups Hauflo may send to: what the integrator allowed in HA, and — for sites paired before
-        this existed — the groups of the entities Hauflo already made."""
+        """Main/middle groups Hauflo may send to: what the integrator allowed in HA, and — for sites paired before this existed — the groups of the entities Hauflo already made."""
         allowed = {str(r) for r in self.entry.options.get(CONF_RANGES) or []}
         if CONF_RANGES not in self.entry.options:
             for configs in (knx_store(self.hass) or {}).values():

@@ -1,6 +1,4 @@
-"""A Home Assistant backup before Hauflo changes anything (CLAUDE.md §2, HA core review round 3): Hauflo asks
-for one before every deploy and starts only when it's written. Settings only (no recorder database: seconds, not
-minutes), to HA's own local backups — restored from Settings → System → Backups like any other."""
+"""A Home Assistant backup before Hauflo changes anything (CLAUDE.md §2, HA core review round 3): Hauflo asks for one before every deploy and starts only when it's written."""
 from __future__ import annotations
 import asyncio
 import functools

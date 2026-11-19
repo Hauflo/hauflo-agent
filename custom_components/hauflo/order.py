@@ -1,13 +1,3 @@
-"""дать возможность перетаскивать, чтобы выстраивалось как надо»). For the whole house, like the block titles (titles.py):
-kept here, so a deploy (which rewrites the dashboard) never loses it; the cards put it over the cloud's order — what
-the cloud adds later goes at the end, what it removed is dropped.
-
-A block is `<dashboard>|<view path>|<slot>`: the slot is the card's kind and its block / kind / title — the same in
-the cards (hauflo-cards.js `orderSlot`), so the phone and tablet copies of a room's block share one order; the room
-tiles of a page are one block (`room:tiles`, items = their paths). Only a block that is on that Hauflo dashboard now,
-and only the items it holds (entity ids in its cards, an area card's entities, the tiles' paths) are kept. An area
-
-GET/POST /api/hauflo/order — any signed-in person of this HA (the client isn't an admin), as the titles; never through"""
 from __future__ import annotations
 import re
 import time
@@ -134,7 +124,7 @@ async def _view(hass: HomeAssistant, dash: str, path: str) -> dict[str, Any] | N
     return None
 
 async def clean_items(hass: HomeAssistant, key: Any, items: Any) -> list[str] | None:
-    """The order as kept: the block's own items, once each, up to 300. None — no such block (or not a list)."""
+    """The order as kept: the block's own items, once each, up to 300."""
     parsed = parse_key(key)
     if parsed is None or not isinstance(items, list):
         return None
@@ -157,11 +147,6 @@ async def clean_items(hass: HomeAssistant, key: Any, items: Any) -> list[str] | 
     return out
 
 def view_order(cfg: Any, order: dict[str, list[str]], dash: str, base: Any=None) -> list[dict[str, Any]] | None:
-    """    Every `room:tiles` block of this dashboard whose items are paths of its views: those views take the places their
-    set holds, in the tiles' order; every other view (the home page, rooms, «Служебное») stays where it is. The blocks
-    go by their view's place, so the home page's tiles decide before a floor's. No block of this dashboard («Как
-    настроил
-    интегратор»): Hauflo's order again — the `base` (the last config Hauflo saved) says it. None — nothing to change."""
     views = cfg.get('views') if isinstance(cfg, dict) else None
     if not isinstance(views, list) or not isinstance(order, dict):
         return None
@@ -254,7 +239,6 @@ def _managed(hass: HomeAssistant) -> list[str]:
     return sorted(getattr(boards, 'bases', {}) or {}) if boards is not None else []
 
 async def reorder_views(hass: HomeAssistant, dash: str, order: dict[str, list[str]]) -> bool:
-    """The dashboard's tabs in the tiles' order now (view_order), through the merge's own save. False — nothing
-    changed."""
+    """The dashboard's tabs in the tiles' order now (view_order), through the merge's own save."""
     boards = _merger(hass)
     return await boards.reorder_views(dash, order) if boards is not None else False

@@ -1,7 +1,4 @@
-"""Every store Hauflo keeps in HA's .storage: one class, so a later shape change is a migration, never a crash.
-
-HA's Store raises NotImplementedError when the saved version differs from the code's and the store has no
-data is kept as is — every reader already checks its shape — until a real migration is written."""
+"""Every store Hauflo keeps in HA's .storage: one class, so a later shape change is a migration, never a crash."""
 from __future__ import annotations
 from typing import Any
 from homeassistant.core import HomeAssistant

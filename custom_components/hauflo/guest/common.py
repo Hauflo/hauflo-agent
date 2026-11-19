@@ -53,8 +53,7 @@ class Invalid(ValueError):
     """A request the family's screen sent wrong (400)."""
 
 class Refused(Invalid, derived.Refused):
-    """A refusal a person can meet (not a request sent wrong): said in the page's language — translations
-    guest_<code>."""
+    """A refusal a person can meet (not a request sent wrong): said in the page's language — translations guest_<code>."""
 
     def __init__(self, code: str, status: int=HTTPStatus.BAD_REQUEST, **ph: Any) -> None:
         derived.Refused.__init__(self, code, f'guest_{code}', status, **ph)

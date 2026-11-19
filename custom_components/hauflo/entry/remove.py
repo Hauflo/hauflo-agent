@@ -91,8 +91,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: HaufloConfigEntry) -> b
     return True
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Removed in HA: its system user and voice sentences go too, and Hauflo is told (the site is no
-    longer paired — no «agent gone» alarm)."""
+    """Removed in HA: its system user and voice sentences go too, and Hauflo is told (the site is no longer paired — no «agent gone» alarm)."""
     await async_preload(hass)
     await voice.async_remove(hass)
     issues.clear_all(hass)

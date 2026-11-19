@@ -77,7 +77,6 @@ class NotifyTestView(HomeAssistantView):
         return self.json(await engine.async_test(body))
 
 class AlarmsView(HomeAssistantView):
-    """Since when each open alarm is on — for the dashboard's alarm card (HA's last_changed restarts with HA;"""
     url = '/api/hauflo/alarms'
     name = 'api:hauflo:alarms'
     requires_auth = True

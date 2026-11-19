@@ -26,8 +26,7 @@ def _loaded(hass: HomeAssistant) -> Agent:
     raise ServiceValidationError(translation_domain=DOMAIN, translation_key='not_loaded')
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """The six actions, registered once: valid in automations before the entry loads, answering «not loaded»
-    meanwhile."""
+    """The six actions, registered once: valid in automations before the entry loads, answering «not loaded» meanwhile."""
     await async_preload(hass)
     timers.async_setup(hass, lambda: _loaded(hass))
     protect.async_setup_service(hass, lambda: _loaded(hass), lambda eid: protect_marks_of(hass, eid), ga_key, lambda: protect_refresh(hass))

@@ -1,5 +1,3 @@
-"""Р55: the doors' cameras — `camera.<door>` (the panel's video) and `camera.<door>_talk` (the call's sound both ways
-through HA's go2rtc: the card's WebRTC sendrecv); the rest of a door's entities: intercom/entities.py."""
 from __future__ import annotations
 from homeassistant.components.camera import Camera, CameraEntityFeature
 from homeassistant.config_entries import ConfigEntry
@@ -43,8 +41,7 @@ class DoorCamera(DoorEntity, Camera):
         return None
 
 class DoorTalkCamera(DoorEntity, Camera):
-    """The call's sound: the agent's loopback RTSP with ONVIF backchannel — the card's microphone goes back to the panel
-    only while its person is the call's talker (the sensor's `talker`)."""
+    """The call's sound: the agent's loopback RTSP with ONVIF backchannel — the card's microphone goes back to the panel only while its person is the call's talker (the sensor's `talker`)."""
     KIND, DOMAIN_, SUFFIX = ('talk', 'camera', '_talk')
     _attr_translation_key = 'intercom_talk'
     _attr_supported_features = CameraEntityFeature.STREAM

@@ -1,6 +1,3 @@
-"""helper times and limits, purposes, derived-value defaults, recipes — lives in rules_canon.json, checked against this
-schema when the agent loads. A bad canon is a bug of the release: the import fails loudly, never a silent default.
-User texts are in strings.json / translations (section «exceptions», keys «rules_…»), never here or in the code."""
 from __future__ import annotations
 import functools
 import json
@@ -78,6 +75,4 @@ def load(path: Path=FILE) -> dict[str, Any]:
 
 @functools.cache
 def rules_canon() -> dict[str, Any]:
-    """rules_canon.json, read on first use — off the event loop: async_setup_entry and the config flow preload it in
-    the executor."""
     return load()

@@ -11,16 +11,6 @@ from .refusals import member_refusal
 from .revert import journal_list, revert
 
 class ForeignView(HomeAssistantView):
-    """GET → {"notify": {...}, "features": [...], "plan": bool, "journal": {"devices": [...], "entities": [...]},
-    "locks":
-    {...}, "lock_info": {"seen", "people", "doors"} (Р56, only with a lock in the house)};
-    POST (admin only), any of:
-      {"notify": {entity_id: bool}} — replaces the alarm sources map;
-      {"plan": {"areas": [...], "devices": [...], "entities": [...]} | null, "plan_id": "<id>"} — a deploy's plan
-        by its id (none — the one legacy plan): each item written once, gone when idle PLAN_TTL; null — dropped;
-      {"revert": {"devices": [...], "entities": [...]}} — «Вернуть как было» (a fresh backup first, as any change);
-      {"locks": {lock entity: {...}}} — the locks' settings (Р56, locks_ok), the whole map;
-        whole set; the answer says each one refused and why ({"refused": {entity_id: reason}})."""
     url = '/api/hauflo/foreign'
     name = 'api:hauflo:foreign'
     requires_auth = True

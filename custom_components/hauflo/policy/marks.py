@@ -51,11 +51,7 @@ def protect_marks_of(hass: HomeAssistant, entity_id: str) -> tuple[str | None, s
     return (entry.unique_id, _opening_gas(config))
 
 def protect_mark(hass: HomeAssistant, entity_ids: list[str]) -> list[str]:
-    """The deploy says what a KNX switch is FOR (red-team 2, A1): a gate's / an electric lock's relay is a plain switch
-    to
-    HA, so neither its class nor its domain tells the agent. Marked here — its unique id and the addresses it opens by —
-    it is protected like a gate cover (sticky: deleted and remade on its addresses it stays protected), and taken off
-    every voice assistant, itself and any «Switch as X» over it. Returns the entities marked."""
+    """The deploy says what a KNX switch is FOR (red-team 2, A1): a gate's / an electric lock's relay is a plain switch to HA, so neither its class nor its domain tells the agent."""
     marks = protect.marks(hass)
     if marks is None:
         return []
@@ -71,7 +67,6 @@ def protect_mark(hass: HomeAssistant, entity_ids: list[str]) -> list[str]:
     return done
 
 def protect_unmark(hass: HomeAssistant, entity_ids: list[str]) -> list[str]:
-    """    voice was refused for good). Only a mark the deploy set by that entity's unique id: a gate cover's (by its class,"""
     marks = protect.marks(hass)
     if marks is None:
         return []

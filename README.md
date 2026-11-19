@@ -40,7 +40,7 @@ Free during the beta; needs a Hauflo account ([request access](https://app.haufl
    The link works only after Home Assistant has been restarted with Hauflo installed, and only if “My Home Assistant” knows your instance address (Settings → My Home Assistant). If it shows “unknown integration” or does not open, go by hand: Settings → Devices & services → **Add integration** → **Hauflo**.
 
 5. **Confirm the KNX addresses.** Remove any Hauflo must not control, such as a gate or a lock.
-6. Hauflo shows **agent online** in a few seconds. Open **Deploy**, check the plan, deploy.
+6. Hauflo shows **agent online** in a few seconds. Open **Apply**, check the plan, apply.
 
 ## Options
 

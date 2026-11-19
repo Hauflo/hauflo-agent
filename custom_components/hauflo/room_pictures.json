@@ -261,7 +261,7 @@
       "icon": "mdi:bed-outline",
       "match": [
         "гостев",
-        "guest\\s*(room|bedroom|suite)"
+        "guests?['’]?s?\\s*(room|bedroom|suite)"
       ],
       "files": [
         "guest-1.webp",
@@ -280,8 +280,10 @@
       "match": [
         "детск",
         "nursery",
-        "kids?\\s*(room|bedroom)",
-        "children"
+        "kids?['’]?\\s*(room|bedroom)",
+        "child(ren)?['’]?s?\\s*(room|bedroom)",
+        "children",
+        "(boys?|girls?)['’]?\\s*(room|bedroom)"
       ],
       "files": [
         "kids-1.webp",

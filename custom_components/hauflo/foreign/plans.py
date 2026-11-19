@@ -48,8 +48,7 @@ def holding(hass: HomeAssistant | None, msg: dict[str, Any]) -> list[tuple[str, 
     return sorted(held, key=lambda kp: float(kp[1].get('at') or 0))
 
 def planned(hass: HomeAssistant | None, msg: dict[str, Any]) -> bool:
-    """The item of this registry update is in a deploy's live plan — or the update names a plan (N7: then the wizard's
-    rules alone decide, a gone plan refused with its reason, never the click's placing): the wizard's rules decide."""
+    """The item of this registry update is in a deploy's live plan — or the update names a plan (N7: then the wizard's rules alone decide, a gone plan refused with its reason, never the click's placing): the wizard's rules decide."""
     return PLAN_KEY in msg or bool(holding(hass, msg))
 
 def drop_items(hass: HomeAssistant | None, devices: set[str], entities: set[str]) -> None:

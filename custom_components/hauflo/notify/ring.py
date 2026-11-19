@@ -59,10 +59,6 @@ class NotifyRingMixin:
         return [e for e in self._rang if e == eid or (dev and self._visits.get(e, '').startswith(f'{dev}|'))]
 
     def ring_said(self, state: State) -> str | None:
-        """The press the cloud's bell / Telegram line is about (status `ring`, the same rule as the push): the visit's
-        first
-        press for a repeat within the window (one line per visit as one push); None for a SIP call's answered / ended —
-        no press (Р55: «🔔 звонок в дверь» on a hang-up)."""
         if str(state.attributes.get('event_type') or '').lower() in (*ring()['clear_event_types'], *ring()['skip_event_types']):
             return None
         last, visit = self._said.get(state.entity_id, ('', ''))
@@ -146,8 +142,7 @@ class NotifyRingMixin:
             self.hass.async_create_task(self._clear_ring(call))
 
     def rings_on(self, phone: dict[str, Any], config: dict[str, Any] | None=None) -> bool:
-        """«Пуш о звонке» of a phone: its own, else its person's, else «*»; not said — on unless its alarms are
-        «off»."""
+        """«Пуш о звонке» of a phone: its own, else its person's, else «*»; not said — on unless its alarms are «off»."""
         rings = (config or self.config).get('rings') or {}
         for key in (phone['service'], phone.get('person'), '*'):
             if key and isinstance(rings.get(key), bool):

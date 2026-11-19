@@ -1,8 +1,4 @@
-"""The registry of health checks and their runs: each check on its own period (`every_s`), one run at a time, after
-HA has started; the results kept in HA's storage (`hauflo.health`), so a restart says the same at once. The status
-block `health` is {check: {"level", "since", …facts}} — `since` is when the level last changed. A change of level
-pushes the status (the cloud turns a non-ok level into a fault line for the company's people). No Repairs here: HA
-raises its own for a full disk or a failed backup."""
+"""The registry of health checks and their runs: each check on its own period (`every_s`), one run at a time, after HA has started; the results kept in HA's storage (`hauflo.health`), so a restart says the same at once."""
 from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable

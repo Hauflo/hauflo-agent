@@ -965,7 +965,7 @@
       "message": "Silent sensor"
     },
     "rules_link_silent_sensor": {
-      "message": "Already in the rule hints on “Review”: a sensor that sends nothing for hours — per room and for the weather station. Not made twice here."
+      "message": "Already in the rule hints in “Devices”: a sensor that sends nothing for hours — per room and for the weather station. Not made twice here."
     },
     "rules_window_mean_hour": {
       "message": "mean per hour"

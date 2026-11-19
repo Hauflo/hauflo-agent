@@ -16,8 +16,7 @@ from .record import HabitsRecordMixin
 from .suggest import HabitsSuggestMixin
 
 class Habits(HabitsRecordMixin, HabitsLearnMixin, HabitsSuggestMixin):
-    """One per loaded entry. `pickable`: automations.pickable; `engines`: Hauflo's own engines (rules, presence)
-    whose commands aren't a person's."""
+    """One per loaded entry."""
 
     def __init__(self, hass: HomeAssistant, pickable: Callable[[str], bool], engines: Callable[[], list[Any]], area: Callable[[str], str | None]) -> None:
         self.hass = hass

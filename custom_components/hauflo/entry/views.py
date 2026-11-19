@@ -8,7 +8,6 @@ from ..issues import degrading
 from ..policy.areas import load_stock_area_names, stock_area
 
 class OwnedView(HomeAssistantView):
-    """The KNX entities Hauflo made here (their unique ids): a plan shows the ones no project knows any more —"""
     url = '/api/hauflo/owned'
     name = 'api:hauflo:owned'
     requires_auth = True
@@ -32,8 +31,7 @@ class OwnedView(HomeAssistantView):
         return self.json({'unique_ids': sorted(owned), 'entries': sorted(entries), 'areas': sorted(areas), 'stock_areas': stock})
 
 class RangesView(HomeAssistantView):
-    """The group address ranges Hauflo may send to (allowed in HA) and the ones it asked for — the plan says which a
-    deploy still needs allowed (acceptance B9). Read only; changed only in HA's own options flow."""
+    """The group address ranges Hauflo may send to (allowed in HA) and the ones it asked for — the plan says which a deploy still needs allowed (acceptance B9)."""
     url = '/api/hauflo/ranges'
     name = 'api:hauflo:ranges'
     requires_auth = True
@@ -48,7 +46,6 @@ class RangesView(HomeAssistantView):
         return self.json({'allowed': sorted(allowed), **ranges.state(hass)})
 
     async def post(self, request):
-        """The plan asks for what the project writes ({"addresses": [...], "project": "…"}): what isn't allowed waits"""
         if not request['hass_user'].is_admin:
             return self.json_message('admin only', 403)
         hass = request.app[KEY_HASS]

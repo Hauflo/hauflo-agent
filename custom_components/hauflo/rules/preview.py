@@ -17,8 +17,7 @@ class RulesPreviewMixin:
     """Previews rules before they are saved."""
 
     async def preview(self, raw: Any, *, client: bool, tunnel: bool=False) -> dict[str, Any]:
-        """A dry run: the rule checked as a save would, and what it would do now — nothing written. Through the tunnel
-        only what get_states would show is read, and «дома / никого» is not asked."""
+        """A dry run: the rule checked as a save would, and what it would do now — nothing written."""
         try:
             rule = clean_rule(raw, self._env(client))
             if tunnel:

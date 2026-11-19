@@ -149,16 +149,13 @@ class Rules(RulesScheduleMixin, RulesBusMixin, RulesEvaluateMixin, RulesSuggestM
         return out
 
     def cloud_hidden(self, rule: dict[str, Any]) -> str | None:
-        """The first thing a rule reads that the tunnel may not (or None). «Дома / никого» reads where the family is — a
-        person's state, never the tunnel's (red-team 2, A3): such a rule is saved in HA only, and the tunnel sees it
-        redacted like any rule over a private input."""
+        """The first thing a rule reads that the tunnel may not (or None)."""
         if any((c['type'] == 'presence' for c in rule['only_if'])):
             return next(iter(sorted(self.hass.states.async_entity_ids('person'))), 'person')
         return next((eid for eid, attr in sorted(self.reads(rule), key=str) if not self.cloud_reads(eid, attr)), None)
 
     def cloud_hidden_entities(self) -> set[str]:
-        """The rule / derived entities whose state would tell the tunnel what it may not read (scrubbed like
-        private)."""
+        """The rule / derived entities whose state would tell the tunnel what it may not read (scrubbed like private)."""
         out: set[str] = set()
         for rid, rule in self.rules.items():
             if self.cloud_hidden(rule) is not None and (b := self.binaries.get(rid)) is not None and b.entity_id:

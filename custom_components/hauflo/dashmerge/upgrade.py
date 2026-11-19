@@ -49,10 +49,7 @@ def _new_ids(idx: Index) -> bool:
     return bool(cards) and (not any((h.startswith(f'{idx.parent[h]}/') for h in cards)))
 
 def upgrade(base: dict[str, Any], current: Any, new: dict[str, Any]) -> tuple[dict[str, Any], Any, dict[str, Any]] | None:
-    """(the base, HA's config — copies, in the new ids and blocks; what it did) when the base has the old ids and the
-    new version the new ones, else None. Nothing of HA's is dropped here: only Hauflo's ids are renamed, Hauflo's copy
-    sections read as the block's section and his cards in them moved next to the block (an exact repeat of his card in
-    another copy of the same section — once: `allow` says how many of which)."""
+    """(the base, HA's config — copies, in the new ids and blocks; what it did) when the base has the old ids and the new version the new ones, else None."""
     if not isinstance(base, dict) or not isinstance(current, dict):
         return None
     B0, N = (Index(base), Index(new))

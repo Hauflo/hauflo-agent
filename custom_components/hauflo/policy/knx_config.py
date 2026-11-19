@@ -30,9 +30,7 @@ def _knx_scenes_owned(hass: HomeAssistant | None, owned: set[str] | None) -> dic
     return out
 
 def knx_scene_target(hass: HomeAssistant | None, owned: set[str] | None, allowed: set[str], entity_id: Any) -> tuple[str, int]:
-    """Where a KNX scene's learn telegram goes: (address «main/middle/sub», scene number). Only from the agent's own
-    HA, or anything but a scene listens there (an actuator's switch object on the same address would take the byte
-    as a command)."""
+    """Where a KNX scene's learn telegram goes: (address «main/middle/sub», scene number)."""
     if not isinstance(entity_id, str) or not SCENE_EID.fullmatch(entity_id):
         raise PermissionError('not a scene')
     found = _knx_scenes_owned(hass, owned).get(entity_id)

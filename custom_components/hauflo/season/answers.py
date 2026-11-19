@@ -107,9 +107,7 @@ class SeasonAnswersMixin:
         return {'season': mode, 'changed': changed, 'sent': sent, 'skipped': skipped, 'failed': failed}
 
     async def resend(self, why: str) -> dict[str, Any] | None:
-        """The chosen season again — never one guessed, never a climate switched on. A KNX UI climate: its heat/cool
-        address (once per address, whether it runs or is off — the address doesn't switch it on); another one: set only
-        while it runs in the other mode."""
+        """The chosen season again — never one guessed, never a climate switched on."""
         mode = self.season
         if mode not in MODES or not self.config['resend_s']:
             return None

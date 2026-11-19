@@ -1,6 +1,6 @@
 # Room pictures
 
-87 files `<type>-<n>.webp`, 800×600, ≤80 KB each, converted (Pillow, WebP q50–80) from Unsplash photos: 10 utility types (shown by the name; Р61: + `technical` — «Сервис», «Техническое помещение», «Service» — reuses boiler-1, electrical-2, server-1, no new files), 18 living types + the general set (offered, shown when chosen).
+87 files `<type>-<n>.webp`, 800×600, ≤80 KB each, converted (Pillow, WebP q50–80) from Unsplash photos: 10 utility types (shown by the name; the `technical` type — «Сервис», «Техническое помещение», «Service» — reuses boiler-1, electrical-2, server-1), 18 living types + the general set (offered, shown when chosen).
 Licence: Unsplash License (https://unsplash.com/license) — free for commercial use, no attribution required, no permission needed.
 
 | file | Unsplash image id | KB |

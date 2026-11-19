@@ -17,9 +17,7 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 async def ask_admins(hass: HomeAssistant, user: Any, note: str, phones: list[dict[str, Any]], config: dict[str, Any] | None=None) -> dict[str, Any]:
-    """«Марина просит гостевую ссылку на вечер» to the admins: a notification in HA and a push to the admins' phones
-    (the
-    HA app, found as the alarms find them). The guest link itself is still made by an admin — nothing is issued here."""
+    """«Марина просит гостевую ссылку на вечер» to the admins: a notification in HA and a push to the admins' phones (the HA app, found as the alarms find them)."""
     ru = site_ru(hass.config.language, config)
     who = (user.name or '').strip() or ('Кто-то из семьи' if ru else 'Someone in the family')
     what = f'{who} просит гостевую ссылку' if ru else f'{who} asks for a guest link'
@@ -40,7 +38,7 @@ async def ask_admins(hass: HomeAssistant, user: Any, note: str, phones: list[dic
     return {'asked': True, 'phones': sent}
 
 class GuestView(HomeAssistantView):
-    """The family's side, signed in to HA. Not reachable through Hauflo's tunnel (not in __init__._HAUFLO_VIEWS)."""
+    """The family's side, signed in to HA."""
     url = '/api/hauflo/guest'
     name = 'api:hauflo:guest'
     requires_auth = True

@@ -1,10 +1,3 @@
-"""window, for Hauflo's page (the hour before the alarm → its end / now). Never our own history: the recorder holds it.
-
-Read only, admin only, through the tunnel (tunnel.json). What may be read is what the tunnel may read anyway — the
-agent's `reads` gate (__init__._cloud_reads: no person / zone / tracker / phone, no presence sensor Hauflo doesn't own,
-only get_states' attributes) — and only a numeric value of the domains in tuning.json `history.domains` (a climate's
-current temperature, a humidifier's humidity — `history.attrs`). The answer is thinned to `max_points` (each bucket's
-min and max kept in time order: a spike survives), the window clipped to `max_window_h`."""
 from __future__ import annotations
 from collections.abc import Callable
 from datetime import datetime, timedelta
@@ -35,8 +28,7 @@ def unit_of(hass: HomeAssistant, entity_id: str, attribute: str | None) -> str |
     return hass.config.units.temperature_unit if 'temperature' in attribute else '%'
 
 def window(start: str | None, end: str | None, now: datetime | None=None) -> tuple[datetime, datetime] | None:
-    """[start, end) as asked (ISO or epoch ms), end never in the future, the span never above MAX_WINDOW (its last part
-    kept — the alarm's end side). None — unreadable or empty."""
+    """[start, end) as asked (ISO or epoch ms), end never in the future, the span never above MAX_WINDOW (its last part kept — the alarm's end side)."""
     now = now or dt_util.utcnow()
 
     def at(v: str | None) -> datetime | None:
@@ -72,8 +64,7 @@ def points_of(states: list[Any], attribute: str | None) -> list[Point]:
     return out
 
 def thin(points: list[Point], a_ms: float, b_ms: float, limit: int | None=None) -> list[Point]:
-    """At most `limit` points (tuning's max_points by default): the window cut in limit/2 buckets, each keeps its min
-    and max in their time order."""
+    """At most `limit` points (tuning's max_points by default): the window cut in limit/2 buckets, each keeps its min and max in their time order."""
     limit = max_points() if limit is None else limit
     if len(points) <= limit:
         return points
@@ -106,8 +97,7 @@ async def read(hass: HomeAssistant, entity_id: str, a: datetime, b: datetime) ->
     return {**base, 'points': [[round(t), v] for t, v in thin(pts, base['from'], base['to'])], 'why': None}
 
 class HistoryView(HomeAssistantView):
-    """GET ?entity=<id>&start=<iso|ms>&end=<iso|ms> → one numeric entity's values (read()). Admins only (Hauflo through
-    its tunnel); an entity the tunnel may not read, a domain without a number — 403 / 400, never an empty «no data»."""
+    """GET ?entity=<id>&start=<iso|ms>&end=<iso|ms> → one numeric entity's values (read())."""
     url = '/api/hauflo/history'
     name = 'api:hauflo:history'
     requires_auth = True

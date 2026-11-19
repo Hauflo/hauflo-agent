@@ -17,8 +17,7 @@ if TYPE_CHECKING:
     from .checks import Env
 
 def clean_repeat(raw: Any, do: str, pulse_s: Any=None) -> dict[str, int] | None:
-    """«Повторить N раз через M с» (canon actions.repeat): only an action that does something each time (a press, a
-    pulse, a toggle, a scene, a script); a pulse's pause longer than the pulse itself."""
+    """«Повторить N раз через M с» (canon actions.repeat): only an action that does something each time (a press, a pulse, a toggle, a scene, a script); a pulse's pause longer than the pulse itself."""
     if raw is None:
         return None
     r = C('actions', 'repeat')
@@ -238,8 +237,7 @@ def _clean_tail(raw: dict[str, Any], rule: dict[str, Any], env: Env, meta: dict[
     return rule
 
 def in_bounds(rule: dict[str, Any]) -> None:
-    """A rule's thresholds inside what its unit can be (canon «thresholds»; the backend checks the same for the
-    project's own sensors)."""
+    """A rule's thresholds inside what its unit can be (canon «thresholds»; the backend checks the same for the project's own sensors)."""
     unit = rule['input'].get('unit')
     b = C('thresholds').get(unit) if unit else None
     if b and any((k in rule and (not b[0] <= rule[k] <= b[1]) for k in ('x', 'lo', 'hi'))):

@@ -24,8 +24,7 @@ def _walk_admins(node: Any, fix: Callable[[str, Any], Any]) -> Any:
     return node
 
 def expand_admins(cfg: Any, ids: list[str]) -> Any:
-    """The marker (a view's `visible: [{user: ADMINS}]`, a card's `{condition: user, users: [ADMINS]}`) → HA's
-    administrators (`ids`); none known — the marker stays, a list no user matches (seen in edit mode only)."""
+    """The marker (a view's `visible: [{user: ADMINS}]`, a card's `{condition: user, users: [ADMINS]}`) → HA's administrators (`ids`); none known — the marker stays, a list no user matches (seen in edit mode only)."""
     if not ids:
         return cfg
 
@@ -38,8 +37,7 @@ def expand_admins(cfg: Any, ids: list[str]) -> Any:
     return _walk_admins(cfg, fix)
 
 def collapse_admins(cfg: Any, ids: list[str]) -> Any:
-    """A read for the cloud: exactly the marker's expansion (a list of users equal to HA's administrators now, `ids`)
-    says the marker again. Any other list (the integrator's own choice of people, or admins since changed) stays as it"""
+    """A read for the cloud: exactly the marker's expansion (a list of users equal to HA's administrators now, `ids`) says the marker again."""
     admins = set(ids)
 
     def fix(key: str, v: list[Any]) -> list[Any]:
@@ -57,9 +55,7 @@ def _marked_names(v: list[Any], key: str) -> set[str]:
     return {x[len(USER_MARKER):] for x in raw if isinstance(x, str) and x.startswith(USER_MARKER)}
 
 def expand_users(cfg: Any, users: list[tuple[str, str]]) -> Any:
-    """`users` — (id, name) of HA's active people. A list with markers ({user: USER_MARKER + name}, a card's
-    `users: [USER_MARKER + name]`) keeps them and gets the ids of the people of those names (all of them, if two share a
-    name); a name nobody has adds nothing — the list then shows the page to nobody (seen in edit mode only)."""
+    """`users` — (id, name) of HA's active people."""
 
     def fix(key: str, v: list[Any]) -> list[Any]:
         names = _marked_names(v, key)
@@ -72,8 +68,7 @@ def expand_users(cfg: Any, users: list[tuple[str, str]]) -> Any:
     return _walk_admins(cfg, fix)
 
 def collapse_users(cfg: Any, users: list[tuple[str, str]]) -> Any:
-    """A read for the cloud: a list with markers loses the ids of the people of those names — exactly what expand_users
-    added; a list without markers (the integrator's own choice) is never touched."""
+    """A read for the cloud: a list with markers loses the ids of the people of those names — exactly what expand_users added; a list without markers (the integrator's own choice) is never touched."""
 
     def fix(key: str, v: list[Any]) -> list[Any]:
         names = _marked_names(v, key)
@@ -86,9 +81,7 @@ def collapse_users(cfg: Any, users: list[tuple[str, str]]) -> Any:
     return _walk_admins(cfg, fix)
 
 class Access:
-    """Who may see Hauflo's pages now (built by guest.py): `family` — HA's active people but guests; `guests` — every
-    guest user the agent made and still knows (ended ones too: never family); `pages` — dashboard → view path → the
-    active guests given it; `active` — a guest with a login exists, so pages get lists."""
+    """Who may see Hauflo's pages now (built by guest.py): `family` — HA's active people but guests; `guests` — every guest user the agent made and still knows (ended ones too: never family); `pages` — dashboard → view path → the active guests given it; `active` — a guest with a login exists, so pages get lists."""
 
     def __init__(self, family: list[str], guests: set[str], pages: dict[str, dict[str, list[str]]], active: bool) -> None:
         self.family = family
@@ -132,8 +125,7 @@ def expand_access(cfg: Any, access: Access | None, url_path: str) -> Any:
     return cfg
 
 def collapse_access(cfg: Any, guests: set[str] | frozenset[str]=frozenset()) -> Any:
-    """The pages as they were before expand_access (in place): by the tag; a list whose tag HA's own editor dropped —
-    the known guests out of it, the rest is a list someone chose."""
+    """The pages as they were before expand_access (in place): by the tag; a list whose tag HA's own editor dropped — the known guests out of it, the rest is a list someone chose."""
     for v in views_of(cfg):
         if not isinstance(v, dict) or not isinstance(v.get('visible'), list):
             continue
@@ -150,8 +142,6 @@ def collapse_access(cfg: Any, guests: set[str] | frozenset[str]=frozenset()) -> 
     return cfg
 
 def redact(current: Any, base: dict[str, Any], key: bytes) -> Any:
-    """HA's config as the cloud may read it: Hauflo's items as they are; the integrator's (no Hauflo id the base knows,
-    or one of another kind) and what he changed in a Hauflo item — opaque placeholders, a keyed hash of what they hold"""
     if not isinstance(current, dict):
         return current
     B = Index(base)

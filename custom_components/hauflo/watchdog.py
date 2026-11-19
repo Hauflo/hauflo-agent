@@ -1,27 +1,3 @@
-"""автоматом; не запустилась — говорить интегратору или заказчику»).
-
-The class (CLAUDE.md §10): an integration of HA that is set up but doesn't work — a cloud account (a weather service,
-a vacuum, a camera, a router…) that failed to start, or a local one whose every entity went «unavailable» (a gateway
-lost after a power cut). HA itself only retries a failed setup (`setup_retry`, backoff to 10 min, for ever) and does
-nothing at all for a setup error or an integration that is loaded but dead. What best products do (Hubitat «device
-watchdog», Homey «app crashed → restart»): restart with a growing pause, a cap per day, then a word to a human.
-
-What counts as fallen (one config entry):
-  * `setup_error` for `error_wait_s`, or `setup_retry` for `retry_wait_s` (HA's own retries failed that long);
-  * `loaded`, with entities, and ALL its enabled entities `unavailable` for `unavailable_after_s`.
-Never: Hauflo itself, the domains of `never_domains` (KNX has its own link alarm; a phone that is off makes all its
-entities unavailable), helper / system integrations (`skip_types`: a template is dead because its source is), a
-disabled entry, an entry the integrator switched the watchdog off for (the cloud's push, signals.py `watchdog.off`),
-and nothing during HA's start (`start_grace_s` after it is running).
-
-Recovery: `hass.config_entries.async_reload` — the first `first_s` after the fault is confirmed, then ×`factor` up to
-`max_s`, at most `attempts_max` within `window_h` hours; one reload at a time in the whole house, `spacing_s` between
-two, `settle_s` after one before judging it. After `down_after_attempts` reloads that didn't help the entry is «down»:
-the status says so (the cloud alarms the integrator, and the client when subscribed), and HA's Repairs shows it. It goes
-back to «ok» by itself the moment the entry works again — whoever fixed it — and the status says when.
-
-Kept in HA's storage (`hauflo.watchdog`): an HA restart neither forgets an open «down» (the cloud would end it as
-«back») nor resets the day's cap. Numbers: tuning.json «watchdog»."""
 from __future__ import annotations
 import asyncio
 from collections.abc import Callable
@@ -274,8 +250,7 @@ class Watchdog:
             self.on_change()
 
     def items(self) -> dict[str, dict[str, Any]]:
-        """The status block (`integrations`): the entries the watchdog has a word about — fallen ones (restarting /
-        down) and the ones back within keep_recovered_h; a short blip never confirmed isn't there."""
+        """The status block (`integrations`): the entries the watchdog has a word about — fallen ones (restarting / down) and the ones back within keep_recovered_h; a short blip never confirmed isn't there."""
         return {f"{r['domain']}/{eid}": {'domain': r['domain'], 'title': r['title'], 'state': r['state'], 'since': _iso(r['since']), 'attempts': r['attempts'], 'lastError': r['lastError'], 'recoveredAt': _iso(r['recoveredAt'])} for eid, r in self.recs.items() if r['confirmed'] or r['recoveredAt'] is not None}
 
 def _new(entry: ConfigEntry) -> dict[str, Any]:

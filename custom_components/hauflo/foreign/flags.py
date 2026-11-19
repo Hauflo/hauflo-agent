@@ -80,8 +80,7 @@ def notify_ok(m: Any) -> bool:
     return isinstance(m, dict) and len(m) <= max_ids() and all((isinstance(k, str) and cv.valid_entity_id(k) and isinstance(v, bool) for k, v in m.items()))
 
 def members_ok(v: Any) -> set[str] | None:
-    """{"members": [...]}: entity ids of lights / covers only, at most MAX_IDS (anything else — the whole body
-    refused)."""
+    """{"members": [...]}: entity ids of lights / covers only, at most MAX_IDS (anything else — the whole body refused)."""
     if not isinstance(v, list) or len(v) > max_ids():
         return None
     if not all((isinstance(x, str) and len(x) <= 255 and cv.valid_entity_id(x) and (x.split('.', 1)[0] in MEMBER_DOMAINS) for x in v)):
@@ -89,8 +88,7 @@ def members_ok(v: Any) -> set[str] | None:
     return set(v)
 
 def locks_ok(v: Any) -> dict[str, dict[str, Any]] | None:
-    """{"locks": {lock entity: {push?, alarms?: bool, users?: [HA user ids], names?: {user no.: name}, door?: intercom
-    door id | null, poll?: minutes}}} — anything else refuses the whole body (a flood or a garbage name never kept)."""
+    """{"locks": {lock entity: {push?, alarms?: bool, users?: [HA user ids], names?: {user no.: name}, door?: intercom door id | null, poll?: minutes}}} — anything else refuses the whole body (a flood or a garbage name never kept)."""
     if not isinstance(v, dict) or len(v) > lt()['locks_max']:
         return None
     out: dict[str, dict[str, Any]] = {}

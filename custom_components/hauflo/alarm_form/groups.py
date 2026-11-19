@@ -21,8 +21,7 @@ def _wanted(rule: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     return ('template', {'state': helper_state(rule)})
 
 async def ensure_group(hass: HomeAssistant, object_id: str, rule: dict[str, Any], name: str) -> str:
-    """The rule's «все датчики» helper, as HA's helper editor makes it (group, else template); its members / state
-    kept as the rule's; named «<Правило> · все датчики». Returns its entity id."""
+    """The rule's «все датчики» helper, as HA's helper editor makes it (group, else template); its members / state kept as the rule's; named «<Правило> · все датчики»."""
     domain, opts = _wanted(rule)
     reg = er.async_get(hass)
     entry = our_entries(hass).get(object_id)
@@ -62,8 +61,7 @@ async def drop_all_groups(hass: HomeAssistant) -> None:
         await hass.config_entries.async_remove(entry.entry_id)
 
 def categorize(hass: HomeAssistant, name: str, entity_ids: dict[str, list[str]]) -> None:
-    """The alarm objects under one category per list (HA's own categories: the automations / scripts / helpers page
-    groups them). A category the integrator set by hand on one stays."""
+    """The alarm objects under one category per list (HA's own categories: the automations / scripts / helpers page groups them)."""
     cats = cr.async_get(hass)
     reg = er.async_get(hass)
     for scope, eids in entity_ids.items():

@@ -1,8 +1,4 @@
-"""The door's sound as an RTSP source for HA's own go2rtc (no add-on, no Docker): rtsp://127.0.0.1:<port>/door/<id>/<token>.
-One audio track of what the panel says (G.711) and — when go2rtc asks for it with ONVIF's «Require:
-www.onvif.org/ver20/backchannel» — a second, `sendonly` track: the card's microphone, which go2rtc sends back over the
-same TCP connection (interleaved) and the agent relays to the panel. TCP only, loopback only, a path with a secret
-token: nothing else on the host reaches a door call through it."""
+"""The door's sound as an RTSP source for HA's own go2rtc (no add-on, no Docker): rtsp://127.0.0.1:<port>/door/<id>/<token>."""
 from __future__ import annotations
 import asyncio
 from collections.abc import Callable
@@ -21,8 +17,7 @@ _TRACK = re.compile('trackID=(\\d+)')
 _PT = {'PCMA': 8, 'PCMU': 0}
 
 class AudioHub:
-    """One door's stream: the panel's audio to every playing client (silence between calls — go2rtc drops a source that
-    sends nothing), the clients' back audio to `on_back`."""
+    """One door's stream: the panel's audio to every playing client (silence between calls — go2rtc drops a source that sends nothing), the clients' back audio to `on_back`."""
 
     def __init__(self, codec: str, frame_ms: int, on_back: Callable[[bytes], None], max_clients: int) -> None:
         self.codec = codec
@@ -203,7 +198,7 @@ class _Client:
         return ('\r\n'.join(lines) + '\r\n').encode()
 
 class RtspServer:
-    """Loopback RTSP for the doors' sound. Port 0 — any free one (the tests)."""
+    """Loopback RTSP for the doors' sound."""
 
     def __init__(self, host: str, port: int) -> None:
         self.host, self.port = (host, port)

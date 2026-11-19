@@ -103,8 +103,7 @@ class RulesEvaluateMixin:
         return (conv, None)
 
     def is_value(self, src: dict[str, Any]) -> Any:
-        """The value «равно» compares: as the device's canon read says it (a fan off: speed 0), else the state /
-        attribute."""
+        """The value «равно» compares: as the device's canon read says it (a fan off: speed 0), else the state / attribute."""
         st = self.hass.states.get(src['entity_id'])
         if st is None or st.state in dv.NOT_A_STATE:
             return None

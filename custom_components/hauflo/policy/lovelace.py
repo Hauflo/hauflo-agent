@@ -43,8 +43,7 @@ def image_ok(value: Any) -> bool:
     return bool(IMAGE_RE.fullmatch(value)) and '..' not in value and ('//' not in value) and (not ENCODED_PATH.search(value))
 
 def area_lights_owned(hass: HomeAssistant | None, area_id: Any, owned: set[str] | None, owned_entries: set[str] | None) -> bool:
-    """«Всё выключить» by a room: every light HA would turn off there (its own area, or its device's when it has
-    none — as HA's service helper resolves it) is Hauflo's."""
+    """«Всё выключить» by a room: every light HA would turn off there (its own area, or its device's when it has none — as HA's service helper resolves it) is Hauflo's."""
     if hass is None or not isinstance(area_id, str) or (not re.fullmatch('[a-z0-9_]+', area_id)) or (area_id in ('all', 'none')):
         return False
     with contained(_LOGGER, 'Hauflo: lights of area %s not checkable — not allowed', area_id):
@@ -56,8 +55,7 @@ def area_lights_owned(hass: HomeAssistant | None, area_id: Any, owned: set[str] 
     return False
 
 def owned_scene_sends(hass: HomeAssistant | None, owned: set[str] | None) -> dict[str, set[int]]:
-    """Address → the «store» bytes a dashboard may send there: each KNX scene Hauflo made, by its scene number (0x80 |
-    number−1; any of the 64 when it has none) — minus every address that opens something protected (protect.py)."""
+    """Address → the «store» bytes a dashboard may send there: each KNX scene Hauflo made, by its scene number (0x80 | number−1; any of the 64 when it has none) — minus every address that opens something protected (protect.py)."""
     store = knx_store(hass)
     if store is None or owned is None:
         return {}
@@ -92,8 +90,7 @@ def _protected_writes(hass: HomeAssistant | None) -> set[str]:
     return out
 
 def shown_protected(hass: HomeAssistant | None, eid: Any, owned: set[str] | None, owned_entries: set[str] | None) -> bool:
-    """A gate / garage door / electric lock Hauflo itself made (protected by its class or its mark, not by what it
-    holds): the family's dashboard shows it on its own card."""
+    """A gate / garage door / electric lock Hauflo itself made (protected by its class or its mark, not by what it holds): the family's dashboard shows it on its own card."""
     if hass is None or not isinstance(eid, str) or eid.startswith(NEVER_EXPOSE):
         return False
     if not (sticky(hass, eid) or class_protected(hass, eid)):
@@ -104,9 +101,7 @@ def _words(text: Any) -> set[str]:
     return set(WORD_RE.findall(voice.norm(str(text or ''))))
 
 def named_as(hass: HomeAssistant, eid: str, name: Any) -> bool:
-    """A card's name for a protected entity is its own: at least one word of HA's names for it (the deploy's short name
-    drops the room — «Ворота» of «Двор Ворота»), the rest its words, room names (a shared device's «(для Двора и
-    Гаража)») or short joining words — never «Свет кухня» on the gate (red-team 2, A1)."""
+    """A card's name for a protected entity is its own: at least one word of HA's names for it (the deploy's short name drops the room — «Ворота» of «Двор Ворота»), the rest its words, room names (a shared device's «(для Двора и Гаража)») or short joining words — never «Свет кухня» on the gate (red-team 2, A1)."""
     if not isinstance(name, str):
         return False
     st = hass.states.get(eid) if hasattr(hass, 'states') else None
@@ -121,7 +116,6 @@ def named_as(hass: HomeAssistant, eid: str, name: Any) -> bool:
     return bool(words & known) and all((w in rooms or len(w) <= 3 or any((w.startswith(r[:-1]) for r in rooms if len(r) > 3)) for w in rest))
 
 def subs_why_of(card: dict[str, Any]) -> str | None:
-    """    names (the cards' cfgProblems); None — fine."""
     for k in dashmerge_const.SUB_KEYS:
         if k not in card:
             continue
@@ -133,9 +127,7 @@ def subs_why_of(card: dict[str, Any]) -> str | None:
     return None
 
 def rows_why_of(card: dict[str, Any], hass: HomeAssistant | None=None) -> str | None:
-    """Why `items`, `auto` and `order` of a Hauflo card are not in their form (their entity ids are checked by the walk,
-    like any); None — fine. A row's regulator out of its sense says its code (Р78, accept 4A): `<entity> regulator
-    <code>`."""
+    """Why `items`, `auto` and `order` of a Hauflo card are not in their form (their entity ids are checked by the walk, like any); None — fine."""
     bad = 'rows not in their form'
     if 'auto' in card and (not isinstance(card['auto'], bool)):
         return bad

@@ -1,24 +1,3 @@
-"""Р56: smart door locks of any integration (Z2M / ZHA / Matter / a cloud one) — recognised by HA's metadata only: the
-`lock` domain and the other entities of the same device (an event entity or a text sensor saying what happened, a
-tamper sensor, a battery), never a brand or an integration's name.
-
-What a lock does is read from three places, merged within `merge_s` (Z2M sends the lock's state, its `action` and
-`action_source_name` / `action_user` as separate updates): the lock's own state (locked / unlocked / jammed), an event /
-text sensor of its device («fingerprint_unlock», «lock_failure_invalid_pin_or_id», Matter's «LockOperation»), the
-user / method sensors or attributes. The words are tuning.json `locks`, never code.
-
-The push («🔓 Входная дверь» / «открыта отпечатком · Мария · 18:02») goes to the phones with «пуш о звонке» on, by the
-alarms' own path (notify.NotifyEngine.send): an alarm (jammed, tamper, `wrong_count` wrong attempts within
-`wrong_window_s`) by default, each unlock only once the integrator turned it on. Tamper is critical (through silent
-mode and the quiet hours); anything else in the quiet hours comes without a sound.
-
-`hauflo.lock` (entity_id, action lock / unlock / open): the panel's buttons. Locking is always allowed; unlocking /
-opening the door only by the people the integrator listed (none listed — anyone), else «Нет прав». Honest limit: it
-guards Hauflo's panel; HA's own `lock.unlock` stays HA's (its users' rights). A second tap while the first command is
-under way is the same command (one call to the lock).
-
-A cloud lock (its integration's iot_class cloud_*): HA reads it as rarely as the cloud allows; the integrator may ask
-for a read every N minutes (`poll`), and the card says «обновляется раз в N мин»."""
 from __future__ import annotations
 from collections.abc import Callable
 from datetime import timedelta
@@ -118,8 +97,7 @@ class Locks:
         return user_id is None or not users or user_id in users
 
     def linked(self, door_id: str) -> str | None:
-        """The lock that opens this intercom door (the integrator's link) — even a lock gone since: «не открылась» then,
-        never the panel's relay quietly «opening» a door it may not be wired to."""
+        """The lock that opens this intercom door (the integrator's link) — even a lock gone since: «не открылась» then, never the panel's relay quietly «opening» a door it may not be wired to."""
         f = foreign_flags.flags(self.hass)
         for eid, s in sorted((f.locks if f is not None else {}).items()):
             if s.get('door') == door_id:
@@ -398,8 +376,7 @@ class Locks:
         return st is not None and bool(int(st.attributes.get('supported_features') or 0) & LockEntityFeature.OPEN)
 
     async def wizard(self, doors: list[dict[str, str]]) -> dict[str, Any]:
-        """The wizard's «Замок» (GET /api/hauflo/foreign `lock_info`): each lock found (cloud — the poll and the hint;
-        open — «Открыть дверь»), the HA people one may give the right to unlock, the intercom's doors to link."""
+        """The wizard's «Замок» (GET /api/hauflo/foreign `lock_info`): each lock found (cloud — the poll and the hint; open — «Открыть дверь»), the HA people one may give the right to unlock, the intercom's doors to link."""
         people = [{'id': u.id, 'name': str(u.name or '')[:t_cfg()['name_max']]} for u in await self.hass.auth.async_get_users() if u.is_active and (not u.system_generated)]
         return {'seen': {eid: {'cloud': bool(self.cloud.get(eid)), 'open': self.can_open(eid)} for eid in sorted(self.devices)}, 'people': sorted(people, key=lambda p: (p['name'].casefold(), p['id']))[:t_cfg()['users_max']], 'doors': doors}
 
@@ -414,8 +391,7 @@ class Locks:
 
 @callback
 def async_setup_services(hass: HomeAssistant, find: Callable[[], Locks | None]) -> None:
-    """«hauflo.lock», registered once for HA's whole run (integration setup); find() raises «not_loaded» without a
-    loaded entry, None — the house has no lock."""
+    """«hauflo.lock», registered once for HA's whole run (integration setup); find() raises «not_loaded» without a loaded entry, None — the house has no lock."""
 
     async def _act(call: ServiceCall) -> None:
         locks = find()

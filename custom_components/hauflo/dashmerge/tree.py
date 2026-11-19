@@ -52,8 +52,7 @@ def _kind(node: dict[str, Any], level: int) -> tuple[int, str | None]:
     return (level, kids_key(node, level))
 
 class Index:
-    """Hauflo ids of a config: the node, its level, its parent's id and the view it is on (first occurrence wins).
-    With `expect` (the base), an id of another kind there is no Hauflo id here — the node is local."""
+    """Hauflo ids of a config: the node, its level, its parent's id and the view it is on (first occurrence wins)."""
 
     def __init__(self, cfg: Any, expect: Index | None=None) -> None:
         self.node: dict[str, dict[str, Any]] = {}
@@ -106,8 +105,6 @@ def ensure_ids(cfg: dict[str, Any]) -> dict[str, Any]:
     return cfg
 
 def rekey(cfg: dict[str, Any], base: Any) -> dict[str, Any]:
-    """An id the base knows as another kind (a section's sent as a card, a view's as a section) is a new id here: the
-    base's item goes as dropped (its local children stay), never matched to something else (security re-review"""
     if not isinstance(base, dict):
         return cfg
     known = Index(base).kind
@@ -154,7 +151,6 @@ def count_cards(node: dict[str, Any], level: int) -> int:
     return sum((count_cards(c, child_level_of(level, kids_key(node, level))) for c in kids_of(node, level) if isinstance(c, dict)))
 
 def inner_of(node: dict[str, Any], level: int, n: int=3) -> list[str]:
-    """    the types of its first cards, never their content."""
     out: list[str] = []
 
     def walk(c: dict[str, Any], lvl: int) -> None:
@@ -190,9 +186,7 @@ def strip_ids(node: Any) -> Any:
     return node
 
 def view_of(target: Any, url_path: str) -> str | None:
-    """The page of THIS dashboard a navigation target names — `/<url_path>/<view>` (a query / a `#…` aside); None for
-    anything else: another dashboard, an external or protocol-relative URL, a relative path, a pop-up `#…`, the
-    dashboard itself."""
+    """The page of THIS dashboard a navigation target names — `/<url_path>/<view>` (a query / a `#…` aside); None for anything else: another dashboard, an external or protocol-relative URL, a relative path, a pop-up `#…`, the dashboard itself."""
     if not isinstance(target, str):
         return None
     t = target.strip().split('#', 1)[0].split('?', 1)[0]
@@ -202,9 +196,7 @@ def view_of(target: Any, url_path: str) -> str | None:
     return parts[1] if len(parts) >= 2 and parts[0] == url_path else None
 
 def ways_of(card: dict[str, Any]) -> list[Any]:
-    """Where a card leads when it is a way to a page by its very purpose: Hauflo's tile's `path` (a room / zone tile,
-    whatever it also shows), else — a card with nothing of its own to show — its `navigation_path` or a tap's
-    `navigate`. A hold's navigation is a by-the-way, never the card's purpose."""
+    """Where a card leads when it is a way to a page by its very purpose: Hauflo's tile's `path` (a room / zone tile, whatever it also shows), else — a card with nothing of its own to show — its `navigation_path` or a tap's `navigate`."""
     out: list[Any] = []
     if isinstance(card.get('path'), str) and card['path'].strip():
         out.append(card['path'])

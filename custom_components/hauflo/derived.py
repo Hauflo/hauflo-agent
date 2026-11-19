@@ -1,14 +1,4 @@
-"""Values worked out from other sensors («Правила по значениям», docs/automations.md): dew point, absolute humidity,
-the difference of two sensors, min / max / average of several, how fast one rises. Each is a real HA sensor
-(`sensor.hauflo_…`): seen in HA's history and dashboards, usable by HA's own automations, and the input of a value rule.
-
-number or hasn't reported for `max_age` minutes — a rule on it then goes to its safe state, it never acts on an old
-value.
-
-«Улица» (outdoor): a KNX weather station or a Hauflo sensor whose name says so (canon: derived.outdoor_words), else HA's
-weather.* (its temperature, said «по прогнозу» — a forecast is not the street).
-
-Defaults are in rules_canon.json (canon.py); the texts of refusals in translations («exceptions», rules_…)."""
+"""Values worked out from other sensors («Правила по значениям», docs/automations.md): dew point, absolute humidity, the difference of two sensors, min / max / average of several, how fast one rises."""
 from __future__ import annotations
 from collections import deque
 from http import HTTPStatus
@@ -61,9 +51,6 @@ class Invalid(ValueError):
         self.code, self.key, self.ph = (code, key, ph)
 
 class Refused(Invalid):
-    """A refusal a person can meet on a page (not a request sent wrong): its HTTP status and its text by key, said in
-    the
-    page's language by rules.said (Р83 polish: scenes, daylight, presence, guests — as rules and automations)."""
 
     def __init__(self, code: str, key: str, status: int=HTTPStatus.BAD_REQUEST, **ph: Any) -> None:
         super().__init__(code, key, **ph)
@@ -77,14 +64,13 @@ def num(v: Any) -> float | None:
     return f if math.isfinite(f) else None
 
 def dew_point(t: float, rh: float) -> float | None:
-    """°C from °C and % (Magnus). 20 °C / 50 % → 9.26 °C."""
+    """°C from °C and % (Magnus)."""
     if not 0 < rh <= PERCENT or t <= -MAGNUS_C:
         return None
     g = math.log(rh / PERCENT) + MAGNUS_B * t / (MAGNUS_C + t)
     return MAGNUS_C * g / (MAGNUS_B - g)
 
 def abs_humidity(t: float, rh: float) -> float | None:
-    """g/m³ from °C and %: the saturation pressure by the same Magnus, the ideal gas law. 20 °C / 50 % → 8.6 g/m³."""
     if not 0 <= rh <= PERCENT or t <= -MAGNUS_C:
         return None
     es = MAGNUS_E0_HPA * math.exp(MAGNUS_B * t / (MAGNUS_C + t))
@@ -135,8 +121,7 @@ def unit_of(st: State, attr: str | None) -> str | None:
     return None
 
 def read(hass: HomeAssistant, src: str, max_age: float=0) -> tuple[float | None, str | None, str | None]:
-    """(value, unit, why not): a number now, or the reason there is none (no_entity / unavailable / not_a_number /
-    stale)."""
+    """(value, unit, why not): a number now, or the reason there is none (no_entity / unavailable / not_a_number / stale)."""
     eid, attr = split_source(src)
     attr = attr or default_attribute(eid)
     st = hass.states.get(eid)

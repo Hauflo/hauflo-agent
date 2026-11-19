@@ -37,35 +37,28 @@ hold_max = functools.cache(lambda: hold_canon()['max_s'])
 native_hold = functools.cache(lambda: t()['native_hold_s'])
 
 def native_back(rule: dict[str, Any]) -> int:
-    """Seconds a source of a rule HA runs stays in normal before its «back» (its chatter window, at least NATIVE_HOLD —
-    ISA-18.2 / Nagios flap hysteresis on the return; HA's own `for:`); in alarm again sooner — the same open alarm."""
+    """Seconds a source of a rule HA runs stays in normal before its «back» (its chatter window, at least NATIVE_HOLD — ISA-18.2 / Nagios flap hysteresis on the return; HA's own `for:`); in alarm again sooner — the same open alarm."""
     return max(native_hold(), chatter_window(rule))
 
 def hold_value(v: Any) -> int | None:
-    """A rule's own hold as sent: a whole number of seconds 0..HOLD_MAX; anything else (absent, an older Hauflo) —
-    None."""
+    """A rule's own hold as sent: a whole number of seconds 0..HOLD_MAX; anything else (absent, an older Hauflo) — None."""
     if isinstance(v, bool) or not isinstance(v, (int, float)) or v != int(v) or (not 0 <= v <= hold_max()):
         return None
     return int(v)
 
 def default_hold(hass: HomeAssistant | None, kind: str, sources: list[str], thresholds: dict[str, Any]) -> int:
-    """The canon hold of a rule with no own: its kind's, each source's (a level — level_s, a signal — by its class,
-    classless — default_s); the shortest."""
+    """The canon hold of a rule with no own: its kind's, each source's (a level — level_s, a signal — by its class, classless — default_s); the shortest."""
     found = [hold_canon()['kinds'][kind]] if kind in hold_canon()['kinds'] else []
     for eid in sources:
         found.append(hold_canon()['level_s'] if eid in thresholds else hold_canon()['classes'].get(str(device_class_of(hass, eid) or ''), hold_canon()['default_s']))
     return int(min(found)) if found else int(hold_canon()['default_s'])
 
 def source_hold(rule: dict[str, Any], eid: str) -> int:
-    """How long this source's alarm state must hold in this rule: its own (a combination's — `holds`), else the
-    rule's."""
+    """How long this source's alarm state must hold in this rule: its own (a combination's — `holds`), else the rule's."""
     return int((rule.get('holds') or {}).get(eid, rule.get('hold') or 0))
 
 def own_kind(hass: HomeAssistant | None, eid: str) -> str | None:
-    """A Hauflo signal that holds its time itself — its key in notify.hold.own, else None: a combination of the site's
-    policy (on only once every condition held its «дольше, чем» — that T is its hold, a second one after it would make
-    it T + a minute), or an own sensor of that kind in HA's registry (platform hauflo, its translation key: a rule's
-    «Сработало» is on only after its own «дольше» / periods in a row). By what it is, never by its name."""
+    """A Hauflo signal that holds its time itself — its key in notify.hold.own, else None: a combination of the site's policy (on only once every condition held its «дольше, чем» — that T is its hold, a second one after it would make it T + a minute), or an own sensor of that kind in HA's registry (platform hauflo, its translation key: a rule's «Сработало» is on only after its own «дольше» / periods in a row)."""
     if hass is None:
         return None
     if eid in signals_store.combo_entities(hass):
@@ -75,9 +68,7 @@ def own_kind(hass: HomeAssistant | None, eid: str) -> str | None:
     return key if key in hold_canon()['own'] else None
 
 def own_holds(hass: HomeAssistant | None, sources: list[str], holds: dict[str, int]) -> dict[str, int]:
-    """{source: its hold} for the rule's sources that hold their time themselves (own_kind): the site's own hold of
-    that very signal if it set one, else the canon's for its kind (notify.hold.own) — never another source's class,
-    nor a scope's (a class's choice, the canon's level): the rule's other sources keep theirs."""
+    """{source: its hold} for the rule's sources that hold their time themselves (own_kind): the site's own hold of that very signal if it set one, else the canon's for its kind (notify.hold.own) — never another source's class, nor a scope's (a class's choice, the canon's level): the rule's other sources keep theirs."""
     pol = signals_store.policy(hass) or {}
     out: dict[str, int] = {}
     for eid in sources:
@@ -136,20 +127,13 @@ ring = functools.cache(lambda: t()['ring_push'])
 INTERCOM_EVENT = f'{DOMAIN}_intercom'
 
 def event_kind(state: State) -> str:
-    """A kind of `event_kinds` — «sos» (a panic button), «doorbell» (a doorbell, an intercom's SIP call), «button» (a
-    Hue /
-    Aqara / Shelly button), «motion» — or «event» (any other press): the first kind whose class or words match, so an
-    SOS button of the «button» class is an SOS and a button named «Звонок» a doorbell. One rule for the push here and
-    the
-    bell / Telegram line in the cloud (status `eventClass`)."""
+    """A kind of `event_kinds` — «sos» (a panic button), «doorbell» (a doorbell, an intercom's SIP call), «button» (a Hue / Aqara / Shelly button), «motion» — or «event» (any other press): the first kind whose class or words match, so an SOS button of the «button» class is an SOS and a button named «Звонок» a doorbell."""
     dc = str(state.attributes.get('device_class') or '')
     said = f"{state.attributes.get('event_type') or ''} {state.name or ''} {state.object_id}"
     return next((kind for kind, (classes, words) in event_kinds().items() if dc and dc in classes or words.search(said)), 'event')
 
 def watched_press(state: State | None, platform: str | None=None) -> bool:
-    """A press the canon watches by default though HA gives it no doorbell class (acceptance 0.33 M4): an event entity
-    whose kind `event_kinds` watches — an SOS / panic button, an intercom's SIP call. Any other press (a button, motion)
-    stays the integrator's choice (the label / «Уведомлять»)."""
+    """A press the canon watches by default though HA gives it no doorbell class (acceptance 0.33 M4): an event entity whose kind `event_kinds` watches — an SOS / panic button, an intercom's SIP call."""
     return state is not None and state.domain == 'event' and (platform not in signals_canon.watch_skip()) and (event_kind(state) in watch_kinds())
 SOURCE_DOMAINS = ('binary_sensor.', 'sensor.')
 
@@ -171,8 +155,7 @@ EN_TITLES = {'Протечка': 'Water leak', 'Дым': 'Smoke', 'Газ': 'Gas
 RU_TITLES = {en: ru for ru, en in EN_TITLES.items()}
 
 def label(hass: HomeAssistant, entity_id: str, state: State | None=None) -> str:
-    """What a person calls the device: HA's friendly name, else the registry's name, else its device's name — the raw
-    object id («leak_bathroom») only when nothing else exists (stage 10 round 3)."""
+    """What a person calls the device: HA's friendly name, else the registry's name, else its device's name — the raw object id («leak_bathroom») only when nothing else exists (stage 10 round 3)."""
     state = state or hass.states.get(entity_id)
     if (name := (str(state.attributes.get('friendly_name') or '').strip() if state else '')):
         return plain(once(name))
@@ -186,14 +169,12 @@ def label(hass: HomeAssistant, entity_id: str, state: State | None=None) -> str:
 _SNAKE = re.compile('\\b[a-z0-9]+(?:_[a-z0-9]+)+\\b')
 
 def plain(name: str) -> str:
-    """A machine id said as words (acceptance 0.33: «climate_living Temperature» — an MQTT device named by its id): the
-    snake_case tokens spaced, as HA itself says an entity without a name («leak_bathroom» → «Leak bathroom»)."""
+    """A machine id said as words (acceptance 0.33: «climate_living Temperature» — an MQTT device named by its id): the snake_case tokens spaced, as HA itself says an entity without a name («leak_bathroom» → «Leak bathroom»)."""
     out = _SNAKE.sub(lambda m: m.group(0).replace('_', ' '), name.strip())
     return out[:1].upper() + out[1:] if out != name.strip() else out
 
 def once(name: str) -> str:
-    """«Звонок в дверь Звонок в дверь» → «Звонок в дверь»: HA's friendly name is «device + entity», and a device whose
-    one entity is named as the device itself (an MQTT doorbell / SOS button) says it twice (acceptance 0.33)."""
+    """«Звонок в дверь Звонок в дверь» → «Звонок в дверь»: HA's friendly name is «device + entity», and a device whose one entity is named as the device itself (an MQTT doorbell / SOS button) says it twice (acceptance 0.33)."""
     half, rest = (len(name) // 2, len(name) % 2)
     if rest and name[half] == ' ' and (name[:half] == name[half + 1:]):
         return name[:half]

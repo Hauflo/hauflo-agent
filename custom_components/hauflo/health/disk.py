@@ -1,8 +1,4 @@
-"""Free space where HA keeps its configuration (and its database, by default): `shutil.disk_usage` of the config
-directory — the same on HA OS, Supervised, Container and Core. A limit is a share of the disk, capped for a big one and
-never below a floor (1 GB: under it Supervisor itself stops updates and backups):
-warn below max(min(disk_warn_pct %, disk_warn_cap_gb), disk_warn_floor_gb), crit likewise with disk_crit_*.
-It ends only `disk_clear_factor` above the limit (a few MB to and fro make no message each)."""
+"""Free space where HA keeps its configuration (and its database, by default): `shutil.disk_usage` of the config directory — the same on HA OS, Supervised, Container and Core."""
 from __future__ import annotations
 import shutil
 from typing import Any

@@ -5,8 +5,7 @@ from homeassistant.core import callback
 from .common import quiet_channel
 
 def push_data(os: str | None, *, tag: str, critical: bool=False, quiet: bool=False, actions: list | None=None, silent: bool=False) -> dict[str, Any]:
-    """The `data` of a push to the HA app — the engine's and the alarm automations' (independent.py) one shape.
-    `silent`: a new message without a sound (the house's quiet hours) — iOS passive, Android its own low channel."""
+    """The `data` of a push to the HA app — the engine's and the alarm automations' (independent.py) one shape."""
     data: dict[str, Any] = {'tag': tag}
     if actions:
         data['actions'] = actions
@@ -22,8 +21,7 @@ def push_data(os: str | None, *, tag: str, critical: bool=False, quiet: bool=Fal
     return data
 
 def button(action: dict[str, Any], name: str) -> str:
-    """Said by the house, not by the server: what the button does and to what (integrator run 22: a server's
-    «Принял» on a button that turned the gate relay off)."""
+    """Said by the house, not by the server: what the button does and to what (integrator run 22: a server's «Принял» on a button that turned the gate relay off)."""
     return f"{('Закрыть' if action['service'] == 'valve.close_valve' else 'Выключить')}: {name}"[:60]
 
 @callback

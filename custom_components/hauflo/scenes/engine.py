@@ -40,8 +40,7 @@ class FamilyScenes:
         return bool(self.owns(eid))
 
     def capture(self, entities: Any, kind: str) -> dict[str, dict[str, Any]]:
-        """What the room's lights / blinds do now, in HA's own scene format. A lamp / blind that says nothing (unknown,
-        unavailable) is left out — a scene never «remembers» a guess."""
+        """What the room's lights / blinds do now, in HA's own scene format."""
         if not isinstance(entities, list) or not entities or len(entities) > MAX_ENTITIES:
             raise Invalid('entities')
         out: dict[str, dict[str, Any]] = {}
@@ -133,8 +132,7 @@ class FamilyScenes:
         return ents if isinstance(ents, dict) else None
 
     async def apply(self, entity_id: Any) -> dict[str, Any]:
-        """A tap on a scene: a Hauflo HA scene without the lights left off by day (only while it is light outside and
-        only where the scene would switch them on); any other — HA's scene.turn_on."""
+        """A tap on a scene: a Hauflo HA scene without the lights left off by day (only while it is light outside and only where the scene would switch them on); any other — HA's scene.turn_on."""
         if not isinstance(entity_id, str) or not entity_id.startswith('scene.') or self.hass.states.get(entity_id) is None:
             raise Invalid('entity_id')
         try:
@@ -187,8 +185,7 @@ class FamilyScenes:
         return {'entity_id': eid, 'name': title}
 
     async def learn(self, entity_id: Any, user: str | None) -> dict[str, Any]:
-        """«Запомнить как сейчас» on a KNX scene: the actuators on its address store what they do now as that scene
-        (if their ETS parameters allow it — nothing on the bus says whether they did)."""
+        """«Запомнить как сейчас» on a KNX scene: the actuators on its address store what they do now as that scene (if their ETS parameters allow it — nothing on the bus says whether they did)."""
         if self.knx is None:
             raise PermissionError('KNX scenes: not available')
         if self.knx.locked():
@@ -275,8 +272,7 @@ class FamilyScenes:
         return {'id': scene_id, 'entities': len(ents)}
 
     async def delete(self, entity_id: Any) -> dict[str, Any]:
-        """The family's own: gone from scenes.yaml. The integrator's: hidden on this dashboard (a deploy would make it
-        again — it is his, set in the app)."""
+        """The family's own: gone from scenes.yaml."""
         scene_id = self._scene_id_of(entity_id)
         if FAMILY.fullmatch(scene_id):
             await self._edit(scene_id, lambda _now: None)

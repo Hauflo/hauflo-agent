@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from .engine import Rules
 
 class RulesView(HomeAssistantView):
-    """GET: the rules (admin — everything; a client — what he may see); POST op …. Through the tunnel (integrator)."""
+    """GET: the rules (admin — everything; a client — what he may see); POST op …."""
     url = '/api/hauflo/rules'
     name = 'api:hauflo:rules'
     requires_auth = True

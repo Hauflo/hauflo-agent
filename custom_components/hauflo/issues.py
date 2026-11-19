@@ -1,5 +1,3 @@
-"""agent older than Hauflo needs.
-Each issue is made when its cause appears and removed when it goes; the texts are in strings.json → «issues»."""
 from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager

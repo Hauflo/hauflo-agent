@@ -14,8 +14,7 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 class Door(DoorCallMixin):
-    """A door's call and diagnosis. Its entities listen through `listeners` (state, attributes) and `rings` (the
-    event)."""
+    """A door's call and diagnosis."""
 
     def __init__(self, cfg: DoorConfig, mgr: Intercom) -> None:
         self.cfg = cfg
@@ -62,8 +61,7 @@ class Door(DoorCallMixin):
         return None
 
     def problem(self) -> str | None:
-        """Why it doesn't work — the first that applies (the card's plate words:
-        entity.sensor.intercom.state_attributes)."""
+        """Why it doesn't work — the first that applies (the card's plate words: entity.sensor.intercom.state_attributes)."""
         if self.mgr.listen_error:
             return self.mgr.listen_error
         if self.cfg.error:
@@ -93,8 +91,7 @@ class Door(DoorCallMixin):
         return None
 
     def call_audio(self) -> str | None:
-        """Which way the sound went in the call now / the last one (hass-sip's words): none, no_rx (nothing from the
-        panel), no_tx (nothing from the card), bidirectional. None — no answered call yet."""
+        """Which way the sound went in the call now / the last one (hass-sip's words): none, no_rx (nothing from the panel), no_tx (nothing from the card), bidirectional."""
         if self.call is not None and self.call.rtp is not None:
             rx, tx = (self.call.rtp.rx, self.hub.back_packets if self.hub is not None else 0)
         elif self.last_call is not None and self.last_call.get('answered'):

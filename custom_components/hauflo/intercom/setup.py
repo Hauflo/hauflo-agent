@@ -1,7 +1,3 @@
-"""The cloud wizard's «Домофон» (Р55): the presets of presets.json (their names RU+EN, honestly «not checked»), the
-doors as set (passwords never sent back — only whether one is set), the listen address and the network cards to
-choose from; a POST saves the same block the options' «Домофон» step saves (one check for both) and the entry reloads.
-The TURN / STUN servers a phone outside the LAN needs for the talk (`ice_servers`) are passed to HA's WebRTC here."""
 from __future__ import annotations
 import base64
 import functools
@@ -51,8 +47,7 @@ def _read_labels() -> dict[str, dict[str, str]]:
 
 @functools.cache
 def preset_labels() -> dict[str, dict[str, str]]:
-    """The presets' names from translations/*.json, read on first use — off the event loop: async_setup_entry and the
-    config flow preload it in the executor. The wizard's GET runs on the loop, where a file read is blocking I/O (0.33"""
+    """The presets' names from translations/*.json, read on first use — off the event loop: async_setup_entry and the config flow preload it in the executor."""
     return _read_labels()
 
 def _labels() -> dict[str, dict[str, str]]:
@@ -99,8 +94,7 @@ def _ice(raw: Any, old: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 def normalize(raw: dict[str, Any], old: dict[str, Any] | None=None) -> dict[str, Any]:
-    """The block the options keep: {bind, port, public, doors, ice_servers}. A door's password not sent keeps the one
-    it had (by the door's name). SetupError — what is wrong and with which door."""
+    """The block the options keep: {bind, port, public, doors, ice_servers}."""
     old = dict(old or {})
     olds = {str(d.get('name') or '').strip(): d for d in old.get('doors') or [] if isinstance(d, dict)}
     doors_in = raw.get('doors') or []
@@ -138,8 +132,7 @@ def normalize(raw: dict[str, Any], old: dict[str, Any] | None=None) -> dict[str,
     return value
 
 def ice_servers(block: dict[str, Any], now: float | None=None) -> list[dict[str, Any]]:
-    """The servers HA's WebRTC hands the card. A coturn `use-auth-secret` server gets fresh time-limited credentials
-    each time (TURN REST: username «<expiry>:<name>», credential base64 HMAC-SHA1 of it by the shared secret)."""
+    """The servers HA's WebRTC hands the card."""
     out = []
     for s in block.get('ice_servers') or []:
         if not isinstance(s, dict) or not s.get('urls'):
@@ -156,8 +149,7 @@ def ice_servers(block: dict[str, Any], now: float | None=None) -> list[dict[str,
     return out
 
 def register_ice(hass: HomeAssistant, block: dict[str, Any], cloud: Any=None) -> Any:
-    """Hands the servers to HA's WebRTC (camera/webrtc/get_client_config gives them to the card, asked anew each time);
-    the remover, or None. The integrator's own `ice_servers` win; else Hauflo's TURN (`cloud`: cloud_ice.CloudIce)."""
+    """Hands the servers to HA's WebRTC (camera/webrtc/get_client_config gives them to the card, asked anew each time); the remover, or None."""
     if not block.get('ice_servers') and cloud is None:
         return None
     try:
@@ -177,10 +169,7 @@ async def adapters(hass: HomeAssistant) -> list[str]:
     return []
 
 class IntercomView(HomeAssistantView):
-    """GET (admin) → {features, presets, config (passwords masked), ice (where the phones' TURN comes from), listen,
-    adapters, doors: {id: state}};
-    POST (admin) {bind?, port?, public?, doors: [...], ice_servers?} → saved into the options (the entry reloads);
-    400 {code, field, door} when something is wrong."""
+    """GET (admin) → {features, presets, config (passwords masked), ice (where the phones' TURN comes from), listen, adapters, doors: {id: state}}; POST (admin) {bind?, port?, public?, doors: [...], ice_servers?} → saved into the options (the entry reloads); 400 {code, field, door} when something is wrong."""
     url = '/api/hauflo/intercom'
     name = 'api:hauflo:intercom'
     requires_auth = True

@@ -1,7 +1,4 @@
-"""HA's helpers (input_boolean, input_text…) made, renamed and removed through HA's own websocket commands — what HA's
-helper editor sends (``<domain>/list|create|update|delete``), run in-process on a websocket connection of the agent's
-own system user. Public API only (HA master review 0.40): never ``hass.data["websocket_api"]`` and the storage
-collection hidden behind it."""
+"""HA's helpers (input_boolean, input_text…) made, renamed and removed through HA's own websocket commands — what HA's helper editor sends (``<domain>/list|create|update|delete``), run in-process on a websocket connection of the agent's own system user."""
 from __future__ import annotations
 import asyncio
 import contextvars
@@ -24,8 +21,7 @@ class HelperError(Exception):
     """HA refused a helper command (its code and message)."""
 
 async def agent_user(hass: HomeAssistant, entry: ConfigEntry) -> User:
-    """The agent's own system user (an admin, made once and kept with the entry) — the tunnel's tokens and the helper
-    commands are its."""
+    """The agent's own system user (an admin, made once and kept with the entry) — the tunnel's tokens and the helper commands are its."""
     async with hass.data.setdefault(_USER_LOCK, asyncio.Lock()):
         if (uid := entry.data.get(CONF_USER_ID)) and (user := (await hass.auth.async_get_user(uid))) is not None:
             return user
@@ -34,8 +30,7 @@ async def agent_user(hass: HomeAssistant, entry: ConfigEntry) -> User:
         return user
 
 class HelperCommands:
-    """One helper domain's items (``data``: id → item, as HA's ``<domain>/list`` gives them) and its changes — each
-    a websocket command with the same checks (schema, admin) as the helper editor's."""
+    """One helper domain's items (``data``: id → item, as HA's ``<domain>/list`` gives them) and its changes — each a websocket command with the same checks (schema, admin) as the helper editor's."""
 
     def __init__(self, hass: HomeAssistant, domain: str, user: User) -> None:
         self.hass = hass
@@ -86,8 +81,7 @@ class HelperCommands:
         self.data.pop(item_id, None)
 
 async def async_store(hass: HomeAssistant, domain: str) -> HelperCommands | None:
-    """A helper domain's store with its items read; None when HA has no such commands (the domain not set up) or the
-    agent isn't set up (no user of its own)."""
+    """A helper domain's store with its items read; None when HA has no such commands (the domain not set up) or the agent isn't set up (no user of its own)."""
     if domain not in hass.config.components or not (entries := hass.config_entries.async_entries(DOMAIN)):
         return None
     try:

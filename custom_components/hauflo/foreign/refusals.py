@@ -10,8 +10,7 @@ from .flags import flags
 from .wizard import is_protected
 
 def member_refusal(hass: HomeAssistant | None, entity_id: Any) -> str | None:
-    """Why another integration's entity may not be in a Hauflo scene / group (None — it may). Each check fails closed;
-    a Hauflo entity is never judged here (_hauflo_entity is)."""
+    """Why another integration's entity may not be in a Hauflo scene / group (None — it may)."""
     if not isinstance(entity_id, str) or entity_id.split('.', 1)[0] not in MEMBER_DOMAINS:
         return 'domain_not_allowed'
     f = flags(hass)
@@ -45,9 +44,7 @@ def member_ok(hass: HomeAssistant | None, entity_id: Any) -> bool:
     return member_refusal(hass, entity_id) is None
 
 def shown_refusal(hass: HomeAssistant | None, entity_id: Any) -> str | None:
-    """Why another integration's entity may not be named on Hauflo's dashboard cards (None — it may). Shown only: the
-    card operates it with the viewer's own HA rights, a dashboard action still names Hauflo's own only (service_ok).
-    Each check fails closed, as member_refusal."""
+    """Why another integration's entity may not be named on Hauflo's dashboard cards (None — it may)."""
     if not isinstance(entity_id, str) or not cv.valid_entity_id(entity_id) or entity_id.split('.', 1)[0] not in shown_domains():
         return 'domain_not_allowed'
     if hass is None:

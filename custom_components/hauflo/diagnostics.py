@@ -1,6 +1,3 @@
-"""secrets, user ids and the server's address path redacted; no personal data (HA reviewer r2): the service contact's
-name, phone and e-mail, who the home moved from / to and the project's name (often the client's surname) are redacted;
-phones and people only as counts."""
 from __future__ import annotations
 from typing import Any
 from urllib.parse import urlparse

@@ -100,8 +100,7 @@ def policy_in(v: Any) -> dict[str, Any] | None:
     return p
 
 def meaning_policy(meaning: str) -> dict[str, Any]:
-    """The policy one of the canon's meanings stands for: {alarm[, watch: False]}; «default» — {} (nothing of its
-    own)."""
+    """The policy one of the canon's meanings stands for: {alarm[, watch: False]}; «default» — {} (nothing of its own)."""
     if meaning == MEANING_DEFAULT:
         return {}
     m = meanings()[meaning]
@@ -153,12 +152,10 @@ def finding_in(v: Any) -> dict[str, Any] | None:
     return f if f.get('normal') or 'factor' in f or 'resetAt' in f else None
 
 def diag_in(v: Any) -> dict[str, str] | None:
-    """The integrator's «Диагностика»: {visible: all | admins} — who in HA reads it (the view, GET
-    /api/hauflo/insights)."""
+    """The integrator's «Диагностика»: {visible: all | admins} — who in HA reads it (the view, GET /api/hauflo/insights)."""
     return {'visible': v['visible']} if isinstance(v, dict) and set(v) == {'visible'} and (v['visible'] in diag_visible()) else None
 
 def watchdog_in(v: Any) -> dict[str, list[str]] | None:
-    """The integrator's watchdog switches (Р58): {off: [integration domains]} — the watchdog leaves these alone."""
     if not isinstance(v, dict) or set(v) != {'off'} or (not isinstance(v['off'], list)) or (len(v['off']) > watchdog_off_max()):
         return None
     if not all((isinstance(d, str) and platform_cfg().match(d) for d in v['off'])):
@@ -166,12 +163,10 @@ def watchdog_in(v: Any) -> dict[str, list[str]] | None:
     return {'off': sorted(set(v['off']))}
 
 def observe_in(v: Any) -> dict[str, bool] | None:
-    """    still."""
     return {'on': v['on']} if isinstance(v, dict) and set(v) == {'on'} and isinstance(v['on'], bool) else None
 
 def signals_in(v: Any) -> tuple[dict[str, Any], int] | None:
-    """({scopes, entities, findings[, diag][, watchdog][, observe]}, rows dropped) — None: not the shape at all (the
-    whole body refused)."""
+    """({scopes, entities, findings[, diag][, watchdog][, observe]}, rows dropped) — None: not the shape at all (the whole body refused)."""
     if not isinstance(v, dict) or set(v) - {'scopes', 'entities', 'findings', 'diag', 'watchdog', 'observe', 'combos', 'v', 'hash'}:
         return None
     scopes_raw, ents_raw, finds_raw = (v.get('scopes') or [], v.get('entities') or {}, v.get('findings') or {})

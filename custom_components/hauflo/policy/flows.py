@@ -91,9 +91,7 @@ def _switch_as_x_step_ok(hass: HomeAssistant | None, data: dict[str, Any], step:
     return isinstance(eid, str) and eid.split('.', 1)[0] in sax()['source_domains'] and hauflo_entity(hass, eid, owned, owned_entries)
 
 def flow_input_ok(hass: HomeAssistant, domain: str | None, data: dict[str, Any], memo: dict[str, list[str]] | None=None, flow_id: str='', step: str | None=None, owned: set[str] | None=None, owned_entries: set[str] | None=None, options: bool=False) -> bool:
-    """What a flow step may set (security re-review round 3: only the handler was checked, not the input): never
-    a lock / alarm / valve for a voice assistant or a group, HomeKit as a bridge of included entities, Alice by the
-    label, KNX to an interface in the house and its telegram history kept in HA."""
+    """What a flow step may set (security re-review round 3: only the handler was checked, not the input): never a lock / alarm / valve for a voice assistant or a group, HomeKit as a bridge of included entities, Alice by the label, KNX to an interface in the house and its telegram history kept in HA."""
     if forbidden(data):
         return False
     if domain == 'homekit':

@@ -14,9 +14,7 @@ if TYPE_CHECKING:
 from .stats import day_of, gone_after, p_cfg
 
 class Flapping(Detector):
-    """Episodes «went unavailable» a day per device (else per entity): the last `flap_recent_days` against its own norm.
-    A mass drop (≥ `flap_mass` devices within `flap_mass_s`: the bus, the coordinator, Wi-Fi, a restart) isn't
-    counted."""
+    """Episodes «went unavailable» a day per device (else per entity): the last `flap_recent_days` against its own norm."""
     name = 'flapping'
     domains = None
     KIND = 'flapping'

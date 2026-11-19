@@ -26,10 +26,7 @@ from .targets import AutomationsTargetsMixin
 _LOGGER = logging.getLogger(__name__)
 
 async def async_add_new(hass: HomeAssistant, configs: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
-    """Adds the automations whose ids automations.yaml doesn't have yet — one write, with the same backup copy and
-    plain-file check as Hauflo's own rules; never replaces or removes one (one already there may have been edited by a
-    person). Each is validated by HA first. Returns (added ids, ids already there); NotPlain when the file isn't
-    plain."""
+    """Adds the automations whose ids automations.yaml doesn't have yet — one write, with the same backup copy and plain-file check as Hauflo's own rules; never replaces or removes one (one already there may have been edited by a person)."""
     for cfg in configs:
         await async_validate_config_item(hass, cfg['id'], cfg)
     helper = Automations(hass, lambda _eid: False)
@@ -66,9 +63,7 @@ class Automations(AutomationsTargetsMixin, AutomationsSpecsMixin, AutomationsBui
         return self.tx
 
     def message(self, err: rules_actions.Invalid, ru: bool) -> str:
-        """A refusal in the request's language: a field by its name, a kind of device by its word, a room by its name,
-        the
-        actions by the canon's names (rules_do_…), a device by what a person calls it — never an id or a key."""
+        """A refusal in the request's language: a field by its name, a kind of device by its word, a room by its name, the actions by the canon's names (rules_do_…), a device by what a person calls it — never an id or a key."""
         tx, ph = (self.tx, dict(err.ph))
         if isinstance((f := ph.get('field')), str):
             ph['field'] = tx.say(f'automations_f_{f}', ru)
@@ -103,7 +98,6 @@ class Automations(AutomationsTargetsMixin, AutomationsSpecsMixin, AutomationsBui
         return self.location()
 
     async def set_time_zone(self, body: dict[str, Any]) -> dict[str, Any]:
-        """        zone."""
         if self.hass.config.config_source == ConfigSource.YAML:
             raise PermissionError('automations_yaml_time_zone')
         tz = body.get('time_zone')
@@ -113,16 +107,14 @@ class Automations(AutomationsTargetsMixin, AutomationsSpecsMixin, AutomationsBui
         return self.location()
 
     async def detect(self) -> dict[str, Any]:
-        """Where the house is by its internet address — HA's own onboarding helper (the HA box has no GPS). Nothing is
-        saved: the person confirms first."""
+        """Where the house is by its internet address — HA's own onboarding helper (the HA box has no GPS)."""
         info = await async_detect_location_info(async_get_clientsession(self.hass))
         if info is None or info.latitude is None or info.longitude is None:
             raise LookupError('automations_no_detect')
         return {'latitude': info.latitude, 'longitude': info.longitude, 'city': info.city, 'region': getattr(info, 'region_name', None), 'country': info.country_code, 'time_zone': info.time_zone}
 
     def days(self, sun: bool=True) -> list[dict[str, Any]]:
-        """Today and the next 7 days in HA's time zone with their sunrise and sunset (none while the house's place isn't
-        known) — the dashboard says when a rule runs."""
+        """Today and the next 7 days in HA's time zone with their sunrise and sunset (none while the house's place isn't known) — the dashboard says when a rule runs."""
         tz = dt_util.get_time_zone(self.hass.config.time_zone) or dt_util.DEFAULT_TIME_ZONE
         obs = astral.Observer(self.hass.config.latitude, self.hass.config.longitude, self.hass.config.elevation)
         today = dt_util.now(tz).date()

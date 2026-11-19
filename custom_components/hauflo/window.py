@@ -1,20 +1,3 @@
-"""A statistic of a value over time windows for the value rules (rules.py): «среднее / мин / макс / сумма за час · день
-·
-
-Never our own history — HA's recorder holds it:
-  * a sensor with a state_class: the recorder's long-term statistics (`statistics_during_period`, hour / day / week,
-    local days and ISO weeks as HA reduces them); mean / min / max of a measurement, the period's change («сумма») of a
-    total (an energy meter, a run-hours counter);
-  * a weather entity (no statistics): its recorded states' attribute, mean / min / max per period from at least
-    `history_min_samples` samples;
-  * an on / off entity (a pump, a boiler): «сумма» = hours on in the period, from its recorded state changes — within
-  the
-    recorder's keep (`history_keep_days`).
-A period without data (no row, too few samples, mostly unavailable) is None — «нет данных», never a guess and never a
-trigger. Only complete periods count: the one running now never does. Read in the recorder's executor, when a period
-closes (+ `compile_delay_s`: HA compiles the hour's statistics just after it), at start and on a save — never polled.
-
-Numbers: rules_canon.json «window»; refusals: translations («exceptions», rules_window_…)."""
 from __future__ import annotations
 from datetime import datetime, timedelta
 import itertools
@@ -57,7 +40,6 @@ def starts(n: int, period: str, now: datetime | None=None) -> list[datetime]:
     return out[::-1]
 
 def source_of(hass: HomeAssistant, entity_id: str, attribute: str | None, stat: str) -> str:
-    """statistics / history / on_time for this input and statistic; raises Invalid with the reason (RU + EN texts)."""
     w = _w()
     domain = entity_id.split('.')[0]
     st = hass.states.get(entity_id)

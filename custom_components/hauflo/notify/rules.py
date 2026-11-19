@@ -19,7 +19,6 @@ def _action_ok(action: dict[str, Any] | None, owns: Callable[[str], bool] | None
     return owns is not None and bool(owns(eid))
 
 def narrowing(new: dict[str, Any], old: dict[str, Any]) -> str | None:
-    """    repeats, a rule off, a button gone — never a new rule, source, recipient, button, louder or more often (security"""
     before = {r['id']: r for r in old.get('rules') or []}
     for r in new.get('rules') or []:
         p = before.get(r['id'])
@@ -64,11 +63,6 @@ def narrowing(new: dict[str, Any], old: dict[str, Any]) -> str | None:
     return None
 
 def policy_overlay(hass: HomeAssistant | None, sources: list[str], *, own_states: bool, thresholds: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], dict[str, int]]:
-    """({source: its alarm condition}, {source: its hold}) from the site's policy (signals.py) — only what the site
-    chose
-    itself (a scope or the signal's own), only where the rule has no own condition: the rule's own states / threshold /
-    (0.34: one choice excludes the entity everywhere — signal, rule, counter, «Всё хорошо»): {none: True}, see
-    muted()."""
     pol = signals_store.policy(hass)
     if hass is None or not pol or (not (pol['scopes'] or pol['entities'])):
         return ({}, {})

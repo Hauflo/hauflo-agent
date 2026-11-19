@@ -1,7 +1,3 @@
-"""protected — its KNX entity and the addresses that open it — even if the cloud deletes and remakes it on the same
-addresses, or under another class or platform. Only HA's own admin clears it, here, with «hauflo.unprotect».
-A relay the deploy marked (a gate's / an electric lock's, red-team 2 A1) is the deploy's word: the deploy that marked it
-What is protected now is decided in __init__ (_protect_refresh / _sticky); this keeps the marks."""
 from __future__ import annotations
 from collections.abc import Callable
 import functools
@@ -22,8 +18,6 @@ max_mark = functools.cache(lambda: tuning()['ownership']['protect_max'])
 SCHEMA = vol.Schema({vol.Optional('entity_id'): cv.entity_ids, vol.Optional('group_address'): vol.All(cv.ensure_list, [cv.string])})
 
 class Marks:
-    """KNX unique ids and group-address keys (their raw numbers, __init__._ga_key) that stay protected: the agent's own
-    each relay with the addresses it was marked by. `uids` / `gas` are all of them."""
 
     def __init__(self, hass: HomeAssistant) -> None:
         self._uids: set[str] = set()
@@ -105,9 +99,7 @@ async def async_load(hass: HomeAssistant) -> Marks:
 
 @callback
 def async_setup_service(hass: HomeAssistant, loaded: Callable[[], Any], marks_of: Callable[[str], tuple[str | None, set[str]]], ga_key: Callable[[Any], str | None], refresh: Callable[[], None]) -> None:
-    """The admin-only «hauflo.unprotect», registered once for HA's whole run (integration setup). loaded() raises
-    «not_loaded» without a loaded entry; marks_of(entity) → (its KNX unique id, its opening addresses); ga_key spells an
-    address the way the marks keep it; refresh marks what is protected now."""
+    """The admin-only «hauflo.unprotect», registered once for HA's whole run (integration setup)."""
 
     async def handle(call: ServiceCall) -> None:
         user = await hass.auth.async_get_user(call.context.user_id) if call.context.user_id else None
@@ -138,9 +130,7 @@ def async_setup_service(hass: HomeAssistant, loaded: Callable[[], Any], marks_of
     async_register_admin_service(hass, DOMAIN, SERVICE, handle, schema=SCHEMA)
 
 class ProtectView(HomeAssistantView):
-    """The deploy names what is a gate's / an electric lock's relay (red-team 2, A1): marked, it stays protected.
-    {"entity_ids": [...], "unmark": [...]} → {"marked": [...], "unmarked": [...]}: «unmark» takes back only the
-    itself, stays until HA's admin clears it («hauflo.unprotect»)."""
+    """The deploy names what is a gate's / an electric lock's relay (red-team 2, A1): marked, it stays protected."""
     url = '/api/hauflo/protect'
     name = 'api:hauflo:protect'
     requires_auth = True

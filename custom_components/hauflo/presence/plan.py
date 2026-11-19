@@ -8,8 +8,7 @@ from .common import at, cap_end, dark_before, default_end, jitter, living, max_e
 from .model import learned_sessions
 
 def sun_rooms(model: dict[str, Any]) -> list[str]:
-    """The rooms «по солнцу» lights: the ones used most; with no history — a living room / kitchen by name, then the one
-    with most lights."""
+    """The rooms «по солнцу» lights: the ones used most; with no history — a living room / kitchen by name, then the one with most lights."""
     rooms = model['rooms']
     return sorted((k for k in rooms if rooms[k]['lights']), key=lambda k: (-rooms[k]['total'], not living().search(rooms[k]['name'] or ''), -len(rooms[k]['lights']), rooms[k]['name']))
 
@@ -39,9 +38,7 @@ def cap_rooms(cands: list[dict[str, Any]], cap: int) -> list[dict[str, Any]]:
     return sorted(kept, key=lambda x: x['from'])
 
 def plan_day(model: dict[str, Any], day: dt.date, sun: tuple[dt.datetime, dt.datetime] | None, now: dt.datetime, rng: random.Random, mode: str='learned', cap: int | None=None, lights_on: bool=True, covers_on: bool=True) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """The day's events (from now on) and what it is in words: the lit rooms tonight, when the blinds move (`cap` rooms
-    at
-    most, max_rooms by default)."""
+    """The day's events (from now on) and what it is in words: the lit rooms tonight, when the blinds move (`cap` rooms at most, max_rooms by default)."""
     cap = max_rooms() if cap is None else cap
     events: list[dict[str, Any]] = []
     sessions: list[dict[str, Any]] = []

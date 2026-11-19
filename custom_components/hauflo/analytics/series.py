@@ -12,8 +12,7 @@ if TYPE_CHECKING:
 from .common import ANY, Facts, cover, days, discover, hold, hour_span, judge, keep, levels, local, match_cfg, matches, max_catchup, max_series, mid, norms, period, robust, spec_cfg, specs, to_cfg, value_of, z, z_end
 
 class SeriesNorm(Detector):
-    """A series per entity (analytics.series[]), an hourly value per season × hour-of-week bucket, judged against its
-    bucket's median ± MAD (robust z ≥ Z, |Δ| ≥ the kind's min_delta, HOLD hours in a row) or the type's norm."""
+    """A series per entity (analytics.series[]), an hourly value per season × hour-of-week bucket, judged against its bucket's median ± MAD (robust z ≥ Z, |Δ| ≥ the kind's min_delta, HOLD hours in a row) or the type's norm."""
     name = 'series'
     domains = None
     KINDS = CanonAttr(lambda: tuple((f"norm_{s['kind']}" for s in specs())))
@@ -143,8 +142,7 @@ class SeriesNorm(Detector):
 
     @staticmethod
     def norm_at(s: dict[str, Any], key: str) -> tuple[float, float, int, str] | None:
-        """(median, spread, n, level) of the bucket, else of that hour on any day, else of the season — the first with
-        OBS_EPS values (the shared gate's count)."""
+        """(median, spread, n, level) of the bucket, else of that hour on any day, else of the season — the first with OBS_EPS values (the shared gate's count)."""
         season, _dg, hb = key.split('|')
         b = s['b']
         for level in levels():
@@ -161,8 +159,7 @@ class SeriesNorm(Detector):
 
     @staticmethod
     def judge_at(s: dict[str, Any], key: str) -> tuple[list[float], float, int] | None:
-        """The norm a value is judged against: (its medians — the level's and, below the bucket, the bucket's own —,
-        spread, n), or None while learning (only the season has enough, or the bucket's own values are too few)."""
+        """The norm a value is judged against: (its medians — the level's and, below the bucket, the bucket's own —, spread, n), or None while learning (only the season has enough, or the bucket's own values are too few)."""
         norm = SeriesNorm.norm_at(s, key)
         if norm is None or norm[3] not in judge():
             return None

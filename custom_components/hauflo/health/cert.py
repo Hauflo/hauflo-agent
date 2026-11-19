@@ -1,7 +1,4 @@
-"""The certificate of the house's external https address (`external_url`) running out — read from a TLS handshake
-with the address itself (the date only: trust is the browser's business, so a self-signed one is read too). No
-external address, or not https: the check isn't shown. Not reachable from inside (no hairpin NAT): the last word stays.
-Let's Encrypt renews 30 days ahead: `cert_warn_days` left means renewal is failing; `cert_crit_days` or past: crit."""
+"""The certificate of the house's external https address (`external_url`) running out — read from a TLS handshake with the address itself (the date only: trust is the browser's business, so a self-signed one is read too)."""
 from __future__ import annotations
 import asyncio
 import contextlib

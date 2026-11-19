@@ -42,9 +42,7 @@ class GuestLifecycleMixin:
         await self.sync()
 
     async def sync(self, force: bool=False) -> None:
-        """The guests' menus and every page's list of who sees it, brought to now: when who-sees-what changed, or
-        (force)
-        a dashboard was saved in HA — a page added there gets its list."""
+        """The guests' menus and every page's list of who sees it, brought to now: when who-sees-what changed, or (force) a dashboard was saved in HA — a page added there gets its list."""
         async with self._sync_lock:
             access = await self.access()
             for g in self.grants:
@@ -71,8 +69,7 @@ class GuestLifecycleMixin:
         self._later = async_call_later(self.hass, pages_debounce(), _run)
 
     async def async_start(self) -> None:
-        """The checks of guests with a login: every minute, on a user added / changed / deleted, on a dashboard
-        saved."""
+        """The checks of guests with a login: every minute, on a user added / changed / deleted, on a dashboard saved."""
         await self.async_load()
 
         async def _tick(_now: Any) -> None:
@@ -94,7 +91,7 @@ class GuestLifecycleMixin:
         await self.check()
 
     async def async_remove(self) -> int:
-        """The integration removed: every guest's user deleted, every page back to what it was. How many deleted."""
+        """The integration removed: every guest's user deleted, every page back to what it was."""
         await self.async_load()
         n = 0
         async with self.lock:

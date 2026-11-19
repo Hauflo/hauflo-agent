@@ -20,10 +20,7 @@ class Env:
         return may_change(self.hass, eid, self.owns, self.own_raw)
 
 def may_change(hass: HomeAssistant, eid: str, owns: Callable[[str], bool], own_raw: Callable[[str], bool]) -> bool:
-    """A rule's target — one test for the picker (targets), a save (clean_action) and the moment it runs (_write): a
-    valve only Hauflo's own raw one (it only closes), anything else Hauflo's own and never a lock / the alarm / a gate,
-    and never «Служебное» (a rule's own on / off switch, «Зима / Лето автоматически» — a rule could switch itself
-    off)."""
+    """A rule's target — one test for the picker (targets), a save (clean_action) and the moment it runs (_write): a valve only Hauflo's own raw one (it only closes), anything else Hauflo's own and never a lock / the alarm / a gate, and never «Служебное» (a rule's own on / off switch, «Зима / Лето автоматически» — a rule could switch itself off)."""
     domain = eid.split('.')[0]
     return (own_raw(eid) if domain == 'valve' else owns(eid)) and (not service_entity(hass, eid))
 

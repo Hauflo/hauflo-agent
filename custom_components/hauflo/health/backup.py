@@ -1,7 +1,4 @@
-"""The age of the last backup — HA's own backup manager (HA ≥ 2025.1: `homeassistant.components.backup`), not a sensor:
-the newest of the last automatic one and every backup in its list (a manual one counts, Hauflo's own pre-deploy ones
-don't — settings only, no history). No backup at all: a fault once `backup_never_h` passed since it was first seen so
-(a fresh house gets its first night). Levels: older than `backup_warn_days` — warn, `backup_crit_days` — crit."""
+"""The age of the last backup — HA's own backup manager (HA ≥ 2025.1: `homeassistant.components.backup`), not a sensor: the newest of the last automatic one and every backup in its list (a manual one counts, Hauflo's own pre-deploy ones don't — settings only, no history)."""
 from __future__ import annotations
 from typing import Any
 from homeassistant.components.backup import async_get_manager

@@ -67,13 +67,11 @@ def is_protected(hass: HomeAssistant, entity_id: str) -> bool:
     return protected(hass, entity_id)
 
 def wizard_refusal(hass: HomeAssistant | None, msg: dict[str, Any]) -> str | None:
-    """Why a device / entity registry update of another integration's item is refused (None — allowed). The reason
-    goes back to Hauflo in the error message («Hauflo agent: not allowed (<reason>)»)."""
+    """Why a device / entity registry update of another integration's item is refused (None — allowed)."""
     return decide(hass, msg)[0]
 
 def decide(hass: HomeAssistant | None, msg: dict[str, Any]) -> tuple[str | None, str | None]:
-    """(why refused, None) or (None, the id of the plan that allows it): the oldest live plan holding the item whose
-    rooms allow the write — a room is never taken from another deploy's plan."""
+    """(why refused, None) or (None, the id of the plan that allows it): the oldest live plan holding the item whose rooms allow the write — a room is never taken from another deploy's plan."""
     live = active_plans(hass) if hass is not None else {}
     held = holding(hass, msg)
     if not held:
@@ -140,9 +138,7 @@ def _refusal(hass: HomeAssistant | None, msg: dict[str, Any], plan: dict[str, An
     return None
 
 def wizard_prepare(hass: HomeAssistant, msg: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
-    """Before an allowed write goes to HA: keeps the item's values as they were (first write only), merges the role
-    labels with the family's own (HA replaces the whole list), creates a missing hauflo_role_* label. Returns the
-    message to send (None — refused: a label of that id can't be made) and the label ids it created."""
+    """Before an allowed write goes to HA: keeps the item's values as they were (first write only), merges the role labels with the family's own (HA replaces the whole list), creates a missing hauflo_role_* label."""
     f = flags(hass)
     created: list[str] = []
     _why, pid = decide(hass, msg)

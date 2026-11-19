@@ -1,9 +1,4 @@
-"""Voice: «включи / выключи тёплый пол», «выключи термостат», «включи защиту» [в комнате].
-
-A KNX floor heating or room thermostat usually has no on/off object — it keeps the climate all the
-time, and HA's own «включи / выключи» fails on it with a general error. The agent adds these
-sentences to HA (its own file in custom_sentences) and answers them: switches where the thermostat
-can, otherwise says it works by its setpoint; a thermostat with the «building protection» mode is"""
+"""Voice: «включи / выключи тёплый пол», «выключи термостат», «включи защиту» [в комнате]."""
 from __future__ import annotations
 import contextlib
 import logging
@@ -46,7 +41,7 @@ def _remove_strays(path: str) -> bool:
     return gone
 
 def write_sentences(path: str) -> bool:
-    """Our file only: one a human put there under the same name is left alone. True = the sentences changed."""
+    """Our file only: one a human put there under the same name is left alone."""
     changed = _remove_strays(path)
     if os.path.exists(path):
         with open(path, encoding='utf-8') as f:

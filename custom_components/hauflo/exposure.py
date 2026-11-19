@@ -1,15 +1,3 @@
-"""GET  /api/hauflo/exposure → {"assistants": [{"id", "on", "mode", "count", "dangerous", "cut", "entities": [{"entity_id",
-     "name", "danger"}]}], "dangerous": N}. Assist (conversation), Alexa / Google through Home Assistant Cloud (when
-     on),
-     Alice (Yandex Smart Home: its label; another filter — said, not listed) and each HomeKit bridge (its filter).
-     Dangerous = the agent's own protection canon (__init__._protected: a lock, the alarm, a valve, a gate / garage
-     door,
-     a relay marked as one, a group or helper over one) plus tuning.json exposure.dangerous_domains (cameras).
-POST /api/hauflo/exposure {"close": true} → the dangerous ones taken off every assistant that has them, nothing else:
-     HA's expose settings (Assist / Alexa / Google), Alice's label off the entity, a HomeKit bridge's filter (out of its
-     included entities, into its excluded ones). A fresh backup first (428 otherwise), as every change; admin only; the
-     ...audit}.
-Reads never change anything but what HA itself writes on asking (the default expose setting of a new entity)."""
 from __future__ import annotations
 from collections.abc import Callable
 import functools
@@ -38,8 +26,7 @@ HOMEKIT_DOMAIN = 'homekit'
 _FILTER_KEYS = (CONF_INCLUDE_DOMAINS, CONF_INCLUDE_ENTITY_GLOBS, CONF_INCLUDE_ENTITIES, CONF_EXCLUDE_DOMAINS, CONF_EXCLUDE_ENTITY_GLOBS, CONF_EXCLUDE_ENTITIES)
 
 def danger_of(entity_id: str, protected: set[str], never_domains: set[str]) -> str | None:
-    """Why it is dangerous: its domain (a lock, the alarm, a valve, a camera) or «protected» (a gate, a relay marked as
-    one, a group or helper over one); None — not dangerous."""
+    """Why it is dangerous: its domain (a lock, the alarm, a valve, a camera) or «protected» (a gate, a relay marked as one, a group or helper over one); None — not dangerous."""
     domain = entity_id.split('.', 1)[0]
     if domain in never_domains or domain in danger_domains():
         return domain
@@ -133,7 +120,7 @@ class Exposure:
         return {'assistants': rows, 'dangerous': total}
 
     def close(self) -> list[dict[str, Any]]:
-        """The dangerous ones off every assistant that has them; the rest untouched. Returns what was closed where."""
+        """The dangerous ones off every assistant that has them; the rest untouched."""
         hass = self.hass
         protected = self._protected()
         closed: dict[str, list[str]] = {}
@@ -174,7 +161,7 @@ class Exposure:
         return [{'entity_id': e, 'assistants': sorted(set(a))} for e, a in sorted(closed.items())]
 
 class ExposureView(HomeAssistantView):
-    """The audit (GET) and «закрыть опасное» (POST {"close": true}). Admin only."""
+    """The audit (GET) and «закрыть опасное» (POST {"close": true})."""
     url = '/api/hauflo/exposure'
     name = 'api:hauflo:exposure'
     requires_auth = True

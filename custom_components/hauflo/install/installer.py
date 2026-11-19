@@ -29,8 +29,7 @@ class Installer:
         return Path(self.hass.config.path(*WORK_DIR))
 
     async def async_load(self) -> None:
-        """After a restart: the one asked for is known now (restarted) or it isn't (failed:not_loaded); an install the
-        restart cut off is failed:interrupted."""
+        """After a restart: the one asked for is known now (restarted) or it isn't (failed:not_loaded); an install the restart cut off is failed:interrupted."""
         data = await self.store.async_load()
         jobs = data.get('jobs') if isinstance(data, dict) else None
         self.jobs = {d: j for d, j in (jobs or {}).items() if item(d) and isinstance(j, dict)}
@@ -137,8 +136,7 @@ class Installer:
         return self.job(domain)
 
     async def restart(self, domain: str) -> dict[str, Any]:
-        """HA's own restart (it checks the configuration first and refuses a broken one) — only for an install waiting
-        for it, only on this explicit request."""
+        """HA's own restart (it checks the configuration first and refuses a broken one) — only for an install waiting for it, only on this explicit request."""
         job = self.jobs.get(domain)
         if job is None or job.get('state') not in ('restart_required', 'restarting'):
             raise Refused('not_needed')

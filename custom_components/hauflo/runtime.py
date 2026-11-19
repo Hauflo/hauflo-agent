@@ -47,9 +47,7 @@ def insights_of(hass: HomeAssistant) -> insight_engine.Insights | None:
 
 @callback
 def policy_changed(hass: HomeAssistant, agent: Any) -> None:
-    """Hauflo sent the site's policy (signals.py): the rules' overlay, the findings' choices, what is watched and the
-    status — at once. A rule HA runs as its own automation whose condition now comes from the policy goes to the engine
-    (independent.async_sync writes the automations again)."""
+    """Hauflo sent the site's policy (signals.py): the rules' overlay, the findings' choices, what is watched and the status — at once."""
     if (engine := agent.engine) is not None and engine.policy_changed() and engine.native:
         hass.async_create_task(independent_sync.async_sync(hass, engine), 'hauflo policy resync')
     if (ins := agent.insights) is not None:
@@ -73,12 +71,6 @@ def notify_of(hass: HomeAssistant) -> notify_engine.NotifyEngine | None:
     return None
 
 def rule_states(hass: HomeAssistant, admin: bool) -> dict[str, str]:
-    """entity → «ok» / «fired» / «off» for every entity a Hauflo rule watches (the tile's bell, hauflo-cards.js).
-    Both kinds count: the value rules (rules.py: the input, the conditions, the interlock) and the alarm rules
-    (notify.py:
-    their sources). Several rules: fired if any fired; else off only if all are off; else ok. A client sees only the
-    value
-    rules the integrator left visible (as /api/hauflo/rules); a no-data alarm is a diagnosis, not «сработало»."""
     found: dict[str, list[str]] = {}
     for entry in hass.config_entries.async_loaded_entries(DOMAIN):
         agent = entry.runtime_data
@@ -111,7 +103,6 @@ def _habits(hass: HomeAssistant) -> habits_engine.Habits | None:
     return next((e.runtime_data.habits for e in hass.config_entries.async_loaded_entries(DOMAIN) if getattr(e.runtime_data, 'habits', None) is not None), None)
 
 async def habits_set(hass: HomeAssistant, on: bool) -> bool:
-    """    forgets what was recorded (habits.py set_enabled)."""
     if (h := _habits(hass)) is None:
         return False
     await h.set_enabled(on)

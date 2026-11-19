@@ -1,6 +1,4 @@
-"""RTP (RFC 3550) for a door call: G.711 packets, A-law ↔ μ-law (a panel offering only the other law than the one the
-cards' stream carries), DTMF as telephone-event (RFC 4733), and the call's UDP session — symmetric (it answers where
-the panel's packets really come from, a NAT in between) and counted for the diagnosis."""
+"""RTP (RFC 3550) for a door call: G.711 packets, A-law ↔ μ-law (a panel offering only the other law than the one the cards' stream carries), DTMF as telephone-event (RFC 4733), and the call's UDP session — symmetric (it answers where the panel's packets really come from, a NAT in between) and counted for the diagnosis."""
 from __future__ import annotations
 import asyncio
 from collections.abc import Callable
@@ -77,9 +75,7 @@ def convert(payload: bytes, src: str, dst: str) -> bytes:
     return payload.translate(A2U if src == 'PCMA' else U2A)
 
 class RtpSession(asyncio.DatagramProtocol):
-    """The panel's audio leg of one call: what comes in goes to `on_audio` (payload, in the call's codec); `send` puts
-    the card's voice on the wire. Symmetric: the first packets from the panel's address (any port) say where to
-    answer."""
+    """The panel's audio leg of one call: what comes in goes to `on_audio` (payload, in the call's codec); `send` puts the card's voice on the wire."""
 
     def __init__(self, codec: str, pt: int, dtmf_pt: int | None, on_audio: Callable[[bytes], None]) -> None:
         self.codec, self.pt, self.dtmf_pt = (codec, pt, dtmf_pt)

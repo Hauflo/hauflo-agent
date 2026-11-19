@@ -22,9 +22,6 @@ def device_entities_owned(hass: HomeAssistant | None, device_id: Any, owned: set
     return all((e.platform != 'knx' or e.unique_id in owned for e in ents))
 
 def foreign_device_placeable(hass: HomeAssistant | None, device_id: Any, area_id: Any, owned_entries: set[str] | None) -> bool:
-    """Another integration's device (a leak sensor, a camera…) put in a room on the integrator's click («Изменения в
-    HA»,
-    or into a room Hauflo made. Never taken out of the family's own room into theirs, never a KNX one, never cleared."""
     if hass is None or not isinstance(device_id, str) or (not isinstance(area_id, str)) or (not area_id):
         return False
     device = dr.async_get(hass).async_get(device_id)
@@ -38,8 +35,6 @@ def foreign_device_placeable(hass: HomeAssistant | None, device_id: Any, area_id
     return getattr(device, 'area_id', None) is None or owns(owned_entries, 'area', area_id)
 
 def foreign_entity_shown(hass: HomeAssistant | None, eid: str, msg: dict[str, Any]) -> bool:
-    """Another integration's entity on a device in the house (a thermostat's, a leak kit's): hidden from / shown on the
-    voice, id), never Hauflo's or KNX's, never a phone's, never one without a device (a helper, a template)."""
     if hass is None or not set(msg) <= {'id', 'type', 'entity_id', 'hidden_by', 'name'} or (not set(msg) & {'hidden_by', 'name'}):
         return False
     if 'hidden_by' in msg and msg['hidden_by'] not in ('user', None):
@@ -74,8 +69,7 @@ def empty_area(hass: HomeAssistant | None, area_id: Any) -> bool:
     return not er.async_entries_for_area(er.async_get(hass), area_id) and (not dr.async_entries_for_area(dr.async_get(hass), area_id))
 
 async def load_stock_area_names(hass: HomeAssistant) -> dict[str, str]:
-    """The rooms HA's onboarding makes («Гостиная», «Кухня», «Спальня»): name in the house's language and English →
-    icon."""
+    """The rooms HA's onboarding makes («Гостиная», «Кухня», «Спальня»): name in the house's language and English → icon."""
     names: dict[str, str] = {}
     for lang in {hass.config.language or 'en', 'en'}:
         tr = await async_get_translations(hass, lang, 'area', {'onboarding'})
@@ -86,7 +80,6 @@ async def load_stock_area_names(hass: HomeAssistant) -> dict[str, str]:
     return names
 
 def stock_area(hass: HomeAssistant | None, area_id: Any) -> bool:
-    """    its stock name and icon, no floor, alias, picture, label or sensor, nothing in it."""
     names = hass.data.get(STOCK_AREAS) if hass is not None else None
     if not names or not isinstance(area_id, str):
         return False

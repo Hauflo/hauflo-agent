@@ -1,12 +1,3 @@
-"""Assistant, the agent's www/ the same source (cards/build.mjs bundles it). Both on one house → ONE copy on the page.
-
-The agent decides at its start which copy serves (`pick`): the plugin only when it is at least as new as the agent's own
-cards and this agent is at least the plugin's `agent_min`; otherwise the agent's own cards (HA's extra JS, loaded before
-any dashboard resource — the plugin's file then defines nothing, hauflo-cards.js HF_FIRST) and HA's Repairs say what to
-update. A tie is the agent's: the same code, and the house keeps what it had before the plugin came.
-
-The plugin is found among the dashboard resources (HACS/Marketplace adds it as /hacsfiles/<repo>/hauflo-cards.js); its
-version is the first line of its file — `// hauflo-cards {"version": …, "agent_min": …}` (cards/build.mjs)."""
 from __future__ import annotations
 import functools
 import json
@@ -22,8 +13,6 @@ _LOGGER = logging.getLogger(__name__)
 
 @functools.cache
 def own_cards() -> dict[str, str]:
-    """www/cards.json, read on first use — off the event loop: async_setup_entry and the config flow preload it in
-    the executor."""
     return json.loads((Path(__file__).parent / 'www' / 'cards.json').read_text(encoding='utf-8'))
 HEADER = re.compile('^// hauflo-cards (\\{.*\\})\\s*$')
 AGENT, PLUGIN = ('agent', 'plugin')
@@ -120,7 +109,7 @@ def report(hass: HomeAssistant, issue: str | None, plugin: dict[str, Any] | None
     issues.raise_issue(hass, issue, plugin=plugin.get('version') or '?', own=own_cards().get('version', ''), agent=VERSION, agent_min=plugin.get('agent_min') or '?')
 
 async def async_choose(hass: HomeAssistant) -> tuple[str, dict[str, Any] | None]:
-    """At the agent's start: which copy serves, Repairs updated. Returns (AGENT | PLUGIN, the plugin or None)."""
+    """At the agent's start: which copy serves, Repairs updated."""
     plugin = await async_find_plugin(hass)
     source, issue = pick(own_cards(), VERSION, plugin)
     report(hass, issue, plugin)

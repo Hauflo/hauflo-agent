@@ -167,9 +167,7 @@ class AutomationsDescribeMixin:
         return text
 
     def describe(self, rule: dict[str, Any], ru: bool) -> str:
-        """«Каждый будний день в 07:00 и 07:30: включить — свет (Кухня, Прихожая). Только если темно. Создано в Hauflo.»
-        —
-        the rule in the language it was made in, from translations only; the devices and rooms by their names."""
+        """«Каждый будний день в 07:00 и 07:30: включить — свет (Кухня, Прихожая)."""
         made = self._d(ru, 'made')
         try:
             when = rule['when']

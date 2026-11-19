@@ -13,16 +13,14 @@ class PairEffectPairsMixin:
     """Keeps the executor and sensor pairs."""
 
     def set_pair(self, effect: str, kind: str, executor: str) -> None:
-        """The integrator's word: this executor is this effect's (`executor` "" — this effect has no executor to
-        judge)."""
+        """The integrator's word: this executor is this effect's (`executor` "" — this effect has no executor to judge)."""
         if kind in kinds_cfg():
             self.manual[effect] = {'kind': kind, 'exec': executor}
             self._paired_at = -pairs_every()
             self.ctx.dirty()
 
     def set_kinds(self, kinds: dict[str, str]) -> None:
-        """The deploy's map of thermostats' «воздух / пол» (the whole of it: one not in it is read by its words
-        again)."""
+        """The deploy's map of thermostats' «воздух / пол» (the whole of it: one not in it is read by its words again)."""
         kinds = {e: k for e, k in kinds.items() if k in effect_kinds()}
         if kinds != self.kinds:
             self.kinds = kinds
@@ -34,8 +32,7 @@ class PairEffectPairsMixin:
         return k == 'floor' if k else bool(floor_re and floor_re.search(text(st)))
 
     def climate_kind(self, eid: str) -> str | None:
-        """«floor» / «air» of a thermostat: the integrator's word, a floor pair's target, else its words
-        (analytics.py loops)."""
+        """«floor» / «air» of a thermostat: the integrator's word, a floor pair's target, else its words (analytics.py loops)."""
         if eid in self.kinds:
             return self.kinds[eid]
         if any((p.get('kind') == 'floor' and p.get('target') == eid for p in self.pairs.values())):
@@ -52,8 +49,7 @@ class PairEffectPairsMixin:
             self.ctx.dirty()
 
     def pairs_view(self) -> dict[str, Any]:
-        """What the integrator sees and may refine: the pairs found, the effects left without an unambiguous
-        executor."""
+        """What the integrator sees and may refine: the pairs found, the effects left without an unambiguous executor."""
         who = self.ctx.who
         here = lambda eid: self.ctx.hass.states.get(eid) is not None
         pairs = []

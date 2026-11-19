@@ -120,8 +120,7 @@ class RulesSuggestMixin:
         persistent_notification.async_dismiss(self.hass, self._tag(rule))
 
     async def answer_suggestion(self, rid: Any, what: str, who: str | None=None) -> bool:
-        """«Сделать» runs the actions of the suggestion there is now (an old push runs nothing); «Не сейчас» snoozes it
-        for the rule's snooze_days. Neither changes the rule's entity."""
+        """«Сделать» runs the actions of the suggestion there is now (an old push runs nothing); «Не сейчас» snoozes it for the rule's snooze_days."""
         rule = self.rules.get(rid) if isinstance(rid, str) else None
         sug = self.st(rid)['sug'] if rule else None
         if rule is None or sug is None:

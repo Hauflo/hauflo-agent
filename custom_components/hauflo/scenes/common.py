@@ -33,8 +33,7 @@ class Invalid(ValueError):
     pass
 
 class Refused(Invalid, derived.Refused):
-    """A refusal a person can meet (not a request sent wrong): said in the page's language — translations
-    scenes_<code>."""
+    """A refusal a person can meet (not a request sent wrong): said in the page's language — translations scenes_<code>."""
 
     def __init__(self, code: str, status: int=HTTPStatus.BAD_REQUEST, **ph: Any) -> None:
         derived.Refused.__init__(self, code, f'scenes_{code}', status, **ph)
@@ -44,7 +43,6 @@ class Locked(RuntimeError):
     EN = "The owner switched off “Allow Hauflo to change this site's setup” (Hauflo → Configure) — the KNX scene can't be saved now."
 
 class TooSoon(RuntimeError):
-    """    «только что отправлено» though nothing of this scene had been)."""
     RU = 'Только что отправлено. Подождите несколько секунд.'
     EN = 'Just sent. Wait a few seconds.'
 
@@ -60,7 +58,6 @@ class TooSoon(RuntimeError):
 
 @dataclass
 class KnxScenes:
-    """    lock)."""
     numbers: Callable[[], dict[str, int]]
     target: Callable[[str], tuple[str, int]]
     locked: Callable[[], bool]

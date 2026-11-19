@@ -71,10 +71,7 @@ KEEP_BACKUPS = 3
 FILE_LOCK = asyncio.Lock()
 
 class Invalid(rules_actions.Invalid):
-    """A request the agent refuses (400): `code` for the app, its text in translations (automations_<code>, or the
-    canon's own rules_… key of an action it refused), `ph` the placeholders — said in the request's language
-    (Automations.message). A request no page of Hauflo's makes (a stale card, a hand-made call) — `bad_request`, `what`
-    names the field for the log."""
+    """A request the agent refuses (400): `code` for the app, its text in translations (automations_<code>, or the canon's own rules_… key of an action it refused), `ph` the placeholders — said in the request's language (Automations.message)."""
 
     def __init__(self, code: str, key: str | None=None, **ph: Any) -> None:
         super().__init__(code, key or f'automations_{code}', **ph)
@@ -83,7 +80,6 @@ def bad(what: str) -> Invalid:
     return Invalid('bad_request', what=what)
 
 class NotPlain(RuntimeError):
-    """automations.yaml carries what a re-dump would lose (409, said in both languages)."""
     RU = 'Hauflo не меняет automations.yaml: в нём комментарии, !include / !secret или ручное оформление, которые потерялись бы при перезаписи. Правила Hauflo на этом объекте добавляет интегратор, или он приводит файл к виду, в каком его сохраняет редактор автоматизаций Home Assistant.'
     EN = "Hauflo doesn't change automations.yaml: it has comments, !include / !secret or hand formatting a rewrite would lose. At this site the integrator adds Hauflo's rules, or saves the file the way Home Assistant's automation editor writes it."
 

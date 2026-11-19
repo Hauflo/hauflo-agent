@@ -25,8 +25,7 @@ from .pages import GuestPagesMixin
 _LOGGER = logging.getLogger(__name__)
 
 def route_of(secret: str) -> str:
-    """The guest pages' address part of this house: the cloud derives the same from the hash of the agent's secret
-    (agentHub.ts guestRouteOf) — no project id in the link, and no other agent can take this house's route."""
+    """The guest pages' address part of this house: the cloud derives the same from the hash of the agent's secret (agentHub.ts guestRouteOf) — no project id in the link, and no other agent can take this house's route."""
     inner = hashlib.sha256(secret.encode()).hexdigest()
     return hashlib.sha256(f'hauflo-guest-route:{inner}'.encode()).hexdigest()[:24]
 
@@ -173,7 +172,7 @@ class GuestAccess(GuestPagesMixin, GuestControlMixin, GuestLifecycleMixin):
         return {'id': gid, 'link': link, 'qr': [''.join(('1' if v else '0' for v in row)) for row in qr.encode(link)], 'expires': grant['expires'], 'count': len(grant['entities'])}
 
     async def revoke(self, user: Any, grant_id: Any=None) -> int:
-        """One link (`grant_id`) or every one still open (None). Any person of the house may — the safe direction."""
+        """One link (`grant_id`) or every one still open (None)."""
         n = 0
         async with self.lock:
             now = iso(dt_util.utcnow())
@@ -199,8 +198,7 @@ class GuestAccess(GuestPagesMixin, GuestControlMixin, GuestLifecycleMixin):
         self.hass.data[GUEST_USERS] = {g['user_id'] for g in self.grants if g.get('kind') == PAGES and isinstance(g.get('user_id'), str) and (not g.get('removed'))} | self._pending
 
     async def access(self) -> Access:
-        """Who sees which page now (dashmerge.Access): every active person of HA but the guests; the guests given a
-        page."""
+        """Who sees which page now (dashmerge.Access): every active person of HA but the guests; the guests given a page."""
         users = await self.hass.auth.async_get_users()
         present = {u.id for u in users}
         self._mark()

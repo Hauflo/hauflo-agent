@@ -74,8 +74,7 @@ class AutomationsStoreMixin:
         return await yamlfile.async_read(self.hass, self.hass.config.path(AUTOMATIONS), NotPlain)
 
     async def write_file(self, data: list[dict[str, Any]], before: str | None, redo: Callable[[list[Any]], list[Any]] | None=None) -> list[Any]:
-        """One atomic write, the replaced text kept as a backup copy; the file changed since ``before`` (HA's editor
-        saved meanwhile) — ``redo`` makes the change again on it (none — NotPlain, nothing written)."""
+        """One atomic write, the replaced text kept as a backup copy; the file changed since ``before`` (HA's editor saved meanwhile) — ``redo`` makes the change again on it (none — NotPlain, nothing written)."""
         return await yamlfile.async_write(self.hass, self.hass.config.path(AUTOMATIONS), self.hass.config.path(BACKUP), KEEP_BACKUPS, data, before, NotPlain, redo)
 
     def entity_of(self, rule_id: str) -> str | None:
@@ -153,8 +152,7 @@ class AutomationsStoreMixin:
         await self._save(data)
 
     async def changed(self, data: dict[str, Any]) -> set[str]:
-        """Hauflo's rules someone edited in HA's own automation editor: what's in automations.yaml is not what Hauflo
-        wrote (its digest; for a rule from before the digest — what Hauflo would write from the form)."""
+        """Hauflo's rules someone edited in HA's own automation editor: what's in automations.yaml is not what Hauflo wrote (its digest; for a rule from before the digest — what Hauflo would write from the form)."""
         try:
             file, _ = await self.read_file()
         except Exception:

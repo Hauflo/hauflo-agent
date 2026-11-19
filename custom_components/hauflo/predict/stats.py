@@ -23,7 +23,7 @@ gone_after = functools.cache(lambda: _i()['gone_after_s'])
 on_actions = functools.cache(lambda: set(_i()['heat_actions']) | set(_i()['cool_actions']))
 
 def theil_sen(pts: list[tuple[float, float]]) -> tuple[float, float] | None:
-    """The median of the pairwise slopes and its intercept (Sen 1968): one wild day doesn't tilt it. None — < 2 x."""
+    """The median of the pairwise slopes and its intercept (Sen 1968): one wild day doesn't tilt it."""
     slopes = [(y2 - y1) / (x2 - x1) for i, (x1, y1) in enumerate(pts) for x2, y2 in pts[i + 1:] if x2 != x1]
     if not slopes:
         return None
@@ -49,9 +49,7 @@ def date_in(now: float, days: float) -> str:
     return dt_util.as_local(dt_util.utc_from_timestamp(now + days * DAY_S)).date().isoformat()
 
 def forecast(pts: list[tuple[float, float]], now_x: float, limit: float, sign: int, min_change: float) -> dict[str, float] | None:
-    """A steady trend toward `limit` (sign −1: falling to it, +1: rising to it): {level (the line's value now), slope
-    (per
-    day), days (to the limit, 0 if past it)}; None — no trend: flat, the other way, too small, or lost in its noise."""
+    """A steady trend toward `limit` (sign −1: falling to it, +1: rising to it): {level (the line's value now), slope (per day), days (to the limit, 0 if past it)}; None — no trend: flat, the other way, too small, or lost in its noise."""
     fit = theil_sen(pts)
     if fit is None:
         return None
@@ -64,9 +62,7 @@ def forecast(pts: list[tuple[float, float]], now_x: float, limit: float, sign: i
     return {'level': level, 'slope': m, 'days': max(0.0, (limit - level) / m)}
 
 class Series(Detector):
-    """Readings → one value a day (`agg`: max / min / median of the day), the last TREND_DAYS days kept; `assess` says
-    whether a finding is open (its fields) or not, with its own end condition. Persisted: the days, today's running
-    value, whether it is open."""
+    """Readings → one value a day (`agg`: max / min / median of the day), the last TREND_DAYS days kept; `assess` says whether a finding is open (its fields) or not, with its own end condition."""
     agg = 'max'
     diagnostic = True
 

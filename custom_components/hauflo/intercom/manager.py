@@ -1,7 +1,4 @@
-"""The doors of one house: one SIP socket on the chosen address (never every interface), the loopback RTSP of their
-sound for HA's go2rtc, the registrations (the agent on a panel's / a cloud's server; the panel on the agent), and who
-a request is for — a call is taken only from an address the door's settings name. Services «Ответить» / «Завершить»
-(the door's opening is its button only — notify.RUN_SERVICES never names it, a push can't open a door)."""
+"""The doors of one house: one SIP socket on the chosen address (never every interface), the loopback RTSP of their sound for HA's go2rtc, the registrations (the agent on a panel's / a cloud's server; the panel on the agent), and who a request is for — a call is taken only from an address the door's settings name."""
 from __future__ import annotations
 import asyncio
 import base64
@@ -62,7 +59,7 @@ class Intercom:
         self.cloud_ice: Any = None
 
     async def start(self) -> None:
-        """No door — no socket. The SIP socket on the chosen address only; the sound's RTSP on loopback only."""
+        """No door — no socket."""
         if not self.doors:
             return
         if self.cloud_fetch is not None and (not self.options.get('ice_servers')):
@@ -300,9 +297,6 @@ class Intercom:
         return self.locks.linked(door_id) if self.locks is not None else None
 
     async def open_lock(self, entity_id: str, user_id: str | None) -> None:
-        """A door opened by its linked smart lock (Р56): «открыть» when the lock can, else «отпереть»; only by the
-        people
-        the lock's settings list (locks.py) — else «Нет прав»."""
         if self.locks is None:
             raise IntercomError('open_not_set')
         if not self.locks.may_unlock(entity_id, user_id):
@@ -358,9 +352,7 @@ def _address(text: str) -> tuple[str, int] | None:
 
 @callback
 def async_setup_services(hass: HomeAssistant, find: Any) -> None:
-    """`hauflo.intercom_answer` / `hauflo.intercom_hangup` (entity_id: any entity of the door), registered once for HA's
-    whole run (integration setup). `find()` → the running Intercom or None; raises «not_loaded» without a loaded
-    entry."""
+    """`hauflo.intercom_answer` / `hauflo.intercom_hangup` (entity_id: any entity of the door), registered once for HA's whole run (integration setup)."""
 
     def _mgr() -> Intercom:
         mgr = find()

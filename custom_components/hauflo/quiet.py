@@ -1,6 +1,3 @@
-"""A window «from … to» in the house's local time; it may cross midnight (22:00–08:00). Numbers and the classes that are
-never silenced (safety: leak, frost…) are data: rules_canon.json «quiet». Pure functions — rules.py decides what is
-held."""
 from __future__ import annotations
 from datetime import datetime, timedelta
 import re
@@ -39,7 +36,7 @@ def clean(raw: Any, old: dict[str, Any]) -> dict[str, Any]:
     return out
 
 def inside(cfg: dict[str, Any], t: datetime) -> bool:
-    """Is the local time `t` in the quiet window (off → never)? The start counts, the end does not."""
+    """Is the local time `t` in the quiet window (off → never)?"""
     if not cfg.get('on'):
         return False
     local = dt_util.as_local(t)

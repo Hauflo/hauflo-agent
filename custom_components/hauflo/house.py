@@ -1,13 +1,3 @@
-"""* «Кто обслуживает дом»: the service company and its contact as service.py keeps them (the cloud's «service» frame) —
-  every signed-in person reads them here: the alarm card's «Позвонить», the settings, the «Сервис» page.
-* «Кто может менять настройки дома» (Google Home: adults are equal, kids are limited — family review round 3): every
-  person of the house may change its settings; an admin marks a person «Ограниченный (детский) профиль». A restricted
-  person can't create / edit / delete automations, rename / re-learn / delete scenes, change the season or «Нет дома»,
-  create guest links (asks an admin instead), rename or reorder blocks — checked by the views themselves (403,
-  `refuse`), not only the cards. Lights, blinds, temperature and «Принято» on an alarm stay open to everyone.
-* «Избранное» and «Моя комната» of each person (per HA user, as the view prefs are): the top of «Главная».
-
-GET/POST /api/hauflo/house — any signed-in person (the restricted list: admins only)."""
 from __future__ import annotations
 import re
 import time

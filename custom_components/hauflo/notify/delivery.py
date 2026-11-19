@@ -42,9 +42,7 @@ class NotifyDeliveryMixin:
 
     @callback
     def ack_house(self, entity_id: str, who: str) -> bool:
-        """«Принято» for a house problem (alarms_now.HOUSE_KEY): no push or siren is its — only who accepted it, until
-        it
-        clears (house_acks_keep). False — accepted already."""
+        """«Принято» for a house problem (alarms_now.HOUSE_KEY): no push or siren is its — only who accepted it, until it clears (house_acks_keep)."""
         if self.house_acks.get(entity_id):
             return False
         self.house_acks[entity_id] = who[:80]
@@ -241,10 +239,7 @@ class NotifyDeliveryMixin:
         return sent
 
     async def async_tell(self, title: str, message: str, user_id: str | None=None, *, actions: list | None=None, tag: str | None=None) -> list[str]:
-        """A value rule's message (rules.py), the season's suggestion (season.py): to one HA user's phones («уведомить
-        меня»), else to every phone that gets the house's messages (its «audience»), and — to everyone — a note in HA
-        too.
-        `tag`: one message replacing the previous one of its kind (push tag and HA note id)."""
+        """A value rule's message (rules.py), the season's suggestion (season.py): to one HA user's phones («уведомить меня»), else to every phone that gets the house's messages (its «audience»), and — to everyone — a note in HA too."""
         phones = self.phones()
         if user_id:
             people = {s.entity_id for s in self.hass.states.async_all('person') if s.attributes.get('user_id') == user_id}
@@ -255,8 +250,6 @@ class NotifyDeliveryMixin:
         return await self.send({}, title, message, tag=tag or f'hauflo-rule-{slugify(title)[:40]}', critical=False, targets=targets, actions=actions)
 
     def test_wait(self, body: dict[str, Any]) -> int:
-        """Seconds until this test may ring its phones (0 = now): each phone at most once per TEST_GAP, TEST_PER_MIN
-        tests a minute in all — a test rings at full volume (security re-review round 5), but «Проверить» then"""
         now = time.monotonic()
         self._tests = [t for t in self._tests if now - t < 60]
         if len(self._tests) >= test_per_min():

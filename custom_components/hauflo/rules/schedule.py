@@ -43,8 +43,7 @@ def clean_at(raw: Any) -> dict[str, Any]:
     return {'times': sorted(set(times)), 'sun': out_sun, 'days': [d for d in DAYS if d in days]}
 
 def next_fire(at: dict[str, Any], after: dt.datetime, sun: Callable[[str, dt.date], dt.datetime | None]) -> dt.datetime | None:
-    """The first moment of `at` strictly after `after` (aware, in the house's time zone) within the canon's horizon;
-    None: none there (no sunset in a polar summer). A sun moment belongs to the day of its event."""
+    """The first moment of `at` strictly after `after` (aware, in the house's time zone) within the canon's horizon; None: none there (no sunset in a polar summer)."""
     found: list[dt.datetime] = []
     for k in range(int(C('schedule', 'horizon_days')) + 1):
         day = after.date() + dt.timedelta(days=k)
@@ -61,9 +60,7 @@ def _day_moments(at: dict[str, Any], day: dt.date, tz: Any, sun: Callable[[str, 
     return out
 
 def next_off_day(at: dict[str, Any], after: dt.datetime, sun: Callable[[str, dt.date], dt.datetime | None]) -> dt.datetime | None:
-    """The first moment of the next day the schedule does not run on (a weekday not among its days), strictly after
-    `after`: there the log says once «пропущен: не тот день недели» (as HA's own automation's trace shows a weekday
-    condition not met). None: it runs every day, or no such day within the horizon."""
+    """The first moment of the next day the schedule does not run on (a weekday not among its days), strictly after `after`: there the log says once «пропущен: не тот день недели» (as HA's own automation's trace shows a weekday condition not met)."""
     for k in range(int(C('schedule', 'horizon_days')) + 1):
         day = after.date() + dt.timedelta(days=k)
         if DAYS[day.weekday()] in at['days'] or not (ms := _day_moments(at, day, after.tzinfo, sun)):
@@ -100,8 +97,7 @@ def past_off(rule: dict[str, Any], v: float) -> bool:
     return not past_on(rule, v)
 
 def window_off(rule: dict[str, Any], v: float) -> bool:
-    """Back to normal for one period of a window rule: strictly past X ∓ Y (a period at the threshold itself breaks
-    the run — as the season's suggestion always did)."""
+    """Back to normal for one period of a window rule: strictly past X ∓ Y (a period at the threshold itself breaks the run — as the season's suggestion always did)."""
     w, y = (rule['when'], rule['y'])
     if w == 'below':
         return v > rule['x'] + y
@@ -134,8 +130,7 @@ class RulesScheduleMixin:
         return (inp['entity_id'], inp.get('attribute'))
 
     async def window_refresh(self, rid: str, why: str) -> None:
-        """The last periods' values from the recorder (in its executor), then the decision; again when the next
-        closes."""
+        """The last periods' values from the recorder (in its executor), then the decision; again when the next closes."""
         rule = self.rules.get(rid)
         if rule is None or not rule.get('window'):
             return

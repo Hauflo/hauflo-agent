@@ -1,9 +1,4 @@
-"""The canon files the agent reads — tuning, tunnel, servers, rules, recipes, integrations, theme, room pictures,
-cards, intercom presets and their labels — read once, in the executor, before anything on the event loop needs them.
-
-Each file is a functools.cache loader read on first use (nothing is read at import, HA core review); the first use is
-here: async_setup_entry and the config flow await it, so no loader ever reads a file on the loop («Detected blocking
-call to open»)."""
+"""The canon files the agent reads — tuning, tunnel, servers, rules, recipes, integrations, theme, room pictures, cards, intercom presets and their labels — read once, in the executor, before anything on the event loop needs them."""
 from __future__ import annotations
 from homeassistant.core import HomeAssistant
 from . import cards, room_pictures, theme
@@ -17,7 +12,7 @@ from .tuning import tuning
 from .tunnel import tunnel_cfg
 
 def preload() -> None:
-    """Read every canon file (blocking: run it in the executor). Cached — a second call costs nothing."""
+    """Read every canon file (blocking: run it in the executor)."""
     tuning()
     tunnel_cfg()
     servers_cfg()

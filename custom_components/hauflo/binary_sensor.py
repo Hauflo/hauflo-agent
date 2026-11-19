@@ -1,4 +1,3 @@
-"""was visible nowhere in HA). On while Hauflo has said «welcome»; off when the link is down or the agent unlinked."""
 from __future__ import annotations
 from urllib.parse import urlparse
 from homeassistant.components.binary_sensor import BinarySensorDeviceClass, BinarySensorEntity

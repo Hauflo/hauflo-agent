@@ -1,5 +1,4 @@
-"""SIP messages (RFC 3261), digest authentication (RFC 2617 / 8760 MD5 — what door panels speak) and SDP offers /
-answers (RFC 4566 / 3264) with G.711 and telephone-event (RFC 4733). Pure functions, no I/O: ua.py sends them."""
+"""SIP messages (RFC 3261), digest authentication (RFC 2617 / 8760 MD5 — what door panels speak) and SDP offers / answers (RFC 4566 / 3264) with G.711 and telephone-event (RFC 4733)."""
 from __future__ import annotations
 from dataclasses import dataclass, field
 import hashlib
@@ -84,7 +83,7 @@ def _split_commas(value: str) -> list[str]:
     return out
 
 def parse(data: bytes) -> Message:
-    """A datagram → Message. ValueError for anything that isn't SIP (a stray packet, a keep-alive CRLF)."""
+    """A datagram → Message."""
     head, sep, body = data.partition(b'\r\n\r\n')
     if not sep:
         head, sep, body = data.partition(b'\n\n')
@@ -154,8 +153,7 @@ def new_call_id(host: str) -> str:
     return f'{secrets.token_hex(10)}@{host}'
 
 def response(req: Message, status: int, reason: str, *, to_tag: str | None=None, headers: list[tuple[str, str]] | None=None, body: bytes=b'', received: tuple[str, int] | None=None) -> Message:
-    """A response to `req`: its Via (the first one marked with where it really came from — rport, RFC 3581), From,
-    To (with our tag), Call-ID, CSeq copied."""
+    """A response to `req`: its Via (the first one marked with where it really came from — rport, RFC 3581), From, To (with our tag), Call-ID, CSeq copied."""
     out = Message(status=status, reason=reason)
     vias = req.get_all('via')
     for i, via in enumerate(vias):

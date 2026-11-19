@@ -1,7 +1,3 @@
-"""makes time-limited credentials of its coturn (backend ha/intercom/turn.ts) — its secret never comes here; the agent
-asks for them when the doors start, again before they run out and on every ring, and never hands them out past their
-TTL. The integrator's own `ice_servers` (the «Домофон» settings) win: then Hauflo is not asked at all
-(setup.register_ice)."""
 from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
@@ -16,8 +12,7 @@ _LOGGER = logging.getLogger(__name__)
 t = functools.cache(lambda: tuning()['intercom'])
 
 def parse(raw: Any) -> tuple[list[dict[str, Any]], int]:
-    """Hauflo's answer {ice_servers: [{urls, username?, credential?}], ttl} → the servers and their TTL (clamped);
-    ValueError when it is not one."""
+    """Hauflo's answer {ice_servers: [{urls, username?, credential?}], ttl} → the servers and their TTL (clamped); ValueError when it is not one."""
     if not isinstance(raw, dict) or not isinstance(raw.get('ice_servers'), list):
         raise ValueError('no ice_servers')
     out: list[dict[str, Any]] = []
@@ -40,9 +35,7 @@ def parse(raw: Any) -> tuple[list[dict[str, Any]], int]:
     return (out, min(high, max(low, ttl)))
 
 class CloudIce:
-    """The credentials Hauflo gave this house, with their expiry. `current()` is what HA's WebRTC asks (in sync, at
-    each card's get_client_config): only credentials with at least `cloud_ice_min_left_s` (a quarter of a shorter TTL)
-    to live, else none."""
+    """The credentials Hauflo gave this house, with their expiry."""
 
     def __init__(self, hass: HomeAssistant, fetch: Callable[[], Awaitable[Any]]) -> None:
         self.hass = hass
@@ -68,8 +61,7 @@ class CloudIce:
         return {'source': 'cloud', 'turn': live and self._turn, 'expires_in': max(0, int(self._expires - now)) if live else 0}
 
     async def refresh(self) -> None:
-        """Ask Hauflo once (a second caller meanwhile waits for the same answer); the next ask is scheduled either
-        way."""
+        """Ask Hauflo once (a second caller meanwhile waits for the same answer); the next ask is scheduled either way."""
         if self._stopped:
             return
         if self._lock.locked():

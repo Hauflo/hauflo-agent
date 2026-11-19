@@ -1,5 +1,4 @@
-"""An update of HA core, its OS or Supervisor is out — the Supervisor's own update entities (`hassio` platform, found
-by their unique ids in `update_ids`, never by name). HA Container / Core have none: the check isn't shown there."""
+"""An update of HA core, its OS or Supervisor is out — the Supervisor's own update entities (`hassio` platform, found by their unique ids in `update_ids`, never by name)."""
 from __future__ import annotations
 from typing import Any
 from homeassistant.const import STATE_OFF, STATE_ON

@@ -23,7 +23,7 @@ NO_DATA = ['unavailable', 'unknown']
 GROUP_ICON = 'mdi:alarm-light-outline'
 
 class NotPlainScripts(Exception):
-    """scripts.yaml isn't as HA's script editor writes it (hand formatting, !include, comments): never rewritten."""
+    pass
 
 def run_key(slug: str) -> str:
     return RUN_PREFIX + slug
@@ -39,8 +39,7 @@ def _num(v: float) -> str:
     return str(int(v)) if float(v).is_integer() else str(v)
 
 def helper_state(rule: dict[str, Any]) -> str:
-    """The template helper's state for a rule a group doesn't fit: on while a source is in alarm — a level until it is
-    back past its threshold by the step (battery < 20 → alarm, > 25 → back: the open alarm's way, notify.in_alarm)."""
+    """The template helper's state for a rule a group doesn't fit: on while a source is in alarm — a level until it is back past its threshold by the step (battery < 20 → alarm, > 25 → back: the open alarm's way, notify.in_alarm)."""
     levels: dict[str, dict[str, float]] = rule.get('thresholds') or {}
     states = list(rule.get('alarm_states') or [])
     parts: list[str] = []

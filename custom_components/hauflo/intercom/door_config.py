@@ -16,8 +16,6 @@ t_cfg = functools.cache(lambda: tuning()['intercom'])
 
 @functools.cache
 def presets_cfg() -> dict[str, dict[str, Any]]:
-    """presets.json, read on first use — off the event loop: async_setup_entry and the config flow preload it in the
-    executor."""
     return {k: v for k, v in json.loads(Path(__file__).with_name('presets.json').read_text(encoding='utf-8')).items() if not k.startswith('_')}
 MODES = ('direct', 'register', 'registrar', 'cloud')
 OPENERS = ('dtmf', 'http', 'entity')

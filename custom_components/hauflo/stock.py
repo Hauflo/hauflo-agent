@@ -1,15 +1,4 @@
-"""«Заменить на Hauflo» (stage 5): a stock Home Assistant card of any integration → the Hauflo card for it, by ONE table
-(www/stock.json, the cards read the same file). Only on the integrator's action: the admin's «Настройки» sheet of the
-cards (GET/POST /api/hauflo/stock, admins only, never through the tunnel) or his ticks in the deploy plan (dashmerge.py
-`plan` → `stock`, `save` with `stock` ids). Never Hauflo's own items (a `hauflo_id`: Hauflo decides their look) and
-never
-silently: an offer is only an offer.
-
-Each replaced card keeps what it was (`hauflo_was`): «Вернуть штатную» puts it back as it was. A device's cards in one
-place (≥ 2 of one device_id) can become one «Устройство целиком» card (hauflo-area with `device`). Guarded entities
-(locks, alarm panels, valves, garage / gate / door covers — protect.py / massSafety) never go into a console with an
-«all
-at once» action, and an offer with one is never pre-ticked."""
+"""«Заменить на Hauflo» (stage 5): a stock Home Assistant card of any integration → the Hauflo card for it, by ONE table (www/stock.json, the cards read the same file)."""
 from __future__ import annotations
 from collections.abc import Callable
 import copy
@@ -191,8 +180,7 @@ def _plan(cfg: Any, info: Info) -> list[dict[str, Any]]:
     return out
 
 def offers(cfg: Any, info: Info) -> list[dict[str, Any]]:
-    """What the integrator is offered: id, from → to, how many entities, where; `pick` — pre-ticked (never a guarded
-    one)."""
+    """What the integrator is offered: id, from → to, how many entities, where; `pick` — pre-ticked (never a guarded one)."""
     return [{'id': o['id'], 'from': o['from'], 'to': o['to'], 'entities': o['entities'], 'device': bool(o.get('device')), 'guarded': o['guarded'], 'pick': not o['guarded'], **({'where': o['where']} if o['where'] else {}), **({'title': o['title']} if o.get('title') else {})} for o in _plan(cfg, info)]
 
 def replaced(cfg: Any, info: Info | None=None) -> list[dict[str, Any]]:
@@ -276,8 +264,7 @@ def _dashboard(hass: HomeAssistant, url_path: Any) -> Any:
     return dash if dash is not None and getattr(dash, 'mode', 'storage') == 'storage' else None
 
 class StockView(HomeAssistantView):
-    """GET ?url_path=… — the offers and the replaced cards of a dashboard; POST {url_path, replace: [ids]} or
-    {url_path, undo: [ids]} — made, the new lists back. Admins only (the integrator), never through the tunnel."""
+    """GET ?url_path=… — the offers and the replaced cards of a dashboard; POST {url_path, replace: [ids]} or {url_path, undo: [ids]} — made, the new lists back."""
     url = '/api/hauflo/stock'
     name = 'api:hauflo:stock'
     requires_auth = True

@@ -9,12 +9,7 @@ if TYPE_CHECKING:
     from .engine import Insights
 
 class InsightsView(HomeAssistantView):
-    """The per-entity diagnosis (0.32). GET → Insights.states() (`?entity=` — with its episodes, `?offset=` — the next
-    page, `?limit=` its length up to LIMIT_MAX; with the canon's sections and the engine's tick and whether the reader
-    may answer): HA's admins, everyone when the diagnosis is
-    shown to all (`diag_visible`). POST (admins only) {entity, kind, action: normal | follow |
-    reset, factor?} — «это норма» / «снова следить» (its own ×N within FACTOR_MIN..FACTOR_MAX) / «сбросить обучение»;
-    `summary`; «Фоновые наблюдения» off — no rows, `off: true`."""
+    """The per-entity diagnosis (0.32)."""
     url = '/api/hauflo/insights'
     name = 'api:hauflo:insights'
     requires_auth = True

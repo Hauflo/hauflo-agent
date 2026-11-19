@@ -1,16 +1,3 @@
-"""of three pictures of ours (www/rooms, canon in room_pictures.json) until the room has a photo of its own; a living room,
-choice); a name no type matches is offered the general set. The client may change the photo right from the room's card.
-
-WebSocket commands (phone card → HA; the cloud's editor goes the same way through the tunnel):
-* `hauflo/room_picture_options {area_id}` → `[{url, label}]` — the three of the room's type (the general three when no
-type matches).
-  Р82 (one picker for everything with a picture): `{name, zone: true}` instead of `area_id` — a zone's / floor's tile on
-  «Главная» (no HA area; canon `zones`, its type by the name); `all: true` — then every other type of the canon too,
-  each
-  labelled «<type> · <variant>» (Р61: any picture may be chosen; the card's editor asks so, the tile's sheet keeps
-  three).
-* `hauflo/area_picture {area_id, picture}` — sets (an address `_image_ok` accepts) or clears (null) the area's picture;
-  a restricted (child) profile may not (house.py), as it may not reorder blocks (order.py)."""
 from __future__ import annotations
 import functools
 import json
@@ -27,8 +14,6 @@ FILE = Path(__file__).with_name('room_pictures.json')
 
 @functools.cache
 def pictures_canon() -> dict[str, Any]:
-    """room_pictures.json, read on first use — off the event loop: async_setup_entry and the config flow preload it
-    in the executor."""
     return json.loads(FILE.read_text(encoding='utf-8'))
 base = functools.cache(lambda: pictures_canon()['base'])
 types = functools.cache(lambda: pictures_canon()['types'])
@@ -55,8 +40,7 @@ def urls_of(kind: dict[str, Any]) -> list[str]:
     return [base() + f for f in kind['files']]
 
 def default_picture(name: Any) -> str | None:
-    """The picture a room without a photo shows by itself: the first of its type's (always the same one) — utility
-    types only (`auto`); a living room shows none until chosen."""
+    """The picture a room without a photo shows by itself: the first of its type's (always the same one) — utility types only (`auto`); a living room shows none until chosen."""
     kind = kind_of(name)
     return urls_of(kind)[0] if kind and kind.get('auto') else None
 
@@ -68,8 +52,7 @@ def labels(kind: dict[str, Any], lang: str, group: bool=False) -> list[dict[str,
     return [{'url': u, 'label': head + text.replace('{n}', str(i + 1))} for i, u in enumerate(urls_of(kind))]
 
 def choices(own: dict[str, Any], lang: str, every: bool=False) -> list[dict[str, str]]:
-    """The own type's three first; `every` — then every room type of the canon (a set already offered is not
-    repeated)."""
+    """The own type's three first; `every` — then every room type of the canon (a set already offered is not repeated)."""
     out = labels(own, lang)
     if every:
         seen = {o['url'] for o in out}

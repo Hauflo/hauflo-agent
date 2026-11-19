@@ -172,10 +172,7 @@ class ClimateEffect(Detector):
             self.ctx.dirty()
 
     def norm(self, eid: str, d: str, gap: float | None=None) -> float | None:
-        """The zone's own rate, °C/h — only after the observation gate (OBS_EPS learned episodes AND OBSERVE_H hours
-        since
-        first seen); with `gap` — of the episodes that started as far away (±GAP_BAND), fewer than GAP_LIKE_MIN:
-        None."""
+        """The zone's own rate, °C/h — only after the observation gate (OBS_EPS learned episodes AND OBSERVE_H hours since first seen); with `gap` — of the episodes that started as far away (±GAP_BAND), fewer than GAP_LIKE_MIN: None."""
         rates = self.norms.get(eid, {}).get(d) or []
         if len(rates) < self.need() or not self.ctx.observed(self.name, eid):
             return None
@@ -231,8 +228,7 @@ class ClimateEffect(Detector):
         return list(self.ring.get(eid, []))
 
     def inputs(self, kind: str, eid: str) -> list[dict[str, Any]]:
-        """The climate (its temperature, setpoint and mode), the room's windows / doors (an open one pauses the check),
-        the street's temperature (kept with each episode) and the season (heating / cooling)."""
+        """The climate (its temperature, setpoint and mode), the room's windows / doors (an open one pauses the check), the street's temperature (kept with each episode) and the season (heating / cooling)."""
         return self.ctx.climate_inputs(eid)
 
     def reset(self, eid: str, kind: str) -> None:

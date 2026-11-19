@@ -76,8 +76,7 @@ def js_number(text: str) -> float | None:
     return v if math.isfinite(v) else None
 
 def base_of(eid: str, device_class: Any, name: str | None, device_kind: str | None=None) -> tuple[str, str, dict[str, Any]]:
-    """(kind, the canon's key, the base) of a signal before any choice. `device_kind` — the canon's onDevice key of its
-    device (a lock's battery is no «info», Р56 L2; device_kind_of); a domain's own key (a lock) needs no class."""
+    """(kind, the canon's key, the base) of a signal before any choice."""
     dom = eid.split('.', 1)[0]
     dc = class_of(device_class)
     own = f'{dom}.{dc}' if dc else dom
@@ -111,8 +110,7 @@ def scope_matches(m: dict[str, Any], eid: str, platform: str | None, device_clas
     return not ('deviceClass' in m and m['deviceClass'] != class_of(device_class))
 
 def resolve(eid: str, *, platform: str | None=None, device_class: Any=None, name: str | None=None, policy: dict[str, Any] | None=None, device_kind: str | None=None) -> dict[str, Any]:
-    """One signal's policy: entity → scopes → the canon's class → classless → unlisted (signals.ts resolvePolicy).
-    `source` — the last layer that chose anything for it (entity / scope), else the canon's base kind."""
+    """One signal's policy: entity → scopes → the canon's class → classless → unlisted (signals.ts resolvePolicy)."""
     kind, key, base = base_of(eid, device_class, name, device_kind)
     r: dict[str, Any] = {'base': kind, 'baseKey': key, 'alarm': base.get('alarm'), 'house': base['house'], 'severity': base['severity'], 'defaultSeverity': base['severity'], 'holdS': None, 'watch': True, 'shelvedUntil': None, 'lifeSafety': key in canon()['lifeSafety'], 'undetermined': kind == 'undetermined', 'from': {'alarm': 'canon', 'severity': 'canon', 'house': 'canon'}, 'source': kind}
 
@@ -141,9 +139,7 @@ def resolve(eid: str, *, platform: str | None=None, device_class: Any=None, name
     return r
 
 def alarm_of(raw: Any, alarm: dict[str, Any] | None) -> bool:
-    """The state is an alarm by this condition (HA's «unavailable» is one — the lost-link class — unless the site said
-    «не
-    авария» for it: 0.34, one choice excludes the entity everywhere; the canon itself never says {none})."""
+    """The state is an alarm by this condition (HA's «unavailable» is one — the lost-link class — unless the site said «не авария» for it: 0.34, one choice excludes the entity everywhere; the canon itself never says {none})."""
     if alarm and 'none' in alarm:
         return False
     state = state_of(raw)
@@ -159,8 +155,6 @@ def alarm_of(raw: Any, alarm: dict[str, Any] | None) -> bool:
     return 'below' in alarm and n < alarm['below'] or ('above' in alarm and n > alarm['above'])
 
 def cond_holds(raw: Any, alarm: dict[str, Any]) -> bool:
-    """    that
-    is unavailable / unknown holds nothing: its lost link is its own signal, never half of a combination."""
     raw = raw.state if isinstance(raw, State) else raw
     return state_of(raw) not in combo_idle() and alarm_of(raw, alarm)
 
@@ -173,8 +167,6 @@ def affects_house(problem: bool, house: str, undetermined: bool) -> bool:
     return problem and (not undetermined) and (house != 'none')
 
 def shelved_now(until: Any, now: Any=None) -> bool:
-    """    —
-    the signal counts again (no restart: Agent.house_now's timer fires at the nearest one)."""
     t = when(until)
     return t is not None and t > (now or dt_util.utcnow())
 
@@ -192,8 +184,7 @@ def watch_by_class(eid: str, device_class: Any, platform: str | None=None) -> bo
     return platform not in watch_skip() and (bool(dc) and f'{dom}.{dc}' in canon()['watch'] or dom in canon()['watch'])
 
 def device_kinds(hass: HomeAssistant) -> dict[str, str]:
-    """{device id: the canon's onDevice key} — a device holding an entity of that key's domain (a lock's device), the
-    first key of the canon's order. One registry pass per call; the callers ask it once per round."""
+    """{device id: the canon's onDevice key} — a device holding an entity of that key's domain (a lock's device), the first key of the canon's order."""
     kinds = list(canon().get('onDevice') or {})
     if not kinds:
         return {}
@@ -212,10 +203,7 @@ def device_kind_of(hass: HomeAssistant, eid: str, kinds: dict[str, str] | None=N
     return (kinds if kinds is not None else device_kinds(hass)).get(e.device_id)
 
 def evaluate(state: State | str | None, *, eid: str | None=None, platform: str | None=None, device_class: Any=None, name: str | None=None, area: str | None=None, policy: dict[str, Any] | None=None, device_kind: str | None=None) -> dict[str, Any]:
-    """{problem, house, severity, undetermined, watch, source, …} of one signal now. `state` — HA's State (its entity
-    id,
-    class and name are read from it unless given) or the raw state with `eid`. `area` is accepted for the callers' one
-    shape; the canon doesn't resolve by it (a room's choice is the cloud's bulk edit into `entities`)."""
+    """{problem, house, severity, undetermined, watch, source, …} of one signal now."""
     if isinstance(state, State):
         eid = eid or state.entity_id
         device_class = device_class if device_class is not None else state.attributes.get('device_class')

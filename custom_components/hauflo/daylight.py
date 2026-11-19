@@ -1,20 +1,3 @@
-"""invisible by day, so a Hauflo scene leaves the lights the family marked «Днём не включать в сценах» off while it is
-light outside; the room's main light still follows the scene (scenes.py `apply`).
-
-HA's scene is a snapshot without conditions; the condition lives here, one state for the house:
-  * an outdoor illuminance sensor set by an HA admin (`sensor`, lx — one without lx is refused when set): light from
-    `lux` (default 1000) up, dark again below 0.8 × `lux` (20 % hysteresis);
-  * otherwise the sun (`sun.sun`, its `elevation`): light from 6° up (civil twilight is −6°…6°: by 6° a room no longer
-    needs decorative light), dark again below 4°.
-A sensor that says nothing (missing, unavailable, not a number, not lx) gives way to the sun; no sun either — unknown,
-and a scene does all it holds. A change holds at least `hold_s` (10 min) before it may flip back — no flicker at dusk
-or under clouds; the very first answer is never held. Recomputed on every change of the source and every `tick_s`
-(5 min); while HA is starting, nothing is decided until HA has started or the source has told its first state (the sun
-right after a restart is not yet the sun of now).
-
-Kept in the house store (house.py, key `daylight`): `{sensor?, lux?, skip: [light / switch ids]}`; a bad stored field is
-dropped (a threshold out of bounds is clamped) on its own, the rest kept. The entity
-`binary_sensor.hauflo_daylight` (on the Hauflo device) tells the integrator's own automations the same."""
 from __future__ import annotations
 from collections.abc import Callable
 from datetime import timedelta
@@ -63,15 +46,13 @@ class Invalid(ValueError):
     pass
 
 class Refused(Invalid, derived.Refused):
-    """A refusal a person can meet (not a request sent wrong): said in the page's language — translations
-    daylight_<code>."""
+    """A refusal a person can meet (not a request sent wrong): said in the page's language — translations daylight_<code>."""
 
     def __init__(self, code: str, status: int=HTTPStatus.BAD_REQUEST, **ph: Any) -> None:
         derived.Refused.__init__(self, code, f'daylight_{code}', status, **ph)
 
 class SensorRefused(Invalid):
-    """`daylight_config`: a sensor HA does not have, or one that is not in lx — said to the person, RU / EN (the
-    integration's translations, `exceptions.daylight_sensor_<why>`)."""
+    """`daylight_config`: a sensor HA does not have, or one that is not in lx — said to the person, RU / EN (the integration's translations, `exceptions.daylight_sensor_<why>`)."""
 
     def __init__(self, why: str) -> None:
         super().__init__(f'sensor: {why}')
@@ -132,9 +113,7 @@ class Daylight:
         self._start: CALLBACK_TYPE | None = None
 
     async def config(self) -> dict[str, Any]:
-        """The stored config field by field: a bad field is dropped (a threshold out of bounds clamped), never the rest
-        —
-        the family's skip list survives a broken threshold, and the next save keeps it (tester D1)."""
+        """The stored config field by field: a bad field is dropped (a threshold out of bounds clamped), never the rest — the family's skip list survives a broken threshold, and the next save keeps it (tester D1)."""
         raw = (await house(self.hass).load()).get(KEY)
         raw = raw if isinstance(raw, dict) else {}
         skip = raw.get('skip')

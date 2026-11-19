@@ -76,8 +76,7 @@ class SeasonAutoMixin:
         await self._save()
 
     def auto_on(self) -> bool:
-        """The house switches by itself: the season rule acts (its outputs) — before the rule exists, Hauflo's
-        setting."""
+        """The house switches by itself: the season rule acts (its outputs) — before the rule exists, Hauflo's setting."""
         _rules, rule = self._rule()
         if rule is not None:
             return bool(rule.get('outputs', {}).get('auto'))
@@ -91,9 +90,7 @@ class SeasonAutoMixin:
         await rules.set_outputs(SEASON_RULE, mode_outputs(want))
 
     async def set_auto(self, on: bool, why: str) -> None:
-        """«Переключать автоматически» on / off (Hauflo's setting or the HA switch): the rule keeps its state; turned
-        on, the
-        day's look runs now (still in the morning only, still once a day)."""
+        """«Переключать автоматически» on / off (Hauflo's setting or the HA switch): the rule keeps its state; turned on, the day's look runs now (still in the morning only, still once a day)."""
         self.config['auto'] = on
         await self._save()
         await self._sync_auto()
@@ -103,9 +100,7 @@ class SeasonAutoMixin:
         self.changed(force=True)
 
     def recommendation(self) -> tuple[str, str]:
-        """(heat / cool / none / no_data, why) — the street rule's verdict with its hysteresis: winter while the rule is
-        ACTIVE (n cold days in a row, held until n_back warm ones), summer after n_back warm days in a row, anything
-        between — «без изменений». No sensor, a day missing, the rule off — never a season (the house keeps its own)."""
+        """(heat / cool / none / no_data, why) — the street rule's verdict with its hysteresis: winter while the rule is ACTIVE (n cold days in a row, held until n_back warm ones), summer after n_back warm days in a row, anything between — «без изменений»."""
         rules, rule = self._rule()
         if rule is None:
             return (NO_DATA, 'no_sensor' if self.config['suggest']['enabled'] else 'off')
@@ -138,10 +133,7 @@ class SeasonAutoMixin:
         await self.auto_check('daily')
 
     async def auto_check(self, why: str) -> str:
-        """The automatic switch itself — what it did, said back: ok, or why not (off / none / no_data / already / today
-        /
-        later). The value rule's own «auto» comes here too (rules.py → __init__), so its once a day and its morning
-        hold."""
+        """The automatic switch itself — what it did, said back: ok, or why not (off / none / no_data / already / today / later)."""
         if not self.auto_on():
             return 'off'
         to, _why = self.recommendation()

@@ -84,15 +84,13 @@ def matches(match: dict[str, Any], facts: dict[str, Any]) -> bool:
     return True
 
 def robust(xs: list[float]) -> tuple[float, float]:
-    """(median, spread): the spread is MAD × MAD_K (≈ σ of a normal series), floored by SPREAD_FLOOR of the median — a
-    series that never moves is not «off» by a hair."""
+    """(median, spread): the spread is MAD × MAD_K (≈ σ of a normal series), floored by SPREAD_FLOOR of the median — a series that never moves is not «off» by a hair."""
     m = statistics.median(xs)
     mad = statistics.median((abs(x - m) for x in xs))
     return (m, max(mad_k() * mad, spread_floor() * abs(m), 1e-09))
 
 def value_of(spec: dict[str, Any], st: State | None) -> float | None:
-    """The state in the spec's unit (`units` factor, `minus` first: °F → °C); None — no number, or a unit it doesn't
-    know."""
+    """The state in the spec's unit (`units` factor, `minus` first: °F → °C); None — no number, or a unit it doesn't know."""
     if st is None or st.state in NOT_A_STATE:
         return None
     x = num(st.state)

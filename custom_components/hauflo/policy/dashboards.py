@@ -18,10 +18,7 @@ def lovelace_ok(hass: HomeAssistant | None, config: Any, owned: set[str] | None,
     return lovelace_refusal(hass, config, owned, owned_entries) is None
 
 def lovelace_refusal(hass: HomeAssistant | None, config: Any, owned: set[str] | None, owned_entries: set[str] | None) -> str | None:
-    """Why the agent refuses a Hauflo dashboard (None — it passes): the first item refused, where it is and why
-    (`views[1].cards[0].type: custom:x — card type not allowed`) — for the agent's log, the cloud's deploy message and
-    its
-    journal (acceptance 0.33 K1: a bare «not allowed» left the integrator with nothing to fix)."""
+    """Why the agent refuses a Hauflo dashboard (None — it passes): the first item refused, where it is and why (`views[1].cards[0].type: custom:x — card type not allowed`) — for the agent's log, the cloud's deploy message and its journal (acceptance 0.33 K1: a bare «not allowed» left the integrator with nothing to fix)."""
     got = _lovelace_refusal_at(hass, config, owned, owned_entries)
     return got[0] if got is not None else None
 
@@ -50,15 +47,13 @@ def _lovelace_refusal_at(hass: HomeAssistant | None, config: Any, owned: set[str
         return hauflo_entity(hass, eid, owned, owned_entries) or shown_protected(hass, eid, owned, owned_entries) or foreign_refusals.shown_ok(hass, eid) or no(entity_why(eid))
 
     def target_ids(value: Any) -> list[str] | None:
-        """entity_id as HA reads it (cv.comp_entity_ids lower-cases, strips, splits on commas, takes «all»): only exact"""
         items = value if isinstance(value, list) else [value]
         if not items or not all((isinstance(i, str) and ENTITY_RE.fullmatch(i) for i in items)):
             return None
         return items
 
     def service_ok(v: dict[str, Any], card: str | None=None) -> bool:
-        """A service call anywhere in a dashboard: an allowed service, on Hauflo's own entities named one by one; a
-        protected one only by the card that shows it (`card`: the nearest «entity» around the call)."""
+        """A service call anywhere in a dashboard: an allowed service, on Hauflo's own entities named one by one; a protected one only by the card that shows it (`card`: the nearest «entity» around the call)."""
         names = [v[k] for k in ('perform_action', 'service') if k in v and (not (k == 'service' and isinstance(v[k], dict) and ('perform_action' not in v)))]
         if not names or not all((isinstance(n, str) and n in CARD_SERVICES for n in names)) or len(set(names)) != 1:
             return no(f"service {', '.join(map(str, names)) or '—'} not allowed")
@@ -194,11 +189,7 @@ def _first_entity(v: Any) -> str | None:
     return None
 
 def lovelace_prune(hass: HomeAssistant | None, config: Any, owned: set[str] | None, owned_entries: set[str] | None) -> tuple[Any, list[dict[str, Any]]]:
-    """One refused card / row / scene never refuses the whole dashboard (accept3b №6: a scene judged protected — a
-    gate's cover inside it, the mark sticky — and the family's dashboard wasn't saved at all): what the check refuses is
-    taken out, item by item, the smallest one around it, and said — the entity, a short reason (`protected`,
-    `not_hauflo`, `refused`) and the check's own words for the log. Only taking out: the rest is checked again in full,
-    a refusal with nothing smaller than the dashboard to take out stays the dashboard's (the caller checks again)."""
+    """One refused card / row / scene never refuses the whole dashboard (accept3b №6: a scene judged protected — a gate's cover inside it, the mark sticky — and the family's dashboard wasn't saved at all): what the check refuses is taken out, item by item, the smallest one around it, and said — the entity, a short reason (`protected`, `not_hauflo`, `refused`) and the check's own words for the log."""
     if not isinstance(config, dict):
         return (config, [])
     cfg = copy.deepcopy(config)

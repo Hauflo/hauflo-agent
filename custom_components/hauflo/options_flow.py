@@ -1,4 +1,3 @@
-"""leaving Hauflo — the config flow's options half, its own file."""
 from __future__ import annotations
 import logging
 from typing import Any
@@ -18,7 +17,6 @@ from .tuning import tuning
 _LOGGER = logging.getLogger(__name__)
 
 class HaufloOptionsFlow(OptionsFlow):
-    """    whether Hauflo may change the setup at all, and the group addresses it may send to. No secrets, no notification"""
     _shown_pending: list[str] | None = None
     _saved: dict[str, Any] | None = None
     _report: str = ''
@@ -49,10 +47,7 @@ class HaufloOptionsFlow(OptionsFlow):
         return self.async_create_entry(data=self._saved if self._saved is not None else dict(self.config_entry.options))
 
     async def async_step_intercom(self, user_input: dict[str, Any] | None=None) -> ConfigFlowResult:
-        """«Домофон»: the address the agent takes calls on (auto — HA's own LAN address; another network card / VLAN by
-        hand), its port, the router's public address when a panel calls from outside, and the doors (a preset of
-        intercom/presets.json + the panel's address and accounts). Saved as they are; what a door lacks is refused
-        here."""
+        """«Домофон»: the address the agent takes calls on (auto — HA's own LAN address; another network card / VLAN by hand), its port, the router's public address when a panel calls from outside, and the doors (a preset of intercom/presets.json + the panel's address and accounts)."""
         current = dict(self.config_entry.options.get(CONF_INTERCOM) or {})
         errors: dict[str, str] = {}
         placeholders = {'door': '', 'presets': ', '.join(dict.fromkeys((p['maker'] for p in intercom_door_config.presets_cfg().values() if p.get('maker'))))}

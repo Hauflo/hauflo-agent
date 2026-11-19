@@ -1,7 +1,4 @@
-"""The SIP user agent's transport (UDP, one socket on the chosen address) with its transactions — a retransmitted
-request gets the same answer, our requests are retransmitted until answered (RFC 3261 §17, timers T1 / T2 / F) — plus
-the two registration roles: the agent registering on a panel's / a cloud's SIP server (`Registration`, digest), and the
-agent as the registrar of one account a panel registers to (`Registrar`, digest required)."""
+"""The SIP user agent's transport (UDP, one socket on the chosen address) with its transactions — a retransmitted request gets the same answer, our requests are retransmitted until answered (RFC 3261 §17, timers T1 / T2 / F) — plus the two registration roles: the agent registering on a panel's / a cloud's SIP server (`Registration`, digest), and the agent as the registrar of one account a panel registers to (`Registrar`, digest required)."""
 from __future__ import annotations
 import asyncio
 from collections import OrderedDict
@@ -24,8 +21,7 @@ class Timers:
     cache: int
 
 class Endpoint(asyncio.DatagramProtocol):
-    """One UDP socket for every door. Requests go to `on_request(msg, source)`; a retransmission of one already
-    answered is answered again from the cache and not passed on."""
+    """One UDP socket for every door."""
 
     def __init__(self, on_request: Callable[[sip.Message, tuple[str, int]], None], timers: Timers, user_agent: str) -> None:
         self.on_request = on_request
@@ -130,9 +126,7 @@ class Endpoint(asyncio.DatagramProtocol):
         return ('Via', f'SIP/2.0/UDP {host}:{port};branch={sip.new_branch()};rport')
 
 class Registration:
-    """The agent's account on a SIP server (a Dahua panel's own, a cloud's): REGISTER with digest, refreshed before it
-    runs out, retried after a failure. Behind a NAT (`nat`): the address the server saw (Via received / rport) becomes
-    the Contact, and a CRLF keeps the router's way open between refreshes."""
+    """The agent's account on a SIP server (a Dahua panel's own, a cloud's): REGISTER with digest, refreshed before it runs out, retried after a failure."""
 
     def __init__(self, ep: Endpoint, server: tuple[str, int], domain: str, user: str, password: str, contact: tuple[str, int], *, expires: int, retry: float, keepalive: float, nat: bool, on_change: Callable[[], None], extra: Callable[[sip.Message], None] | None=None) -> None:
         self.ep, self.server, self.domain = (ep, server, domain)
@@ -242,8 +236,7 @@ class Binding:
     at: float
 
 class Registrar:
-    """The registrar of one account: digest required (no REGISTER is ever taken without the password), nonces of ours
-    only and for a while."""
+    """The registrar of one account: digest required (no REGISTER is ever taken without the password), nonces of ours only and for a while."""
 
     def __init__(self, realm: str, nonce_ttl: float, max_expires: int) -> None:
         self.realm = realm

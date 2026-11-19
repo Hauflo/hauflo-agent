@@ -1,8 +1,3 @@
-"""dark mode (follows the phone), and Hauflo's own icon set `hauflo:*`.
-
-The theme is added to HA's themes in memory — the client's configuration.yaml isn't touched. HA's
-«Reload themes» drops it; the agent puts it back. Picked per user in the profile, or by Hauflo as the
-default (frontend.set_theme) when the integrator asks."""
 from __future__ import annotations
 import functools
 import hashlib
@@ -57,9 +52,7 @@ def _valid(data: object) -> bool:
     return all((isinstance(p, dict) and all((isinstance(v, str) for v in p.values())) for p in [*parts, cards]))
 
 def variants(data: dict) -> dict[str, dict]:
-    """One theme file → HA's themes: the one that follows the phone and the fixed light / dark ones. Another file's card
-    tokens go in as `hf-t-<name>` (the cards read `--hf-<name>: var(--hf-t-<name>, Hauflo's own)`): a new theme is one
-    JSON file in www/themes, no code (stage 5, item 6)."""
+    """One theme file → HA's themes: the one that follows the phone and the fixed light / dark ones."""
     common, dark, light = (data['ha']['common'], data['ha']['dark'], data['ha']['light'])
     tokens = {f'hf-t-{k}': v for k, v in data.get('cards', {}).items()}
     base = {**common, **tokens}
@@ -162,8 +155,7 @@ CACHE_VERSIONED = 'public, max-age=31536000, immutable'
 CACHE_PLAIN = 'no-cache'
 
 class StaticView(HomeAssistantView):
-    """The agent's www folder at /hauflo_static: HA's extra JS loads before anyone has logged in (no auth, like HA's
-    own static paths), only files inside the folder."""
+    """The agent's www folder at /hauflo_static: HA's extra JS loads before anyone has logged in (no auth, like HA's own static paths), only files inside the folder."""
     url = '/hauflo_static/{path:.+}'
     name = 'hauflo:static'
     requires_auth = False
@@ -200,8 +192,7 @@ def _say_reload(hass: HomeAssistant) -> None:
 
 @callback
 def async_unload(hass: HomeAssistant) -> None:
-    """Unloaded or removed: «Reload themes» no longer puts the Hauflo theme back (HA review round 4). The cards'
-    JS stays registered — dashboards keep working until HA restarts (keep.py makes copies on removal)."""
+    """Unloaded or removed: «Reload themes» no longer puts the Hauflo theme back (HA review round 4)."""
     if callable((unsub := hass.data.pop(DATA_THEME_LISTENER, None))):
         unsub()
     if callable((timer := hass.data.pop(DATA_RELOAD_TIMER, None))):

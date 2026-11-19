@@ -60,11 +60,6 @@ def on_intervals(states: list[State], end: dt.datetime) -> list[tuple[dt.datetim
     return out
 
 def drop_ours(history: dict[str, list[State]], ours: list[Any]) -> dict[str, list[State]]:
-    """    evenings» were its own). HA's history keeps no context, so a state within OURS_AFTER of a command it sent to that
-    device (`ours`: [entity, epoch seconds]) is its echo. A light's «on» right before its own «off» that was dropped
-    goes
-    18:30, its planned «off» at 22:00 → the family's evening was lost): the light was last its own «on» and the «off» in
-    between (a restart's bool(None)) lasted less than WATCH_OFF. A person's «on» keeps that «off» as its end."""
     sent: dict[str, list[float]] = {}
     for item in ours:
         if isinstance(item, (list, tuple)) and len(item) == 2 and isinstance(item[1], (int, float)):
@@ -107,7 +102,7 @@ def _bus_again(first_on: State, off: State | None, mine: list[State]) -> bool:
     return (t - off.last_updated).total_seconds() < watch_off()
 
 def build_model(history: dict[str, list[State]], info: dict[str, dict[str, Any]], rooms: dict[str, tuple[str, str]], start: dt.datetime, end: dt.datetime) -> dict[str, Any]:
-    """History of [start, end) → what the family's days look like. `rooms`: entity → (room key, room name)."""
+    """History of [start, end) → what the family's days look like."""
     firsts = [min((s.last_updated for s in v)) for k, v in history.items() if v and k in info]
     data_start = max(start, min(firsts)) if firsts else end
     d0, m0 = day_min(data_start)

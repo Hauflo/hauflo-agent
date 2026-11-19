@@ -14,10 +14,7 @@ from .const import ENTITY_RE, IS, IS_NUMBERS, LANGS
 from .spec import C, option_domains, purpose, scheduled, spec_of
 
 class Texts:
-    """The agent's texts in both languages: translations («exceptions»), HA's option labels, devices by name.
-
-    One place for every refusal / description a person reads (rules, automations): `say` a key, `words` its
-    placeholders."""
+    """The agent's texts in both languages: translations («exceptions»), HA's option labels, devices by name."""
 
     def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass
@@ -43,10 +40,7 @@ class Texts:
         return label(self.hass, eid) if isinstance(eid, str) and ENTITY_RE.match(eid) else eid
 
     def known_label(self, ru: bool, domain: Any, field: Any, option: str) -> str | None:
-        """An option value as HA names it in the language — its state attribute's labels, else the domain's states, else
-        the same attribute of another domain (a fan's «boost» preset as a thermostat's), else Hauflo's own (KNX's
-        presets
-        HA has no label for: standby / economy / building_protection); None — nobody names it."""
+        """An option value as HA names it in the language — its state attribute's labels, else the domain's states, else the same attribute of another domain (a fan's «boost» preset as a thermostat's), else Hauflo's own (KNX's presets HA has no label for: standby / economy / building_protection); None — nobody names it."""
         labels = self.labels[LANGS[0] if ru else LANGS[1]]
         root = f'component.{domain}.entity_component._.'
         got = labels.get(f'{root}state_attributes.{field}.state.{option}') or labels.get(f'{root}state.{option}')
@@ -60,8 +54,6 @@ class Texts:
         return self.known_label(ru, domain, field, option) or option
 
     def reads_out(self, st: Any) -> list[dict[str, Any]]:
-        """        (the app shows them by its language and keeps the value; one nobody names — not in it, shown as is); a number
-        read with its «unit» (% for a percent, else HA's unit of the attribute) — as a save stores it."""
         out = []
         for item in reads_of(st):
             field = C('actions_by_domain')[st.domain][item['do']].get('field')
@@ -78,8 +70,7 @@ class Texts:
         return out
 
     def words(self, ru: bool, ph: dict[str, Any]) -> dict[str, Any]:
-        """A refusal's placeholders in words: an action by its name (rules_do_…), a device by its name, options by
-        HA's labels."""
+        """A refusal's placeholders in words: an action by its name (rules_do_…), a device by its name, options by HA's labels."""
         out = {k: self.who(v) if k in ('entity', 'other') else v for k, v in ph.items()}
         for k in ('do', 'what'):
             if isinstance((v := out.get(k)), str) and f'rules_do_{v}' in self.texts[LANGS[1]]:

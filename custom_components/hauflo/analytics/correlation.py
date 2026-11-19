@@ -12,9 +12,7 @@ from .common import Facts, corr_keep, corrs, discover, factor, hold, matches, sp
 from .series import SeriesNorm
 
 class Correlation(Detector):
-    """A trigger's switching on and the change of its bound series `window_min` later (analytics.correlations[]): the
-    expected change learned (median of the clean events); judged once it is at least `min_delta` the expected way —
-    HOLD events in a row below max(min_delta, expected / ×N), or the other way, say it; the next good one ends it."""
+    """A trigger's switching on and the change of its bound series `window_min` later (analytics.correlations[]): the expected change learned (median of the clean events); judged once it is at least `min_delta` the expected way — HOLD events in a row below max(min_delta, expected / ×N), or the other way, say it; the next good one ends it."""
     name = 'correlation'
     domains = None
     KINDS = CanonAttr(lambda: tuple((f"corr_{c['name']}" for c in corrs())))
@@ -124,8 +122,7 @@ class Correlation(Detector):
         return statistics.median(link['d']) if len(link['d']) >= obs_eps() else None
 
     def level(self, link: dict[str, Any], cfg: dict[str, Any]) -> float | None:
-        """Where the trigger brings the series: the learned level after the clean events, else the canon's `level` (an
-        extract fan can't take a room's humidity / CO2 below it)."""
+        """Where the trigger brings the series: the learned level after the clean events, else the canon's `level` (an extract fan can't take a room's humidity / CO2 below it)."""
         a = link.setdefault('a', [])
         return statistics.median(a) if len(a) >= obs_eps() else cfg.get('level')
 

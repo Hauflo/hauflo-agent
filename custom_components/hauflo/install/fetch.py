@@ -48,8 +48,7 @@ def _is_link(info: zipfile.ZipInfo) -> bool:
     return stat.S_ISLNK(info.external_attr >> 16)
 
 def unpack(data: bytes, it: dict[str, Any], dest: Path, work: Path, replace: bool) -> str | None:
-    """Into dest (custom_components/<domain>) only: every member checked first, unpacked beside it, swapped in with one
-    rename, the folder it replaces kept in work/backups (the last _KEEP of this domain). → that backup's name."""
+    """Into dest (custom_components/<domain>) only: every member checked first, unpacked beside it, swapped in with one rename, the folder it replaces kept in work/backups (the last _KEEP of this domain)."""
     try:
         zf = zipfile.ZipFile(io.BytesIO(data))
     except zipfile.BadZipFile as err:

@@ -40,16 +40,14 @@ DOOR_ID = re.compile('^[a-z0-9_]{1,64}$')
 USER_KEY = re.compile('^[A-Za-z0-9_-]{1,16}$')
 
 def device_entry_ids(device: Any) -> set[str]:
-    """The config entries a device belongs to, on every HA the agent supports. HA 2026.x: one `config_entry_id` (the
-    old id of a split one) still answers `config_entries` with the union, unlogged; older HA: only `config_entries`."""
+    """The config entries a device belongs to, on every HA the agent supports."""
     one = getattr(device, 'config_entry_id', None)
     if isinstance(one, str) and one and (getattr(device, 'is_composite_device', False) is not True):
         return {one}
     return {x for x in getattr(device, 'config_entries', None) or () if isinstance(x, str)}
 
 def device_dict_entry_ids(d: dict[str, Any]) -> list[str]:
-    """The same for a device as `config/device_registry/list` sends it: `config_entry_id` first (the `config_entries`
-    list is kept there only until HA 2027.8)."""
+    """The same for a device as `config/device_registry/list` sends it: `config_entry_id` first (the `config_entries` list is kept there only until HA 2027.8)."""
     one = d.get('config_entry_id')
     if isinstance(one, str) and one:
         return [one]

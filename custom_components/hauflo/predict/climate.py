@@ -62,9 +62,7 @@ class HeatSlowing(Detector):
         return [o for o in old if o[3] is None or abs(o[3] - gap) <= gap_band()]
 
     def compare(self, hist: list[list[Any]]) -> tuple[float, float, bool] | None:
-        """(was, now — °C/h, like-for-like by the outdoor temperature?) or None — too little history. Each recent
-        episode
-        against the older ones that started as far from the target (a 3° gap is crossed faster than a 1° one)."""
+        """(was, now — °C/h, like-for-like by the outdoor temperature?) or None — too little history."""
         n = p_cfg()['trend_recent']
         recent, old = (hist[-n:], hist[:-n])
         if len(recent) < n or len(old) < p_cfg()['slow_min_old']:
@@ -155,8 +153,7 @@ class HeatSlowing(Detector):
             self.recs.pop(eid, None)
 
 class ShortCycling(Detector):
-    """Starts per hour (a thermostat beginning to heat / cool, a relay / valve on the climate's own device switching on)
-    over the last `cycle_window_h` against the entity's own daily norm (starts per active hour)."""
+    """Starts per hour (a thermostat beginning to heat / cool, a relay / valve on the climate's own device switching on) over the last `cycle_window_h` against the entity's own daily norm (starts per active hour)."""
     name = 'cycling'
     domains = CanonAttr(lambda: ('climate', *p_cfg()['cycle_switch_domains']))
     KIND = 'short_cycling'

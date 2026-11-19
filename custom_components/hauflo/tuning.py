@@ -1,8 +1,3 @@
-"""tuning.json, checked against this schema when the agent loads. A bad file is a bug of the release: the import fails
-loudly, never a silent default. (The value rules' own canon is canon.py / rules_canon.json; user texts are in
-translations.) The modules keep NAMED constants (``NODATA_AFTER = T["nodata_after_s"]``) — the mechanics stay in code.
-
-Plain Python on purpose (no HA / voluptuous import): the checker is also run by scripts/check-hardcode.mjs."""
 from __future__ import annotations
 import functools
 import json
@@ -46,6 +41,4 @@ def load(path: Path=FILE) -> dict[str, dict[str, Any]]:
 
 @functools.cache
 def tuning() -> dict[str, dict[str, Any]]:
-    """tuning.json, read on first use — off the event loop: async_setup_entry and the config flow preload it in the
-    executor."""
     return load()

@@ -19,9 +19,7 @@ from .common import COOL, HEAT, LANGS, MODES, SEASON_RULE, STORE_KEY, acs, clean
 _LOGGER = logging.getLogger(__name__)
 
 class Season(SeasonAutoMixin, SeasonAnswersMixin):
-    """The house's season: the client's switch, the resend; the suggestion is the value rule «season» (rules.py). One
-    per
-    loaded entry."""
+    """The house's season: the client's switch, the resend; the suggestion is the value rule «season» (rules.py)."""
 
     def __init__(self, hass: HomeAssistant, notify_of: Callable[[], Any] | None=None, rules_of: Callable[[], Any] | None=None, owns: Callable[[str], bool] | None=None) -> None:
         self.hass = hass

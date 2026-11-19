@@ -23,8 +23,7 @@ def combo_entities(hass: HomeAssistant | None) -> set[str]:
     return {combo_entity(cid) for cid in s.combos()} if s is not None else set()
 
 class Signals:
-    """The site's policy as Hauflo last sent it, with the hash Hauflo computed (the agent never recomputes it: the two
-    languages serialize numbers differently — the cloud compares its own hash with the one kept here)."""
+    """The site's policy as Hauflo last sent it, with the hash Hauflo computed (the agent never recomputes it: the two languages serialize numbers differently — the cloud compares its own hash with the one kept here)."""
 
     def __init__(self, hass: HomeAssistant) -> None:
         self.hass = hass
@@ -77,8 +76,7 @@ class Signals:
 
     @callback
     def choose(self, eid: str, meaning: str, by: str) -> None:
-        """«Авария когда» chosen on a card's row in HA by an admin: applied at once (the cards, the push engine, «Всё
-        хорошо»), kept, and carried to Hauflo by the status (`choices`) — the newer of the two choices wins."""
+        """«Авария когда» chosen on a card's row in HA by an admin: applied at once (the cards, the push engine, «Всё хорошо»), kept, and carried to Hauflo by the status (`choices`) — the newer of the two choices wins."""
         was = self.local.pop(eid, None)
         if meaning == MEANING_DEFAULT and was is None and (eid not in (self.cloud.get('entities') or {})):
             self._merge()
@@ -92,9 +90,7 @@ class Signals:
         self._told()
 
     def choices(self) -> dict[str, dict[str, Any]]:
-        """HA's choices the site's policy doesn't hold yet (newer than its own for the signal), newest first — Hauflo
-        folds
-        them in with the same `at`; its push back then equals them and they stop going."""
+        """HA's choices the site's policy doesn't hold yet (newer than its own for the signal), newest first — Hauflo folds them in with the same `at`; its push back then equals them and they stop going."""
         own = self.cloud.get('entities') or {}
         out: dict[str, dict[str, Any]] = {}
         for eid, c in sorted(self.local.items(), key=lambda kv: when(kv[1]['at']) or dt_util.utc_from_timestamp(0), reverse=True):
@@ -151,7 +147,6 @@ def local_in(v: Any) -> dict[str, Any] | None:
     return {'meaning': v['meaning'], 'by': str(v.get('by') or '')[:stamp_len()], 'at': v['at']}
 
 def watchdog_off(hass: HomeAssistant | None) -> set[str]:
-    """The integration domains the integrator switched the watchdog off for (Р58)."""
     s = store(hass)
     return set((s.cloud.get('watchdog') or {}).get('off') or ()) if s is not None else set()
 

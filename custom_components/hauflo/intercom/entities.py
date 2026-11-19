@@ -1,7 +1,4 @@
-"""The door's entities (one device per door, under the «Hauflo» service device): `camera.<door>` (the panel's video),
-`camera.<door>_talk` (the call's sound both ways through HA's go2rtc — the card's WebRTC sendrecv), `event.<door>_call`
-(a doorbell: its ring is the push), `sensor.<door>_intercom` (idle / ringing / talking / answered_elsewhere and the
-plate's diagnosis), `button.<door>_open` (the door's opening — only here and never from a push)."""
+"""The door's entities (one device per door, under the «Hauflo» service device): `camera.<door>` (the panel's video), `camera.<door>_talk` (the call's sound both ways through HA's go2rtc — the card's WebRTC sendrecv), `event.<door>_call` (a doorbell: its ring is the push), `sensor.<door>_intercom` (idle / ringing / talking / answered_elsewhere and the plate's diagnosis), `button.<door>_open` (the door's opening — only here and never from a push)."""
 from __future__ import annotations
 from typing import Any
 from homeassistant.components.button import ButtonEntity
@@ -39,9 +36,7 @@ class DoorEntity(Entity):
         self.mgr.entities.pop((self.door.cfg.id, self.KIND), None)
 
 class DoorCall(DoorEntity, EventEntity):
-    """A ring of the door: the push to the phones (notify.py) — and nothing else of the call moves it (every state
-    change
-    of an event entity is a push; the call's other moments are the sensor and the bus event)."""
+    """A ring of the door: the push to the phones (notify.py) — and nothing else of the call moves it (every state change of an event entity is a push; the call's other moments are the sensor and the bus event)."""
     KIND, DOMAIN_, SUFFIX = ('call', 'event', '_call')
     _attr_translation_key = 'intercom_call'
     _attr_device_class = EventDeviceClass.DOORBELL

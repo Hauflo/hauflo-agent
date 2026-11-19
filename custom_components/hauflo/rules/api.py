@@ -46,10 +46,7 @@ class RulesApiMixin:
         return [{**r, 'title': self.say(f"rules_recipe_{r['id']}", True), 'title_en': self.say(f"rules_recipe_{r['id']}", False)} for r in C('schedule_recipes')]
 
     def targets(self, tunnel: bool=False, client: bool=False) -> list[dict[str, Any]]:
-        """What a rule may change (the app's picker: room → device → action → value): Hauflo's own of the canon's
-        domains (may_change), with the attributes its actions take their options / bounds from. «dos» — exactly what a
-        save takes (clean_action): the canon's actions the entity supports (supports), a client's only the client's; a
-        device with nothing to do is not offered. «room» — the room's name (HA's area registry), «area» its id."""
+        """What a rule may change (the app's picker: room → device → action → value): Hauflo's own of the canon's domains (may_change), with the attributes its actions take their options / bounds from."""
         table = C('actions_by_domain')
         acts = set(C('actions', 'client_acts')) if client else None
         domains = [d for d in table if not client or d in C('actions', 'client_domains')]
@@ -145,9 +142,7 @@ class RulesApiMixin:
         self._listen()
 
     async def set_outputs(self, rid: Any, raw: Any, tunnel: bool=False) -> dict[str, Any]:
-        """What the rule does when it changes (its HA entity always; a suggestion; its actions by itself) — the rule
-        keeps
-        its state: switching «auto» on or off neither restarts it nor undoes / redoes anything now."""
+        """What the rule does when it changes (its HA entity always; a suggestion; its actions by itself) — the rule keeps its state: switching «auto» on or off neither restarts it nor undoes / redoes anything now."""
         rule = self.existing_rule(rid)
         rule['outputs'] = clean_outputs(raw, bool(rule.get('window')))
         st = self.st(rid)

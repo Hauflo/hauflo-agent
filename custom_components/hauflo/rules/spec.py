@@ -52,10 +52,7 @@ def scheduled(rule: dict[str, Any]) -> bool:
     return rule.get('when') == AT
 
 def client_locked(rule: dict[str, Any]) -> bool:
-    """A protective rule (safety priority: frost, leak) or one that works a valve is never the client's to switch or
-    tune,
-    whatever the integrator ticked (docs/acceptance.md C6: lock / alarm / valve / gate never; the engine itself never
-    targets a lock, the alarm or a gate)."""
+    """A protective rule (safety priority: frost, leak) or one that works a valve is never the client's to switch or tune, whatever the integrator ticked (docs/acceptance.md C6: lock / alarm / valve / gate never; the engine itself never targets a lock, the alarm or a gate)."""
     return rule.get('priority') == 'safety' or any((str(a.get('entity_id', '')).startswith('valve.') for a in rule.get('actions') or []))
 
 def client_can(rule: dict[str, Any]) -> dict[str, bool]:

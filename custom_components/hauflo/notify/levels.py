@@ -12,7 +12,7 @@ from .common import ENTITY_ID, NOT_A_STATE, SOURCE_DOMAINS, critical_classes, de
 _LOGGER = logging.getLogger(__name__)
 
 def labelled(hass: HomeAssistant | None, eid: str) -> bool:
-    """The integrator marked it «Hauflo мониторинг» in HA (on the entity or its device) — HA's admin's say, not the"""
+    """The integrator marked it «Hauflo мониторинг» in HA (on the entity or its device) — HA's admin's say, not the cloud's."""
     if hass is None:
         return False
     if (said := foreign_flags.notify_flag(hass, eid)) is not None:
@@ -29,9 +29,6 @@ def labelled(hass: HomeAssistant | None, eid: str) -> bool:
     return False
 
 def source_ok(hass: HomeAssistant | None, eid: str, owns: Callable[[str], bool] | None=None, picked: frozenset[str]=frozenset()) -> bool:
-    """An alarm watches a sensor of the house — never a person, a tracker or a phone's own sensors (panel round 6: a
-    rule on «person.…» told the server when the family left) — and only one of Hauflo's own or one the integrator
-    rule repeating every minute)."""
     if not eid.startswith(SOURCE_DOMAINS):
         return False
     entry = er.async_get(hass).async_get(eid) if hass is not None else None
@@ -44,10 +41,7 @@ def source_ok(hass: HomeAssistant | None, eid: str, owns: Callable[[str], bool] 
     return labelled(hass, eid) or eid in picked
 
 def loud_verdict(hass: HomeAssistant | None, sources: list[str]) -> str | None:
-    """Why a rule the integrator marked critical rings only normally; None = rings loud, even in silent mode.
-    Loud: every source is moisture/smoke/gas/CO/heat/problem/safety or has no device class at all (a KNX sensor).
-    Normal: no source left, any source of another class (motion, door, window, occupancy, presence, battery…), or
-    a classless one that is named like a motion/presence sensor."""
+    """Why a rule the integrator marked critical rings only normally; None = rings loud, even in silent mode."""
     if not sources:
         return 'no_sources'
     for s in sources:
@@ -62,8 +56,7 @@ def loud_verdict(hass: HomeAssistant | None, sources: list[str]) -> str | None:
     return None
 
 def output_ok(hass: HomeAssistant | None, eid: str) -> bool:
-    """An alarm output: a domain of OUTPUTS, a plain entity id, never a phone's, and one HA knows (registry or
-    state)."""
+    """An alarm output: a domain of OUTPUTS, a plain entity id, never a phone's, and one HA knows (registry or state)."""
     if not ENTITY_ID.match(eid) or eid.partition('.')[0] not in outputs_cfg():
         return False
     if hass is None:
@@ -103,8 +96,7 @@ def level_default(device_class: str | None) -> dict[str, float] | None:
     return {way: canon[way], 'step': canon['step']}
 
 def clean_thresholds(hass: HomeAssistant | None, raw: Any, sources: list[str]) -> dict[str, dict[str, float]]:
-    """Per source: exactly one of below / above (a number) and the hysteresis step — only for a level (sensor.*)
-    source."""
+    """Per source: exactly one of below / above (a number) and the hysteresis step — only for a level (sensor.*) source."""
     out: dict[str, dict[str, float]] = {}
     if not isinstance(raw, dict):
         return out
@@ -136,9 +128,7 @@ def _threshold(rule: dict[str, Any], eid: str) -> dict[str, float] | None:
     return pol if pol is not None and ('below' in pol or 'above' in pol) else None
 
 def muted(rule: dict[str, Any], eid: str) -> bool:
-    """The site marked this source «не авария» itself (signals.py: a scope or the signal's own `alarm: {none}`): the
-    rule
-    keeps it as sent (the cloud's list stays whole), but never rings, never waits for its data and never counts it."""
+    """The site marked this source «не авария» itself (signals.py: a scope or the signal's own `alarm: {none}`): the rule keeps it as sent (the cloud's list stays whole), but never rings, never waits for its data and never counts it."""
     return bool(((rule.get('policy') or {}).get(eid) or {}).get('none'))
 
 def live_sources(rule: dict[str, Any]) -> list[str]:
@@ -146,10 +136,7 @@ def live_sources(rule: dict[str, Any]) -> list[str]:
     return [s for s in rule['sources'] if not muted(rule, s)]
 
 def in_alarm(rule: dict[str, Any], state: State | None, open_now: bool=False) -> bool:
-    """Is this source in alarm for the rule: a signal — one of its alarm states; a level — past its threshold, and while
-    the alarm is open, until it is back past the threshold by its step (the hysteresis). Not a number: not an alarm.
-    A rule with no own states / threshold takes the source's from the site's policy (`policy`, signals.py) — its states
-    compared by value (any language: an enum «Авария» too)."""
+    """Is this source in alarm for the rule: a signal — one of its alarm states; a level — past its threshold, and while the alarm is open, until it is back past the threshold by its step (the hysteresis)."""
     if state is None or muted(rule, state.entity_id):
         return False
     th = _threshold(rule, state.entity_id)

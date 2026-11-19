@@ -11,10 +11,7 @@ if TYPE_CHECKING:
 from .common import Facts, day, discover, factor, loop_days, loop_keep, loop_max_s, loop_metrics, loop_min_days, loop_min_h, loop_types, loop_units, loops, matches, overshoot_s, peers_min, readers
 
 class LoopTuning(Detector):
-    """Heating / cooling / humidity loops (analytics.loops[], first match wins): each episode «wants → reached» gives a
-    rate and a time to setpoint, the OVERSHOOT_H after it an overshoot; each day — the starts and the share of time
-    active. Judged once observed (the shared gate: OBS_EPS episodes / LOOP_MIN_DAYS days): against the median of its
-    peers of the same type (PEERS_MIN of them, the integrator's «×N», default FACTOR), else against the type's bar."""
+    """Heating / cooling / humidity loops (analytics.loops[], first match wins): each episode «wants → reached» gives a rate and a time to setpoint, the OVERSHOOT_H after it an overshoot; each day — the starts and the share of time active."""
     name = 'loops'
     domains = CanonAttr(lambda: tuple(readers()))
     KINDS = CanonAttr(lambda: tuple(dict.fromkeys(loop_metrics().values())))
@@ -279,9 +276,7 @@ class LoopTuning(Detector):
         return out
 
     def inputs(self, kind: str, eid: str) -> list[dict[str, Any]]:
-        """The loop (its temperature, setpoint, starts) and its supply sensor when the integrator named one; its peers
-        of
-        the same type are the norm."""
+        """The loop (its temperature, setpoint, starts) and its supply sensor when the integrator named one; its peers of the same type are the norm."""
         return [{'role': 'self', 'entityId': eid}, *([{'role': 'supply', 'entityId': self.supply[eid]}] if eid in self.supply else []), {'role': 'peers'}]
 
     def keys(self) -> list[tuple[str, str]]:

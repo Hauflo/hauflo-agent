@@ -14,9 +14,7 @@ from .spec import C
 _LOGGER = logging.getLogger(__name__)
 
 def ga_raw(v: Any) -> int | None:
-    """A KNX group address as its 16-bit number in any notation the canon's `ga_bits` knows (3-level «1/2/3», 2-level
-    «1/234», free «2058»), None — not one. The bit layout is the KNX standard's, kept with the canon (no numbers
-    here)."""
+    """A KNX group address as its 16-bit number in any notation the canon's `ga_bits` knows (3-level «1/2/3», 2-level «1/234», free «2058»), None — not one."""
     if isinstance(v, bool) or not isinstance(v, (str, int)):
         return None
     t = str(v).strip()
@@ -43,7 +41,6 @@ def _gas(v: Any, cap: int) -> list[str]:
     return out
 
 def clean_bus_read(raw: Any) -> dict[str, Any]:
-    """One «читать после команды» rule (Р65): a write to any of `triggers` → knx.read of `reads` after `delay_s`."""
     br = C('bus_reads')
     if not isinstance(raw, dict):
         raise Invalid('bad', 'rules_bad_object')

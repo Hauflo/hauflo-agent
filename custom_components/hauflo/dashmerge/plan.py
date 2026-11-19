@@ -30,10 +30,6 @@ def _local_prints(cfg: Any, base: dict[str, Any]) -> Counter[str]:
     return out
 
 def edited_where(seen: Any, base: Any, limit: int=5) -> list[dict[str, Any]]:
-    """    a
-    copy at every save — what differs was nowhere to see). Only places, never content: the path of list indexes and
-    keys, the key that differs and how (changed / added / removed / count), Hauflo's own view title and the card's type
-    when the place is in one. At most `limit` places, the first found in config order."""
     out: list[dict[str, Any]] = []
 
     def place(path: list[Any], key: str | None, op: str) -> None:
@@ -90,8 +86,7 @@ def digest(config: Any) -> str:
     return hashlib.sha256(json.dumps(config, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()
 
 def plan_and_merge(new: dict[str, Any], current: Any, base: dict[str, Any] | None, take: Any=(), restore: Any=(), url_path: str | None=None) -> tuple[dict[str, Any], dict[str, Any]]:
-    """(the config to save, what the plan says). No base: Hauflo's config as it is, nothing known about HA's. With the
-    dashboard's `url_path`: the integrator's tiles to a page of it no longer there go (`Merge._drop_dead`)."""
+    """(the config to save, what the plan says)."""
     new = ensure_ids(copy.deepcopy(new))
     if base is not None:
         base, seen = (unpanel(base, new), unpanel(current, new))

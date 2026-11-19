@@ -7,7 +7,7 @@ from homeassistant.util.hass_dict import HassKey
 if TYPE_CHECKING:
     from .servers import GoodHosts
 DOMAIN = 'hauflo'
-VERSION = '0.42.1'
+VERSION = '0.43.0'
 SIGNING_KEYS = ('ygNZu39MKqI4HCznYsl8HqVXRdxPypJn7Q6Bikp3sUc=', 'LKtAtwSRuhK2nonpJrxHeGQigg/I4viRV+ZwRCuvIYY=')
 UNSIGNED_BEFORE = '0.40.0'
 CONF_SERVER = 'server'
@@ -55,20 +55,13 @@ QUIET_PARENT = f'{DOMAIN}_quiet'
 LOCKED_CODE = 'locked_by_owner'
 
 def site_ru(hass_language: str | None, config: object=None) -> bool:
-    """The ONE language of everything the house says by itself — every push, HA notice and logbook line (0.33 С3): the
-    project's, as Hauflo wrote it into the alarm engine's config (`lang`), else Home Assistant's. A push in English over
-    a Russian HA said «🚨 Equipment alarm» while the value rules' pushes to the same phone came in Russian. Names of
-    rooms
-    and devices are the integrator's and stay as written."""
+    """The ONE language of everything the house says by itself — every push, HA notice and logbook line (0.33 С3): the project's, as Hauflo wrote it into the alarm engine's config (`lang`), else Home Assistant's."""
     lang = config.get('lang') if isinstance(config, dict) else None
     return str(lang if isinstance(lang, str) and lang.strip() else hass_language or 'ru').lower().startswith('ru')
 SITE_LANGS = ('ru', 'en')
 
 async def async_entity_names(hass: Any) -> dict[str, dict[str, str]]:
-    """The agent's entity names with a placeholder in both languages ({lang: {"<platform>.<key>": template}}, from the
-    translations' «entity» section) — for the names a site gives its own sensors (combination, rule): HA words them in
-    its own language («Hauflo Combination · Приток…» on an English HA of a Russian project, w5 acceptance), the house
-    says everything in ONE language (site_ru)."""
+    """The agent's entity names with a placeholder in both languages ({lang: {"<platform>.<key>": template}}, from the translations' «entity» section) — for the names a site gives its own sensors (combination, rule): HA words them in its own language («Hauflo Combination · Приток…» on an English HA of a Russian project, w5 acceptance), the house says everything in ONE language (site_ru)."""
     pre, suf = (f'component.{DOMAIN}.entity.', '.name')
     out: dict[str, dict[str, str]] = {}
     for lang in SITE_LANGS:

@@ -54,8 +54,7 @@ class DashboardMerge:
         return [u for u in self.bases if not is_copy(u)]
 
     async def apply_access(self) -> int:
-        """Every merged dashboard's pages → the lists of who sees them now (a guest given / revoked / expired, a person
-        added to HA). Only `visible` of the pages changes; the base and the merge are not touched. How many saved."""
+        """Every merged dashboard's pages → the lists of who sees them now (a guest given / revoked / expired, a person added to HA)."""
         access = await self._access()
         saved = 0
         async with self.write_lock:
@@ -70,9 +69,7 @@ class DashboardMerge:
         return saved
 
     async def page_list(self) -> list[dict[str, Any]]:
-        """The pages a guest with a login may be given (guest.py): every page with a path of the merged dashboards, as
-        the family sees them (collapse_access) — a page only for the administrators marked, a hidden one (`visible:
-        false`) and a dashboard only for administrators (`require_admin`: HA refuses it to a guest) left out."""
+        """The pages a guest with a login may be given (guest.py): every page with a path of the merged dashboards, as the family sees them (collapse_access) — a page only for the administrators marked, a hidden one (`visible: false`) and a dashboard only for administrators (`require_admin`: HA refuses it to a guest) left out."""
         access = await self._access()
         admins = set(await self._admin_ids())
         out: list[dict[str, Any]] = []
@@ -115,8 +112,6 @@ class DashboardMerge:
         self.key = bytes.fromhex(key)
 
     async def reorder_views(self, url_path: str, order: dict[str, list[str]]) -> bool:
-        """        of
-        what the agent wrote stays true (no hidden copy for it at the next deploy). False — nothing to change."""
         if not self.manages(url_path) or is_copy(url_path):
             return False
         exists, raw = await self._current(url_path)
@@ -136,7 +131,6 @@ class DashboardMerge:
         await self.meta_store.async_save({'copies': self.copies, 'taken': sorted(self.taken_copies), 'written': self.written, 'key': key or self.key.hex(), **({'merged_by': self.merged_by} if self.merged_by else {}), **({'langs': self.langs} if self.langs else {})})
 
     def unchanged(self, url_path: str, raw: Any) -> bool:
-        """HA's dashboard is exactly what the agent left there last (Р33) — nothing edited in HA since."""
         return raw is not None and self.written.get(url_path) == digest(raw)
 
     def manages(self, url_path: Any) -> bool:
@@ -155,7 +149,7 @@ class DashboardMerge:
             return (True, None)
 
     async def read(self, url_path: str) -> Any:
-        """`lovelace/config` of a dashboard the agent merges, as the cloud may see it (redact). None: no config yet."""
+        """`lovelace/config` of a dashboard the agent merges, as the cloud may see it (redact)."""
         exists, current = await self._current(url_path)
         if not exists:
             raise MergeError('not_found', 'no such storage dashboard')
@@ -254,16 +248,6 @@ class DashboardMerge:
         return self.merged_by != VERSION
 
     async def remerge(self, local_ws: Callable[[list[dict[str, Any]]], Any], locked: bool=False) -> dict[str, dict[str, Any]]:
-        """        dashboard
-        again by its own rules, with no deploy — the new version N is the base B (what Hauflo saved last), HA's config
-        the current. N = B keeps every edit of the integrator's as it is (the three-way merge of an untouched key is
-        his),
-        so only what the merge itself now decides changes: a tile to a page gone (`_drop_dead`), the tabs in the
-        client's
-        order (order.py). Written only then, a hidden copy of the panel first (what of his goes is kept there); any
-        other
-        difference the merge would make is not written (no deploy asked for it). Never raises for one dashboard: each
-        written, the version not marked (the next start tries again)."""
         out: dict[str, dict[str, Any]] = {}
         failed = False
         for url_path in [u for u in self.bases if not is_copy(u)]:

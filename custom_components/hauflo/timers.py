@@ -1,6 +1,4 @@
-"""«Выключить через время» for a light (the remote's timer): one pending switch-off per light, kept until HA restarts.
-Minutes 0 cancels. The remote shows the note it keeps itself; the switch-off is made here, so it holds with the tab
-closed."""
+"""«Выключить через время» for a light (the remote's timer): one pending switch-off per light, kept until HA restarts."""
 from __future__ import annotations
 from collections.abc import Callable
 from datetime import datetime
@@ -20,8 +18,7 @@ schema = functools.cache(lambda: vol.Schema({vol.Required('entity_id'): cv.entit
 
 @callback
 def async_setup(hass: HomeAssistant, loaded: Callable[[], Any]) -> None:
-    """«hauflo.off_in», registered once for HA's whole run (integration setup); loaded() raises «not_loaded» without a
-    loaded entry."""
+    """«hauflo.off_in», registered once for HA's whole run (integration setup); loaded() raises «not_loaded» without a loaded entry."""
     timers: dict[str, Callable[[], None]] = hass.data.setdefault(DATA_OFF_TIMERS, {})
 
     async def handle(call: ServiceCall) -> None:

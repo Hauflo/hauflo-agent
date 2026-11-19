@@ -9,8 +9,7 @@ from .plans import drop_items
 from .wizard import current
 
 def revert(hass: HomeAssistant, devices: set[str], entities: set[str]) -> dict[str, Any]:
-    """«Вернуть как было»: what Hauflo wrote to these items back to the values before it. A field the integrator
-    changed in HA since (not Hauflo's value any more) stays as he set it; role labels go, the family's stay."""
+    """«Вернуть как было»: what Hauflo wrote to these items back to the values before it."""
     f = flags(hass)
     out: dict[str, Any] = {'devices': [], 'entities': [], 'kept': {}, 'unknown': []}
     if f is None:

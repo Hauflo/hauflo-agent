@@ -37,8 +37,6 @@ def _phone_ids(hass: HomeAssistant | None) -> set[str]:
     return set()
 
 def scrub_entities(result: Any, hass: HomeAssistant | None) -> Any:
-    """config/entity_registry/list, /get, /get_entries without the phones' entities (as the device list without their
-    names)."""
     phones = _phone_ids(hass)
 
     def phone(e: Any) -> bool:
@@ -52,7 +50,6 @@ def scrub_entities(result: Any, hass: HomeAssistant | None) -> Any:
     return result
 
 def scrub_panels(panels: Any) -> Any:
-    """Only HA's own menu items «Убрать лишнее из меню» may hide, by name (the deploy says which this HA has) — no"""
     return {str(k): {'url_path': str(k)} for k in panels if k in sidebar.MENU_EXTRAS} if isinstance(panels, dict) else {}
 
 def scrub_states(states: Any, hass: HomeAssistant | None=None, visible: Callable[[str], bool] | None=None, hidden: set[str] | None=None) -> Any:
@@ -84,9 +81,7 @@ def scrub_states(states: Any, hass: HomeAssistant | None=None, visible: Callable
     return states
 
 def cloud_reads(hass: HomeAssistant | None, eid: str, attr: str | None, visible: Callable[[str], bool]) -> bool:
-    """What the tunnel may read through a rule (input, condition, window history, derived source): the same as
-    get_states shows it — no private domain / phone / sun, a presence sensor only when visible, only attributes
-    get_states keeps."""
+    """What the tunnel may read through a rule (input, condition, window history, derived source): the same as get_states shows it — no private domain / phone / sun, a presence sensor only when visible, only attributes get_states keeps."""
     domain = eid.split('.')[0]
     if domain == 'weather':
         return attr in WEATHER_READS
@@ -109,21 +104,18 @@ def cloud_reads(hass: HomeAssistant | None, eid: str, attr: str | None, visible:
     return True
 
 def history_reads(hass: HomeAssistant, eid: str, attr: str | None) -> bool:
-    """    loaded (its presence sensors' visibility)."""
     loaded = hass.config_entries.async_loaded_entries(DOMAIN)
     return bool(loaded) and cloud_reads(hass, eid, attr, loaded[0].runtime_data.state_visible)
 
 def scrub_cloud(status: Any) -> Any:
-    """Nabu Casa's status without the account, the house's remote address, Google's PIN for locks or the cloudhooks
-    (security re-review round 5) — Hauflo needs whether it's on and which assistants are."""
+    """Nabu Casa's status without the account, the house's remote address, Google's PIN for locks or the cloudhooks (security re-review round 5) — Hauflo needs whether it's on and which assistants are."""
     if not isinstance(status, dict):
         return {}
     prefs = status.get('prefs') if isinstance(status.get('prefs'), dict) else {}
     return {'logged_in': status.get('logged_in'), 'cloud': status.get('cloud'), 'prefs': {k: prefs.get(k) for k in ('alexa_enabled', 'google_enabled') if k in prefs}}
 
 def scrub_diagnostics(text: str) -> str:
-    """A config entry's diagnostics as Hauflo reads them: a bridge's filter, Alice's label settings — nothing else
-    (states, devices, coordinates, people stay in the house)."""
+    """A config entry's diagnostics as Hauflo reads them: a bridge's filter, Alice's label settings — nothing else (states, devices, coordinates, people stay in the house)."""
     try:
         d = json.loads(text)
     except ValueError:
@@ -175,15 +167,13 @@ def scrub_monitor(info: Any) -> Any:
     return {'project_loaded': info.get('project_loaded'), 'recent_telegrams': [{k: x.get(k) for k in ('destination', 'direction', 'telegramtype', 'timestamp')} for x in tg if isinstance(x, dict)]}
 
 def scrub_notes(event: Any, hass: HomeAssistant, owned_entries: set[str] | None=None) -> Any:
-    """HA's notifications to Hauflo: only the HomeKit bridges' pairing codes it shows — not the logins that failed, not"""
     if not isinstance(event, dict) or not isinstance(event.get('notifications'), dict):
         return event
     keep = {k: v for k, v in event['notifications'].items() if entry_domain(hass, str(k)) == 'homekit' and owned_entries is not None and (str(k) in owned_entries)}
     return {**event, 'notifications': keep}
 
 def alice_creds_to_ha(hass: HomeAssistant, text: str) -> str:
-    """Alice's link login stays in the house (panel round 6: with it, anyone's Yandex account takes the house): shown
-    as an HA notification, Hauflo only learns that it's there."""
+    """Alice's link login stays in the house (panel round 6: with it, anyone's Yandex account takes the house): shown as an HA notification, Hauflo only learns that it's there."""
     try:
         res = json.loads(text)
     except ValueError:

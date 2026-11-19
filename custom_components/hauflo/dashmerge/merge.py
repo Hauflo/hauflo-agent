@@ -13,9 +13,7 @@ from .twins import stack
 _LOGGER = logging.getLogger(__name__)
 
 class Dead:
-    """What `drop_dead` took out: the `removed` items, the prints of the integrator's items gone or changed with them
-    (no
-    loss to the guard), the Hauflo ids among them, the Hauflo pages they were on, the labels of the kept items gone."""
+    """What `drop_dead` took out: the `removed` items, the prints of the integrator's items gone or changed with them (no loss to the guard), the Hauflo ids among them, the Hauflo pages they were on, the labels of the kept items gone."""
 
     def __init__(self) -> None:
         self.removed: list[dict[str, Any]] = []
@@ -25,15 +23,6 @@ class Dead:
         self.labels: list[dict[str, Any]] = []
 
 def drop_dead(cfg: Any, url_path: str, mine: Callable[[dict[str, Any]], bool], labels: dict[int, dict[str, Any]] | None=None) -> Dead | None:
-    """`cfg` (changed in place) less the integrator's tiles (`mine`) that open a page of THIS dashboard it no longer has
-    moved the room to `servis` — a second «Сервис» on «Главная» that opened nothing). At any depth: a section, Hauflo's
-    layout, a stack of his; his stack or section left empty by it goes too, a page stays. Each said in `removed` with
-    `reason` «dead_link» and the page it led to; one with a label (`labels`, by the python id of its node) that carries
-    a
-    Hauflo id (`dropped`) is said by it. Never a card that leads anywhere else or anywhere that is (a path of another
-    dashboard, a URL, a pop-up `#…`, an index of a page that is), never one with an entity / area of its own (a lamp's
-    tile that also opens a page), never Hauflo's own card. None — a config with no pages: nothing to tell a dead way
-    by."""
     views = [v for v in kids_of(cfg, 0) if isinstance(v, dict)] if isinstance(cfg, dict) else []
     if not views:
         return None
@@ -274,8 +263,7 @@ class Merge(MergeBuildMixin, MergeLocalMixin):
         return out
 
     def lost(self) -> int:
-        """How many of the integrator's items (a view / section / card with no Hauflo id the base knows) the merged
-        config no longer holds as they are — above 0 the save is refused, whatever the cloud sent."""
+        """How many of the integrator's items (a view / section / card with no Hauflo id the base knows) the merged config no longer holds as they are — above 0 the save is refused, whatever the cloud sent."""
         missing = self.prints_of(self.current, True) - self.prints_of(self.result, False) - self.dead_prints - self.blank_prints
         return sum(missing.values())
 
@@ -284,9 +272,6 @@ class Merge(MergeBuildMixin, MergeLocalMixin):
         return {'added': sum((1 for h in nn if h not in nb)), 'changed': sum((1 for h in nn if h in nb and nn[h] != nb[h])), 'removed': sum((1 for h in nb if h not in nn and h not in self.skip))}
 
     def pages(self) -> list[dict[str, Any]]:
-        """        stays as it is): Hauflo's new blocks (and ones brought back), its blocks with a new version where HA holds
-        them as Hauflo saved them (or the integrator took Hauflo's), its blocks gone that HA still held unedited. What
-        the integrator removed and keeps removed, his edits he keeps, his own cards: no change."""
         nb, nn = (leaves(self.B), leaves(self.N))
         rows: dict[str, dict[str, Any]] = {}
 
@@ -327,9 +312,6 @@ class Merge(MergeBuildMixin, MergeLocalMixin):
         return False
 
     def untouched(self) -> list[str]:
-        """        (not updated by Hauflo, not taken, not brought back, not dropped) is in what is saved exactly as HA holds it,
-        once; an edited one Hauflo dropped is kept as his. Returns the ids that aren't — above none, nothing is
-        saved."""
         R = Index(self.result)
         count: Counter[str] = Counter()
 

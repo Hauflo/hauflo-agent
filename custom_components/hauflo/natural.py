@@ -1,7 +1,4 @@
-"""Natural order for every list a person reads: «Штора 2» before «Штора 10», «Room 9» before «Room 10».
-
-One key for the whole agent (guest page, notify candidates, automations rooms, house users): digits compare as numbers,
-the rest case-insensitively."""
+"""Natural order for every list a person reads: «Штора 2» before «Штора 10», «Room 9» before «Room 10»."""
 from __future__ import annotations
 import re
 _PARTS = re.compile('(\\d+)')

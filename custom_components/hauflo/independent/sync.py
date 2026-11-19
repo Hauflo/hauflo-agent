@@ -20,14 +20,7 @@ from .helpers import ack_entity, collection, drop_ours, empty, ensure_helper, he
 _LOGGER = logging.getLogger(__name__)
 
 async def async_sync(hass: HomeAssistant, engine: NotifyEngine, *, dry_run: bool=False, config: dict[str, Any] | None=None, migrate: bool=False) -> dict[str, Any]:
-    """The engine's rules as automations + helpers in HA (one write of automations.yaml, then one reload); the engine is
-    told which rules HA now runs (``async_set_native`` — open alarms move over). ``dry_run`` — only what would change
-    (Hauflo's deploy plan, ``config`` — the rules it would send). Rules are said by their titles; ``engine`` — those
-    left
-    to the agent, with the reason. A rule's automation from before 0.31 is written in the new form and its chatter
-    memory (input_text) removed — unless it was edited by hand: then both stay as they are.
-    Р83: a new rule is written in the flat form (alarm_form.py) where HA's scripts run; a rule already in HA in the
-    (his explicit step on the «Аварии» page: never on an agent update) — one edited by hand never."""
+    """The engine's rules as automations + helpers in HA (one write of automations.yaml, then one reload); the engine is told which rules HA now runs (``async_set_native`` — open alarms move over)."""
     english = engine.english(config)
     lang = 'en' if english else 'ru'
     out = empty()

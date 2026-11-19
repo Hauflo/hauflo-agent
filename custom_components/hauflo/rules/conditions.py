@@ -42,8 +42,7 @@ def clean_input(raw: Any, env: Env) -> dict[str, Any]:
     return out
 
 def clean_window(raw: Any, inp: dict[str, Any], env: Env) -> dict[str, Any]:
-    """«среднее / мин / макс / сумма за час · день · неделю, N подряд»: checked against the canon and what the input's
-    recorder data can say (window.py)."""
+    """«среднее / мин / макс / сумма за час · день · неделю, N подряд»: checked against the canon and what the input's recorder data can say (window.py)."""
     w = C('window')
     if not isinstance(raw, dict) or raw.get('stat') not in w['stats'] or raw.get('period') not in w['periods']:
         raise Invalid('bad_window', 'rules_bad_window')
@@ -60,8 +59,7 @@ def clean_window(raw: Any, inp: dict[str, Any], env: Env) -> dict[str, Any]:
     return {'stat': raw['stat'], 'period': raw['period'], 'n': ns[0], 'n_back': ns[1], 'source': src}
 
 def outputs(rule: dict[str, Any]) -> dict[str, bool]:
-    """What a rule does when it changes: its HA entity always; a suggestion to the family; its actions by itself. A
-    window rule suggests by default and acts only if allowed; a rule from before the outputs acts, as it always did."""
+    """What a rule does when it changes: its HA entity always; a suggestion to the family; its actions by itself."""
     base = {'suggest': True, 'suggest_back': False, 'auto': False} if rule.get('window') else {'suggest': False, 'suggest_back': False, 'auto': True}
     return {**base, **(rule.get('outputs') or {})}
 
@@ -130,8 +128,7 @@ def read_attr(read: str) -> str | None:
     return READ_ATTR.get(read, read)
 
 def read_kind(domain: str, dos: list[str]) -> tuple[str, str] | None:
-    """(the action whose value a canon read compares, its kind): on / off, an option, a number kind; None — nothing
-    «равно» compares (a text, a time). A read of wants only (a player's playing / paused) is an option of them."""
+    """(the action whose value a canon read compares, its kind): on / off, an option, a number kind; None — nothing «равно» compares (a text, a time)."""
     table = C('actions_by_domain')[domain]
     if table[dos[0]]['read'] in ('power', 'closed'):
         return (dos[0], 'onoff')
@@ -149,9 +146,7 @@ def step_of(spec: dict[str, Any], attrs: Any) -> float | None:
     return step if step and step > 0 else None
 
 def reads_of(st: Any) -> list[dict[str, Any]]:
-    """What «равно» may compare on an entity (the app's «что проверить»): one per canon read the entity supports (on /
-    off / pulse share «power») — the action it belongs to, the attribute, the kind and the options / bounds / step from
-    the entity's own attributes."""
+    """What «равно» may compare on an entity (the app's «что проверить»): one per canon read the entity supports (on / off / pulse share «power») — the action it belongs to, the attribute, the kind and the options / bounds / step from the entity's own attributes."""
     table = C('actions_by_domain').get(st.domain, {})
     groups: dict[str, list[str]] = {}
     for do, spec in table.items():
@@ -178,8 +173,7 @@ def reads_of(st: Any) -> list[dict[str, Any]]:
     return out
 
 def pick_read(st: Any, do: Any, attr: str | None) -> dict[str, Any] | None:
-    """The read «равно» compares: by the action named, else by the attribute, else the entity's state (a mode, an
-    option, a number), else its on / off."""
+    """The read «равно» compares: by the action named, else by the attribute, else the entity's state (a mode, an option, a number), else its on / off."""
     reads, table = (reads_of(st), C('actions_by_domain').get(st.domain, {}))
     if do is not None:
         spec = table.get(do) if isinstance(do, str) else None
@@ -189,8 +183,7 @@ def pick_read(st: Any, do: Any, attr: str | None) -> dict[str, Any] | None:
     return next((r for r in reads if r['attribute'] is None and r['kind'] != 'onoff'), None) or next((r for r in reads if r['kind'] == 'onoff'), None)
 
 def clean_is_input(raw: Any, env: Env, what: str='input') -> dict[str, Any]:
-    """The value «равно» watches: a device of the canon's domains read as its action reads it (Hauflo's own only — the
-    same boundary as a target), or a sensor / binary sensor / weather as the value rules always took it."""
+    """The value «равно» watches: a device of the canon's domains read as its action reads it (Hauflo's own only — the same boundary as a target), or a sensor / binary sensor / weather as the value rules always took it."""
     if not isinstance(raw, dict):
         raise Invalid('bad_input', 'rules_bad_input', entity='—')
     eid = valid_entity(raw.get('entity_id'), what)
@@ -221,8 +214,7 @@ def _word(v: Any) -> str:
     return ''.join(str(v).split()).casefold()
 
 def clean_is(raw: Any, src: dict[str, Any], st: Any) -> list[Any]:
-    """«равно» values: 1…is_max of them; an option / on-off one of the device's own (as it names it), a number inside
-    its bounds — a value the device never has would make a rule silently never true."""
+    """«равно» values: 1…is_max of them; an option / on-off one of the device's own (as it names it), a number inside its bounds — a value the device never has would make a rule silently never true."""
     lim = C('limits')
     if not isinstance(raw, list) or not 1 <= len(raw) <= lim['is_max']:
         raise Invalid('bad_is', 'rules_is_count', n=lim['is_max'])
@@ -254,7 +246,6 @@ def clean_is(raw: Any, src: dict[str, Any], st: Any) -> list[Any]:
     return out
 
 def is_match(v: Any, wants: list[Any], tol: float) -> bool:
-    """    spaces aside (HA's states are lower case, a person types «Boost»)."""
     if v is None or isinstance(v, bool):
         return False
     a = num(v)
@@ -268,18 +259,14 @@ def is_match(v: Any, wants: list[Any], tol: float) -> bool:
     return False
 
 def has_now(a: dict[str, Any]) -> bool:
-    """An action with a state to compare: the season, or a canon action that reads one (not a press / scene / run /
-    toggle)."""
+    """An action with a state to compare: the season, or a canon action that reads one (not a press / scene / run / toggle)."""
     if 'entity_id' not in a:
         return a['do'] == 'season'
     spec = spec_of(a['entity_id'], a['do'])
     return bool(spec and spec.get('read'))
 
 def supports(st: Any, spec: dict[str, Any]) -> bool:
-    """The entity takes this canon action — as HA itself decides (the service's required_features: any one, each fully),
-    an option only with its options listed, a helper's value only of the kind it holds (needs), a light's brightness
-    only beyond «onoff». Not knowable (unavailable): yes —
-    an unknown state still has its capabilities."""
+    """The entity takes this canon action — as HA itself decides (the service's required_features: any one, each fully), an option only with its options listed, a helper's value only of the kind it holds (needs), a light's brightness only beyond «onoff»."""
     if st is None or st.state == STATE_UNAVAILABLE:
         return True
     a = st.attributes

@@ -13,17 +13,14 @@ from .const import ALLOWED_ITEM, KNX_CONN_KEYS
 _LOGGER = logging.getLogger(__name__)
 
 def owned_knx(hass: HomeAssistant | None, entity_id: Any, owned: set[str] | None) -> bool:
-    """A KNX UI entity Hauflo created or took over (its unique_id is in the agent's store) — never one the
-    integrator made by hand (security re-review round 3: knx/delete_entity reached any KNX entity)."""
+    """A KNX UI entity Hauflo created or took over (its unique_id is in the agent's store) — never one the integrator made by hand (security re-review round 3: knx/delete_entity reached any KNX entity)."""
     if hass is None or owned is None or (not isinstance(entity_id, str)):
         return False
     entry = er.async_get(hass).async_get(entity_id)
     return entry is not None and entry.platform == 'knx' and (entry.unique_id in owned)
 
 def ga_key(value: Any) -> str | None:
-    """One spelling per group address (integrator run 22: «7/1793», «16129», 16129 and «07/07/001» all reached the
-    gate relay's 7/7/1). Three-level, two-level, free and numeric forms → the raw number; an internal address stays
-    itself; anything else → None (refused)."""
+    """One spelling per group address (integrator run 22: «7/1793», «16129», 16129 and «07/07/001» all reached the gate relay's 7/7/1)."""
     if isinstance(value, bool):
         return None
     if isinstance(value, int):
@@ -65,7 +62,6 @@ def ga_text(key: str) -> str | None:
     return f'{raw >> 11}/{raw >> 8 & 7}/{raw & 255}'
 
 def range_allows(allowed: set[str], key: str) -> bool:
-    """Is this group address (its raw number) in what the integrator allowed: a main/middle group «1/1», an address"""
     try:
         raw = int(key)
     except (TypeError, ValueError):
@@ -84,8 +80,7 @@ def range_allows(allowed: set[str], key: str) -> bool:
     return False
 
 def knx_writes(value: Any) -> set[str]:
-    """Every group address a KNX UI config sends to («write»), however deep and however spelled; one that can't be
-    read is «?» — matches nothing of the integrator's, so the caller refuses it separately."""
+    """Every group address a KNX UI config sends to («write»), however deep and however spelled; one that can't be read is «?» — matches nothing of the integrator's, so the caller refuses it separately."""
     out: set[str] = set()
     if isinstance(value, dict):
         if 'write' in value and value['write'] not in (None, ''):
@@ -115,8 +110,7 @@ def _knx_listens(value: Any) -> set[str]:
 
 @functools.cache
 def knx_key() -> Any:
-    """HA's key of the running KNX integration (KNX_MODULE_KEY), imported on first use — HA's knx only when a house
-    has it; «knx» when HA has none to import. Cached: a constant of this HA, no module state to append to."""
+    """HA's key of the running KNX integration (KNX_MODULE_KEY), imported on first use — HA's knx only when a house has it; «knx» when HA has none to import."""
     try:
         from homeassistant.components.knx.const import KNX_MODULE_KEY
     except ImportError:
@@ -126,8 +120,7 @@ def knx_key() -> Any:
 
 @functools.cache
 def knx_store_errors() -> tuple[type[Exception], ...]:
-    """What KNX's config store raises for an entity it has no UI config for (ConfigStoreException, imported when KNX is
-    there; the store's own «not found» as KeyError/ValueError otherwise)."""
+    """What KNX's config store raises for an entity it has no UI config for (ConfigStoreException, imported when KNX is there; the store's own «not found» as KeyError/ValueError otherwise)."""
     try:
         from homeassistant.components.knx.storage.config_store import ConfigStoreException
     except ImportError:
@@ -163,9 +156,7 @@ def knx_store(hass: HomeAssistant | None) -> dict[str, Any] | None:
     return store
 
 def foreign_knx_writes(hass: HomeAssistant | None, owned: set[str] | None, skip: str | None=None) -> set[str] | None:
-    """The addresses the integrator's own KNX UI entities send to or listen on — Hauflo's never send there (panel
-    round 6: a Siri-exposed «Kitchen light» rewired to the gate relay's address; integrator run 23: to its passive
-    7/7/5, which the same actuator obeys). None when it can't be known."""
+    """The addresses the integrator's own KNX UI entities send to or listen on — Hauflo's never send there (panel round 6: a Siri-exposed «Kitchen light» rewired to the gate relay's address; integrator run 23: to its passive 7/7/5, which the same actuator obeys)."""
     store = knx_store(hass)
     if store is None:
         return set() if hass is not None and knx_data(hass) is None else None
@@ -196,9 +187,6 @@ def foreign_knx_writes(hass: HomeAssistant | None, owned: set[str] | None, skip:
     return out
 
 def knx_addresses(hass: HomeAssistant | None) -> dict[str, list[str]]:
-    """entity → the KNX group addresses («main/middle/sub») it sends to or listens on — what the integrator knows a
-    signal
-    by (0.33 Р26 «Анализ»: what is analysed). HA's running KNX entities, UI and YAML; no KNX here — empty."""
     out: dict[str, list[str]] = {}
     for ga, ents in (getattr(knx_data(hass), 'group_address_entities', None) or {}).items():
         raw = getattr(ga, 'raw', None)
@@ -212,8 +200,7 @@ def knx_addresses(hass: HomeAssistant | None) -> dict[str, list[str]]:
     return out
 
 def foreign_holders(hass: HomeAssistant | None, owned: set[str] | None, skip: str | None=None) -> dict[str, list[tuple[str | None, int | None]]] | None:
-    """Per address, who else listens there: (platform, scene number if known). An address only xknx knows (an
-    exposure, the time server) gets a holder of no platform — never shared."""
+    """Per address, who else listens there: (platform, scene number if known)."""
     store = knx_store(hass)
     if store is None:
         return None
@@ -248,8 +235,7 @@ def foreign_holders(hass: HomeAssistant | None, owned: set[str] | None, skip: st
     return out
 
 def knx_conn(data: Any) -> dict[str, Any] | None:
-    """HA's KNX config entry data → the passport's connection facts (an allowlist; secure only as a yes/no).
-    empty)."""
+    """HA's KNX config entry data → the passport's connection facts (an allowlist; secure only as a yes/no)."""
     if not isinstance(data, Mapping):
         return None
     out: dict[str, Any] = {}

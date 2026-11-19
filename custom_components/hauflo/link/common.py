@@ -18,7 +18,7 @@ knx_round_min_reads = functools.cache(lambda: tuning()['link']['knx_round_min_re
 event_recent = functools.cache(lambda: tuning()['link']['event_recent_s'])
 
 async def local_token(hass: HomeAssistant, entry: ConfigEntry):
-    """The refresh token of the agent's own system user (made once, kept with the entry). Access tokens made from"""
+    """The refresh token of the agent's own system user (made once, kept with the entry)."""
     user = await helper_store.agent_user(hass, entry)
     refresh = None
     if (rid := entry.data.get(CONF_REFRESH_TOKEN_ID)):

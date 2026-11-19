@@ -154,7 +154,6 @@ class HaufloConfigFlow(ConfigFlow, domain=DOMAIN):
         return self.async_show_form(step_id='user', data_schema=self._schema(server), description_placeholders=self._asked(), errors=errors)
 
     async def async_step_ranges(self, user_input: dict[str, Any] | None=None) -> ConfigFlowResult:
-        """Which group addresses Hauflo may send to — confirmed here, in the house, not by the cloud (narrow round"""
         body, server = self._paired
         proposed = ', '.join(ranges.parse_ranges(body.get('addresses') or body.get('ranges')))
         if user_input is not None:
@@ -218,8 +217,6 @@ class HaufloConfigFlow(ConfigFlow, domain=DOMAIN):
         return None
 
     async def async_step_transfer(self, user_input: dict[str, Any] | None=None) -> ConfigFlowResult:
-        """        is only evidence on the request — Hauflo support decides after telling the previous company; this HA keeps its
-        link until then (_transfer_end)."""
         return self.async_show_menu(step_id='transfer', menu_options=['transfer_yes', 'transfer_no'], description_placeholders={'company': self._transfer_company or '—'})
 
     async def async_step_transfer_yes(self, user_input: dict[str, Any] | None=None) -> ConfigFlowResult:

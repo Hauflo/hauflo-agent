@@ -1,5 +1,4 @@
-"""The agent's one service device «Hauflo»: every entity of the agent sits on it (HA reviewer r2: with the agent's
-version and a link to the Hauflo app on the device page)."""
+"""The agent's one service device «Hauflo»: every entity of the agent sits on it (HA reviewer r2: with the agent's version and a link to the Hauflo app on the device page)."""
 from __future__ import annotations
 from urllib.parse import urlparse
 from homeassistant.config_entries import ConfigEntry

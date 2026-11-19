@@ -1,21 +1,3 @@
-""".storage/hauflo.knx_owned — an engineer in HA saw «KNX» like any other entity).
-
-- One label «Hauflo» on every entity Hauflo created or took over: its KNX entities (the agent's owned list), the
-  light / cover groups it set up, its scenes, the family's dashboard automations and the agent's own entities. Kept in
-  sync by the agent: put on what becomes Hauflo's, taken off what stops being Hauflo's (or was labelled by hand).
-- Alice's zone rooms (Р57): a merged room's zones are their own HA areas «Кухня-гостиная · Остров» for Yandex to ask
-  «в какой комнате?»; the plan Hauflo tells carries `zones` {zone area → room area}, and everything here that asks an
-  entity's room (`entity_room`: order, voice, presence, scenes, guests, recipes, alarms, insights, the cards through
-  /api/hauflo/house) gets the room, never the zone.
-  protection canon, __init__._protected), «Hauflo · служебное» (in HA, not on the client's screens: an entity category
-  the deploy set, alarm helpers, the agent's own) and «Hauflo · клиенту» (the rest of Hauflo's). Names RU/EN from the
-  translations (selector.hauflo_label). On Hauflo's entities only, idempotent, off what stops being of its kind; any
-  other label stays. Room = the HA area, class = the deploy's category labels — not duplicated here.
-- «Создано в этом доме» / «Made in this home»: a read-only sensor on the integration's page — how many entities are
-Hauflo's,
-  which of them were changed by hand in HA (renamed, disabled; the ones the last plan keeps as edited) and what the next
-
-Who services the house is said elsewhere (house transfer) — not here."""
 from __future__ import annotations
 from collections.abc import Callable
 import functools
@@ -49,7 +31,6 @@ zones_max = functools.cache(lambda: _t()['zones_max'])
 ZONES_KEY = f'{DOMAIN}_zone_rooms'
 
 def room_area(hass: HomeAssistant, area_id: str | None) -> str | None:
-    """The room an area belongs to: a zone area of Alice's (Р57) → its room's area; any other area — itself."""
     if not area_id:
         return area_id
     return (hass.data.get(ZONES_KEY) or {}).get(area_id, area_id)
@@ -92,11 +73,7 @@ def label_kinds(kind: str | None, entry: er.RegistryEntry, protected: bool) -> s
     return out
 
 def service_entity(hass: HomeAssistant, entity_id: str) -> bool:
-    """«Служебное» of Hauflo's (the label's rule, label_kinds): the agent's own switches / sensors (a rule's on / off,
-    «Зима /
-    Лето автоматически»), the alarms' helpers, a hidden or config / diagnostic entity — never something a rule, a
-    schedule or a picker changes (HA's own area targets skip the hidden and categorised ones too). Asked of an entity
-    already known to be Hauflo's: its kind is taken as owned."""
+    """«Служебное» of Hauflo's (the label's rule, label_kinds): the agent's own switches / sensors (a rule's on / off, «Зима / Лето автоматически»), the alarms' helpers, a hidden or config / diagnostic entity — never something a rule, a schedule or a picker changes (HA's own area targets skip the hidden and categorised ones too)."""
     entry = er.async_get(hass).async_get(entity_id)
     if entry is None:
         return False
@@ -212,8 +189,7 @@ class Ownership:
 
     @callback
     def remember_name(self, entity_id: Any, name: Any=None, old_entity_id: Any=None, named: bool=True) -> None:
-        """Hauflo changed an entity's registry entry through the tunnel (config/entity_registry/update): the name it
-        set (named) is Hauflo's, a cleared one is forgotten; a new entity_id takes the remembered name along."""
+        """Hauflo changed an entity's registry entry through the tunnel (config/entity_registry/update): the name it set (named) is Hauflo's, a cleared one is forgotten; a new entity_id takes the remembered name along."""
         if not isinstance(entity_id, str):
             return
         before = dict(self.names)
@@ -289,8 +265,7 @@ class Ownership:
 
     @callback
     def async_sync(self) -> tuple[int, int]:
-        """The «Hauflo» label on exactly Hauflo's entities, its kind labels on exactly the ones of their kind. Returns
-        (labels put on, labels taken off)."""
+        """The «Hauflo» label on exactly Hauflo's entities, its kind labels on exactly the ones of their kind."""
         if not self.loaded or self._locked():
             return (0, 0)
         try:
@@ -364,8 +339,7 @@ class Ownership:
 _COUNTS = ('create', 'update', 'leftovers', 'leftover_rooms', 'kept_count')
 
 def clean_plan(raw: Any) -> dict[str, Any]:
-    """What Hauflo says the next deploy would do — numbers, a time, entity ids; anything else from the wire is
-    dropped."""
+    """What Hauflo says the next deploy would do — numbers, a time, entity ids; anything else from the wire is dropped."""
     if not isinstance(raw, dict):
         raise ValueError('not an object')
     out: dict[str, Any] = {'at': dt_util.utcnow().isoformat()}
@@ -387,7 +361,7 @@ def clean_plan(raw: Any) -> dict[str, Any]:
     return out
 
 class OwnershipView(HomeAssistantView):
-    """Hauflo tells what the next deploy would change (after each plan) — shown in HA, changes nothing. Admin only."""
+    """Hauflo tells what the next deploy would change (after each plan) — shown in HA, changes nothing."""
     url = '/api/hauflo/ownership'
     name = 'api:hauflo:ownership'
     requires_auth = True

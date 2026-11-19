@@ -20,8 +20,7 @@ class InsightsHouseMixin:
         return er.async_get(self.hass).async_get(eid)
 
     def visible(self, eid: str, diagnostic: bool=False) -> bool:
-        """Shown in HA: not disabled, not hidden; a diagnostic / config entity only for a detector that needs one (a
-        battery, a link quality — diagnostic by nature). An entity HA's registry doesn't know (YAML) is shown."""
+        """Shown in HA: not disabled, not hidden; a diagnostic / config entity only for a detector that needs one (a battery, a link quality — diagnostic by nature)."""
         entry = self.entry(eid)
         if entry is None:
             return True
@@ -58,7 +57,7 @@ class InsightsHouseMixin:
         return {'name': label(self.hass, eid, st), 'area': area.name if area else ''}
 
     def opening_open(self, eid: str, ignore: set[str] | frozenset[str]=frozenset()) -> bool:
-        """A window / door of the same room is open now (a room unknown: none known open). `ignore`: entities that are"""
+        """A window / door of the same room is open now (a room unknown: none known open)."""
         area_id = self.area_id(eid)
         if not area_id:
             return False
@@ -77,8 +76,7 @@ class InsightsHouseMixin:
         return [{'role': 'self', 'entityId': eid}, *({'role': 'window', 'entityId': w} for w in self.windows_of(eid)), *([{'role': 'outdoor', 'entityId': src['entity_id']}] if src else []), {'role': 'season'}]
 
     def uses(self, det: Detector, kind: str, eid: str, addresses: dict[str, list[str]]) -> list[dict[str, Any]]:
-        """`inputs` for the reader: each entity's name, room and KNX group addresses (what the integrator knows it
-        by)."""
+        """`inputs` for the reader: each entity's name, room and KNX group addresses (what the integrator knows it by)."""
         out: list[dict[str, Any]] = []
         try:
             got = det.inputs(kind, eid)

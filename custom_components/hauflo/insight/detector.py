@@ -8,8 +8,7 @@ if TYPE_CHECKING:
     from .engine import Insights
 
 class CanonAttr:
-    """A class attribute taken from the canon (tuning.json) on its first read, then kept on the class: the detectors'
-    kinds and domains without a file read at import (HA core review: no I/O at import)."""
+    """A class attribute taken from the canon (tuning.json) on its first read, then kept on the class: the detectors' kinds and domains without a file read at import (HA core review: no I/O at import)."""
 
     def __init__(self, fn: Callable[[], Any]) -> None:
         self.fn = fn
@@ -23,8 +22,7 @@ class CanonAttr:
         return value
 
 class Detector:
-    """One kind of «off its own norm». The engine calls `on_state` for its domains, `tick` every TICK seconds; `items`
-    are the open findings now. `load` / `dump` are its persisted norms (a bad saved shape is read as empty)."""
+    """One kind of «off its own norm»."""
     name = ''
     domains: tuple[str, ...] | None = ()
     KINDS: tuple[str, ...] = ()
@@ -49,16 +47,13 @@ class Detector:
         self.on_state(new, now)
 
     def on_learned(self, eid: str, direction: str, rate: float, now: float, gap: float | None=None) -> None:
-        """ClimateEffect learned a clean episode's rate (°C/h, from `gap` °C away) — a detector following the trend
-        listens."""
+        """ClimateEffect learned a clean episode's rate (°C/h, from `gap` °C away) — a detector following the trend listens."""
 
     def tick(self, now: float) -> None:
         raise NotImplementedError
 
     def warm(self, now: float) -> None:
-        """Switched on again with HA running (accept3 №5): what it derives from HA's states and not from its saved norms
-        (the pairs) found at once — never a minute of a «shorter» list (117 → 105 rows, «Норма известна» 13 → 1) until
-        the first tick. Nothing judged, nothing sampled."""
+        """Switched on again with HA running (accept3 №5): what it derives from HA's states and not from its saved norms (the pairs) found at once — never a minute of a «shorter» list (117 → 105 rows, «Норма известна» 13 → 1) until the first tick."""
 
     def items(self, now: float) -> list[dict[str, Any]]:
         raise NotImplementedError
@@ -68,7 +63,6 @@ class Detector:
         return []
 
     def progress(self, kind: str, eid: str, now: float) -> dict[str, Any]:
-        """learning{have, need, hours, needH} or ready{norm, unit, n} — a detector with a fixed bar is ready at once."""
         return {'ready': {'norm': None, 'unit': self.UNIT, 'n': 0}}
 
     def excluded(self, kind: str, eid: str) -> str | None:
@@ -79,15 +73,10 @@ class Detector:
         return []
 
     def extra(self, kind: str, eid: str) -> dict[str, Any]:
-        """More of the row for the integrator's view (analytics.py: its unit, the standard, a tip, «нормы нет —
-        спросим»)."""
+        """More of the row for the integrator's view (analytics.py: its unit, the standard, a tip, «нормы нет — спросим»)."""
         return {}
 
     def inputs(self, kind: str, eid: str) -> list[dict[str, Any]]:
-        """What the check reads (0.33 Р26 «что анализируется»): the entity itself and every other signal that takes part
-        —
-        `role` a token the reader words (translations: selector.insight_input), `entityId` when it is an entity of
-        HA."""
         return [{'role': 'self', 'entityId': eid}]
 
     def reset(self, eid: str, kind: str) -> None:

@@ -31,9 +31,7 @@ def _push(base: dict[str, Any], **data: Any) -> dict[str, Any]:
     return {'action': 'script.' + SCRIPT, 'data': {**base, **data}}
 
 def triggers(rule: dict[str, Any], hold_groups: list[tuple[list[str], int]], hold: int) -> list[dict[str, Any]]:
-    """The rule's sensors in alarm for its hold: HA's own `state` (`to:` without `from:` — a sensor waking up from no
-    data in alarm is an alarm too) / `numeric_state` (a level below / above its threshold, one trigger per threshold);
-    a link sensor's «off» only after it was seen «on» (never from no data)."""
+    """The rule's sensors in alarm for its hold: HA's own `state` (`to:` without `from:` — a sensor waking up from no data in alarm is an alarm too) / `numeric_state` (a level below / above its threshold, one trigger per threshold); a link sensor's «off» only after it was seen «on» (never from no data)."""
     states = list(rule['alarm_states'])
     levels: dict[str, dict[str, float]] = rule.get('thresholds') or {}
     to: Any = states[0] if len(states) == 1 else states
@@ -53,10 +51,7 @@ def triggers(rule: dict[str, Any], hold_groups: list[tuple[list[str], int]], hol
     return out
 
 def rule_configs(rule: dict[str, Any], phones: list[dict[str, Any]], t: dict[str, str], ack: str, group: str, *, slug: str, aid: str, hold_groups: list[tuple[list[str], int]], hold: int, back_s: int, outputs_on: list[dict[str, Any]], outputs_off: list[dict[str, Any]], button: str | None, button_text: str | None, act: dict[str, Any] | None, title: str, names: dict[str, str], who: str) -> dict[str, Any]:
-    """The rule's objects: ``automation``, ``back`` (a critical rule's «снова в норме», else None) and ``run`` (its push
-    button's script, else None). ``title`` — the rule's title as a literal (independent.common.lit), ``button`` — the
-    button's
-    words («Закрыть: Кран») as a literal too, ``button_text`` — as they are (the script's name)."""
+    """The rule's objects: ``automation``, ``back`` (a critical rule's «снова в норме», else None) and ``run`` (its push button's script, else None)."""
     critical = rule.get('priority') == 'critical'
     targets = [f"notify.{p['service']}" for p in phones]
     base: dict[str, Any] = {'rule': title, 'tag': aid, 'targets': targets, 'group': group}

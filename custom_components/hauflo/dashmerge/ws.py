@@ -12,8 +12,7 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 async def local_ws(session: Any, url: str, token: str, cmds: list[dict[str, Any]]) -> list[Any]:
-    """Commands to this HA's own websocket as the agent's user (a copy of the dashboard, the old copies off) — the
-    public API, one connection, in order; the first failure raises."""
+    """Commands to this HA's own websocket as the agent's user (a copy of the dashboard, the old copies off) — the public API, one connection, in order; the first failure raises."""
     async with asyncio.timeout(60), session.ws_connect(url, max_msg_size=0) as ws:
         await ws.receive_json()
         await ws.send_json({'type': 'auth', 'access_token': token})
@@ -32,8 +31,7 @@ async def local_ws(session: Any, url: str, token: str, cmds: list[dict[str, Any]
         return out
 
 async def handle(agent: Any, ch: int, msg: dict[str, Any], validate: Callable[[Any], str | None], fresh_backup: Callable[[], bool], locked_code: str, prune: Callable[[Any], tuple[Any, list[dict[str, Any]]]] | None=None) -> None:
-    """`hauflo/dashboard/plan` and `lovelace/config` of a dashboard the agent merges (reads), `hauflo/dashboard/save`
-    and every plain `lovelace/config/save` of a `hauflo-…` dashboard (writes): answered here, never relayed to HA."""
+    """`hauflo/dashboard/plan` and `lovelace/config` of a dashboard the agent merges (reads), `hauflo/dashboard/save` and every plain `lovelace/config/save` of a `hauflo-…` dashboard (writes): answered here, never relayed to HA."""
     t, mid = (msg.get('type'), msg.get('id'))
 
     async def reply(result: Any=None, code: str | None=None, message: str='') -> None:

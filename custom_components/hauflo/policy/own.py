@@ -11,9 +11,7 @@ from .knx import knx_store, knx_writes, owned_knx
 _LOGGER = logging.getLogger(__name__)
 
 def own_entity(hass: HomeAssistant | None, entity_id: Any, owned_entries: set[str] | None=None) -> bool:
-    """Hauflo's own: KNX / its agent's entities, a group or a rule sensor it set up through the tunnel, a scene it wrote
-    (hauflo_…) —
-    never the integrator's own group or template helper or scene (security re-review round 5)."""
+    """Hauflo's own: KNX / its agent's entities, a group or a rule sensor it set up through the tunnel, a scene it wrote (hauflo_…) — never the integrator's own group or template helper or scene (security re-review round 5)."""
     if hass is None or not isinstance(entity_id, str):
         return False
     entry = er.async_get(hass).async_get(entity_id)
@@ -26,9 +24,7 @@ def own_entity(hass: HomeAssistant | None, entity_id: Any, owned_entries: set[st
     return entry.platform in OWN_PLATFORMS
 
 def protected(hass: HomeAssistant | None, entity_id: Any, depth: int=0, links: list[tuple[set[str], set[str]]] | None=None) -> bool:
-    """What opens the house or stops its protection: a lock, the alarm, a valve, a garage door / gate / door cover —
-    never in a voice assistant, a scene or a bridge, whatever path asks (security re-review round 5); nor a group with
-    one of them inside (panel round 6)."""
+    """What opens the house or stops its protection: a lock, the alarm, a valve, a garage door / gate / door cover — never in a voice assistant, a scene or a bridge, whatever path asks (security re-review round 5); nor a group with one of them inside (panel round 6)."""
     if not isinstance(entity_id, str):
         return True
     if entity_id.startswith(NEVER_EXPOSE):
@@ -54,8 +50,7 @@ def _self_protected(hass: HomeAssistant, entity_id: str) -> bool:
     return entity_id.startswith(NEVER_EXPOSE) or sticky(hass, entity_id) or class_protected(hass, entity_id) or unknown_source(hass, entity_id)
 
 def recent_event(state: str, within: float) -> str | None:
-    """An event entity's state is the ISO time it last fired: that time when it is within `within` seconds of now
-    (a clock a little ahead counts), else None (unknown / unavailable / old)."""
+    """An event entity's state is the ISO time it last fired: that time when it is within `within` seconds of now (a clock a little ahead counts), else None (unknown / unavailable / old)."""
     at = dt_util.parse_datetime(state) if isinstance(state, str) else None
     if at is None or at.tzinfo is None:
         return None
@@ -63,10 +58,7 @@ def recent_event(state: str, within: float) -> str | None:
     return dt_util.as_utc(at).isoformat() if -within <= age <= within else None
 
 def unknown_source(hass: HomeAssistant | None, entity_id: str) -> bool:
-    """N6: a switch / cover / button / script whose actions nobody can read — made in YAML (a template, a command line,
-    a REST one: no config entry) or a UI helper whose options name no entity (empty actions, a service call only) —
-    and whose class or name says a gate / garage door / door / lock: counted as one, the source unknown (fail closed).
-    A UI helper naming what it operates is judged by that (_helper_links); an integration's own by class / mark."""
+    """N6: a switch / cover / button / script whose actions nobody can read — made in YAML (a template, a command line, a REST one: no config entry) or a UI helper whose options name no entity (empty actions, a service call only) — and whose class or name says a gate / garage door / door / lock: counted as one, the source unknown (fail closed)."""
     if hass is None or not isinstance(entity_id, str) or (not entity_id.startswith(UNKNOWN_DOMAINS)):
         return False
     reg = None
@@ -113,10 +105,7 @@ def _entry_sources(reg: er.EntityRegistry, domain: str, entry: Any) -> set[str]:
     return {x for x in sources if isinstance(x, str) and '.' in x}
 
 def helper_operates_known(hass: HomeAssistant, reg_entry: Any) -> bool | None:
-    """For an entity of a config entry: True when it is a UI helper (template / Switch as X) whose options name at
-    least one entity it operates (then _helper_links judges it), False when it is such a helper naming none (empty
-    actions, a service like rest_command / shell_command / mqtt.publish — what it does can't be read), None when the
-    entry is an integration's own (judged by its class, its mark, what it holds — not by its name)."""
+    """For an entity of a config entry: True when it is a UI helper (template / Switch as X) whose options name at least one entity it operates (then _helper_links judges it), False when it is such a helper naming none (empty actions, a service like rest_command / shell_command / mqtt.publish — what it does can't be read), None when the entry is an integration's own (judged by its class, its mark, what it holds — not by its name)."""
     try:
         entry = hass.config_entries.async_get_entry(reg_entry.config_entry_id)
     except Exception:
@@ -134,9 +123,7 @@ def protected_ids(hass: HomeAssistant) -> list[str]:
     return sorted((eid for eid in hass.states.async_entity_ids() if protected(hass, eid, links=links)))
 
 def wrapped_source(hass: HomeAssistant, entity_id: str) -> str | None:
-    """The entity a «Switch as X» helper operates; «?» when it can't be told (then it counts as protected — fail
-    closed);
-    None for anything that wraps nothing."""
+    """The entity a «Switch as X» helper operates; «?» when it can't be told (then it counts as protected — fail closed); None for anything that wraps nothing."""
     reg = er.async_get(hass)
     entry = reg.async_get(entity_id)
     if entry is None or entry.platform not in WRAPPER_PLATFORMS:
@@ -161,8 +148,7 @@ def class_protected(hass: HomeAssistant, entity_id: str) -> bool:
     return bool(classes & PROTECTED_COVERS)
 
 def sticky(hass: HomeAssistant | None, entity_id: str) -> bool:
-    """A KNX entity once seen as a gate / garage door / door, or one sending to the addresses that open it (protect.py:
-    deleted and remade, under another class or platform, it stays protected until HA's admin clears it)."""
+    """A KNX entity once seen as a gate / garage door / door, or one sending to the addresses that open it (protect.py: deleted and remade, under another class or platform, it stays protected until HA's admin clears it)."""
     marks = getattr(hass, 'data', {}).get(PROTECT_DATA)
     if marks is None or not (marks.uids or marks.gas):
         return False
@@ -175,8 +161,7 @@ def sticky(hass: HomeAssistant | None, entity_id: str) -> bool:
     return bool(knx_writes(config.get('knx') if isinstance(config, dict) else None) & marks.gas)
 
 def hauflo_entity(hass: HomeAssistant | None, eid: Any, owned: set[str] | None, owned_entries: set[str] | None) -> bool:
-    """Hauflo's own and safe to hand on (a bridge, a voice assistant): a KNX one only if Hauflo created it, never
-    a lock / the alarm / a valve / a garage door."""
+    """Hauflo's own and safe to hand on (a bridge, a voice assistant): a KNX one only if Hauflo created it, never a lock / the alarm / a valve / a garage door."""
     return not protected(hass, eid) and own_entity(hass, eid, owned_entries) and (platform(hass, eid) != 'knx' or owned_knx(hass, eid, owned))
 
 def platform(hass: HomeAssistant | None, entity_id: Any) -> str | None:

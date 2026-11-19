@@ -1,10 +1,4 @@
-"""Client recipes of «Настройки → Автоматизации» (p6d, docs/automations-recipes.md): ready rules from the house's own
-devices. The recipes are DATA (automation_recipes.json: RU+EN texts, parameters with defaults and limits, the standard
-behind each default); this module only resolves them against what the house has (targets()) into the rule form that
-automations.validate() takes — the engine stays the single judge, a recipe it refuses is simply not offered.
-
-Pure Python (no Home Assistant import): the data is checkable offline (check()) and the resolver is testable with a
-fake `targets`."""
+"""Client recipes of «Настройки → Автоматизации» (p6d, docs/automations-recipes.md): ready rules from the house's own devices."""
 from __future__ import annotations
 from collections.abc import Callable
 import functools
@@ -31,8 +25,6 @@ def load() -> dict[str, Any]:
 
 @functools.cache
 def recipes_data() -> dict[str, Any]:
-    """automation_recipes.json, read on first use — off the event loop: async_setup_entry and the config flow preload
-    it in the executor."""
     return load()
 
 def _texts(v: Any, what: str, out: list[str]) -> None:
@@ -40,8 +32,7 @@ def _texts(v: Any, what: str, out: list[str]) -> None:
         out.append(f"{what}: text in {' and '.join(LANGS)}")
 
 def check(data: dict[str, Any]) -> list[str]:
-    """Everything wrong with the recipe data (empty = fine): ids, RU+EN texts, parameters with defaults inside limits,
-    every $param / {param} known, only events and actions the engine has."""
+    """Everything wrong with the recipe data (empty = fine): ids, RU+EN texts, parameters with defaults inside limits, every $param / {param} known, only events and actions the engine has."""
     bad: list[str] = []
     for g, t in data.get('groups', {}).items():
         _texts(t, f'group {g}', bad)
@@ -119,8 +110,7 @@ def _fill(text: str, vals: dict[str, Any], extra: dict[str, str]) -> str:
     return text.format_map({**{k: _num(v) if isinstance(v, (int, float)) else v for k, v in vals.items()}, **extra})
 
 def resolve(data: dict[str, Any], targets: dict[str, Any], validate: Callable[[Any], Any] | None=None) -> list[dict[str, Any]]:
-    """The recipes this house can run: [{key, group, icon, title, sub, basis, params, rule}]. `validate` is the engine's
-    automations.validate(): a recipe it refuses is left out (never an error for the client)."""
+    """The recipes this house can run: [{key, group, icon, title, sub, basis, params, rule}]."""
     out: list[dict[str, Any]] = []
     for r in data['recipes']:
         item = _one(data, r, targets)

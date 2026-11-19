@@ -85,9 +85,7 @@ class LinkQuality(Series):
         return {'daysLeft': round(fc['days']), 'date': date_in(now, fc['days']), 'value': round2(fc['level']), 'limit': warn, 'perWeek': round2(fc['slope'] * WEEK)}
 
 class HaHost(Series):
-    """HA's own disk (System Monitor / Supervisor sensors): only the FORECAST («fills up in N days»).
-    The levels already reached and the age of the last backup are health/'s (health_disk, health_backup):
-    one fault, one source (0.41 W1)."""
+    """HA's own disk (System Monitor / Supervisor sensors): only the FORECAST («fills up in N days»)."""
     name = 'host'
     domains = ('sensor',)
     agg = 'max'

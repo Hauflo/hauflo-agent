@@ -6,10 +6,6 @@ from .const import ID, LAYOUT
 from .tree import child_level_of, count_cards, hid, kids_key, kids_of, title_of
 
 def unpanel(cfg: Any, new: dict[str, Any]) -> Any:
-    """    showed only its first card — what the family or HA's «Добавить на панель» put on the room page was hidden): read as
-    that sections view, its cards in the new version's first section — in the base and in HA's config alike, so what the
-    family added there stays on that page after Hauflo's card, not on a hidden «-kept» page. A copy; the rest as it
-    is."""
     if not isinstance(cfg, dict) or not isinstance(new, dict):
         return cfg
     to_sections: dict[str, str] = {}
@@ -91,9 +87,6 @@ def _opened(cfg: dict[str, Any], path: str) -> bool:
     return found
 
 def unique_paths(cfg: Any) -> None:
-    """    opens
-    the first of two pages with one path for both — Hauflo's gets the next free `<path>_2`… Only a page nothing on the
-    dashboard opens by its path (the «Диагностика» tab): a room's page its tiles open keeps it (they'd lead to his)."""
     views = [v for v in (cfg.get('views') if isinstance(cfg, dict) else None) or [] if isinstance(v, dict)]
     his = {v['path'] for v in views if hid(v) is None and isinstance(v.get('path'), str)}
     taken = {v.get('path') for v in views}
@@ -108,8 +101,6 @@ def unique_paths(cfg: Any) -> None:
         taken.add(v['path'])
 
 def twins(current: Any, new: Any) -> list[dict[str, Any]]:
-    """    tile, then the room made in Hauflo — two «Протечки» on «Сервис»). Offered for removal with the tiles that open them;
-    nothing is lost (no card on the page) and nothing goes without his tick."""
     if not isinstance(current, dict) or not isinstance(new, dict):
         return []
     names = {same_name(title_of(v, 1)) for v in kids_of(new, 0) if isinstance(v, dict) and hid(v)} - {''}
@@ -130,8 +121,6 @@ def drop_twins(current: Any, new: Any, ids: Any) -> tuple[Any, int]:
         return (current, 0)
 
     def emptied(before: dict[str, Any], after: dict[str, Any], key: str) -> bool:
-        """The integrator's own section / stack that held something and holds nothing now — because of the tiles
-        empty Hauflo section gone from HA would read as removed by him)."""
         b, a = (before.get(key), after.get(key))
         return hid(before) is None and isinstance(b, list) and bool(b) and isinstance(a, list) and (not a)
 

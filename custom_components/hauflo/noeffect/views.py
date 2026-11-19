@@ -7,9 +7,6 @@ if TYPE_CHECKING:
     from .engine import PairEffect
 
 class PairsView(HomeAssistantView):
-    """      {"set": {"effect": entity_id, "kind": "floor|air|co2|humidity", "exec": entity_id | ""}} — this executor is this
-      effect's;
-      {"clear": entity_id} — back to what the mapping finds;"""
     url = '/api/hauflo/pairs'
     name = 'api:hauflo:pairs'
     requires_auth = True

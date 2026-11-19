@@ -7,9 +7,7 @@ from .policy import signals_in
 from .store import evaluate_in, store
 
 class SignalsView(HomeAssistantView):
-    """GET → {"hash": <kept> | null, "applied": counts, "at"}; POST (admin only, Hauflo through its tunnel)
-    {"signals": {scopes, entities, findings}, "hash": "<16 hex>"} → {"hash", "applied": false when that hash is kept
-    already (nothing written), "counts", "dropped"}."""
+    """GET → {"hash": <kept> | null, "applied": counts, "at"}; POST (admin only, Hauflo through its tunnel) {"signals": {scopes, entities, findings}, "hash": "<16 hex>"} → {"hash", "applied": false when that hash is kept already (nothing written), "counts", "dropped"}."""
     url = '/api/hauflo/signals'
     name = 'api:hauflo:signals'
     requires_auth = True
@@ -45,9 +43,6 @@ class SignalsView(HomeAssistantView):
         return self.json({'hash': s.hash, 'applied': True, 'counts': s.counts(), 'dropped': got[1]})
 
 class SignalChooseView(HomeAssistantView):
-    """«Авария когда» on a card's row (Р9/Р19), admins only: POST {entity, meaning: on | off | none | reading | default}
-    →
-    {entity, meaning, ha, problem, house, alarm} — applied at once, kept, carried to Hauflo by the status."""
     url = '/api/hauflo/signals/choose'
     name = 'api:hauflo:signals:choose'
     requires_auth = True

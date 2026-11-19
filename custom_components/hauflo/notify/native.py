@@ -93,9 +93,7 @@ class NotifyNativeMixin:
             await self.hass.services.async_call('input_boolean', f"turn_{('on' if on else 'off')}", {'entity_id': eid}, blocking=True, context=Context(parent_id=QUIET_PARENT))
 
     async def async_set_native(self, native: dict[str, dict[str, Any]]) -> None:
-        """Which rules HA's automations run now (independent.async_sync). A rule handed over brings its open alarms: the
-        engine's repeats stop, its helper says whether they were accepted. A rule taken back is repeated by the
-        engine."""
+        """Which rules HA's automations run now (independent.async_sync)."""
         before, self.native = (self.native, {str(k): dict(v) for k, v in native.items()})
         await self.native_store.async_save(self.native)
         self._watch_helpers()
@@ -284,8 +282,7 @@ class NotifyNativeMixin:
             self._schedule_group(rule)
 
     def native_status(self) -> dict[str, Any]:
-        """Each rule HA runs: its automation and helper, on/accepted, when it last ran (Hauflo's monitoring); ``state``
-        — «ha» (its automation runs) or why the agent tells its alarms instead: «off», «missing», «unavailable»."""
+        """Each rule HA runs: its automation and helper, on/accepted, when it last ran (Hauflo's monitoring); ``state`` — «ha» (its automation runs) or why the agent tells its alarms instead: «off», «missing», «unavailable»."""
         reg = er.async_get(self.hass)
         out: dict[str, Any] = {}
         for rule_id, rec in self.native.items():

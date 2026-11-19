@@ -69,8 +69,6 @@ def load(path: Path=FILE) -> dict[str, Any]:
 
 @functools.cache
 def integrations() -> dict[str, Any]:
-    """integrations.json, read on first use — off the event loop: async_setup_entry and the config flow preload it in
-    the executor."""
     return load()
 by_domain = functools.cache(lambda: {i['domain']: i for i in integrations()['integrations']})
 
@@ -95,8 +93,7 @@ def folder_version(folder: Path) -> str | None:
         return ''
 
 async def loaded_version(hass: HomeAssistant, domain: str) -> str | None:
-    """The version HA knows of this run: HA reads custom integrations once at its start — files put there later are
-    known only after a restart (then this is the restart having happened)."""
+    """The version HA knows of this run: HA reads custom integrations once at its start — files put there later are known only after a restart (then this is the restart having happened)."""
     try:
         integration = await async_get_integration(hass, domain)
     except IntegrationNotFound:

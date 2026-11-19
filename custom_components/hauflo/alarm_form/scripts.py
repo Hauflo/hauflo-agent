@@ -8,9 +8,7 @@ from .automations import digest
 from .common import KEEP_BACKUPS, SCRIPTS, SCRIPTS_BACKUP, NotPlainScripts, jinja, names_cfg
 
 def push_script(t: dict[str, str]) -> dict[str, Any]:
-    """``script.hauflo_push`` — one push of an alarm to the rule's phones, every phone on its own (a failing one never
-    holds the others). What it says by ``say``: alarm (repeat ≥ 2 — «никто не подтвердил») / repeat / back / accepted /
-    done; HA's notice with the alarm's tag made on the alarm and gone on «Принято» / back."""
+    """``script.hauflo_push`` — one push of an alarm to the rule's phones, every phone on its own (a failing one never holds the others)."""
     crit = {**push_data('android', tag='', critical=True), **push_data('ios', tag='', critical=True)}
     quiet = {**push_data('android', tag='', quiet=True), **push_data('ios', tag='', quiet=True)}
     crit.pop('tag')
@@ -27,8 +25,6 @@ async def read_scripts(hass: HomeAssistant) -> tuple[dict[str, Any], str | None]
     return (dict(data), before)
 
 def rebase_scripts(writes: dict[str, Any], base: dict[str, Any], kept: list[str]) -> Any:
-    """scripts.yaml changed in HA's editor while this pass ran: the writes again on what is there now — a script
-    someone changed or removed meanwhile is left as they made it."""
 
     def redo(fresh: dict[str, Any]) -> dict[str, Any]:
         out = dict(fresh)

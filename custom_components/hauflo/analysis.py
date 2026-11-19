@@ -1,10 +1,3 @@
-"""norm, what is off it and why — as its OWN item of HA's sidebar next to «Дом», not a tab of the dashboard. A panel of
-HA's own kind (`custom`, like HACS' or Energy's own page): the element is the cards' `hauflo-analysis-panel`
-(hauflo-cards.js), loaded from the same file that serves the cards; the data is the agent's GET /api/hauflo/insights.
-
-Who sees it is the integrator's choice for the diagnosis (`insight.diag_visible`, pushed with the site's signals): HA's
-administrators only, or everyone — re-registered when that choice changes. The address, icon, element and title are
-tuning.json «analysis»."""
 from __future__ import annotations
 import functools
 import logging
@@ -23,7 +16,6 @@ DATA_ADMIN = 'hauflo_analysis_admin'
 DATA_TITLE = 'hauflo_analysis_title'
 
 def title_of(language: str | None, config: object=None) -> str:
-    """    the alarm engine's config, else HA's — «Analysis» stood beside a Russian dashboard on an English HA."""
     return titles()['ru'] if site_ru(language, config) else titles()['en']
 
 def panel_config(module_url: str) -> dict:
@@ -31,8 +23,7 @@ def panel_config(module_url: str) -> dict:
     return {'_panel_custom': {'name': element(), 'module_url': module_url, 'embed_iframe': False, 'trust_external': False}}
 
 def async_register(hass: HomeAssistant, admin_only: bool, module_url: str | None=None, config: object=None) -> bool:
-    """The panel in the sidebar; again only when who may see it or its title (the house's language) changed. Returns
-    True when (re)registered. `config` — the alarm engine's (its `lang`: the project's language)."""
+    """The panel in the sidebar; again only when who may see it or its title (the house's language) changed."""
     url = module_url or hass.data.get(DATA_CARDS_FILE)
     if not url:
         return False

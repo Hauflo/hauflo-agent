@@ -159,9 +159,7 @@ class NotifyEngine(NotifyRingMixin, NotifyFiringMixin, NotifyRepeatMixin, Notify
 
     @callback
     def policy_changed(self) -> bool:
-        """The site's policy changed (signals.py): each rule's overlay and hold taken again; True — a rule HA runs as
-        its own
-        automation now needs the engine (its automation is written again by the caller)."""
+        """The site's policy changed (signals.py): each rule's overlay and hold taken again; True — a rule HA runs as its own automation now needs the engine (its automation is written again by the caller)."""
         before = {r['id']: (r.get('policy'), r['hold'], r.get('holds')) for r in self.config['rules']}
         self.config = clean_rules(self.config, self.hass, self.owns)
         after = {r['id']: (r.get('policy'), r['hold'], r.get('holds')) for r in self.config['rules']}
@@ -244,8 +242,6 @@ class NotifyEngine(NotifyRingMixin, NotifyFiringMixin, NotifyRepeatMixin, Notify
         return state.entity_id not in self._seen_ok
 
     def active_list(self) -> list[dict[str, Any]]:
-        """Open alarms for Hauflo's monitoring: which rule, what, since when, accepted by whom — the ones taken
-        two open critical alarms)."""
         out = []
         known = {r['id'] for r in self.config['rules']}
         pending = {k: v for k, v in self._restored.items() if k.partition('|')[0] in known}
@@ -257,9 +253,7 @@ class NotifyEngine(NotifyRingMixin, NotifyFiringMixin, NotifyRepeatMixin, Notify
         return out
 
     def alarm_items(self) -> list[dict[str, Any]]:
-        """The alarms the one counter (alarms_now.py) reads: the open ones (active_list) and those back to normal that
-        nobody
-        accepted yet (`returned` — the alert card asks for a look), with their names and rooms."""
+        """The alarms the one counter (alarms_now.py) reads: the open ones (active_list) and those back to normal that nobody accepted yet (`returned` — the alert card asks for a look), with their names and rooms."""
         out = self.active_list()
         for key, v in self.unacked_rtn.items():
             if key in self.active:

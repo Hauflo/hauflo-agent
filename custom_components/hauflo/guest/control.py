@@ -15,8 +15,7 @@ class GuestControlMixin:
     """Serves the guest's requests within the granted rooms."""
 
     async def handle(self, body: Any) -> tuple[int, dict[str, Any]]:
-        """What the guest's page asked: {token, device, op: state | act, entity_id?, action?, value?}. Never trusts
-        it."""
+        """What the guest's page asked: {token, device, op: state | act, entity_id?, action?, value?}."""
         if not isinstance(body, dict) or set(body) - {'token', 'device', 'op', 'entity_id', 'action', 'value'}:
             return (400, {'code': 'bad_request'})
         token, device, op = (body.get('token'), body.get('device'), body.get('op'))

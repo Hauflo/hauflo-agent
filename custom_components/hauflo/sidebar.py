@@ -1,10 +1,3 @@
-"""To-do hidden for the family — every person in this HA who isn't an administrator. HA's administrators only with the
-option «Также у администраторов» (HA reviewer r2: an admin's menu was stripped to «Home» — so off for new houses; the
-frontend storage (each can show a panel again in their profile). The choice is kept by the agent: a person added
-later gets it too (integrator run 16: a client created after the deploy saw Map/Energy/…).
-
-API for Hauflo (through the agent's tunnel, admin): POST /api/hauflo/sidebar {"hide": [...], "show": [...],
-"admins": bool}. Without "admins" the house's choice stays as it is."""
 from __future__ import annotations
 from typing import Any
 from homeassistant.components.frontend.storage import async_system_store, async_user_store
@@ -57,8 +50,6 @@ async def async_apply(hass: HomeAssistant, hide: list[str], show: list[str], adm
     return {'users': users, 'hidden': hide, 'shown': show, 'admins': admins}
 
 async def async_upgrade(hass: HomeAssistant) -> int:
-    """    its
-    goes out of their menu again. Returns how many administrators got it hidden again."""
     saved = HaufloStore(hass, STORE_KEY)
     data = await saved.async_load() or {}
     if 'admins' in data or not data.get('hide'):
@@ -95,7 +86,6 @@ def async_unload(hass: HomeAssistant) -> None:
 MENU_EXTRAS = {'map', 'energy', 'logbook', 'history', 'calendar', 'media-browser', 'todo'}
 
 async def async_remove(hass: HomeAssistant) -> int:
-    """The integration removed: the panels Hauflo hid (as it recorded them) come back for every person, and the choice"""
     saved = HaufloStore(hass, STORE_KEY)
     hidden_by_us = {p for p in (await saved.async_load() or {}).get('hide', []) if p in MENU_EXTRAS}
     back = 0

@@ -64,8 +64,7 @@ def _shown(reg: er.EntityRegistry, eid: str) -> bool:
     return not (ent and (ent.disabled_by or ent.hidden_by))
 
 def is_chosen(state: Any, reg: er.EntityRegistry, ours: bool, exclude: Any, include: Any, legacy: bool=False) -> bool:
-    """The one rule: capable and shown, and (Hauflo's own and not unticked) or (foreign and ticked). `legacy` = a config
-    from before `include` (not migrated yet): a foreign one counts as ticked unless unticked."""
+    """The one rule: capable and shown, and (Hauflo's own and not unticked) or (foreign and ticked)."""
     if not (can_switch(state) and _shown(reg, state.entity_id)):
         return False
     if ours:
@@ -73,8 +72,7 @@ def is_chosen(state: Any, reg: er.EntityRegistry, ours: bool, exclude: Any, incl
     return state.entity_id in include or (legacy and state.entity_id not in exclude)
 
 def acs(hass: HomeAssistant, exclude: frozenset[str] | set[str]=frozenset(), include: frozenset[str] | set[str]=frozenset(), owns: Callable[[str], bool] | None=None, legacy: bool=False) -> list[Any]:
-    """The climates the season switches (is_chosen) — floors and heat-only thermostats never. No `owns` = nothing is
-    Hauflo's own."""
+    """The climates the season switches (is_chosen) — floors and heat-only thermostats never."""
     reg = er.async_get(hass)
     return [s for s in hass.states.async_all('climate') if s.state not in _GONE and is_chosen(s, reg, bool(owns and owns(s.entity_id)), exclude, include, legacy)]
 
@@ -171,7 +169,5 @@ def clean_config(raw: Any) -> tuple[dict[str, Any], list[str]]:
     return (out, dropped)
 
 def rule_body(s: dict[str, Any]) -> dict[str, Any]:
-    """The suggestion's settings as a value rule (recipe «season», rules.py / window.py): the street's daily mean below
-    `below` for `days` days in a row → «на зиму?»; strictly above `above` as long → «на лето?». A suggestion, never a
-    switch (auto off). Thresholds the wrong way round (above < below) keep `below` both ways (Y can't be negative)."""
+    """The suggestion's settings as a value rule (recipe «season», rules.py / window.py): the street's daily mean below `below` for `days` days in a row → «на зиму?»; strictly above `above` as long → «на лето?»."""
     return {'id': SEASON_RULE, 'name': SEASON_RULE, 'name_gen': {'recipe': SEASON_RULE}, 'purpose': SEASON_RULE, 'enabled': s['enabled'], 'input': {'entity_id': s['sensor']} if s['sensor'] else 'outdoor', 'when': 'below', 'x': s['below'], 'y': max(0.0, s['above'] - s['below']), 'window': {'stat': 'mean', 'period': 'day', 'n': int(s['days'])}, 'outputs': {'suggest': True, 'suggest_back': True, 'auto': False}, 'snooze_days': int(s['snooze_days']), 'actions': [{'do': 'season', 'value': HEAT}], 'back': 'reverse'}

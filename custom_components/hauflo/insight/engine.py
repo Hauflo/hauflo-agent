@@ -26,8 +26,7 @@ _LOGGER = logging.getLogger(__name__)
 DETECTORS: tuple[type[Detector], ...] = (ClimateEffect, StuckSensor, *TRENDS, *NOEFFECT, *ANALYTICS)
 
 class Insights(InsightsHouseMixin):
-    """The engine: feeds the detectors, keeps their norms (debounced save), lists their findings, says when the list
-    changed (the agent sends its status then)."""
+    """The engine: feeds the detectors, keeps their norms (debounced save), lists their findings, says when the list changed (the agent sends its status then)."""
 
     def __init__(self, hass: HomeAssistant, owns: Callable[[str], bool], season_now: Callable[[], str | None]) -> None:
         self.hass = hass
@@ -72,12 +71,7 @@ class Insights(InsightsHouseMixin):
 
     @callback
     def switch(self) -> None:
-        """The integrator switched «Фоновые наблюдения» (signals.py `observe`): off — the listener and the tick stop,
-        the
-        norms are saved as they are, the list empties (no finding stays open behind a stopped engine); on — the
-        detectors
-        start from the saved norms like after a restart (what was open then opens anew, the observation gap is no
-        evidence)."""
+        """The integrator switched «Фоновые наблюдения» (signals.py `observe`): off — the listener and the tick stop, the norms are saved as they are, the list empties (no finding stays open behind a stopped engine); on — the detectors start from the saved norms like after a restart (what was open then opens anew, the observation gap is no evidence)."""
         want = self._wanted()
         if want != self.off:
             return
@@ -260,15 +254,12 @@ class Insights(InsightsHouseMixin):
         return [] if self.off else self._shown(self.clock())
 
     def summary(self) -> dict[str, Any]:
-        """        learns."""
         eids = {eid for det in self.detectors for _kind, eid in self._keys(det)}
         since = min(self.first.values(), default=None)
         return {'on': not self.off, 'devices': len(eids), 'since': dt_util.utc_from_timestamp(since).isoformat() if since is not None else None}
 
     def states(self, entity: str | None=None, offset: int=0, limit: int | None=None) -> dict[str, Any]:
-        """Every (kind, entity) a detector knows with its state, `limit` a page (list_max by default); with `entity` —
-        its
-        episodes too."""
+        """Every (kind, entity) a detector knows with its state, `limit` a page (list_max by default); with `entity` — its episodes too."""
         limit = list_max() if limit is None else limit
         now = self.clock()
         rows: list[dict[str, Any]] = []
@@ -329,8 +320,7 @@ class Insights(InsightsHouseMixin):
         self._after()
 
     def choices(self) -> dict[str, dict[str, Any]]:
-        """Choices made in HA (an admin's «Это норма» / «Снова следить») the site's findings don't hold yet — the status
-        carries them and Hauflo folds them in with the same `at`; the push back then equals them and they stop going."""
+        """Choices made in HA (an admin's «Это норма» / «Снова следить») the site's findings don't hold yet — the status carries them and Hauflo folds them in with the same `at`; the push back then equals them and they stop going."""
         out: dict[str, dict[str, Any]] = {}
         for key, loc in sorted(self.local.items(), key=lambda kv: str(kv[1].get('at') or ''), reverse=True):
             cloud = (self.finding_of(key) if self.finding_of else None) or {}

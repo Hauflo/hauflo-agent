@@ -1,10 +1,4 @@
-"""What Hauflo may ask through the tunnel — tunnel.json, the one list the agent and the backend's tests share (a call
-the
-backend makes that the agent would refuse fails the backend's own tests, not a house). Checked when the agent loads: a
-bad file is a bug of the release and the import fails loudly — never an empty list that lets nothing through silently,
-nor one that lets everything through.
-
-Plain Python on purpose (no HA import): the backend's contract test and scripts read the same file."""
+"""What Hauflo may ask through the tunnel — tunnel.json, the one list the agent and the backend's tests share (a call the backend makes that the agent would refuse fails the backend's own tests, not a house)."""
 from __future__ import annotations
 import functools
 import json
@@ -73,6 +67,4 @@ def load(path: Path=FILE) -> dict[str, Any]:
 
 @functools.cache
 def tunnel_cfg() -> dict[str, Any]:
-    """tunnel.json, read on first use — off the event loop: async_setup_entry and the config flow preload it in the
-    executor."""
     return load()

@@ -47,7 +47,6 @@ class AgentHouseMixin:
         return True
 
     def watches(self, eid: str) -> bool:
-        """        class gave the bell and Telegram but no push — the push asked only the label)."""
         ctx = self._watch_ctx()
         e = ctx['reg'].async_get(eid)
         if e is None:
@@ -65,11 +64,7 @@ class AgentHouseMixin:
         return [i for i in dict.fromkeys([*ids, *by_class, *chosen]) if self._kept(i, ctx)]
 
     def house(self, summary: bool=False) -> dict[str, Any]:
-        """«Всё хорошо» by the one calculator (signals.py, 0.32) over the watched signals: `_house` alarm (a problem
-        whose
-        policy says «авария») > fault («неисправность») > offline (only lost links among them) > ok; `_faults` — those
-        problems; `_shelved` — the «не решено» problems (listed, never moving it). `summary`: with `_summary` — the one
-        counter of open alarms (alarms_now.py) over the same faults."""
+        """«Всё хорошо» by the one calculator (signals.py, 0.32) over the watched signals: `_house` alarm (a problem whose policy says «авария») > fault («неисправность») > offline (only lost links among them) > ok; `_faults` — those problems; `_shelved` — the «не решено» problems (listed, never moving it)."""
         v = self.house_now()
         out = {**v, '_signals': self.signal_verdicts()}
         if summary:
@@ -78,11 +73,6 @@ class AgentHouseMixin:
 
     @callback
     def house_now(self, mon: list[dict[str, Any]] | None=None) -> dict[str, Any]:
-        """        до»:
-        [{entity, until}])}; kept for the house's sensors (sensor.HaufloHouseState, binary_sensor.HaufloHouseProblem)
-        and
-        told to them on a change. Every recompute comes here: status() (the link's status), status_now() unlinked, the
-        cards' read (house()) and the timer at the nearest «Отложить до» end — no timer of its own besides that one."""
         faults, shelved, held = self._faults(self.monitored() if mon is None else mon)
         live = [f for f in faults if not f['offline']]
         level = 'alarm' if any((f['house'] == 'alarm' for f in live)) else 'fault' if live else 'offline' if faults else 'ok'
@@ -113,7 +103,6 @@ class AgentHouseMixin:
         self.status_now()
 
     def alarms_now(self, faults: list[dict[str, Any]], cap: int | None=None) -> dict[str, Any]:
-        """        entity — the cards, Hauflo's monitoring and the bot count and list only this."""
         engine = self.engine
         where = getattr(engine, 'where', None)
         items = getattr(engine, 'alarm_items', None)
@@ -144,16 +133,6 @@ class AgentHouseMixin:
         return (faults, shelved, held)
 
     def signal_verdicts(self) -> dict[str, dict[str, Any]]:
-        """The cards' answer «is this signal an alarm here» by the one calculator (signals.py with the site's policy,
-        0.32
-        fault, "alarm": its alarm condition}} for a watched one — the card compares HA's live state with the condition
-        (no wait for the next read); {"house": "none"} — never an alarm here (the site's «Не авария» / «не влияет» / «не
-        следить»). Listed: what the canon watches by class (hidden ones too: a card may list a project's hidden inputs)
-        or
-        a classless one by its name's words, what the agent watches (the label, «Уведомлять», the site's «следить») and
-        what it was told not to. Not listed — the cards' canon, the same one (cards/src/*.test.js): the rest
-        (the site's choice for a signal nobody watches moves nothing, as in the cloud's «Сигналы дома»), «не решено»
-        unless switched off, the agent's own and the phones'. At most signals_agent.cards_max, the site's own first."""
         reg = er.async_get(self.hass)
         pol = signals_store.policy(self.hass)
         own = (pol or {}).get('entities') or {}
@@ -218,9 +197,7 @@ class AgentHouseMixin:
             self._admins = sorted({str(u.name)[:80] for u in users if u.is_admin and u.is_active and (not u.system_generated) and u.name})[:20]
 
     def monitored(self) -> list[dict[str, Any]]:
-        """The watched signals now, each by the one calculator (signals.py): problem, its «Всё хорошо» (house),
-        importance,
-        «не решено», where its policy came from — the same as the cloud's applySignals (and its own 0.31 status)."""
+        """The watched signals now, each by the one calculator (signals.py): problem, its «Всё хорошо» (house), importance, «не решено», where its policy came from — the same as the cloud's applySignals (and its own 0.31 status)."""
         reg = er.async_get(self.hass)
         pol = signals_store.policy(self.hass)
         kinds = signals_canon.device_kinds(self.hass)
